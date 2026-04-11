@@ -2,6 +2,7 @@
   system,
   nixpkgs,
   proxySuiteModule,
+  zapret,
 }:
 
 let
@@ -14,6 +15,41 @@ let
     };
   forceEval = value: builtins.tryEval (builtins.deepSeq value true);
   rg = "${pkgs.ripgrep}/bin/rg";
+  mkRouting =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+    in
+    import ../modules/proxy-suite/rules.nix {
+      lib = pkgs.lib;
+      inherit pkgs cfg zapret;
+    };
+  mkRoutingRules =
+    fixture:
+    (mkRouting fixture).routingRules;
+  mkTProxyConfig =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+      rules = mkRouting fixture;
+      configs = import ../modules/proxy-suite/config.nix {
+        lib = pkgs.lib;
+        inherit pkgs cfg rules;
+      };
+    in
+    builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tproxyFile));
+  hasDirectDomain =
+    rules: domain:
+    builtins.any (rule: (rule ? domain_suffix) && rule.outbound == "direct" && builtins.elem domain rule.domain_suffix) rules;
+  hasDirectIP =
+    rules: cidr:
+    builtins.any (rule: (rule ? ip_cidr) && rule.outbound == "direct" && builtins.elem cidr rule.ip_cidr) rules;
+  hasRuleSet =
+    rules: outbound: ruleSet:
+    builtins.any (rule: (rule ? rule_set) && rule.outbound == outbound && builtins.elem ruleSet rule.rule_set) rules;
+  dnsHasRuleSet =
+    dnsRules: ruleSet:
+    builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
 
   baseModule = {
     system.stateVersion = "26.05";
@@ -147,11 +183,73 @@ let
     }
   ];
 
-  routingOrRules = (import ../modules/proxy-suite/rules.nix {
-    lib = pkgs.lib;
-    inherit pkgs;
-    cfg = routingOrFixture.config.services.proxy-suite;
-  }).routingRules;
+  ruDefaultRules = mkRoutingRules minimal;
+  ruDefaultConfig = mkTProxyConfig minimal;
+
+  ruDisabledFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.routing.enableRuDirect = false;
+    }
+  ];
+  ruDisabledRules = mkRoutingRules ruDisabledFixture;
+  ruDisabledConfig = mkTProxyConfig ruDisabledFixture;
+
+  ruExplicitFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.routing = {
+        enableRuDirect = false;
+        direct.geosites = [ "category-ru" ];
+      };
+    }
+  ];
+  ruExplicitConfig = mkTProxyConfig ruExplicitFixture;
+
+  zapretSyncFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret.enable = true;
+    }
+  ];
+  zapretSyncRules = mkRoutingRules zapretSyncFixture;
+
+  zapretSyncDisabledFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        syncDirectRouting = false;
+      };
+    }
+  ];
+  zapretSyncDisabledRules = mkRoutingRules zapretSyncDisabledFixture;
+
+  zapretExtrasFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        listGeneral = [ "pixiv.net" ];
+        ipsetAll = [ "203.0.113.0/24" ];
+      };
+    }
+  ];
+  zapretExtrasRules = mkRoutingRules zapretExtrasFixture;
+
+  zapretExcludesFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        listExclude = [ "discord.com" ];
+        ipsetExclude = [ "1.1.1.0/24" ];
+      };
+    }
+  ];
+  zapretExcludesRules = mkRoutingRules zapretExcludesFixture;
+
+  routingOrRules = mkRoutingRules routingOrFixture;
 
   routingOrDomainRules = builtins.filter (
     rule: (rule ? domain_suffix) && rule.domain_suffix == [ "example.com" ]
@@ -185,7 +283,82 @@ let
                         assert (builtins.head routingOrDomainRules).outbound == "proxy";
                         true
                       ) (
-                        assert (builtins.head routingOrGeoIPRules).outbound == "proxy"; true
+                        builtins.seq (
+                          assert (builtins.head routingOrGeoIPRules).outbound == "proxy";
+                          true
+                        ) (
+                          builtins.seq (
+                            assert hasRuleSet ruDefaultRules "direct" "geosite-category-ru";
+                            true
+                          ) (
+                            builtins.seq (
+                              assert hasRuleSet ruDefaultRules "direct" "geoip-ru";
+                              true
+                            ) (
+                              builtins.seq (
+                                assert dnsHasRuleSet ruDefaultConfig.dns.rules "geosite-category-ru";
+                                true
+                              ) (
+                                builtins.seq (
+                                  assert !(hasRuleSet ruDisabledRules "direct" "geosite-category-ru");
+                                  true
+                                ) (
+                                  builtins.seq (
+                                    assert !(hasRuleSet ruDisabledRules "direct" "geoip-ru");
+                                    true
+                                  ) (
+                                    builtins.seq (
+                                      assert !(dnsHasRuleSet ruDisabledConfig.dns.rules "geosite-category-ru");
+                                      true
+                                    ) (
+                                      builtins.seq (
+                                        assert dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru";
+                                        true
+                                      ) (
+                                        builtins.seq (
+                                          assert hasDirectDomain zapretSyncRules "discord.com";
+                                          true
+                                        ) (
+                                          builtins.seq (
+                                            assert hasDirectIP zapretSyncRules "1.1.1.0/24";
+                                            true
+                                          ) (
+                                            builtins.seq (
+                                              assert !(hasDirectDomain zapretSyncDisabledRules "discord.com");
+                                              true
+                                            ) (
+                                              builtins.seq (
+                                                assert !(hasDirectIP zapretSyncDisabledRules "1.1.1.0/24");
+                                                true
+                                              ) (
+                                                builtins.seq (
+                                                  assert hasDirectDomain zapretExtrasRules "pixiv.net";
+                                                  true
+                                                ) (
+                                                  builtins.seq (
+                                                    assert hasDirectIP zapretExtrasRules "203.0.113.0/24";
+                                                    true
+                                                  ) (
+                                                    builtins.seq (
+                                                      assert !(hasDirectDomain zapretExcludesRules "discord.com");
+                                                      true
+                                                    ) (
+                                                      assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24"); true
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
                       )
                     )
                   )

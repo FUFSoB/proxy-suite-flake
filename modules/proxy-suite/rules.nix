@@ -1,9 +1,56 @@
 # Routing rules and rule-set definitions for sing-box
-{ lib, pkgs, cfg }:
+{ lib, pkgs, cfg, zapret }:
 
 let
   r = cfg.singBox.routing;
   sb = cfg.singBox;
+  z = cfg.zapret;
+
+  trim = lib.strings.trim;
+  hasPrefix = lib.strings.hasPrefix;
+  splitString = lib.strings.splitString;
+
+  zapretSrc =
+    if builtins.isAttrs zapret && zapret ? outPath then zapret.outPath else zapret;
+
+  parseListFile =
+    path:
+    lib.unique (
+      builtins.filter (line: line != "" && !(hasPrefix "#" line)) (
+        map trim (splitString "\n" (builtins.replaceStrings [ "\r" ] [ "" ] (builtins.readFile path)))
+      )
+    );
+
+  subtractItems = items: exclusions: builtins.filter (item: !(builtins.elem item exclusions)) items;
+
+  syncZapretDirect = z.enable && z.syncDirectRouting;
+
+  zapretDefaultDomains =
+    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/list-general.txt" else [ ];
+  zapretDefaultIps =
+    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
+  zapretExcludedDomains =
+    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
+  zapretExcludedIps =
+    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/ipset-exclude.txt" else [ ];
+
+  zapretDirectDomains =
+    if syncZapretDirect then
+      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral)) (lib.unique (zapretExcludedDomains ++ z.listExclude))
+    else
+      [ ];
+  zapretDirectIps =
+    if syncZapretDirect then
+      subtractItems (lib.unique (zapretDefaultIps ++ z.ipsetAll)) (lib.unique (zapretExcludedIps ++ z.ipsetExclude))
+    else
+      [ ];
+
+  direct = {
+    domains = lib.unique (r.direct.domains ++ zapretDirectDomains);
+    ips = lib.unique (r.direct.ips ++ zapretDirectIps);
+    geosites = lib.unique (r.direct.geosites ++ lib.optional r.enableRuDirect "category-ru");
+    geoips = lib.unique (r.direct.geoips ++ lib.optional r.enableRuDirect "ru");
+  };
 
   mkDomainRule =
     tag: domains:
@@ -61,7 +108,7 @@ let
   # All geosite names referenced anywhere (for rule-set file definitions).
   allGeositeNames = lib.unique (
     r.proxy.geosites
-    ++ r.direct.geosites
+    ++ direct.geosites
     ++ r.block.geosites
     ++ lib.concatMap (rule: rule.geosites) customRules
   );
@@ -69,7 +116,7 @@ let
   # All geoip names referenced anywhere.
   allGeoIPNames = lib.unique (
     r.proxy.geoips
-    ++ r.direct.geoips
+    ++ direct.geoips
     ++ r.block.geoips
     ++ lib.concatMap (rule: rule.geoips) customRules
   );
@@ -104,10 +151,10 @@ let
     (mkIPRule "proxy" r.proxy.ips)
 
     # Global direct lists
-    (mkDomainRule "direct" r.direct.domains)
-    (mkIPRule "direct" r.direct.ips)
-    (mkRulesetRule "direct" (map (s: "geosite-${s}") r.direct.geosites))
-    (mkRulesetRule "direct" (map (s: "geoip-${s}") r.direct.geoips))
+    (mkDomainRule "direct" direct.domains)
+    (mkIPRule "direct" direct.ips)
+    (mkRulesetRule "direct" (map (s: "geosite-${s}") direct.geosites))
+    (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
 
     { ip_is_private = true; outbound = "direct"; }
 
@@ -125,6 +172,7 @@ let
 in
 {
   inherit
+    direct
     geositeRuleSets
     geoIPRuleSets
     routingRules

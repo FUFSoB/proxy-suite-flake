@@ -18,7 +18,7 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     (lib.mkIf cfg.singBox.enable (
       let
-        rules = import ./rules.nix { inherit lib pkgs cfg; };
+        rules = import ./rules.nix { inherit lib pkgs cfg zapret; };
         configs = import ./config.nix { inherit lib pkgs cfg rules; };
         nftr = import ./nftables.nix { inherit lib pkgs cfg; };
       in

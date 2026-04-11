@@ -56,15 +56,19 @@ services.proxy-suite = {
       }
     ];
 
-    routing.direct = {
-      domains  = [ "youtube.com" "discord.com" "x.com" "reddit.com" ];
-      geosites = [ "category-ru" ];
-      geoips   = [ "ru" ];
+    routing = {
+      # Default: send RU geosite/geoip traffic direct.
+      enableRuDirect = true;
+      direct.domains = [ "reddit.com" ];
     };
     routing.proxy.geosites = [ "google" ];
   };
 
-  zapret.enable = true;
+  zapret = {
+    enable = true;
+    # Default: mirror zapret-covered domains/IPs into sing-box direct routing.
+    syncDirectRouting = true;
+  };
 };
 ```
 
@@ -163,6 +167,11 @@ singBox = {
 
 By default all proxied traffic goes to whatever the active outbound is (the selector, urltest winner, or single "first" outbound). You can override this per-outbound or with explicit rules to send specific traffic to a specific server.
 
+Global direct routing also has two built-in behaviors:
+
+- `singBox.routing.enableRuDirect = true` sends `geosite-category-ru` and `geoip-ru` direct by default.
+- If `zapret.enable = true`, then `zapret.syncDirectRouting = true` mirrors zapret's effective domain/IP lists into sing-box direct rules, including `listGeneral` and `ipsetAll`, minus zapret excludes.
+
 **Attached to an outbound:**
 
 ```nix
@@ -242,17 +251,20 @@ proxy-ctl select <tag>        switch to a specific outbound (selector mode)
 
 ## Zapret
 
-zapret handles DPI-based blocking by mangling packets at the netfilter level. It's separate from the proxy — useful for sites like YouTube and Discord that are throttled or blocked by inspection rather than IP bans.
+zapret handles DPI-based blocking by mangling packets at the netfilter level. It's separate from the proxy, but by default this module also mirrors zapret-covered domains and IPs into sing-box direct routing so the proxy does not fight zapret for the same traffic.
 
 ```nix
 zapret = {
   enable = true;
   configName = "general(ALT)";
+  syncDirectRouting = true;  # default
 
   # Extra domains beyond zapret's built-in list
   listGeneral = [ "pixiv.net" "pximg.net" ];
 };
 ```
+
+When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt` and `hostlists/ipset-all.txt`, adds your `listGeneral` and `ipsetAll` entries, and subtracts both upstream and user exclusion lists before generating sing-box direct rules.
 
 If zapret corrupts traffic for some subnet (e.g. a VM behind a libvirt bridge):
 

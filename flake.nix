@@ -36,7 +36,12 @@
       });
 
       checks = forAll (system: import ./nix/checks.nix {
-        inherit system nixpkgs proxySuiteModule;
+        inherit
+          system
+          nixpkgs
+          proxySuiteModule
+          zapret
+          ;
       });
     };
 }

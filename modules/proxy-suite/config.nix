@@ -4,6 +4,7 @@
 
 let
   sb = cfg.singBox;
+  direct = rules.direct;
 
   clashApiBlock = lib.optionalAttrs (sb.selection != "first") {
     experimental = {
@@ -35,7 +36,7 @@ let
         rule_set = [ "geosite-google" ];
         server = "remote";
       }
-      ++ lib.optional (builtins.elem "category-ru" sb.routing.direct.geosites) {
+      ++ lib.optional (builtins.elem "category-ru" direct.geosites) {
         rule_set = [ "geosite-category-ru" ];
         server = "local";
       };

@@ -240,6 +240,12 @@ in
       };
 
       routing = {
+        enableRuDirect = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Automatically send sing-geosite category-ru and sing-geoip ru traffic direct.";
+        };
+
         proxy = routingFields;
 
         direct = {
@@ -255,12 +261,12 @@ in
           };
           geosites = mkOption {
             type = types.listOf types.str;
-            default = [ "category-ru" ];
+            default = [ ];
             description = "sing-geosite names to send direct.";
           };
           geoips = mkOption {
             type = types.listOf types.str;
-            default = [ "ru" ];
+            default = [ ];
             description = "sing-geoip names to send direct.";
           };
         };
@@ -328,6 +334,12 @@ in
 
     zapret = {
       enable = mkEnableOption "zapret DPI bypass";
+
+      syncDirectRouting = mkOption {
+        type = types.bool;
+        default = true;
+        description = "When zapret is enabled, mirror its effective domain and IP lists into sing-box direct routing.";
+      };
 
       configName = mkOption {
         type = types.str;
