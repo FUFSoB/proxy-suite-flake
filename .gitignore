@@ -1,0 +1,22 @@
+.codex
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Nix build outputs
+result
+result-*
+
+# Local shell/dev environment state
+.direnv/
+
+# Likely secret material
+.env
+.env.*
+secrets/
+*.age
+*.pem
+*.key
+*.p12
+*.pfx
