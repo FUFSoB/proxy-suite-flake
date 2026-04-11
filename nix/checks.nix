@@ -249,6 +249,25 @@ let
   ];
   zapretExcludesRules = mkRoutingRules zapretExcludesFixture;
 
+  proxyDirectFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.proxyByDefault = false;
+    }
+  ];
+  proxyDirectConfig = mkTProxyConfig proxyDirectFixture;
+
+  blockGeoFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.routing.block = {
+        geosites = [ "category-ads-all" ];
+        geoips = [ "cn" ];
+      };
+    }
+  ];
+  blockGeoRules = mkRoutingRules blockGeoFixture;
+
   routingOrRules = mkRoutingRules routingOrFixture;
 
   routingOrDomainRules = builtins.filter (
@@ -343,7 +362,27 @@ let
                                                       assert !(hasDirectDomain zapretExcludesRules "discord.com");
                                                       true
                                                     ) (
-                                                      assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24"); true
+                                                      builtins.seq (
+                                                        assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24");
+                                                        true
+                                                      ) (
+                                                        builtins.seq (
+                                                          assert hasRuleSet blockGeoRules "block" "geosite-category-ads-all";
+                                                          true
+                                                        ) (
+                                                          builtins.seq (
+                                                            assert hasRuleSet blockGeoRules "block" "geoip-cn";
+                                                            true
+                                                          ) (
+                                                            builtins.seq (
+                                                              assert proxyDirectConfig.dns.final == "local";
+                                                              true
+                                                            ) (
+                                                              assert ruDefaultConfig.dns.final == "remote"; true
+                                                            )
+                                                          )
+                                                        )
+                                                      )
                                                     )
                                                   )
                                                 )

@@ -36,11 +36,11 @@ let
         rule_set = [ "geosite-google" ];
         server = "remote";
       }
-      ++ lib.optional (builtins.elem "category-ru" direct.geosites) {
-        rule_set = [ "geosite-category-ru" ];
+      ++ lib.optional (direct.geosites != [ ]) {
+        rule_set = map (s: "geosite-${s}") direct.geosites;
         server = "local";
       };
-    final = "remote";
+    final = if sb.proxyByDefault then "remote" else "local";
   };
 
   dnsConfigTun = dnsConfig // {

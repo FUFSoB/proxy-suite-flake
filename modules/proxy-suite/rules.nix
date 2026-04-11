@@ -158,15 +158,15 @@ let
 
     { ip_is_private = true; outbound = "direct"; }
 
-    # Global proxy geo lists
-    (mkRulesetRule "proxy" (map (s: "geosite-${s}") r.proxy.geosites))
-    (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
-
-    # Block
+    # Block (before proxy geosets so block can override them)
     (mkDomainRule "block" r.block.domains)
     (mkIPRule "block" r.block.ips)
     (mkRulesetRule "block" (map (s: "geosite-${s}") r.block.geosites))
     (mkRulesetRule "block" (map (s: "geoip-${s}") r.block.geoips))
+
+    # Global proxy geo lists
+    (mkRulesetRule "proxy" (map (s: "geosite-${s}") r.proxy.geosites))
+    (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
   ];
 
 in
