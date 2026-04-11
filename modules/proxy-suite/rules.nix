@@ -62,6 +62,7 @@ let
   allGeositeNames = lib.unique (
     r.proxy.geosites
     ++ r.direct.geosites
+    ++ r.block.geosites
     ++ lib.concatMap (rule: rule.geosites) customRules
   );
 
@@ -69,6 +70,7 @@ let
   allGeoIPNames = lib.unique (
     r.proxy.geoips
     ++ r.direct.geoips
+    ++ r.block.geoips
     ++ lib.concatMap (rule: rule.geoips) customRules
   );
 
@@ -116,6 +118,8 @@ let
     # Block
     (mkDomainRule "block" r.block.domains)
     (mkIPRule "block" r.block.ips)
+    (mkRulesetRule "block" (map (s: "geosite-${s}") r.block.geosites))
+    (mkRulesetRule "block" (map (s: "geoip-${s}") r.block.geoips))
   ];
 
 in

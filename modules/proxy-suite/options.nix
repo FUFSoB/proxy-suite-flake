@@ -276,6 +276,16 @@ in
             default = [ ];
             description = "IP CIDRs to block.";
           };
+          geosites = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "sing-geosite names to block.";
+          };
+          geoips = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "sing-geoip names to block.";
+          };
         };
 
         # Per-outbound and per-action routing rules.

@@ -8,11 +8,14 @@ let
   dcArgs = lib.concatMapStrings (id: " --dc-ip=${id}:${t.dcIps.${id}}") (
     builtins.attrNames t.dcIps
   );
-  secretArg =
-    if t.secretFile != null then
-      " --secret-file=%d/tg_ws_proxy_secret"
-    else
-      " --secret=${t.secret}";
+  startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''
+    exec ${tgPkg}/bin/tg-ws-proxy \
+      --port=${toString t.port} \
+      --host=${t.host} \
+      ${if t.secretFile != null
+        then "--secret-file=$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret"
+        else "--secret=${t.secret}"}${dcArgs}
+  '';
 in
 {
   systemd.services.proxy-suite-tg-ws-proxy = {
@@ -20,7 +23,7 @@ in
     after = [ "network.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
-      ExecStart = "${tgPkg}/bin/tg-ws-proxy --port=${toString t.port} --host=${t.host}${secretArg}${dcArgs}";
+      ExecStart = "${startScript}";
       LoadCredential = lib.optional (t.secretFile != null) "tg_ws_proxy_secret:${t.secretFile}";
       Restart = "on-failure";
       RestartSec = 5;
