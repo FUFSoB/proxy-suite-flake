@@ -162,7 +162,7 @@ def main() -> int:
     lines = config_path.read_text(encoding="utf-8").splitlines()
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     entries = spec.get("entries", [])
-    include_extra_upstream_lists = spec.get("includeExtraUpstreamLists", True)
+    include_extra_upstream_lists = spec.get("includeExtraUpstreamLists", False)
 
     start, end = locate_nfqws_block(lines)
     nfqws_lines = lines[start + 1 : end]

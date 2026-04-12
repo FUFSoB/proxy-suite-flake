@@ -444,7 +444,7 @@ in
 
       includeExtraUpstreamLists = mkOption {
         type = types.bool;
-        default = true;
+        default = false;
         description = ''
           Automatically activate upstream list-instagram.txt, list-soundcloud.txt,
           and list-twitter.txt in the generated zapret config when the selected

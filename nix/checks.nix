@@ -245,6 +245,18 @@ let
   zapretSyncNoExtraListsBase = mkZapretBase zapretSyncNoExtraListsFixture;
   zapretSyncNoExtraListsRules = mkRoutingRules zapretSyncNoExtraListsFixture;
 
+  zapretSyncExtraListsFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        includeExtraUpstreamLists = true;
+      };
+    }
+  ];
+  zapretSyncExtraListsBase = mkZapretBase zapretSyncExtraListsFixture;
+  zapretSyncExtraListsRules = mkRoutingRules zapretSyncExtraListsFixture;
+
   zapretSyncIpsFixture = evalProxySuite [
     baseModule
     {
@@ -575,7 +587,7 @@ let
       true
     )
     (
-      assert hasDirectDomain zapretSyncRules "twitter.com";
+      assert !(hasDirectDomain zapretSyncRules "twitter.com");
       true
     )
     (
@@ -596,6 +608,10 @@ let
     )
     (
       assert !(hasDirectDomain zapretSyncNoExtraListsRules "twitter.com");
+      true
+    )
+    (
+      assert hasDirectDomain zapretSyncExtraListsRules "twitter.com";
       true
     )
     (
@@ -687,9 +703,12 @@ in
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
 
   zapret-hostlist-rules = pkgs.runCommand "proxy-suite-zapret-hostlist-rules-check" { } ''
-    grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-twitter.txt"' "${zapretSyncBase}/config"
-    grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-instagram.txt"' "${zapretSyncBase}/config"
-    grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-soundcloud.txt"' "${zapretSyncBase}/config"
+    grep -F -- '--hostlist="${zapretSyncExtraListsBase}/hostlists/list-twitter.txt"' "${zapretSyncExtraListsBase}/config"
+    grep -F -- '--hostlist="${zapretSyncExtraListsBase}/hostlists/list-instagram.txt"' "${zapretSyncExtraListsBase}/config"
+    grep -F -- '--hostlist="${zapretSyncExtraListsBase}/hostlists/list-soundcloud.txt"' "${zapretSyncExtraListsBase}/config"
+    ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-twitter.txt"' "${zapretSyncBase}/config"
+    ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-instagram.txt"' "${zapretSyncBase}/config"
+    ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-soundcloud.txt"' "${zapretSyncBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-twitter.txt"' "${zapretSyncNoExtraListsBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-instagram.txt"' "${zapretSyncNoExtraListsBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-soundcloud.txt"' "${zapretSyncNoExtraListsBase}/config"

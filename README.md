@@ -270,11 +270,11 @@ zapret = {
 };
 ```
 
-When `syncDirectRouting = true`, the module always reuses zapret's upstream `hostlists/list-general.txt` and `list-google.txt`, adds your `listGeneral`, and subtracts both upstream and user domain exclusions before generating sing-box direct rules. If `zapret.includeExtraUpstreamLists = true` (default), it also includes upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` in both zapret handling and sing-box direct sync.
+When `syncDirectRouting = true`, the module always reuses zapret's upstream `hostlists/list-general.txt` and `list-google.txt`, adds your `listGeneral`, and subtracts both upstream and user domain exclusions before generating sing-box direct rules. If `zapret.includeExtraUpstreamLists = true`, it also includes upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` in both zapret handling and sing-box direct sync.
 
 Custom `zapret.hostlistRules` domains also join this direct-domain sync by default. Set `enableDirectSync = false` on a custom hostlist if you want zapret to handle it but do not want sing-box direct-routing rules generated from it.
 
-The generated zapret config also auto-activates upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` when the selected upstream preset does not already reference them. They are attached using the active config's `general` rule family so those hostlists are actually handled by zapret instead of just existing on disk. Set `zapret.includeExtraUpstreamLists = false;` to opt out.
+The generated zapret config can also auto-activate upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` when the selected upstream preset does not already reference them. They are attached using the active config's `general` rule family so those hostlists are actually handled by zapret instead of just existing on disk. This is disabled by default; set `zapret.includeExtraUpstreamLists = true;` to opt in.
 
 When `syncDirectRoutingUpstreamIps = true`, the module also mirrors zapret's upstream `ipset-all.txt`. This is disabled by default because the upstream IP set is intentionally broad.
 
