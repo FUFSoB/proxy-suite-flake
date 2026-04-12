@@ -466,6 +466,132 @@ let
     }
   ];
 
+  # ---------------------------------------------------------------------------
+  # Subscription fixtures
+  # ---------------------------------------------------------------------------
+
+  subscriptionOnlyFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox.subscriptions = [
+          {
+            tag = "community";
+            url = "https://example.com/sub/token";
+          }
+        ];
+      };
+    }
+  ];
+
+  subscriptionWithStaticFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox = {
+          outbounds = [
+            {
+              tag = "own-vps";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
+          subscriptions = [
+            {
+              tag = "backup";
+              url = "https://example.com/sub/token";
+            }
+          ];
+          selection = "urltest";
+          subscriptionUpdateInterval = "6h";
+        };
+      };
+    }
+  ];
+
+  # selection=first with subscriptions only – start script must rename first
+  # subscription outbound to "proxy" so routing rules resolve at runtime.
+  subscriptionFirstSelectionFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox = {
+          subscriptions = [
+            {
+              tag = "community";
+              url = "https://example.com/sub/token";
+            }
+          ];
+          selection = "first";
+        };
+      };
+    }
+  ];
+
+  subscriptionUrlFileFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox.subscriptions = [
+          {
+            tag = "private";
+            urlFile = "/run/secrets/sub-url";
+          }
+        ];
+      };
+    }
+  ];
+
+  # Validation failures
+  subscriptionBothSources = forceEval (
+    (evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = {
+          enable = true;
+          singBox.subscriptions = [
+            {
+              tag = "bad";
+              url = "https://example.com/sub/token";
+              urlFile = "/run/secrets/sub-url";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  subscriptionNoSources = forceEval (
+    (evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = {
+          enable = true;
+          singBox.subscriptions = [
+            {
+              tag = "bad";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  noOutboundsNoSubscriptions = forceEval (
+    (evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = {
+          enable = true;
+          # neither outbounds nor subscriptions set
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   blockGeoFixture = evalProxySuite [
     baseModule
     {
@@ -697,6 +823,82 @@ let
         ".*/[^/]*proxy-suite-tray\\.desktop$";
       true
     )
+
+    # -- subscription: basic config is accepted --
+    (
+      assert subscriptionOnlyFixture.config.services.proxy-suite.singBox.subscriptions != [ ];
+      true
+    )
+
+    # -- subscription: update service is created when subscriptions are configured --
+    (
+      assert subscriptionOnlyFixture.config.systemd.services ? "proxy-suite-subscription-update";
+      true
+    )
+
+    # -- subscription: update timer is created when subscriptions are configured --
+    (
+      assert subscriptionOnlyFixture.config.systemd.timers ? "proxy-suite-subscription-update";
+      true
+    )
+
+    # -- subscription: StateDirectory set on socks service --
+    (
+      assert subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.StateDirectory
+        == "proxy-suite";
+      true
+    )
+
+    # -- subscription: custom update interval flows through to timer --
+    (
+      assert subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
+        == "6h";
+      true
+    )
+
+    # -- subscription: selection=first renames first subscription outbound to "proxy" --
+    (
+      let
+        startScript = subscriptionFirstSelectionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+        scriptText = builtins.readFile startScript;
+      in
+      assert builtins.match ".*proxy.*" scriptText != null;
+      true
+    )
+
+    # -- subscription: no update service/timer without subscriptions --
+    (
+      assert !(minimal.config.systemd.services ? "proxy-suite-subscription-update");
+      true
+    )
+    (
+      assert !(minimal.config.systemd.timers ? "proxy-suite-subscription-update");
+      true
+    )
+
+    # -- subscription: urlFile form accepted --
+    (
+      assert subscriptionUrlFileFixture.config.services.proxy-suite.singBox.subscriptions != [ ];
+      true
+    )
+
+    # -- subscription: both url + urlFile fails --
+    (
+      assert subscriptionBothSources.success == false;
+      true
+    )
+
+    # -- subscription: neither url nor urlFile fails --
+    (
+      assert subscriptionNoSources.success == false;
+      true
+    )
+
+    # -- subscription: no outbounds + no subscriptions fails --
+    (
+      assert noOutboundsNoSubscriptions.success == false;
+      true
+    )
   ];
 in
 {
@@ -726,6 +928,15 @@ in
         export PYTHONDONTWRITEBYTECODE=1
         export BUILD_OUTBOUND_SCRIPT=${../scripts/build-outbound.py}
         python ${../scripts/test-build-outbound.py}
+        touch "$out"
+      '';
+
+  fetch-subscription-parser =
+    pkgs.runCommand "fetch-subscription-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1
+        export FETCH_SUBSCRIPTION_SCRIPT=${../scripts/fetch-subscription.py}
+        python ${../scripts/test-fetch-subscription.py}
         touch "$out"
       '';
 

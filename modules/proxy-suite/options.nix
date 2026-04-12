@@ -57,6 +57,43 @@ let
     // routingFields;
   };
 
+  subscriptionType = types.submodule {
+    options = {
+      tag = mkOption {
+        type = types.str;
+        description = ''
+          Unique identifier for this subscription. Used as a prefix for all
+          outbound tags generated from its proxy list, e.g. "my-sub" →
+          tags like "my-sub-Server-DE".
+        '';
+        example = "community-list";
+      };
+
+      url = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Literal subscription URL. The response must be a base64-encoded
+          newline-separated list of proxy URIs (standard v2rayN format) or
+          a plain-text list of the same.
+          The URL will end up in the nix store. Use urlFile for actual secrets.
+        '';
+        example = "https://example.com/sub/token123";
+      };
+
+      urlFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Runtime path to a file containing the subscription URL.
+          Intended for use with secret managers (sops-nix, agenix, etc.).
+          The file is read at service start time and never lands in the nix store.
+        '';
+        example = "/run/secrets/my-sub-url";
+      };
+    };
+  };
+
   outboundType = types.submodule {
     options = {
       tag = mkOption {
@@ -182,8 +219,46 @@ in
         default = [ ];
         description = ''
           List of proxy outbounds. Set exactly one of urlFile, url, or json per entry.
-          At least one outbound is required when singBox.enable = true.
+          At least one outbound (or one subscription) is required when singBox.enable = true.
         '';
+      };
+
+      subscriptions = mkOption {
+        type = types.listOf subscriptionType;
+        default = [ ];
+        description = ''
+          Subscription URLs that provide dynamic lists of proxy outbounds.
+          Each URL must return a base64-encoded newline-separated list of proxy URIs
+          (standard v2rayN / Clash subscription format) or plain text of the same.
+
+          On first service start the subscription is fetched live. Subsequent starts
+          use the on-disk cache under /var/lib/proxy-suite/subscriptions/.
+
+          A systemd timer (proxy-suite-subscription-update) refreshes all caches on
+          the interval set by subscriptionUpdateInterval and restarts the service.
+        '';
+        example = [
+          {
+            tag = "community";
+            url = "https://example.com/sub/token";
+          }
+          {
+            tag = "private";
+            urlFile = "/run/secrets/private-sub-url";
+          }
+        ];
+      };
+
+      subscriptionUpdateInterval = mkOption {
+        type = types.str;
+        default = "1d";
+        description = ''
+          How often the proxy-suite-subscription-update timer fires and refreshes
+          all subscription caches. Accepts any systemd time span string
+          (e.g. "1h", "6h", "1d", "12h").
+          Only used when subscriptions is non-empty.
+        '';
+        example = "6h";
       };
 
       selection = mkOption {

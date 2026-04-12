@@ -4,7 +4,7 @@ Declarative proxy stack for NixOS. One flake, one module, done.
 
 Bundles [sing-box](https://github.com/SagerNet/sing-box), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
 
-The goal is to replace GUI clients like v2rayN and their ilk – you configure your proxies in Nix, rebuild, and they just work as systemd services.
+The goal is to replace GUI clients like v2rayN, throne and their ilk – you configure your proxies in Nix, rebuild, and they just work as systemd services.
 
 ---
 
@@ -13,12 +13,13 @@ The goal is to replace GUI clients like v2rayN and their ilk – you configure y
 - **SOCKS5/HTTP proxy** on `127.0.0.1:1080` by default – always running, always available to apps
 - **Transparent proxy (TProxy)** – redirect all system traffic through sing-box without configuring each app; start/stop on demand
 - **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something
+- **Subscription URLs** – point at a v2rayN/Clash-format subscription endpoint; the module fetches, decodes, and imports all proxies automatically, with a periodic refresh timer
 - **Multiple outbounds** with automatic latency-based switching or manual selection
 - **Per-outbound routing** – route specific domains, IPs, or geo sets to specific servers
 - **Protocol support**: vless (Reality, TLS), vmess, trojan, shadowsocks, hysteria2, TUIC v5, socks5, socks4, http/https proxy
 - **`proxy-ctl`** – control script for managing services, switching outbounds, and following logs
 - **DPI bypass** via zapret – handles YouTube, Discord, and other sites that are blocked by packet inspection rather than IP
-- **Telegram proxy** – MTProto WebSocket relay for sharing with others or for clients that don't support SOCKS
+- **Telegram proxy** – local MTProto WebSocket proxy using tg-ws-proxy
 
 ---
 
@@ -167,6 +168,92 @@ singBox = {
 
 ---
 
+## Subscription URLs
+
+A subscription URL is an HTTP endpoint that returns a base64-encoded newline-separated list of proxy URIs — the standard format used by v2rayN, Clash, and similar clients. All supported proxy schemes (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, SOCKS5, HTTP…) can appear in the same subscription.
+
+```nix
+singBox = {
+  subscriptions = [
+    {
+      tag = "community";
+      url = "https://example.com/sub/your-token";
+    }
+  ];
+
+  # urltest is strongly recommended for subscriptions: sing-box probes all proxies
+  # every 3 minutes and routes through the fastest working one. With selection = "first"
+  # a single dead server in position 0 breaks everything.
+  selection = "urltest";
+  subscriptionUpdateInterval = "6h"; # refresh every 6 hours (default: 1d)
+};
+```
+
+Use `urlFile` instead of `url` to keep the subscription URL out of the nix store:
+
+```nix
+subscriptions = [{
+  tag = "private";
+  urlFile = config.sops.secrets.sub_url.path;
+}];
+```
+
+### How it works
+
+**First start:** the service fetches the subscription URL live and writes the parsed outbounds to `/var/lib/proxy-suite/subscriptions/<tag>.json`.
+
+**Subsequent starts:** the cache file is used directly — no network access on restart.
+
+**Periodic refresh:** a systemd timer (`proxy-suite-subscription-update`) fires on boot (after 5 minutes) and then every `subscriptionUpdateInterval`. On success it updates the cache files and restarts `proxy-suite-socks` (and `proxy-suite-tun` if it is active).
+
+### Tag generation
+
+Each proxy URI in the subscription gets a sing-box outbound tag derived from its `#remark` fragment:
+
+```
+<subscription-tag>-<slugified-remark>
+```
+
+For example, a subscription with `tag = "sub"` and a proxy remarked `Server DE #1` becomes `sub-Server-DE--1`. URIs without a remark get `sub-0`, `sub-1`, etc. Duplicate tags are suffixed with `-2`, `-3`, and so on.
+
+### Routing domains through subscription proxies
+
+Routing rules that point to `"proxy"` automatically use whatever subscription proxy is currently active. With `selection = "urltest"`, the fastest subscription proxy handles those domains. With `selection = "selector"`, the manually chosen one does.
+
+```nix
+singBox = {
+  subscriptions = [{ tag = "community"; url = "https://example.com/sub/token"; }];
+  selection = "urltest";
+
+  # These domains go through whichever community proxy wins the latency test.
+  routing.proxy.domains = [ "youtube.com" "twitter.com" ];
+};
+```
+
+You **cannot** route specific domains to "a named group of proxies from subscription X" — subscription tags are generated at runtime and are unknown at Nix eval time. If you need to pin a domain to a specific proxy, use `selection = "selector"`, switch to that proxy via `proxy-ctl select <tag>`, and all routing rules pointing to `"proxy"` will follow.
+
+### Mixing subscriptions with static outbounds
+
+Subscriptions and static outbound declarations can coexist. Subscription outbounds are appended after static ones, so with `selection = "selector"` or `"urltest"` all of them are available:
+
+```nix
+singBox = {
+  outbounds = [
+    { tag = "own-vps"; urlFile = config.sops.secrets.vps.path; }
+  ];
+  subscriptions = [
+    { tag = "backup"; url = "https://example.com/sub/token"; }
+  ];
+  selection = "urltest";
+};
+```
+
+### `selection = "first"` with subscriptions
+
+With `selection = "first"` and static outbounds, the first static outbound is used (as usual). With `selection = "first"` and **subscriptions only**, the first proxy from the first subscription is used as `proxy`.
+
+---
+
 ## Per-outbound routing
 
 By default all proxied traffic goes to whatever the active outbound is (the selector, urltest winner, or single "first" outbound). You can override this per-outbound or with explicit rules to send specific traffic to a specific server.
@@ -222,16 +309,20 @@ In `first` selection mode, per-outbound tags are resolved to `"proxy"` automatic
 A control script is installed into your system packages automatically. Run it as root or with the right polkit permissions.
 
 ```
-proxy-ctl status              show status of all proxy-suite services
-proxy-ctl tproxy on|off       enable/disable TProxy transparent mode
-proxy-ctl tun on|off          enable/disable TUN mode
-proxy-ctl restart             restart proxy-suite-socks, and proxy-suite-tun if it is active
-proxy-ctl logs [service]      follow logs (default: proxy-suite-socks)
-proxy-ctl outbounds           list outbounds and current selection (needs Clash API)
-proxy-ctl select <tag>        switch to a specific outbound (selector mode)
+proxy-ctl status                    show status of all proxy-suite services
+proxy-ctl tproxy on|off             enable/disable TProxy transparent mode
+proxy-ctl tun on|off                enable/disable TUN mode
+proxy-ctl restart                   restart proxy-suite-socks, and proxy-suite-tun if it is active
+proxy-ctl logs [service]            follow logs (default: proxy-suite-socks)
+proxy-ctl outbounds                 list outbounds and current selection (needs Clash API)
+proxy-ctl select <tag>              switch to a specific outbound (selector mode)
+proxy-ctl subscription list         show subscriptions, cache age, and proxy count
+proxy-ctl subscription update       force-refresh all subscription caches and restart
 ```
 
 `outbounds` works with `selection = "selector"` or `"urltest"`. `select` requires `selection = "selector"` and talks to the Clash-compatible REST API embedded in sing-box.
+
+`subscription list` and `subscription update` are only meaningful when `singBox.subscriptions` is non-empty.
 
 ---
 
@@ -340,13 +431,14 @@ tgWsProxy = {
 
 ## Services
 
-| Service                        | Auto-starts      | Description                                      |
-| ------------------------------ | ---------------- | ------------------------------------------------ |
-| `proxy-suite-socks`            | yes              | SOCKS5/HTTP proxy, always running                |
-| `proxy-suite-tproxy`           | no               | TProxy transparent mode (start manually)         |
-| `proxy-suite-tun`              | no               | TUN mode (start manually, conflicts with tproxy) |
-| `proxy-suite-tg-ws-proxy`      | yes (if enabled) | Telegram proxy                                   |
-| `proxy-suite-zapret-vm-exempt` | yes (if enabled) | VM subnet exemption                              |
+| Service                                | Auto-starts          | Description                                      |
+| -------------------------------------- | -------------------- | ------------------------------------------------ |
+| `proxy-suite-socks`                    | yes                  | SOCKS5/HTTP proxy, always running                |
+| `proxy-suite-tproxy`                   | no                   | TProxy transparent mode (start manually)         |
+| `proxy-suite-tun`                      | no                   | TUN mode (start manually, conflicts with tproxy) |
+| `proxy-suite-tg-ws-proxy`              | yes (if enabled)     | Telegram proxy                                   |
+| `proxy-suite-zapret-vm-exempt`         | yes (if enabled)     | VM subnet exemption                              |
+| `proxy-suite-subscription-update`      | timer (if sub set)   | Refresh subscription caches and restart          |
 
 TProxy and TUN are mutually exclusive. Start one, the other refuses to start.
 
@@ -408,6 +500,7 @@ Features:
 - **Enable/Disable Proxy**: Toggles `proxy-suite-socks`; disabling proxy also stops active TProxy/TUN first
 - **Toggle TProxy/TUN**: Only shown if the service is enabled in your config
 - **Close window**: Hides the floating controls window without exiting the tray
+- **Update Subscriptions**: Triggers `proxy-suite-subscription-update` to re-fetch all subscription caches; only shown when subscriptions are configured
 - **Restart services**: Restarts `proxy-suite-socks`, and `proxy-suite-tun` if it is active
 - **Polkit authentication**: Prompts for password when toggling services
 

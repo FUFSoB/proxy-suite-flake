@@ -313,6 +313,11 @@ static void on_restart(GtkWidget *item, gpointer data) {
     update_status();
 }
 
+static void on_subscription_update(GtkWidget *item, gpointer data) {
+    (void)item; (void)data;
+    run_privileged("start", "proxy-suite-subscription-update");
+}
+
 static void on_open_controls(GtkWidget *item, gpointer data) {
     (void)item; (void)data;
     if (!controls_window) {
@@ -364,6 +369,12 @@ static void build_controls_window(void) {
         gtk_box_pack_start(GTK_BOX(box), controls_tun_button, FALSE, FALSE, 0);
     }
 
+    if (service_exists("proxy-suite-subscription-update")) {
+        GtkWidget *sub_update_button = gtk_button_new_with_label("Update Subscriptions");
+        g_signal_connect(sub_update_button, "clicked", G_CALLBACK(on_subscription_update), NULL);
+        gtk_box_pack_start(GTK_BOX(box), sub_update_button, FALSE, FALSE, 0);
+    }
+
     GtkWidget *restart_button = gtk_button_new_with_label("Restart Services");
     g_signal_connect(restart_button, "clicked", G_CALLBACK(on_restart), NULL);
     gtk_box_pack_start(GTK_BOX(box), restart_button, FALSE, FALSE, 0);
@@ -409,6 +420,12 @@ static void build_menu(void) {
         tun_item = gtk_menu_item_new_with_label("Enable TUN");
         g_signal_connect(tun_item, "activate", G_CALLBACK(on_tun_toggle), NULL);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), tun_item);
+    }
+
+    if (service_exists("proxy-suite-subscription-update")) {
+        GtkWidget *sub_update_item = gtk_menu_item_new_with_label("Update Subscriptions");
+        g_signal_connect(sub_update_item, "activate", G_CALLBACK(on_subscription_update), NULL);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), sub_update_item);
     }
 
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
