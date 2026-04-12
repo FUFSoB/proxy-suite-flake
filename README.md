@@ -170,7 +170,7 @@ By default all proxied traffic goes to whatever the active outbound is (the sele
 Global direct routing also has two built-in behaviors:
 
 - `singBox.routing.enableRuDirect = true` sends `geosite-category-ru` and `geoip-ru` direct by default.
-- If `zapret.enable = true`, then `zapret.syncDirectRouting = true` mirrors zapret's effective domain/IP lists into sing-box direct rules, including `listGeneral` and `ipsetAll`, minus zapret excludes.
+- If `zapret.enable = true`, then `zapret.syncDirectRouting = true` mirrors zapret's effective domain/IP lists into sing-box direct rules, including upstream `list-general`, `list-google`, `list-instagram`, `list-soundcloud`, `list-twitter`, plus your `listGeneral`/`ipsetAll`, minus zapret excludes.
 
 **Attached to an outbound:**
 
@@ -264,7 +264,7 @@ zapret = {
 };
 ```
 
-When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt` and `hostlists/ipset-all.txt`, adds your `listGeneral` and `ipsetAll` entries, and subtracts both upstream and user exclusion lists before generating sing-box direct rules.
+When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt`, `hostlists/list-google.txt`, `hostlists/list-instagram.txt`, `hostlists/list-soundcloud.txt`, `hostlists/list-twitter.txt`, and `hostlists/ipset-all.txt`, adds your `listGeneral` and `ipsetAll` entries, and subtracts both upstream and user exclusion lists before generating sing-box direct rules.
 
 If zapret corrupts traffic for some subnet (e.g. a VM behind a libvirt bridge):
 

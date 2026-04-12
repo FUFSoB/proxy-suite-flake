@@ -25,8 +25,19 @@ let
 
   syncZapretDirect = z.enable && z.syncDirectRouting;
 
+  zapretDefaultDomainFiles = [
+    "list-general.txt"
+    "list-google.txt"
+    "list-instagram.txt"
+    "list-soundcloud.txt"
+    "list-twitter.txt"
+  ];
+
   zapretDefaultDomains =
-    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/list-general.txt" else [ ];
+    if syncZapretDirect then
+      lib.unique (lib.concatMap (file: parseListFile "${zapretSrc}/hostlists/${file}") zapretDefaultDomainFiles)
+    else
+      [ ];
   zapretDefaultIps =
     if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
   zapretExcludedDomains =

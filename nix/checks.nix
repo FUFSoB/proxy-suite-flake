@@ -24,9 +24,7 @@ let
       lib = pkgs.lib;
       inherit pkgs cfg zapret;
     };
-  mkRoutingRules =
-    fixture:
-    (mkRouting fixture).routingRules;
+  mkRoutingRules = fixture: (mkRouting fixture).routingRules;
   mkTProxyConfig =
     fixture:
     let
@@ -40,13 +38,19 @@ let
     builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tproxyFile));
   hasDirectDomain =
     rules: domain:
-    builtins.any (rule: (rule ? domain_suffix) && rule.outbound == "direct" && builtins.elem domain rule.domain_suffix) rules;
+    builtins.any (
+      rule: (rule ? domain_suffix) && rule.outbound == "direct" && builtins.elem domain rule.domain_suffix
+    ) rules;
   hasDirectIP =
     rules: cidr:
-    builtins.any (rule: (rule ? ip_cidr) && rule.outbound == "direct" && builtins.elem cidr rule.ip_cidr) rules;
+    builtins.any (
+      rule: (rule ? ip_cidr) && rule.outbound == "direct" && builtins.elem cidr rule.ip_cidr
+    ) rules;
   hasRuleSet =
     rules: outbound: ruleSet:
-    builtins.any (rule: (rule ? rule_set) && rule.outbound == outbound && builtins.elem ruleSet rule.rule_set) rules;
+    builtins.any (
+      rule: (rule ? rule_set) && rule.outbound == outbound && builtins.elem ruleSet rule.rule_set
+    ) rules;
   dnsHasRuleSet =
     dnsRules: ruleSet:
     builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
@@ -278,148 +282,148 @@ let
     rule: (rule ? rule_set) && rule.rule_set == [ "geoip-us" ]
   ) routingOrRules;
 
-  validated =
-    builtins.seq (assert minimal.config.services.proxy-suite.singBox.listenAddress == "127.0.0.1"; true) (
-      builtins.seq (assert tgSecretFile.config.services.proxy-suite.tgWsProxy.host == "127.0.0.1"; true) (
-        builtins.seq (
-          assert tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.LoadCredential
-            == [ "tg_ws_proxy_secret:/run/secrets/tg-ws-proxy" ];
-          true
-        ) (
-          builtins.seq (assert duplicateTags.success == false; true) (
-            builtins.seq (assert reservedTag.success == false; true) (
-              builtins.seq (assert unknownRoutingTarget.success == false; true) (
-                builtins.seq (assert tproxyWithFirewall.config.networking.firewall.enable; true) (
-                  builtins.seq (
-                    assert builtins.length routingOrDomainRules == 1;
-                    true
-                  ) (
-                    builtins.seq (
-                      assert builtins.length routingOrGeoIPRules == 1;
-                      true
-                    ) (
-                      builtins.seq (
-                        assert (builtins.head routingOrDomainRules).outbound == "proxy";
-                        true
-                      ) (
-                        builtins.seq (
-                          assert (builtins.head routingOrGeoIPRules).outbound == "proxy";
-                          true
-                        ) (
-                          builtins.seq (
-                            assert hasRuleSet ruDefaultRules "direct" "geosite-category-ru";
-                            true
-                          ) (
-                            builtins.seq (
-                              assert hasRuleSet ruDefaultRules "direct" "geoip-ru";
-                              true
-                            ) (
-                              builtins.seq (
-                                assert dnsHasRuleSet ruDefaultConfig.dns.rules "geosite-category-ru";
-                                true
-                              ) (
-                                builtins.seq (
-                                  assert !(hasRuleSet ruDisabledRules "direct" "geosite-category-ru");
-                                  true
-                                ) (
-                                  builtins.seq (
-                                    assert !(hasRuleSet ruDisabledRules "direct" "geoip-ru");
-                                    true
-                                  ) (
-                                    builtins.seq (
-                                      assert !(dnsHasRuleSet ruDisabledConfig.dns.rules "geosite-category-ru");
-                                      true
-                                    ) (
-                                      builtins.seq (
-                                        assert dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru";
-                                        true
-                                      ) (
-                                        builtins.seq (
-                                          assert hasDirectDomain zapretSyncRules "discord.com";
-                                          true
-                                        ) (
-                                          builtins.seq (
-                                            assert hasDirectIP zapretSyncRules "1.1.1.0/24";
-                                            true
-                                          ) (
-                                            builtins.seq (
-                                              assert !(hasDirectDomain zapretSyncDisabledRules "discord.com");
-                                              true
-                                            ) (
-                                              builtins.seq (
-                                                assert !(hasDirectIP zapretSyncDisabledRules "1.1.1.0/24");
-                                                true
-                                              ) (
-                                                builtins.seq (
-                                                  assert hasDirectDomain zapretExtrasRules "pixiv.net";
-                                                  true
-                                                ) (
-                                                  builtins.seq (
-                                                    assert hasDirectIP zapretExtrasRules "203.0.113.0/24";
-                                                    true
-                                                  ) (
-                                                    builtins.seq (
-                                                      assert !(hasDirectDomain zapretExcludesRules "discord.com");
-                                                      true
-                                                    ) (
-                                                      builtins.seq (
-                                                        assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24");
-                                                        true
-                                                      ) (
-                                                        builtins.seq (
-                                                          assert hasRuleSet blockGeoRules "block" "geosite-category-ads-all";
-                                                          true
-                                                        ) (
-                                                          builtins.seq (
-                                                            assert hasRuleSet blockGeoRules "block" "geoip-cn";
-                                                            true
-                                                          ) (
-                                                            builtins.seq (
-                                                              assert proxyDirectConfig.dns.final == "local";
-                                                              true
-                                                            ) (
-                                                              assert ruDefaultConfig.dns.final == "remote"; true
-                                                            )
-                                                          )
-                                                        )
-                                                      )
-                                                    )
-                                                  )
-                                                )
-                                              )
-                                            )
-                                          )
-                                        )
-                                      )
-                                    )
-                                  )
-                                )
-                              )
-                            )
-                          )
-                        )
-                      )
-                    )
-                  )
-                )
-              )
-            )
-          )
-        )
-      )
-    );
+  validated = builtins.all (x: x) [
+    (
+      assert minimal.config.services.proxy-suite.singBox.listenAddress == "127.0.0.1";
+      true
+    )
+    (
+      assert tgSecretFile.config.services.proxy-suite.tgWsProxy.host == "127.0.0.1";
+      true
+    )
+    (
+      assert
+        tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.LoadCredential
+        == [ "tg_ws_proxy_secret:/run/secrets/tg-ws-proxy" ];
+      true
+    )
+    (
+      assert duplicateTags.success == false;
+      true
+    )
+    (
+      assert reservedTag.success == false;
+      true
+    )
+    (
+      assert unknownRoutingTarget.success == false;
+      true
+    )
+    (
+      assert tproxyWithFirewall.config.networking.firewall.enable;
+      true
+    )
+    (
+      assert builtins.length routingOrDomainRules == 1;
+      true
+    )
+    (
+      assert builtins.length routingOrGeoIPRules == 1;
+      true
+    )
+    (
+      assert (builtins.head routingOrDomainRules).outbound == "proxy";
+      true
+    )
+    (
+      assert (builtins.head routingOrGeoIPRules).outbound == "proxy";
+      true
+    )
+    (
+      assert hasRuleSet ruDefaultRules "direct" "geosite-category-ru";
+      true
+    )
+    (
+      assert hasRuleSet ruDefaultRules "direct" "geoip-ru";
+      true
+    )
+    (
+      assert dnsHasRuleSet ruDefaultConfig.dns.rules "geosite-category-ru";
+      true
+    )
+    (
+      assert !(hasRuleSet ruDisabledRules "direct" "geosite-category-ru");
+      true
+    )
+    (
+      assert !(hasRuleSet ruDisabledRules "direct" "geoip-ru");
+      true
+    )
+    (
+      assert !(dnsHasRuleSet ruDisabledConfig.dns.rules "geosite-category-ru");
+      true
+    )
+    (
+      assert dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru";
+      true
+    )
+    (
+      assert hasDirectDomain zapretSyncRules "discord.com";
+      true
+    )
+    (
+      assert hasDirectDomain zapretSyncRules "youtube.com";
+      true
+    )
+    (
+      assert hasDirectIP zapretSyncRules "1.1.1.0/24";
+      true
+    )
+    (
+      assert !(hasDirectDomain zapretSyncDisabledRules "discord.com");
+      true
+    )
+    (
+      assert !(hasDirectIP zapretSyncDisabledRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert hasDirectDomain zapretExtrasRules "pixiv.net";
+      true
+    )
+    (
+      assert hasDirectIP zapretExtrasRules "203.0.113.0/24";
+      true
+    )
+    (
+      assert !(hasDirectDomain zapretExcludesRules "discord.com");
+      true
+    )
+    (
+      assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert hasRuleSet blockGeoRules "block" "geosite-category-ads-all";
+      true
+    )
+    (
+      assert hasRuleSet blockGeoRules "block" "geoip-cn";
+      true
+    )
+    (
+      assert proxyDirectConfig.dns.final == "local";
+      true
+    )
+    (
+      assert ruDefaultConfig.dns.final == "remote";
+      true
+    )
+  ];
 in
 {
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
 
-  build-outbound-parser = pkgs.runCommand "build-outbound-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-    export PYTHONDONTWRITEBYTECODE=1
-    export BUILD_OUTBOUND_SCRIPT=${../scripts/build-outbound.py}
-    python ${../scripts/test-build-outbound.py}
-    touch "$out"
-  '';
+  build-outbound-parser =
+    pkgs.runCommand "build-outbound-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1
+        export BUILD_OUTBOUND_SCRIPT=${../scripts/build-outbound.py}
+        python ${../scripts/test-build-outbound.py}
+        touch "$out"
+      '';
 
-  no-secrets = pkgs.runCommand "proxy-suite-no-secrets-check" {} ''
+  no-secrets = pkgs.runCommand "proxy-suite-no-secrets-check" { } ''
     repo_root=${../.}
     if ${rg} --pcre2 -n -I -H -S \
       -e '-----BEGIN (RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----' \
