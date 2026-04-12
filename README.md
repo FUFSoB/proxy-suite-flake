@@ -66,8 +66,12 @@ services.proxy-suite = {
 
   zapret = {
     enable = true;
-    # Default: mirror zapret-covered domains/IPs into sing-box direct routing.
+    # Default: mirror zapret domain lists into sing-box direct routing.
     syncDirectRouting = true;
+    # Upstream zapret IP ranges are much broader, so keep them opt-in.
+    syncDirectRoutingUpstreamIps = false;
+    # User-defined ipsetAll/ipsetExclude still map into sing-box by default.
+    syncDirectRoutingUserIps = true;
   };
 };
 ```
@@ -170,7 +174,7 @@ By default all proxied traffic goes to whatever the active outbound is (the sele
 Global direct routing also has two built-in behaviors:
 
 - `singBox.routing.enableRuDirect = true` sends `geosite-category-ru` and `geoip-ru` direct by default.
-- If `zapret.enable = true`, then `zapret.syncDirectRouting = true` mirrors zapret's effective domain/IP lists into sing-box direct rules, including upstream `list-general`, `list-google`, `list-instagram`, `list-soundcloud`, `list-twitter`, plus your `listGeneral`/`ipsetAll`, minus zapret excludes.
+- If `zapret.enable = true`, then `zapret.syncDirectRouting = true` mirrors zapret's upstream domain hostlists into sing-box direct rules. `zapret.syncDirectRoutingUpstreamIps = false` by default, so upstream zapret IP ranges are not mirrored unless you opt in, while `zapret.syncDirectRoutingUserIps = true` keeps user `ipsetAll`/`ipsetExclude` mirrored by default.
 
 **Attached to an outbound:**
 
@@ -251,20 +255,26 @@ proxy-ctl select <tag>        switch to a specific outbound (selector mode)
 
 ## Zapret
 
-zapret handles DPI-based blocking by mangling packets at the netfilter level. It's separate from the proxy, but by default this module also mirrors zapret-covered domains and IPs into sing-box direct routing so the proxy does not fight zapret for the same traffic.
+zapret handles DPI-based blocking by mangling packets at the netfilter level. It's separate from the proxy, but by default this module also mirrors zapret-covered domains into sing-box direct routing so the proxy does not fight zapret for the same traffic.
 
 ```nix
 zapret = {
   enable = true;
   configName = "general(ALT)";
-  syncDirectRouting = true;  # default
+  syncDirectRouting = true;      # default: sync upstream domain lists
+  syncDirectRoutingUpstreamIps = false;  # default: do not sync upstream IP ranges
+  syncDirectRoutingUserIps = true; # default: do sync user ipsetAll/ipsetExclude
 
   # Extra domains beyond zapret's built-in list
   listGeneral = [ "pixiv.net" "pximg.net" ];
 };
 ```
 
-When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt`, `hostlists/list-google.txt`, `hostlists/list-instagram.txt`, `hostlists/list-soundcloud.txt`, `hostlists/list-twitter.txt`, and `hostlists/ipset-all.txt`, adds your `listGeneral` and `ipsetAll` entries, and subtracts both upstream and user exclusion lists before generating sing-box direct rules.
+When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt`, `list-google.txt`, `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt`, adds your `listGeneral`, and subtracts both upstream and user domain exclusions before generating sing-box direct rules.
+
+When `syncDirectRoutingUpstreamIps = true`, the module also mirrors zapret's upstream `ipset-all.txt`. This is disabled by default because the upstream IP set is intentionally broad.
+
+When `syncDirectRoutingUserIps = true`, the module mirrors your `ipsetAll` and `ipsetExclude` values into sing-box direct routing even if upstream IP sync stays disabled. This is enabled by default.
 
 If zapret corrupts traffic for some subnet (e.g. a VM behind a libvirt bridge):
 
@@ -359,6 +369,7 @@ services.proxy-suite = {
 ```
 
 Features:
+
 - **Status icon**: `network-vpn` (active), `network-vpn-acquiring` (partial), `network-vpn-disconnected` (stopped)
 - **Toggle TProxy/TUN**: Only shown if the service is enabled in your config
 - **Restart services**: Restarts `proxy-suite-socks`, and `proxy-suite-tun` if it is active

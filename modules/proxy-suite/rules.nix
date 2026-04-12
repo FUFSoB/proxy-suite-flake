@@ -1,5 +1,10 @@
 # Routing rules and rule-set definitions for sing-box
-{ lib, pkgs, cfg, zapret }:
+{
+  lib,
+  pkgs,
+  cfg,
+  zapret,
+}:
 
 let
   r = cfg.singBox.routing;
@@ -10,8 +15,7 @@ let
   hasPrefix = lib.strings.hasPrefix;
   splitString = lib.strings.splitString;
 
-  zapretSrc =
-    if builtins.isAttrs zapret && zapret ? outPath then zapret.outPath else zapret;
+  zapretSrc = if builtins.isAttrs zapret && zapret ? outPath then zapret.outPath else zapret;
 
   parseListFile =
     path:
@@ -23,7 +27,10 @@ let
 
   subtractItems = items: exclusions: builtins.filter (item: !(builtins.elem item exclusions)) items;
 
-  syncZapretDirect = z.enable && z.syncDirectRouting;
+  syncZapretDirectDomains = z.enable && z.syncDirectRouting;
+  syncZapretDirectUpstreamIps = z.enable && z.syncDirectRoutingUpstreamIps;
+  syncZapretDirectUserIps = z.enable && z.syncDirectRoutingUserIps;
+  syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
   zapretDefaultDomainFiles = [
     "list-general.txt"
@@ -34,25 +41,37 @@ let
   ];
 
   zapretDefaultDomains =
-    if syncZapretDirect then
-      lib.unique (lib.concatMap (file: parseListFile "${zapretSrc}/hostlists/${file}") zapretDefaultDomainFiles)
+    if syncZapretDirectDomains then
+      lib.unique (
+        lib.concatMap (file: parseListFile "${zapretSrc}/hostlists/${file}") zapretDefaultDomainFiles
+      )
     else
       [ ];
   zapretDefaultIps =
-    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
+    if syncZapretDirectUpstreamIps then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
+  zapretUserIps = if syncZapretDirectUserIps then z.ipsetAll else [ ];
   zapretExcludedDomains =
-    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
-  zapretExcludedIps =
-    if syncZapretDirect then parseListFile "${zapretSrc}/hostlists/ipset-exclude.txt" else [ ];
+    if syncZapretDirectDomains then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
+  zapretExcludedIps = lib.unique (
+    (
+      if syncZapretDirectUpstreamIps then
+        parseListFile "${zapretSrc}/hostlists/ipset-exclude.txt"
+      else
+        [ ]
+    )
+    ++ (if syncZapretDirectUserIps then z.ipsetExclude else [ ])
+  );
 
   zapretDirectDomains =
-    if syncZapretDirect then
-      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral)) (lib.unique (zapretExcludedDomains ++ z.listExclude))
+    if syncZapretDirectDomains then
+      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral)) (
+        lib.unique (zapretExcludedDomains ++ z.listExclude)
+      )
     else
       [ ];
   zapretDirectIps =
-    if syncZapretDirect then
-      subtractItems (lib.unique (zapretDefaultIps ++ z.ipsetAll)) (lib.unique (zapretExcludedIps ++ z.ipsetExclude))
+    if syncZapretDirectAnyIps then
+      subtractItems (lib.unique (zapretDefaultIps ++ zapretUserIps)) zapretExcludedIps
     else
       [ ];
 
@@ -87,29 +106,40 @@ let
   # In "first" mode the start script renames the first outbound to "proxy",
   # so any per-outbound routing tag that isn't direct/block/proxy must map
   # to "proxy" instead of the original tag (which won't exist in sing-box).
-  builtinTags = [ "proxy" "direct" "block" ];
+  builtinTags = [
+    "proxy"
+    "direct"
+    "block"
+  ];
   resolveTag =
-    tag:
-    if sb.selection == "first" && !builtins.elem tag builtinTags then "proxy" else tag;
+    tag: if sb.selection == "first" && !builtins.elem tag builtinTags then "proxy" else tag;
 
   # Collect per-outbound routing attached directly to outbound definitions.
-  perOutboundRules = lib.concatMap (ob:
+  perOutboundRules = lib.concatMap (
+    ob:
     let
       ro = ob.routing;
       hasAny = ro.domains != [ ] || ro.ips != [ ] || ro.geosites != [ ] || ro.geoips != [ ];
     in
     lib.optional hasAny {
       outbound = resolveTag ob.tag;
-      inherit (ro) domains ips geosites geoips;
+      inherit (ro)
+        domains
+        ips
+        geosites
+        geoips
+        ;
     }
   ) sb.outbounds;
 
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.
-  customRules = perOutboundRules ++ map (rule: rule // { outbound = resolveTag rule.outbound; }) r.rules;
+  customRules =
+    perOutboundRules ++ map (rule: rule // { outbound = resolveTag rule.outbound; }) r.rules;
 
   # Build sing-box routing rule entries from a custom rule record.
   mkCustomRuleEntries =
-    rule: lib.flatten [
+    rule:
+    lib.flatten [
       (mkDomainRule rule.outbound rule.domains)
       (mkIPRule rule.outbound rule.ips)
       (mkRulesetRule rule.outbound (map (s: "geosite-${s}") rule.geosites))
@@ -126,10 +156,7 @@ let
 
   # All geoip names referenced anywhere.
   allGeoIPNames = lib.unique (
-    r.proxy.geoips
-    ++ direct.geoips
-    ++ r.block.geoips
-    ++ lib.concatMap (rule: rule.geoips) customRules
+    r.proxy.geoips ++ direct.geoips ++ r.block.geoips ++ lib.concatMap (rule: rule.geoips) customRules
   );
 
   geositeRuleSets = map (name: {
@@ -148,7 +175,10 @@ let
 
   routingRules = lib.flatten [
     {
-      network = [ "tcp" "udp" ];
+      network = [
+        "tcp"
+        "udp"
+      ];
       port = 53;
       action = "hijack-dns";
     }
@@ -167,7 +197,10 @@ let
     (mkRulesetRule "direct" (map (s: "geosite-${s}") direct.geosites))
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
 
-    { ip_is_private = true; outbound = "direct"; }
+    {
+      ip_is_private = true;
+      outbound = "direct";
+    }
 
     # Block (before proxy geosets so block can override them)
     (mkDomainRule "block" r.block.domains)

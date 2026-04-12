@@ -338,7 +338,19 @@ in
       syncDirectRouting = mkOption {
         type = types.bool;
         default = true;
-        description = "When zapret is enabled, mirror its effective domain and IP lists into sing-box direct routing.";
+        description = "When zapret is enabled, mirror its upstream domain hostlists into sing-box direct routing.";
+      };
+
+      syncDirectRoutingUpstreamIps = mkOption {
+        type = types.bool;
+        default = false;
+        description = "When zapret is enabled, mirror its upstream ipset ranges into sing-box direct routing.";
+      };
+
+      syncDirectRoutingUserIps = mkOption {
+        type = types.bool;
+        default = true;
+        description = "When zapret is enabled, mirror user-defined ipsetAll/ipsetExclude entries into sing-box direct routing.";
       };
 
       configName = mkOption {
@@ -382,8 +394,11 @@ in
 
         cidrs = mkOption {
           type = types.listOf types.str;
-          default = [];
-          example = [ "192.168.123.0/24" "10.0.0.0/8" ];
+          default = [ ];
+          example = [
+            "192.168.123.0/24"
+            "10.0.0.0/8"
+          ];
           description = ''
             Subnets to exempt from zapret's NFQUEUE mangle rules.
             Useful when a VM (libvirt, etc.) is behind NAT and zapret

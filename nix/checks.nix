@@ -223,6 +223,29 @@ let
   ];
   zapretSyncRules = mkRoutingRules zapretSyncFixture;
 
+  zapretSyncIpsFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        syncDirectRoutingUpstreamIps = true;
+      };
+    }
+  ];
+  zapretSyncIpsRules = mkRoutingRules zapretSyncIpsFixture;
+
+  zapretSyncUserIpsDisabledFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        syncDirectRoutingUserIps = false;
+        ipsetAll = [ "203.0.113.0/24" ];
+      };
+    }
+  ];
+  zapretSyncUserIpsDisabledRules = mkRoutingRules zapretSyncUserIpsDisabledFixture;
+
   zapretSyncDisabledFixture = evalProxySuite [
     baseModule
     {
@@ -234,17 +257,39 @@ let
   ];
   zapretSyncDisabledRules = mkRoutingRules zapretSyncDisabledFixture;
 
+  zapretSyncDomainsOnlyFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        syncDirectRouting = true;
+        syncDirectRoutingUpstreamIps = false;
+      };
+    }
+  ];
+  zapretSyncDomainsOnlyRules = mkRoutingRules zapretSyncDomainsOnlyFixture;
+
   zapretExtrasFixture = evalProxySuite [
     baseModule
     {
       services.proxy-suite.zapret = {
         enable = true;
         listGeneral = [ "pixiv.net" ];
-        ipsetAll = [ "203.0.113.0/24" ];
       };
     }
   ];
   zapretExtrasRules = mkRoutingRules zapretExtrasFixture;
+
+  zapretIpExtrasFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        ipsetAll = [ "203.0.113.0/24" ];
+      };
+    }
+  ];
+  zapretIpExtrasRules = mkRoutingRules zapretIpExtrasFixture;
 
   zapretExcludesFixture = evalProxySuite [
     baseModule
@@ -252,11 +297,22 @@ let
       services.proxy-suite.zapret = {
         enable = true;
         listExclude = [ "discord.com" ];
-        ipsetExclude = [ "1.1.1.0/24" ];
       };
     }
   ];
   zapretExcludesRules = mkRoutingRules zapretExcludesFixture;
+
+  zapretIpExcludesFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        ipsetExclude = [ "1.1.1.0/24" ];
+        ipsetAll = [ "1.1.1.0/24" ];
+      };
+    }
+  ];
+  zapretIpExcludesRules = mkRoutingRules zapretIpExcludesFixture;
 
   proxyDirectFixture = evalProxySuite [
     baseModule
@@ -388,7 +444,27 @@ let
       true
     )
     (
-      assert hasDirectIP zapretSyncRules "1.1.1.0/24";
+      assert hasDirectDomain zapretSyncRules "cloudflare-ech.com";
+      true
+    )
+    (
+      assert !(hasDirectIP zapretSyncRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert hasDirectDomain zapretSyncDomainsOnlyRules "cloudflare-ech.com";
+      true
+    )
+    (
+      assert !(hasDirectIP zapretSyncDomainsOnlyRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert hasDirectIP zapretSyncIpsRules "1.1.1.0/24";
+      true
+    )
+    (
+      assert !(hasDirectIP zapretSyncUserIpsDisabledRules "203.0.113.0/24");
       true
     )
     (
@@ -404,7 +480,7 @@ let
       true
     )
     (
-      assert hasDirectIP zapretExtrasRules "203.0.113.0/24";
+      assert hasDirectIP zapretIpExtrasRules "203.0.113.0/24";
       true
     )
     (
@@ -412,7 +488,7 @@ let
       true
     )
     (
-      assert !(hasDirectIP zapretExcludesRules "1.1.1.0/24");
+      assert !(hasDirectIP zapretIpExcludesRules "1.1.1.0/24");
       true
     )
     (
@@ -432,19 +508,21 @@ let
       true
     )
     (
-      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray(-[0-9.]+)?$";
+      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages
+        ".*/[^/]*proxy-suite-tray(-[0-9.]+)?$";
       true
     )
     (
-      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray\\.desktop$";
+      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages
+        ".*/[^/]*proxy-suite-tray\\.desktop$";
       true
     )
     (
       assert
-        builtins.match
-          ".*/share/xdg/autostart/proxy-suite-tray\\.desktop$"
-          (builtins.unsafeDiscardStringContext trayAutostartFixture.config.environment.etc."xdg/autostart/proxy-suite-tray.desktop".source)
-        != null;
+        builtins.match ".*/share/xdg/autostart/proxy-suite-tray\\.desktop$" (
+          builtins.unsafeDiscardStringContext
+            trayAutostartFixture.config.environment.etc."xdg/autostart/proxy-suite-tray.desktop".source
+        ) != null;
       true
     )
     (
@@ -452,7 +530,8 @@ let
       true
     )
     (
-      assert packagePathMatches trayManualFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray\\.desktop$";
+      assert packagePathMatches trayManualFixture.config.environment.systemPackages
+        ".*/[^/]*proxy-suite-tray\\.desktop$";
       true
     )
   ];
