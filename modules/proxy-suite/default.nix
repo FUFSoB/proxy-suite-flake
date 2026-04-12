@@ -36,5 +36,9 @@ in
     (lib.mkIf cfg.tgWsProxy.enable (
       import ./tg-ws-proxy.nix { inherit lib pkgs cfg; }
     ))
+
+    (lib.mkIf cfg.tray.enable (
+      import ./tray.nix { inherit config lib pkgs cfg; }
+    ))
   ]);
 }

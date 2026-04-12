@@ -54,6 +54,11 @@ let
   dnsHasRuleSet =
     dnsRules: ruleSet:
     builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
+  packagePathMatches =
+    packages: pattern:
+    builtins.any (
+      pkg: builtins.match pattern (builtins.unsafeDiscardStringContext (toString pkg)) != null
+    ) packages;
 
   baseModule = {
     system.stateVersion = "26.05";
@@ -261,6 +266,23 @@ let
   ];
   proxyDirectConfig = mkTProxyConfig proxyDirectFixture;
 
+  trayAutostartFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.tray.enable = true;
+    }
+  ];
+
+  trayManualFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.tray = {
+        enable = true;
+        autostart = false;
+      };
+    }
+  ];
+
   blockGeoFixture = evalProxySuite [
     baseModule
     {
@@ -407,6 +429,30 @@ let
     )
     (
       assert ruDefaultConfig.dns.final == "remote";
+      true
+    )
+    (
+      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray(-[0-9.]+)?$";
+      true
+    )
+    (
+      assert packagePathMatches trayAutostartFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray\\.desktop$";
+      true
+    )
+    (
+      assert
+        builtins.match
+          ".*/share/xdg/autostart/proxy-suite-tray\\.desktop$"
+          (builtins.unsafeDiscardStringContext trayAutostartFixture.config.environment.etc."xdg/autostart/proxy-suite-tray.desktop".source)
+        != null;
+      true
+    )
+    (
+      assert !(trayManualFixture.config.environment.etc ? "xdg/autostart/proxy-suite-tray.desktop");
+      true
+    )
+    (
+      assert packagePathMatches trayManualFixture.config.environment.systemPackages ".*/[^/]*proxy-suite-tray\\.desktop$";
       true
     )
   ];

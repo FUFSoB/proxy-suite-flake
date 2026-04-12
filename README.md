@@ -341,3 +341,38 @@ services.proxy-suite.singBox.outbounds = [{
 # Create /run/proxy-url with your URL, ensure it's readable by root
 urlFile = "/run/proxy-url";
 ```
+
+---
+
+## System tray
+
+Optional tray indicator for desktop environments. Shows proxy status and provides quick toggles.
+
+```nix
+services.proxy-suite = {
+  tray = {
+    enable = true;
+    autostart = true;   # Install XDG autostart for all graphical users (default)
+    pollInterval = 5;   # Status refresh interval in seconds
+  };
+};
+```
+
+Features:
+- **Status icon**: `network-vpn` (active), `network-vpn-acquiring` (partial), `network-vpn-disconnected` (stopped)
+- **Toggle TProxy/TUN**: Only shown if the service is enabled in your config
+- **Restart services**: Restarts `proxy-suite-socks`, and `proxy-suite-tun` if it is active
+- **Polkit authentication**: Prompts for password when toggling services
+
+When enabled, the tray app is installed system-wide and autostarts for all graphical users via XDG autostart unless you set `tray.autostart = false;`.
+
+The tray uses libayatana-appindicator and requires StatusNotifier/AppIndicator support. KDE generally works out of the box; GNOME may need shell support or an extension that exposes AppIndicators.
+
+To enable TProxy/TUN toggles in the tray, you need to enable the services in your config:
+
+```nix
+services.proxy-suite.singBox = {
+  tproxy.enable = true;  # Show TProxy toggle
+  tun.enable = true;     # Show TUN toggle
+};
+```

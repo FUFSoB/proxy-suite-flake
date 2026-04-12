@@ -393,6 +393,22 @@ in
       };
     };
 
+    tray = {
+      enable = mkEnableOption "system tray indicator for proxy-suite";
+
+      pollInterval = mkOption {
+        type = types.int;
+        default = 5;
+        description = "Status polling interval in seconds.";
+      };
+
+      autostart = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Whether to autostart the tray application for all graphical users via XDG desktop autostart.";
+      };
+    };
+
     tgWsProxy = {
       enable = mkEnableOption "Telegram MTProto WebSocket proxy";
 

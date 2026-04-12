@@ -29,10 +29,12 @@
 
       overlays.default = final: prev: {
         tg-ws-proxy = import ./pkgs/tg-ws-proxy.nix { pkgs = final; };
+        proxy-suite-tray = import ./pkgs/proxy-suite-tray.nix { pkgs = final; };
       };
 
       packages = forAll (system: {
         tg-ws-proxy = import ./pkgs/tg-ws-proxy.nix { pkgs = pkgsFor system; };
+        proxy-suite-tray = import ./pkgs/proxy-suite-tray.nix { pkgs = pkgsFor system; };
       });
 
       checks = forAll (system: import ./nix/checks.nix {
