@@ -32,16 +32,15 @@ let
   syncZapretDirectUserIps = z.enable && z.syncDirectRoutingUserIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
-  zapretDefaultDomainFiles =
-    [
-      "list-general.txt"
-      "list-google.txt"
-    ]
-    ++ lib.optionals z.includeExtraUpstreamLists [
-      "list-instagram.txt"
-      "list-soundcloud.txt"
-      "list-twitter.txt"
-    ];
+  zapretDefaultDomainFiles = [
+    "list-general.txt"
+    "list-google.txt"
+  ]
+  ++ lib.optionals z.includeExtraUpstreamLists [
+    "list-instagram.txt"
+    "list-soundcloud.txt"
+    "list-twitter.txt"
+  ];
 
   zapretDefaultDomains =
     if syncZapretDirectDomains then
@@ -192,7 +191,7 @@ let
     }
     { action = "sniff"; }
 
-    # Per-outbound and explicit rules come first — they take priority.
+    # Per-outbound and explicit rules come first – they take priority.
     (lib.concatMap mkCustomRuleEntries customRules)
 
     # Global proxy lists

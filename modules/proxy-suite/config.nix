@@ -1,6 +1,11 @@
 # Build-time sing-box configuration templates.
 # The proxy outbound(s) are injected at service start time, not here.
-{ lib, pkgs, cfg, rules }:
+{
+  lib,
+  pkgs,
+  cfg,
+  rules,
+}:
 
 let
   sb = cfg.singBox;
@@ -44,9 +49,7 @@ let
   };
 
   dnsConfigTun = dnsConfig // {
-    servers = map (
-      s: if s.tag == "local" then s // { detour = "proxy"; } else s
-    ) dnsConfig.servers;
+    servers = map (s: if s.tag == "local" then s // { detour = "proxy"; } else s) dnsConfig.servers;
   };
 
   mkConfig =
@@ -89,10 +92,16 @@ let
       # proxy outbound(s) are prepended at runtime by the start script
       outbounds = [
         (
-          { type = "direct"; tag = "direct"; }
+          {
+            type = "direct";
+            tag = "direct";
+          }
           // lib.optionalAttrs useOutboundRoutingMark { routing_mark = sb.proxyMark; }
         )
-        { type = "block"; tag = "block"; }
+        {
+          type = "block";
+          tag = "block";
+        }
       ];
 
       route = {
@@ -100,7 +109,8 @@ let
         rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
         rules = rules.routingRules;
         final = if sb.proxyByDefault then "proxy" else "direct";
-      } // lib.optionalAttrs enableTun { auto_detect_interface = true; };
+      }
+      // lib.optionalAttrs enableTun { auto_detect_interface = true; };
     }
     // clashApiBlock;
 

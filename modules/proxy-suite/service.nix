@@ -41,9 +41,7 @@ let
     if ob.json != null then
       let
         outboundJson = builtins.toJSON (
-          ob.json
-          // { tag = tag; }
-          // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; }
+          ob.json // { tag = tag; } // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; }
         );
         jsonFile = pkgs.writeText "proxy-suite-ob-${tag}.json" outboundJson;
       in
@@ -58,7 +56,7 @@ let
           if ob.urlFile != null then
             ob.urlFile
           else
-            # Literal URL — write to nix store so the script can cat it.
+            # Literal URL – write to nix store so the script can cat it.
             # Less secret than urlFile, but convenient for non-sensitive configs.
             "${pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url}";
       in
@@ -146,7 +144,10 @@ let
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
-    runtimeInputs = with pkgs; [ curl jq ];
+    runtimeInputs = with pkgs; [
+      curl
+      jq
+    ];
     text = ''
       # Embedded at build time from module config
       CLASH_API="${clashApi}"
@@ -253,7 +254,7 @@ let
             -d "$payload" >/dev/null; then
             echo "Switched to: $tag"
           else
-            echo "Failed — is proxy-suite-socks running with selector mode?"
+            echo "Failed – is proxy-suite-socks running with selector mode?"
             exit 1
           fi
           ;;
@@ -272,45 +273,49 @@ in
   # nftables must be on for TProxy to work.
   networking.nftables.enable = lib.mkIf sb.tproxy.enable (lib.mkDefault true);
 
-  assertions =
-    [
-      {
-        assertion = !sb.enable || sb.outbounds != [ ];
-        message = "proxy-suite: singBox.outbounds must not be empty when singBox.enable = true";
-      }
-      {
-        assertion = builtins.length outboundTags == builtins.length (lib.unique outboundTags);
-        message = "proxy-suite: outbound tags must be unique";
-      }
-      {
-        assertion = builtins.all (tag: !builtins.elem tag builtinTags) outboundTags;
-        message = "proxy-suite: outbound tags must not use reserved names: proxy, direct, block";
-      }
-      {
-        assertion = invalidRoutingTargets == [ ];
-        message = "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}";
-      }
-      {
-        assertion =
-          !t.enable
-          || builtins.length (builtins.filter (x: x != null) [
-            t.secret
-            t.secretFile
-          ]) == 1;
-        message = "proxy-suite: tgWsProxy requires exactly one of secret or secretFile";
-      }
-    ]
-    ++ lib.concatMap (ob: [
-      {
-        assertion =
-          builtins.length (builtins.filter (x: x != null) [
+  assertions = [
+    {
+      assertion = !sb.enable || sb.outbounds != [ ];
+      message = "proxy-suite: singBox.outbounds must not be empty when singBox.enable = true";
+    }
+    {
+      assertion = builtins.length outboundTags == builtins.length (lib.unique outboundTags);
+      message = "proxy-suite: outbound tags must be unique";
+    }
+    {
+      assertion = builtins.all (tag: !builtins.elem tag builtinTags) outboundTags;
+      message = "proxy-suite: outbound tags must not use reserved names: proxy, direct, block";
+    }
+    {
+      assertion = invalidRoutingTargets == [ ];
+      message = "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}";
+    }
+    {
+      assertion =
+        !t.enable
+        ||
+          builtins.length (
+            builtins.filter (x: x != null) [
+              t.secret
+              t.secretFile
+            ]
+          ) == 1;
+      message = "proxy-suite: tgWsProxy requires exactly one of secret or secretFile";
+    }
+  ]
+  ++ lib.concatMap (ob: [
+    {
+      assertion =
+        builtins.length (
+          builtins.filter (x: x != null) [
             ob.urlFile
             ob.url
             ob.json
-          ]) == 1;
-        message = "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, or json";
-      }
-    ]) sb.outbounds;
+          ]
+        ) == 1;
+      message = "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, or json";
+    }
+  ]) sb.outbounds;
 
   systemd.services = {
     # Always-on: SOCKS5/HTTP mixed inbound, also ready for TProxy interception.
@@ -331,7 +336,7 @@ in
     #   systemctl start proxy-suite-tproxy
     #   systemctl stop proxy-suite-tproxy
     proxy-suite-tproxy = {
-      description = "sing-box TProxy — nftables rules and policy routing";
+      description = "sing-box TProxy – nftables rules and policy routing";
       after = [
         "network.target"
         "proxy-suite-socks.service"

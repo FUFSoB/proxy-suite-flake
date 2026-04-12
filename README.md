@@ -4,21 +4,21 @@ Declarative proxy stack for NixOS. One flake, one module, done.
 
 Bundles [sing-box](https://github.com/SagerNet/sing-box), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
 
-The goal is to replace GUI clients like v2rayN and their ilk — you configure your proxies in Nix, rebuild, and they just work as systemd services.
+The goal is to replace GUI clients like v2rayN and their ilk – you configure your proxies in Nix, rebuild, and they just work as systemd services.
 
 ---
 
 ## What it gives you
 
-- **SOCKS5/HTTP proxy** on `127.0.0.1:1080` by default — always running, always available to apps
-- **Transparent proxy (TProxy)** — redirect all system traffic through sing-box without configuring each app; start/stop on demand
-- **TUN mode** — full tunnel via a virtual network interface; useful when TProxy doesn't cover something
+- **SOCKS5/HTTP proxy** on `127.0.0.1:1080` by default – always running, always available to apps
+- **Transparent proxy (TProxy)** – redirect all system traffic through sing-box without configuring each app; start/stop on demand
+- **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something
 - **Multiple outbounds** with automatic latency-based switching or manual selection
-- **Per-outbound routing** — route specific domains, IPs, or geo sets to specific servers
+- **Per-outbound routing** – route specific domains, IPs, or geo sets to specific servers
 - **Protocol support**: vless (Reality, TLS), vmess, trojan, shadowsocks, hysteria2, TUIC v5, socks5, socks4, http/https proxy
-- **`proxy-ctl`** — control script for managing services, switching outbounds, and following logs
-- **DPI bypass** via zapret — handles YouTube, Discord, and other sites that are blocked by packet inspection rather than IP
-- **Telegram proxy** — MTProto WebSocket relay for sharing with others or for clients that don't support SOCKS
+- **`proxy-ctl`** – control script for managing services, switching outbounds, and following logs
+- **DPI bypass** via zapret – handles YouTube, Discord, and other sites that are blocked by packet inspection rather than IP
+- **Telegram proxy** – MTProto WebSocket relay for sharing with others or for clients that don't support SOCKS
 
 ---
 
@@ -30,7 +30,7 @@ Add to your flake inputs:
 inputs.proxy-suite.url = "github:FUFSoB/proxy-suite-flake";
 ```
 
-No need to add zapret separately — it comes along as a transitive input.
+No need to add zapret separately – it comes along as a transitive input.
 
 Add the module to your NixOS configuration:
 
@@ -50,7 +50,7 @@ services.proxy-suite = {
     outbounds = [
       {
         tag = "vps";
-        # Runtime secret — not in the nix store.
+        # Runtime secret – not in the nix store.
         # Works with sops-nix, agenix, or anything that gives you a file path.
         urlFile = config.sops.secrets.proxy_url.path;
       }
@@ -196,7 +196,7 @@ outbounds = [
 ];
 ```
 
-**Explicit rules list** — also works for `direct` and `block`, in any selection mode:
+**Explicit rules list** – also works for `direct` and `block`, in any selection mode:
 
 ```nix
 singBox.routing.rules = [
@@ -404,7 +404,10 @@ services.proxy-suite = {
 Features:
 
 - **Status icon**: `network-vpn` (active), `network-vpn-acquiring` (partial), `network-vpn-disconnected` (stopped)
+- **Quick controls window**: Opens on secondary activation and on hosts that emit StatusNotifier `Activate` on left-click (including niri)
+- **Enable/Disable Proxy**: Toggles `proxy-suite-socks`; disabling proxy also stops active TProxy/TUN first
 - **Toggle TProxy/TUN**: Only shown if the service is enabled in your config
+- **Close window**: Hides the floating controls window without exiting the tray
 - **Restart services**: Restarts `proxy-suite-socks`, and `proxy-suite-tun` if it is active
 - **Polkit authentication**: Prompts for password when toggling services
 

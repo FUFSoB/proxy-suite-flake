@@ -33,40 +33,52 @@ let
 
   upstreamZapretPackage =
     let
-      upstreamPackages = zapret.packages.${pkgs.system};
+      upstreamPackages = zapret.packages.${pkgs.stdenv.hostPlatform.system};
     in
     if upstreamPackages ? zapret then upstreamPackages.zapret else upstreamPackages.default;
 
   listGeneralFile =
-    if z.listGeneral != [ ] then pkgs.writeText "proxy-suite-zapret-list-general-user.txt" (
-      lib.concatStringsSep "\n" z.listGeneral + "\n"
-    ) else null;
+    if z.listGeneral != [ ] then
+      pkgs.writeText "proxy-suite-zapret-list-general-user.txt" (
+        lib.concatStringsSep "\n" z.listGeneral + "\n"
+      )
+    else
+      null;
 
   listExcludeFile =
-    if z.listExclude != [ ] then pkgs.writeText "proxy-suite-zapret-list-exclude-user.txt" (
-      lib.concatStringsSep "\n" z.listExclude + "\n"
-    ) else null;
+    if z.listExclude != [ ] then
+      pkgs.writeText "proxy-suite-zapret-list-exclude-user.txt" (
+        lib.concatStringsSep "\n" z.listExclude + "\n"
+      )
+    else
+      null;
 
   ipsetAllFile =
-    if z.ipsetAll != [ ] then pkgs.writeText "proxy-suite-zapret-ipset-all.txt" (
-      lib.concatStringsSep "\n" z.ipsetAll + "\n"
-    ) else null;
+    if z.ipsetAll != [ ] then
+      pkgs.writeText "proxy-suite-zapret-ipset-all.txt" (lib.concatStringsSep "\n" z.ipsetAll + "\n")
+    else
+      null;
 
   ipsetExcludeFile =
-    if z.ipsetExclude != [ ] then pkgs.writeText "proxy-suite-zapret-ipset-exclude-user.txt" (
-      lib.concatStringsSep "\n" z.ipsetExclude + "\n"
-    ) else null;
+    if z.ipsetExclude != [ ] then
+      pkgs.writeText "proxy-suite-zapret-ipset-exclude-user.txt" (
+        lib.concatStringsSep "\n" z.ipsetExclude + "\n"
+      )
+    else
+      null;
 
-  hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (builtins.toJSON {
-    includeExtraUpstreamLists = z.includeExtraUpstreamLists;
-    entries = map (rule: {
-      inherit (rule)
-        name
-        preset
-        nfqwsArgs
-        ;
-    }) z.hostlistRules;
-  });
+  hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
+    builtins.toJSON {
+      includeExtraUpstreamLists = z.includeExtraUpstreamLists;
+      entries = map (rule: {
+        inherit (rule)
+          name
+          preset
+          nfqwsArgs
+          ;
+      }) z.hostlistRules;
+    }
+  );
 
   selectedConfigName = lib.strings.sanitizeDerivationName z.configName;
   patchConfigScriptSrc = builtins.path {
@@ -75,79 +87,83 @@ let
   };
   patchConfigScript = "${pkgs.python3}/bin/python3 ${patchConfigScriptSrc}";
 
-  customZapretPackage = pkgs.runCommand "proxy-suite-zapret-${selectedConfigName}" {
-    nativeBuildInputs = with pkgs; [
-      coreutils
-      gnused
-      python3
-    ];
-  } ''
-    set -euo pipefail
-
-    mkdir -p "$out"
-    cp -a ${upstreamZapretPackage}/. "$out/"
-    chmod -R u+w "$out/opt/zapret" "$out/bin"
-
-    find "$out/opt/zapret/configs" -type f -exec ${pkgs.gnused}/bin/sed -i \
-      -e 's|${upstreamZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
-      {} \;
-
-    if [ -f "$out/opt/zapret/configs/${z.configName}" ]; then
-      cp "$out/opt/zapret/configs/${z.configName}" "$out/opt/zapret/config"
-    else
-      echo "proxy-suite: zapret config '${z.configName}' not found in upstream package" >&2
-      ls -la "$out/opt/zapret/configs" >&2 || true
-      exit 1
-    fi
-
-    ${pkgs.gnused}/bin/sed -i \
-      -e 's|${upstreamZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
-      "$out/opt/zapret/config"
-
-    append_list_file() {
-      local target="$1"
-      local extra_file="$2"
-      local tmp="$out/opt/zapret/hostlists/$target.tmp"
-      cat "$out/opt/zapret/hostlists/$target" > "$tmp"
-      ${pkgs.gnused}/bin/sed -i -e '$a\' "$tmp"
-      cat "$extra_file" >> "$tmp"
-      mv "$tmp" "$out/opt/zapret/hostlists/$target"
-    }
-
-    ${lib.optionalString (listGeneralFile != null) ''
-      append_list_file list-general-user.txt ${listGeneralFile}
-    ''}
-
-    ${lib.optionalString (listExcludeFile != null) ''
-      append_list_file list-exclude-user.txt ${listExcludeFile}
-    ''}
-
-    ${lib.optionalString (ipsetAllFile != null) ''
-      append_list_file ipset-all.txt ${ipsetAllFile}
-    ''}
-
-    ${lib.optionalString (ipsetExcludeFile != null) ''
-      append_list_file ipset-exclude-user.txt ${ipsetExcludeFile}
-    ''}
-
-    rm -f "$out/opt/zapret/hostlists/.game_filter.enabled"
-    ${lib.optionalString (z.gameFilter != "null") ''
-      echo "${z.gameFilter}" > "$out/opt/zapret/hostlists/.game_filter.enabled"
-    ''}
-
-    ${lib.concatMapStrings (rule:
-      let
-        domainsFile = pkgs.writeText "proxy-suite-zapret-hostlist-${rule.name}.txt" (
-          lib.concatStringsSep "\n" (lib.unique rule.domains) + "\n"
-        );
-      in
+  customZapretPackage =
+    pkgs.runCommand "proxy-suite-zapret-${selectedConfigName}"
+      {
+        nativeBuildInputs = with pkgs; [
+          coreutils
+          gnused
+          python3
+        ];
+      }
       ''
-        cp ${domainsFile} "$out/opt/zapret/hostlists/list-${rule.name}.txt"
-      ''
-    ) z.hostlistRules}
+        set -euo pipefail
 
-    ${patchConfigScript} --config "$out/opt/zapret/config" --spec ${hostlistRuleSpec}
-  '';
+        mkdir -p "$out"
+        cp -a ${upstreamZapretPackage}/. "$out/"
+        chmod -R u+w "$out/opt/zapret" "$out/bin"
+
+        find "$out/opt/zapret/configs" -type f -exec ${pkgs.gnused}/bin/sed -i \
+          -e 's|${upstreamZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
+          {} \;
+
+        if [ -f "$out/opt/zapret/configs/${z.configName}" ]; then
+          cp "$out/opt/zapret/configs/${z.configName}" "$out/opt/zapret/config"
+        else
+          echo "proxy-suite: zapret config '${z.configName}' not found in upstream package" >&2
+          ls -la "$out/opt/zapret/configs" >&2 || true
+          exit 1
+        fi
+
+        ${pkgs.gnused}/bin/sed -i \
+          -e 's|${upstreamZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
+          "$out/opt/zapret/config"
+
+        append_list_file() {
+          local target="$1"
+          local extra_file="$2"
+          local tmp="$out/opt/zapret/hostlists/$target.tmp"
+          cat "$out/opt/zapret/hostlists/$target" > "$tmp"
+          ${pkgs.gnused}/bin/sed -i -e '$a\' "$tmp"
+          cat "$extra_file" >> "$tmp"
+          mv "$tmp" "$out/opt/zapret/hostlists/$target"
+        }
+
+        ${lib.optionalString (listGeneralFile != null) ''
+          append_list_file list-general-user.txt ${listGeneralFile}
+        ''}
+
+        ${lib.optionalString (listExcludeFile != null) ''
+          append_list_file list-exclude-user.txt ${listExcludeFile}
+        ''}
+
+        ${lib.optionalString (ipsetAllFile != null) ''
+          append_list_file ipset-all.txt ${ipsetAllFile}
+        ''}
+
+        ${lib.optionalString (ipsetExcludeFile != null) ''
+          append_list_file ipset-exclude-user.txt ${ipsetExcludeFile}
+        ''}
+
+        rm -f "$out/opt/zapret/hostlists/.game_filter.enabled"
+        ${lib.optionalString (z.gameFilter != "null") ''
+          echo "${z.gameFilter}" > "$out/opt/zapret/hostlists/.game_filter.enabled"
+        ''}
+
+        ${lib.concatMapStrings (
+          rule:
+          let
+            domainsFile = pkgs.writeText "proxy-suite-zapret-hostlist-${rule.name}.txt" (
+              lib.concatStringsSep "\n" (lib.unique rule.domains) + "\n"
+            );
+          in
+          ''
+            cp ${domainsFile} "$out/opt/zapret/hostlists/list-${rule.name}.txt"
+          ''
+        ) z.hostlistRules}
+
+        ${patchConfigScript} --config "$out/opt/zapret/config" --spec ${hostlistRuleSpec}
+      '';
 
   exemptStart = lib.concatMapStrings (cidr: ''
     ${iptables} -t mangle -I FORWARD     1 -d ${cidr} -j RETURN

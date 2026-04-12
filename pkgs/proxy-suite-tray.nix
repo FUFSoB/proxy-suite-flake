@@ -10,7 +10,10 @@ pkgs.stdenv.mkDerivation {
   src = ./proxy-suite-tray;
 
   nativeBuildInputs = [ pkgs.pkg-config ];
-  buildInputs = [ pkgs.gtk3 pkgs.libayatana-appindicator ];
+  buildInputs = [
+    pkgs.gtk3
+    pkgs.libayatana-appindicator
+  ];
 
   buildPhase = ''
     $CC -o proxy-suite-tray main.c \

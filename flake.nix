@@ -1,5 +1,5 @@
 {
-  description = "NixOS proxy suite — sing-box, zapret, tg-ws-proxy";
+  description = "NixOS proxy suite – sing-box, zapret, tg-ws-proxy";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -10,7 +10,11 @@
   };
 
   outputs =
-    { self, nixpkgs, zapret }:
+    {
+      self,
+      nixpkgs,
+      zapret,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -21,7 +25,7 @@
       proxySuiteModule = import ./modules/proxy-suite { inherit zapret; };
     in
     {
-      # Main module — bakes in the zapret flake so consumers don't need it as a separate input.
+      # Main module – bakes in the zapret flake so consumers don't need it as a separate input.
       nixosModules.default = proxySuiteModule;
 
       # Re-export zapret standalone for users who want just that.
@@ -37,13 +41,16 @@
         proxy-suite-tray = import ./pkgs/proxy-suite-tray.nix { pkgs = pkgsFor system; };
       });
 
-      checks = forAll (system: import ./nix/checks.nix {
-        inherit
-          system
-          nixpkgs
-          proxySuiteModule
-          zapret
-          ;
-      });
+      checks = forAll (
+        system:
+        import ./nix/checks.nix {
+          inherit
+            system
+            nixpkgs
+            proxySuiteModule
+            zapret
+            ;
+        }
+      );
     };
 }

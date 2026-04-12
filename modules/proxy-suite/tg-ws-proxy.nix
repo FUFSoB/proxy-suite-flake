@@ -1,20 +1,25 @@
 # Telegram MTProto WebSocket proxy service
-{ lib, pkgs, cfg }:
+{
+  lib,
+  pkgs,
+  cfg,
+}:
 
 let
   t = cfg.tgWsProxy;
   tgPkg = import ../../pkgs/tg-ws-proxy.nix { inherit pkgs; };
 
-  dcArgs = lib.concatMapStrings (id: " --dc-ip=${id}:${t.dcIps.${id}}") (
-    builtins.attrNames t.dcIps
-  );
+  dcArgs = lib.concatMapStrings (id: " --dc-ip=${id}:${t.dcIps.${id}}") (builtins.attrNames t.dcIps);
   startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''
     exec ${tgPkg}/bin/tg-ws-proxy \
       --port=${toString t.port} \
       --host=${t.host} \
-      ${if t.secretFile != null
-        then "--secret-file=$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret"
-        else "--secret=${t.secret}"}${dcArgs}
+      ${
+        if t.secretFile != null then
+          "--secret-file=$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret"
+        else
+          "--secret=${t.secret}"
+      }${dcArgs}
   '';
 in
 {

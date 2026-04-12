@@ -300,7 +300,7 @@ def parse_tuic(url: str, tag: str) -> dict:
 def parse_socks(url: str, tag: str) -> dict:
     """
     socks5://[user:pass@]host:port[#remark]
-    socks5h://...   (socks5 with remote DNS resolution — same wire format)
+    socks5h://...   (socks5 with remote DNS resolution – same wire format)
     socks4://host:port[#remark]
     socks4a://host:port[#remark]
     """
@@ -333,8 +333,8 @@ def parse_socks(url: str, tag: str) -> dict:
 
 def parse_http_proxy(url: str, tag: str) -> dict:
     """
-    http://[user:pass@]host:port[#remark]   — plain HTTP CONNECT proxy
-    https://[user:pass@]host:port[#remark]  — HTTP CONNECT proxy over TLS
+    http://[user:pass@]host:port[#remark]   – plain HTTP CONNECT proxy
+    https://[user:pass@]host:port[#remark]  – HTTP CONNECT proxy over TLS
     """
     scheme = url.split("://")[0].lower()
     rest = url[len(scheme) + 3:]

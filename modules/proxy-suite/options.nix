@@ -41,7 +41,7 @@ let
     };
   };
 
-  # An explicit routing rule — associates traffic patterns with a named outbound.
+  # An explicit routing rule – associates traffic patterns with a named outbound.
   routingRuleType = types.submodule {
     options = {
       outbound = mkOption {
@@ -471,7 +471,10 @@ in
           }
           {
             name = "example";
-            domains = [ "example.com" "example.de" ];
+            domains = [
+              "example.com"
+              "example.de"
+            ];
             nfqwsArgs = [
               "--filter-tcp=443 --dpi-desync=fake,multisplit"
             ];
