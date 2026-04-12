@@ -545,6 +545,29 @@ let
     }
   ];
 
+  urlTestCustomFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox = {
+          outbounds = [
+            {
+              tag = "test-proxy";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
+          selection = "urltest";
+          urlTest = {
+            url = "https://telegram.org";
+            interval = "1m";
+            tolerance = 100;
+          };
+        };
+      };
+    }
+  ];
+
   # Validation failures
   subscriptionBothSources = forceEval (
     (evalProxySuite [
@@ -844,14 +867,16 @@ let
 
     # -- subscription: StateDirectory set on socks service --
     (
-      assert subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.StateDirectory
+      assert
+        subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.StateDirectory
         == "proxy-suite";
       true
     )
 
     # -- subscription: custom update interval flows through to timer --
     (
-      assert subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
+      assert
+        subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
         == "6h";
       true
     )
@@ -859,7 +884,8 @@ let
     # -- subscription: selection=first renames first subscription outbound to "proxy" --
     (
       let
-        startScript = subscriptionFirstSelectionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+        startScript =
+          subscriptionFirstSelectionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
         scriptText = builtins.readFile startScript;
       in
       assert builtins.match ".*proxy.*" scriptText != null;
@@ -897,6 +923,30 @@ let
     # -- subscription: no outbounds + no subscriptions fails --
     (
       assert noOutboundsNoSubscriptions.success == false;
+      true
+    )
+
+    # -- urlTest: custom url/interval/tolerance propagate to start script --
+    (
+      let
+        startScript =
+          urlTestCustomFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+        scriptText = builtins.readFile startScript;
+      in
+      assert builtins.match ".*telegram\\.org.*" scriptText != null;
+      assert builtins.match ".*1m.*" scriptText != null;
+      assert builtins.match ".*100.*" scriptText != null;
+      true
+    )
+
+    # -- urlTest: defaults are sane --
+    (
+      let
+        cfg = minimal.config.services.proxy-suite.singBox.urlTest;
+      in
+      assert cfg.url == "https://www.gstatic.com/generate_204";
+      assert cfg.interval == "3m";
+      assert cfg.tolerance == 50;
       true
     )
   ];

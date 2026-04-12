@@ -182,10 +182,15 @@ singBox = {
   ];
 
   # urltest is strongly recommended for subscriptions: sing-box probes all proxies
-  # every 3 minutes and routes through the fastest working one. With selection = "first"
+  # concurrently and routes through the fastest working one. With selection = "first"
   # a single dead server in position 0 breaks everything.
   selection = "urltest";
   subscriptionUpdateInterval = "6h"; # refresh every 6 hours (default: 1d)
+
+  # Optional: test against a URL that is actually blocked in your region.
+  # Only proxies that bypass the block will win — not just any reachable server.
+  # Defaults to https://www.gstatic.com/generate_204 (reachability check only).
+  urlTest.url = "https://telegram.org/";
 };
 ```
 
@@ -205,6 +210,14 @@ subscriptions = [{
 **Subsequent starts:** the cache file is used directly — no network access on restart.
 
 **Periodic refresh:** a systemd timer (`proxy-suite-subscription-update`) fires on boot (after 5 minutes) and then every `subscriptionUpdateInterval`. On success it updates the cache files and restarts `proxy-suite-socks` (and `proxy-suite-tun` if it is active).
+
+### urltest startup behavior
+
+When `selection = "urltest"`, sing-box starts probing all proxies **concurrently** the moment the service comes up. Until the first test result arrives (typically within a few seconds), traffic uses the first proxy in the list. As tests complete, sing-box progressively switches to faster winners. Dead proxies are skipped as their tests time out.
+
+**Practical consequence:** the first few requests after a (re)start may go through a slow or unreachable proxy. This resolves quickly — usually within 5–20 seconds — without any manual action.
+
+To minimize this window, set `urlTest.url` to a URL that must actually be reachable through a working proxy (e.g. a blocked site in your region). This way the first working test result corresponds to a proxy that genuinely serves your traffic, not just any reachable server.
 
 ### Tag generation
 
@@ -226,7 +239,7 @@ singBox = {
   selection = "urltest";
 
   # These domains go through whichever community proxy wins the latency test.
-  routing.proxy.domains = [ "youtube.com" "twitter.com" ];
+  routing.proxy.domains = [ "telegram.org" "twitter.com" ];
 };
 ```
 
@@ -431,14 +444,14 @@ tgWsProxy = {
 
 ## Services
 
-| Service                                | Auto-starts          | Description                                      |
-| -------------------------------------- | -------------------- | ------------------------------------------------ |
-| `proxy-suite-socks`                    | yes                  | SOCKS5/HTTP proxy, always running                |
-| `proxy-suite-tproxy`                   | no                   | TProxy transparent mode (start manually)         |
-| `proxy-suite-tun`                      | no                   | TUN mode (start manually, conflicts with tproxy) |
-| `proxy-suite-tg-ws-proxy`              | yes (if enabled)     | Telegram proxy                                   |
-| `proxy-suite-zapret-vm-exempt`         | yes (if enabled)     | VM subnet exemption                              |
-| `proxy-suite-subscription-update`      | timer (if sub set)   | Refresh subscription caches and restart          |
+| Service                           | Auto-starts        | Description                                      |
+| --------------------------------- | ------------------ | ------------------------------------------------ |
+| `proxy-suite-socks`               | yes                | SOCKS5/HTTP proxy, always running                |
+| `proxy-suite-tproxy`              | no                 | TProxy transparent mode (start manually)         |
+| `proxy-suite-tun`                 | no                 | TUN mode (start manually, conflicts with tproxy) |
+| `proxy-suite-tg-ws-proxy`         | yes (if enabled)   | Telegram proxy                                   |
+| `proxy-suite-zapret-vm-exempt`    | yes (if enabled)   | VM subnet exemption                              |
+| `proxy-suite-subscription-update` | timer (if sub set) | Refresh subscription caches and restart          |
 
 TProxy and TUN are mutually exclusive. Start one, the other refuses to start.
 

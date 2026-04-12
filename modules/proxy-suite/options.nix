@@ -272,8 +272,46 @@ in
           How to pick between multiple outbounds:
           - "first": use the first outbound only (no overhead, simplest)
           - "selector": expose a Clash-compatible API for manual switching
-          - "urltest": measure latency every 3 minutes and auto-switch to the fastest
+          - "urltest": measure latency periodically and auto-switch to the fastest
         '';
+      };
+
+      urlTest = {
+        url = mkOption {
+          type = types.str;
+          default = "https://www.gstatic.com/generate_204";
+          description = ''
+            URL that sing-box fetches through each proxy to measure latency.
+            Only used when selection = "urltest".
+
+            Set this to a URL that is actually blocked in your region (e.g.
+            "https://telegram.org") so that only proxies that bypass the
+            blocking get selected. If left at the default, any responding proxy
+            wins — including ones that might not unblock your target site.
+          '';
+          example = "https://telegram.org";
+        };
+
+        interval = mkOption {
+          type = types.str;
+          default = "3m";
+          description = ''
+            How often sing-box re-tests all outbounds. Accepts a Go duration
+            string (e.g. "1m", "3m", "10m"). Only used when selection = "urltest".
+          '';
+          example = "1m";
+        };
+
+        tolerance = mkOption {
+          type = types.int;
+          default = 50;
+          description = ''
+            Latency tolerance in milliseconds. The current proxy is only replaced
+            when a competing one is faster by more than this value.
+            Only used when selection = "urltest".
+          '';
+          example = 100;
+        };
       };
 
       clashApiPort = mkOption {

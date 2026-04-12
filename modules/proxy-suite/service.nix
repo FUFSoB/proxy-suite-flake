@@ -145,7 +145,10 @@ let
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
             WRAPPER=$(${jq} -n \
               --argjson tags "$TAGS" \
-              '{type:"urltest",tag:"proxy",outbounds:$tags,url:"https://www.gstatic.com/generate_204",interval:"3m",tolerance:50}')
+              --arg url ${lib.escapeShellArg sb.urlTest.url} \
+              --arg interval ${lib.escapeShellArg sb.urlTest.interval} \
+              --argjson tolerance ${toString sb.urlTest.tolerance} \
+              '{type:"urltest",tag:"proxy",outbounds:$tags,url:$url,interval:$interval,tolerance:$tolerance}')
             OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
           '';
     in
