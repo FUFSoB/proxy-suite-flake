@@ -54,6 +54,13 @@ let
   dnsHasRuleSet =
     dnsRules: ruleSet:
     builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
+  mkZapretBase =
+    fixture:
+    let
+      env = fixture.config.systemd.services.zapret-discord-youtube.serviceConfig.Environment;
+      zapretBaseEnv = builtins.head (builtins.filter (value: pkgs.lib.hasPrefix "ZAPRET_BASE=" value) env);
+    in
+    pkgs.lib.removePrefix "ZAPRET_BASE=" zapretBaseEnv;
   packagePathMatches =
     packages: pattern:
     builtins.any (
@@ -222,6 +229,19 @@ let
     }
   ];
   zapretSyncRules = mkRoutingRules zapretSyncFixture;
+  zapretSyncBase = mkZapretBase zapretSyncFixture;
+
+  zapretSyncNoExtraListsFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        includeExtraUpstreamLists = false;
+      };
+    }
+  ];
+  zapretSyncNoExtraListsBase = mkZapretBase zapretSyncNoExtraListsFixture;
+  zapretSyncNoExtraListsRules = mkRoutingRules zapretSyncNoExtraListsFixture;
 
   zapretSyncIpsFixture = evalProxySuite [
     baseModule
@@ -314,6 +334,93 @@ let
   ];
   zapretIpExcludesRules = mkRoutingRules zapretIpExcludesFixture;
 
+  zapretHostlistRulesFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [
+          {
+            name = "googlevideo";
+            domains = [ "googlevideo.com" "ggpht.com" ];
+            preset = "google";
+          }
+          {
+            name = "example";
+            domains = [ "example.com" "example.de" ];
+            nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake,multisplit" ];
+          }
+          {
+            name = "twitter-no-direct";
+            domains = [ "x.example" ];
+            nfqwsArgs = [ "--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6" ];
+            enableDirectSync = false;
+          }
+        ];
+      };
+    }
+  ];
+  zapretHostlistRules = mkRoutingRules zapretHostlistRulesFixture;
+  zapretHostlistBase = mkZapretBase zapretHostlistRulesFixture;
+
+  duplicateZapretHostlistNames = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.zapret = {
+          enable = true;
+          hostlistRules = [
+            {
+              name = "dup";
+              domains = [ "one.example" ];
+              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+            }
+            {
+              name = "dup";
+              domains = [ "two.example" ];
+              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  emptyZapretHostlistDomains = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.zapret = {
+          enable = true;
+          hostlistRules = [
+            {
+              name = "empty";
+              domains = [ ];
+              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  missingZapretHostlistAction = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.zapret = {
+          enable = true;
+          hostlistRules = [
+            {
+              name = "missing";
+              domains = [ "missing.example" ];
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   proxyDirectFixture = evalProxySuite [
     baseModule
     {
@@ -388,6 +495,18 @@ let
       true
     )
     (
+      assert duplicateZapretHostlistNames.success == false;
+      true
+    )
+    (
+      assert emptyZapretHostlistDomains.success == false;
+      true
+    )
+    (
+      assert missingZapretHostlistAction.success == false;
+      true
+    )
+    (
       assert tproxyWithFirewall.config.networking.firewall.enable;
       true
     )
@@ -448,6 +567,10 @@ let
       true
     )
     (
+      assert hasDirectDomain zapretSyncRules "twitter.com";
+      true
+    )
+    (
       assert !(hasDirectIP zapretSyncRules "1.1.1.0/24");
       true
     )
@@ -461,6 +584,10 @@ let
     )
     (
       assert hasDirectIP zapretSyncIpsRules "1.1.1.0/24";
+      true
+    )
+    (
+      assert !(hasDirectDomain zapretSyncNoExtraListsRules "twitter.com");
       true
     )
     (
@@ -489,6 +616,18 @@ let
     )
     (
       assert !(hasDirectIP zapretIpExcludesRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert hasDirectDomain zapretHostlistRules "googlevideo.com";
+      true
+    )
+    (
+      assert hasDirectDomain zapretHostlistRules "example.com";
+      true
+    )
+    (
+      assert !(hasDirectDomain zapretHostlistRules "x.example");
       true
     )
     (
@@ -538,6 +677,23 @@ let
 in
 {
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
+
+  zapret-hostlist-rules =
+    pkgs.runCommand "proxy-suite-zapret-hostlist-rules-check" { }
+      ''
+        grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-twitter.txt"' "${zapretSyncBase}/config"
+        grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-instagram.txt"' "${zapretSyncBase}/config"
+        grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-soundcloud.txt"' "${zapretSyncBase}/config"
+        ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-twitter.txt"' "${zapretSyncNoExtraListsBase}/config"
+        ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-instagram.txt"' "${zapretSyncNoExtraListsBase}/config"
+        ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-soundcloud.txt"' "${zapretSyncNoExtraListsBase}/config"
+        grep -F 'googlevideo.com' "${zapretHostlistBase}/hostlists/list-googlevideo.txt"
+        grep -F 'example.de' "${zapretHostlistBase}/hostlists/list-example.txt"
+        grep -F -- '--hostlist="${zapretHostlistBase}/hostlists/list-googlevideo.txt"' "${zapretHostlistBase}/config"
+        grep -F -- '--hostlist="${zapretHostlistBase}/hostlists/list-example.txt"' "${zapretHostlistBase}/config"
+        grep -F -- '--filter-tcp=443 --dpi-desync=fake,multisplit --hostlist="${zapretHostlistBase}/hostlists/list-example.txt" --hostlist-exclude="${zapretHostlistBase}/hostlists/list-exclude.txt" --hostlist-exclude="${zapretHostlistBase}/hostlists/list-exclude-user.txt" --ipset-exclude="${zapretHostlistBase}/hostlists/ipset-exclude.txt" --ipset-exclude="${zapretHostlistBase}/hostlists/ipset-exclude-user.txt" --new' "${zapretHostlistBase}/config"
+        touch "$out"
+      '';
 
   build-outbound-parser =
     pkgs.runCommand "build-outbound-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }

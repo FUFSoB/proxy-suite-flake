@@ -30,7 +30,9 @@ in
     ))
 
     (lib.mkIf cfg.zapret.enable (
-      import ./zapret.nix { inherit lib pkgs cfg; }
+      import ./zapret.nix {
+        inherit lib pkgs cfg zapret;
+      }
     ))
 
     (lib.mkIf cfg.tgWsProxy.enable (

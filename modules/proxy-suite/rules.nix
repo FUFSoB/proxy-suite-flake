@@ -32,13 +32,16 @@ let
   syncZapretDirectUserIps = z.enable && z.syncDirectRoutingUserIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
-  zapretDefaultDomainFiles = [
-    "list-general.txt"
-    "list-google.txt"
-    "list-instagram.txt"
-    "list-soundcloud.txt"
-    "list-twitter.txt"
-  ];
+  zapretDefaultDomainFiles =
+    [
+      "list-general.txt"
+      "list-google.txt"
+    ]
+    ++ lib.optionals z.includeExtraUpstreamLists [
+      "list-instagram.txt"
+      "list-soundcloud.txt"
+      "list-twitter.txt"
+    ];
 
   zapretDefaultDomains =
     if syncZapretDirectDomains then
@@ -50,6 +53,11 @@ let
   zapretDefaultIps =
     if syncZapretDirectUpstreamIps then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
   zapretUserIps = if syncZapretDirectUserIps then z.ipsetAll else [ ];
+  zapretCustomDomains =
+    if syncZapretDirectDomains then
+      lib.unique (lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) z.hostlistRules)
+    else
+      [ ];
   zapretExcludedDomains =
     if syncZapretDirectDomains then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
   zapretExcludedIps = lib.unique (
@@ -64,7 +72,7 @@ let
 
   zapretDirectDomains =
     if syncZapretDirectDomains then
-      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral)) (
+      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral ++ zapretCustomDomains)) (
         lib.unique (zapretExcludedDomains ++ z.listExclude)
       )
     else

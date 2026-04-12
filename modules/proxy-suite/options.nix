@@ -112,6 +112,59 @@ let
     };
   };
 
+  zapretPresetType = types.enum [
+    "general"
+    "google"
+    "instagram"
+    "soundcloud"
+    "twitter"
+  ];
+
+  zapretHostlistRuleType = types.submodule {
+    options = {
+      name = mkOption {
+        type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
+        description = "Custom hostlist name. Used to generate list-<name>.txt.";
+        example = "cloudflare";
+      };
+
+      domains = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Domains written into the generated custom zapret hostlist.";
+        example = [
+          "example.com"
+          "example.de"
+        ];
+      };
+
+      preset = mkOption {
+        type = types.nullOr zapretPresetType;
+        default = null;
+        description = "Clone the active zapret config's built-in rule family for this hostlist.";
+        example = "google";
+      };
+
+      nfqwsArgs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          Additional NFQWS argument fragments for this hostlist.
+          The module injects --hostlist=... and trailing --new automatically.
+        '';
+        example = [
+          "--filter-tcp=443 --dpi-desync=fake,multisplit"
+        ];
+      };
+
+      enableDirectSync = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Whether this custom hostlist should also be mirrored into sing-box direct domain routing.";
+      };
+    };
+  };
+
 in
 {
   options.services.proxy-suite = {
@@ -387,6 +440,43 @@ in
         type = types.listOf types.str;
         default = [ ];
         description = "IPs/CIDRs to exclude from zapret's ipset.";
+      };
+
+      includeExtraUpstreamLists = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Automatically activate upstream list-instagram.txt, list-soundcloud.txt,
+          and list-twitter.txt in the generated zapret config when the selected
+          upstream preset does not already reference them.
+        '';
+      };
+
+      hostlistRules = mkOption {
+        type = types.listOf zapretHostlistRuleType;
+        default = [ ];
+        description = ''
+          Additional named zapret hostlists with per-list DPI mitigation rules.
+          Each entry generates hostlists/list-<name>.txt and can clone a built-in
+          zapret family, add custom NFQWS rule fragments, or both.
+        '';
+        example = [
+          {
+            name = "googlevideo";
+            domains = [
+              "googlevideo.com"
+              "ggpht.com"
+            ];
+            preset = "google";
+          }
+          {
+            name = "example";
+            domains = [ "example.com" "example.de" ];
+            nfqwsArgs = [
+              "--filter-tcp=443 --dpi-desync=fake,multisplit"
+            ];
+          }
+        ];
       };
 
       cidrExemption = {

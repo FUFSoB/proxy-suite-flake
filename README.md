@@ -270,7 +270,11 @@ zapret = {
 };
 ```
 
-When `syncDirectRouting = true`, the module reuses zapret's upstream `hostlists/list-general.txt`, `list-google.txt`, `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt`, adds your `listGeneral`, and subtracts both upstream and user domain exclusions before generating sing-box direct rules.
+When `syncDirectRouting = true`, the module always reuses zapret's upstream `hostlists/list-general.txt` and `list-google.txt`, adds your `listGeneral`, and subtracts both upstream and user domain exclusions before generating sing-box direct rules. If `zapret.includeExtraUpstreamLists = true` (default), it also includes upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` in both zapret handling and sing-box direct sync.
+
+Custom `zapret.hostlistRules` domains also join this direct-domain sync by default. Set `enableDirectSync = false` on a custom hostlist if you want zapret to handle it but do not want sing-box direct-routing rules generated from it.
+
+The generated zapret config also auto-activates upstream `list-instagram.txt`, `list-soundcloud.txt`, and `list-twitter.txt` when the selected upstream preset does not already reference them. They are attached using the active config's `general` rule family so those hostlists are actually handled by zapret instead of just existing on disk. Set `zapret.includeExtraUpstreamLists = false;` to opt out.
 
 When `syncDirectRoutingUpstreamIps = true`, the module also mirrors zapret's upstream `ipset-all.txt`. This is disabled by default because the upstream IP set is intentionally broad.
 
@@ -284,6 +288,35 @@ zapret.cidrExemption = {
   cidrs = [ "192.168.123.0/24" ];  # your VM's bridge network(s)
 };
 ```
+
+You can also define custom zapret hostlists with per-list rules:
+
+```nix
+zapret.hostlistRules = [
+  {
+    name = "googlevideo";
+    domains = [ "googlevideo.com" "ggpht.com" ];
+    preset = "google";
+  }
+  {
+    name = "example";
+    domains = [ "example.com" "example.de" ];
+    nfqwsArgs = [
+      "--filter-tcp=443 --dpi-desync=fake,multisplit"
+    ];
+  }
+  {
+    name = "social-extra";
+    domains = [ "x.example" ];
+    preset = "twitter";
+    nfqwsArgs = [
+      "--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6"
+    ];
+  }
+];
+```
+
+Each entry generates `hostlists/list-<name>.txt`. `preset` clones the active zapret config's matching family rules for that hostlist, while `nfqwsArgs` appends custom NFQWS rule fragments. The module injects the generated `--hostlist=...`, standard zapret exclude files, and trailing `--new` automatically.
 
 ---
 
