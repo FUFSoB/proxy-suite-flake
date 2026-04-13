@@ -178,6 +178,58 @@ let
     }
   ];
 
+  tproxyManualFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.tproxy.enable = true;
+    }
+  ];
+
+  tproxyAutostartFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.tproxy = {
+        enable = true;
+        autostart = true;
+      };
+    }
+  ];
+
+  tunManualFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.tun.enable = true;
+    }
+  ];
+
+  tunAutostartFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.tun = {
+        enable = true;
+        autostart = true;
+      };
+    }
+  ];
+
+  conflictingAutostartModes = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.singBox = {
+          tproxy = {
+            enable = true;
+            autostart = true;
+          };
+          tun = {
+            enable = true;
+            autostart = true;
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   routingOrFixture = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -678,6 +730,32 @@ let
     )
     (
       assert tproxyWithFirewall.config.networking.firewall.enable;
+      true
+    )
+    (
+      assert tproxyManualFixture.config.services.proxy-suite.singBox.tproxy.autostart == false;
+      assert tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".wantedBy == [ ];
+      true
+    )
+    (
+      assert
+        tproxyAutostartFixture.config.systemd.services."proxy-suite-tproxy".wantedBy
+        == [ "multi-user.target" ];
+      true
+    )
+    (
+      assert tunManualFixture.config.services.proxy-suite.singBox.tun.autostart == false;
+      assert tunManualFixture.config.systemd.services."proxy-suite-tun".wantedBy == [ ];
+      true
+    )
+    (
+      assert
+        tunAutostartFixture.config.systemd.services."proxy-suite-tun".wantedBy
+        == [ "multi-user.target" ];
+      true
+    )
+    (
+      assert conflictingAutostartModes.success == false;
       true
     )
     (

@@ -44,6 +44,7 @@ services.proxy-suite = {
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
     tproxy = {
+      autostart = false;
       enable = false;
       localSubnets = [
         "192.168.0.0/16"
@@ -52,6 +53,7 @@ services.proxy-suite = {
     tproxyPort = 1081;
     tun = {
       address = "172.19.0.1/30";
+      autostart = false;
       enable = false;
       interface = "singtun0";
       mtu = 1400;
@@ -1685,6 +1687,41 @@ true
 
 
 
+## services\.proxy-suite\.singBox\.tproxy\.autostart
+
+
+
+Whether to start proxy-suite-tproxy automatically during boot by
+attaching it to multi-user\.target\.
+Only relevant when singBox\.tproxy\.enable = true\.
+Cannot be enabled together with singBox\.tun\.autostart\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
 ## services\.proxy-suite\.singBox\.tproxy\.localSubnets
 
 
@@ -1818,6 +1855,41 @@ string
 
 ```nix
 "172.19.0.1/30"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tun\.autostart
+
+
+
+Whether to start proxy-suite-tun automatically during boot by
+attaching it to multi-user\.target\.
+Only relevant when singBox\.tun\.enable = true\.
+Cannot be enabled together with singBox\.tproxy\.autostart\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
 ```
 
 *Declared by:*

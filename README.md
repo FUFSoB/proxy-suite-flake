@@ -11,8 +11,8 @@ The goal is to replace GUI clients like v2rayN and throne – you configure your
 ## What it gives you
 
 - **SOCKS5/HTTP proxy** on `127.0.0.1:1080` by default – always running, always available to apps
-- **Transparent proxy (TProxy)** – redirect all system traffic through sing-box without configuring each app; start/stop on demand
-- **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something
+- **Transparent proxy (TProxy)** – redirect all system traffic through sing-box without configuring each app; start/stop on demand or autostart at boot
+- **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something, with optional boot-time autostart
 - **Subscription URLs** – point at a v2rayN/Clash-format subscription endpoint; the module fetches, decodes, and imports all proxies automatically, with a periodic refresh timer
 - **Multiple outbounds** with automatic latency-based switching or manual selection
 - **Per-outbound routing** – route specific domains, IPs, or geo sets to specific servers

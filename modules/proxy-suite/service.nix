@@ -421,6 +421,10 @@ in
       message = "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}";
     }
     {
+      assertion = !(sb.tproxy.enable && sb.tproxy.autostart && sb.tun.enable && sb.tun.autostart);
+      message = "proxy-suite: singBox.tproxy.autostart and singBox.tun.autostart cannot both be enabled at the same time";
+    }
+    {
       assertion =
         !t.enable
         ||
@@ -484,6 +488,7 @@ in
         "network.target"
         "proxy-suite-socks.service"
       ];
+      wantedBy = lib.optionals sb.tproxy.autostart [ "multi-user.target" ];
       requires = [ "proxy-suite-socks.service" ];
       conflicts = [ "proxy-suite-tun.service" ];
       serviceConfig = {
@@ -510,6 +515,7 @@ in
     proxy-suite-tun = {
       description = "sing-box TUN proxy client";
       after = [ "network-online.target" ];
+      wantedBy = lib.optionals sb.tun.autostart [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       conflicts = [ "proxy-suite-tproxy.service" ];
       serviceConfig = {

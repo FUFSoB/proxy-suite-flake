@@ -491,6 +491,18 @@ in
       tun = {
         enable = mkEnableOption "TUN mode service (opt-in, mutually exclusive with proxy-suite-tproxy)";
 
+        autostart = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Whether to start proxy-suite-tun automatically during boot by
+            attaching it to multi-user.target.
+            Only relevant when singBox.tun.enable = true.
+            Cannot be enabled together with singBox.tproxy.autostart.
+          '';
+          example = true;
+        };
+
         interface = mkOption {
           type = types.str;
           default = "singtun0";
@@ -524,6 +536,18 @@ in
 
       tproxy = {
         enable = mkEnableOption "TProxy mode service (opt-in, transparent proxy via nftables)";
+
+        autostart = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Whether to start proxy-suite-tproxy automatically during boot by
+            attaching it to multi-user.target.
+            Only relevant when singBox.tproxy.enable = true.
+            Cannot be enabled together with singBox.tun.autostart.
+          '';
+          example = true;
+        };
 
         localSubnets = mkOption {
           type = types.listOf types.str;
