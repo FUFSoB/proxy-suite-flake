@@ -39,6 +39,16 @@ Add the module to your NixOS configuration:
 imports = [ inputs.proxy-suite.nixosModules.default ];
 ```
 
+Enable the service with all defaults:
+
+```nix
+services.proxy-suite = {
+  enable = true;
+};
+```
+
+By default, `zapret` and `tgWsProxy` stay disabled until you enable them explicitly.
+
 ---
 
 ## Options
