@@ -699,6 +699,14 @@ let
       true
     )
     (
+      assert minimal.config.services.proxy-suite.tgWsProxy.host == "127.0.0.1";
+      true
+    )
+    (
+      assert minimal.config.services.proxy-suite.tgWsProxy.dcIps == { };
+      true
+    )
+    (
       assert
         tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.LoadCredential
         == [ "tg_ws_proxy_secret:/run/secrets/tg-ws-proxy" ];

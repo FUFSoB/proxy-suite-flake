@@ -902,12 +902,12 @@ in
 
       host = mkOption {
         type = types.str;
-        default = "0.0.0.0";
+        default = "127.0.0.1";
         description = ''
           Address to bind tg-ws-proxy to.
           Only relevant when tgWsProxy.enable = true.
         '';
-        example = "0.0.0.0";
+        example = "127.0.0.1";
       };
 
       secret = mkOption {
@@ -937,20 +937,15 @@ in
 
       dcIps = mkOption {
         type = types.attrsOf types.str;
-        default = {
-          "2" = "149.154.167.220";
-          "4" = "149.154.167.220";
-        };
+        default = { };
         description = ''
           Map of Telegram DC ID to IP address for relay.
           Only relevant when tgWsProxy.enable = true.
         '';
         example = {
-          "1" = "149.154.175.50";
-          "2" = "149.154.167.51";
-          "3" = "149.154.175.100";
-          "4" = "149.154.167.91";
-          "5" = "91.108.56.130";
+          "2" = "149.154.167.220";
+          "4" = "149.154.167.220";
+          "203" = "149.154.167.220";
         };
       };
     };
