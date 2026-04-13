@@ -1,0 +1,2975 @@
+# proxy-suite options
+
+This file is generated from the `services.proxy-suite` option descriptions in [`modules/proxy-suite/options.nix`](modules/proxy-suite/options.nix).
+Update module option docs there instead of editing this file by hand.
+
+## Complete default config
+
+```nix
+services.proxy-suite = {
+  enable = false;
+  singBox = {
+    clashApiPort = 9090;
+    enable = true;
+    fwmark = 1;
+    listenAddress = "127.0.0.1";
+    outbounds = [ ];
+    port = 1080;
+    proxyByDefault = true;
+    proxyMark = 2;
+    routeTable = 100;
+    routing = {
+      block = {
+        domains = [ ];
+        geoips = [ ];
+        geosites = [ ];
+        ips = [ ];
+      };
+      direct = {
+        domains = [ ];
+        geoips = [ ];
+        geosites = [ ];
+        ips = [ ];
+      };
+      enableRuDirect = true;
+      proxy = {
+        domains = [ ];
+        geoips = [ ];
+        geosites = [ ];
+        ips = [ ];
+      };
+      rules = [ ];
+    };
+    selection = "first";
+    subscriptionUpdateInterval = "1d";
+    subscriptions = [ ];
+    tproxy = {
+      enable = false;
+      localSubnets = [
+        "192.168.0.0/16"
+      ];
+    };
+    tproxyPort = 1081;
+    tun = {
+      address = "172.19.0.1/30";
+      enable = false;
+      interface = "singtun0";
+      mtu = 1400;
+    };
+    urlTest = {
+      interval = "3m";
+      tolerance = 50;
+      url = "https://www.gstatic.com/generate_204";
+    };
+  };
+  tgWsProxy = {
+    dcIps = {
+      "2" = "149.154.167.220";
+      "4" = "149.154.167.220";
+    };
+    enable = false;
+    host = "0.0.0.0";
+    port = 1076;
+    secret = null;
+    secretFile = null;
+  };
+  tray = {
+    autostart = true;
+    enable = false;
+    pollInterval = 5;
+  };
+  zapret = {
+    cidrExemption = {
+      cidrs = [ ];
+      enable = false;
+    };
+    configName = "general(ALT)";
+    enable = false;
+    gameFilter = "null";
+    hostlistRules = [ ];
+    includeExtraUpstreamLists = false;
+    ipsetAll = [ ];
+    ipsetExclude = [ ];
+    listExclude = [ ];
+    listGeneral = [ ];
+    syncDirectRouting = true;
+    syncDirectRoutingUpstreamIps = false;
+    syncDirectRoutingUserIps = true;
+  };
+};
+```
+
+## services\.proxy-suite\.enable
+
+Whether to enable proxy suite (sing-box + zapret + tg-ws-proxy)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.enable
+
+
+
+Whether to configure and run sing-box services for proxy-suite\.
+When disabled, singBox\.\* options are ignored even if proxy-suite itself
+is enabled\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.clashApiPort
+
+
+
+Port for the Clash-compatible REST API exposed by sing-box\.
+Only used when selection is “selector” or “urltest”\. Ignored in
+“first” mode because there is no selector-style outbound to control\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+9090
+```
+
+
+
+*Example:*
+
+```nix
+9090
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.fwmark
+
+
+
+Netfilter mark set on packets intercepted by TProxy so policy routing
+can send them to the local loopback route table\.
+Only relevant when singBox\.tproxy\.enable = true\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+1
+```
+
+
+
+*Example:*
+
+```nix
+1
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.listenAddress
+
+
+
+Address for the SOCKS5/HTTP mixed inbound to bind to\.
+This affects the always-on proxy-suite-socks service\.
+
+Use “0\.0\.0\.0” only if you intentionally want to expose the proxy to
+other machines on your network\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"127.0.0.1"
+```
+
+
+
+*Example:*
+
+```nix
+"127.0.0.1"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds
+
+
+
+List of static proxy outbounds\.
+Set exactly one of urlFile, url, or json per entry\.
+
+At least one outbound or one subscription is required when
+singBox\.enable = true\.
+
+
+
+*Type:*
+list of (submodule)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  {
+    tag = "de-vps";
+    urlFile = "/run/secrets/proxy-de-url";
+  }
+  {
+    tag = "nl-vps";
+    url = "hy2://password@example.com:443?sni=example.com";
+  }
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.json
+
+
+
+Raw sing-box outbound configuration as a Nix attribute set\.
+Embedded directly into the config at build time\. The tag field
+is overridden by the outbound’s tag option\.
+
+Set exactly one of urlFile, url, or json for each outbound\.
+Use this when the proxy definition is easier to generate as native Nix
+than as a single URL string\.
+
+
+
+*Type:*
+null or (attribute set)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+{
+  server = "example.com";
+  server_port = 443;
+  type = "vless";
+  uuid = "...";
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.domains
+
+
+
+Domain suffixes to match in this routing rule\.
+Leave empty to skip domain-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "youtube.com"
+  "discord.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geoips
+
+
+
+sing-geoip rule-set names to match in this routing rule\.
+Each name becomes a sing-box geoip rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "us"
+  "de"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geosites
+
+
+
+sing-geosite rule-set names to match in this routing rule\.
+Each name becomes a sing-box geosite rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "netflix"
+  "google"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.ips
+
+
+
+IP CIDRs to match in this routing rule\.
+Leave empty to skip IP-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "1.1.1.0/24"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.tag
+
+
+
+Outbound tag used in routing rules and multi-outbound selection\.
+
+With selection = “selector” or “urltest”, each outbound keeps its own
+tag and can be selected directly\. With selection = “first”, sing-box
+routes through a single active outbound tagged “proxy”, so individual
+proxy tags are mainly useful for documentation and config structure\.
+
+
+
+*Type:*
+string
+
+
+
+*Example:*
+
+```nix
+"vps-de"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.url
+
+
+
+Literal proxy URL\. Convenient for non-secret configs, but the URL
+will end up in the Nix store\.
+
+Set exactly one of urlFile, url, or json for each outbound\.
+Prefer urlFile for real credentials\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"hy2://password@example.com:443?sni=example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.outbounds\.\*\.urlFile
+
+
+
+Runtime path to a file containing the proxy URL\.
+Intended for use with secret managers (sops-nix, agenix, etc\.)\.
+The file is read at service start time and never lands in the Nix store\.
+
+Set exactly one of urlFile, url, or json for each outbound\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/my-proxy-url"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.port
+
+
+
+Listen port for the always-on SOCKS5/HTTP mixed inbound provided by
+proxy-suite-socks\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+1080
+```
+
+
+
+*Example:*
+
+```nix
+1080
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.proxyByDefault
+
+
+
+Whether traffic that does not match any explicit routing rule should
+go through the proxy or go direct\.
+
+This affects both sing-box route\.final and the default DNS resolver
+choice in the generated config\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.proxyMark
+
+
+
+Netfilter mark set on sing-box’s own outbound packets so they bypass
+TProxy re-interception loops\.
+Only relevant when singBox\.tproxy\.enable = true\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+2
+```
+
+
+
+*Example:*
+
+```nix
+2
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routeTable
+
+
+
+Policy routing table used to redirect TProxy-marked packets to the
+loopback interface\.
+Only relevant when singBox\.tproxy\.enable = true\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+100
+```
+
+
+
+*Example:*
+
+```nix
+100
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.enableRuDirect
+
+
+
+Automatically append “category-ru” to routing\.direct\.geosites and
+“ru” to routing\.direct\.geoips\.
+
+This is additive: user-defined routing\.direct\.\* entries still apply\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.block\.domains
+
+
+
+Domain suffixes to block entirely\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "ads.example.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.block\.geoips
+
+
+
+sing-geoip names to block\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "cn"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.block\.geosites
+
+
+
+sing-geosite names to block\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "category-ads-all"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.block\.ips
+
+
+
+IP CIDRs to block\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "203.0.113.0/24"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.direct\.domains
+
+
+
+Domain suffixes to send direct (bypass proxy)\.
+Merged with zapret-synced direct domains when zapret direct sync
+options are enabled\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "internal.example"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.direct\.geoips
+
+
+
+sing-geoip names to send direct\.
+“ru” is added automatically when enableRuDirect = true\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "ru"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.direct\.geosites
+
+
+
+sing-geosite names to send direct\.
+“category-ru” is added automatically when enableRuDirect = true\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "category-ru"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.direct\.ips
+
+
+
+IP CIDRs to send direct\.
+Merged with zapret-synced direct IPs when the corresponding zapret
+sync options are enabled\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "10.10.0.0/16"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.proxy\.domains
+
+
+
+Domain suffixes to match in this routing rule\.
+Leave empty to skip domain-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "youtube.com"
+  "discord.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.proxy\.geoips
+
+
+
+sing-geoip rule-set names to match in this routing rule\.
+Each name becomes a sing-box geoip rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "us"
+  "de"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.proxy\.geosites
+
+
+
+sing-geosite rule-set names to match in this routing rule\.
+Each name becomes a sing-box geosite rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "netflix"
+  "google"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.proxy\.ips
+
+
+
+IP CIDRs to match in this routing rule\.
+Leave empty to skip IP-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "1.1.1.0/24"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules
+
+
+
+Explicit routing rules evaluated before global proxy/direct/block lists\.
+Each rule routes matching traffic to a specific outbound tag\.
+
+The outbound can be a configured outbound tag (useful with selector/urltest),
+or one of: “proxy” (active proxy), “direct”, “block”\.
+
+Order is preserved\. The first matching rule wins in sing-box\.
+With selection = “first”, non-built-in outbound tags are effectively
+routed to the single active “proxy” outbound\.
+
+
+
+*Type:*
+list of (submodule)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  {
+    domains = [
+      "netflix.com"
+    ];
+    geosites = [
+      "netflix"
+    ];
+    outbound = "vps-de";
+  }
+  {
+    domains = [
+      "internal.corp"
+    ];
+    outbound = "direct";
+  }
+  {
+    domains = [
+      "ads.example.com"
+    ];
+    outbound = "block";
+  }
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules\.\*\.domains
+
+
+
+Domain suffixes to match in this routing rule\.
+Leave empty to skip domain-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "youtube.com"
+  "discord.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geoips
+
+
+
+sing-geoip rule-set names to match in this routing rule\.
+Each name becomes a sing-box geoip rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "us"
+  "de"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geosites
+
+
+
+sing-geosite rule-set names to match in this routing rule\.
+Each name becomes a sing-box geosite rule-set reference\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "netflix"
+  "google"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules\.\*\.ips
+
+
+
+IP CIDRs to match in this routing rule\.
+Leave empty to skip IP-based matching for this rule entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "1.1.1.0/24"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.routing\.rules\.\*\.outbound
+
+
+
+Target outbound tag\. Can be a specific server tag (only useful with
+selection = “selector” or “urltest”), or one of the built-in tags:
+“proxy” (the active proxy outbound), “direct”, “block”\.
+
+With selection = “first”, named proxy outbounds are collapsed into the
+single active “proxy” outbound at runtime, so per-tag routing no longer
+distinguishes between individual proxy servers\.
+
+
+
+*Type:*
+string
+
+
+
+*Example:*
+
+```nix
+"vps-de"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.selection
+
+
+
+How to pick between multiple proxy outbounds:
+
+ - “first”: route through a single active outbound tagged “proxy”\.
+   The first static outbound is used, or the first subscription
+   outbound if only subscriptions are configured\.
+ - “selector”: create a Clash-compatible selector outbound tagged
+   “proxy” and keep all configured outbounds available for manual
+   switching via the Clash API\.
+ - “urltest”: create an automatic latency-testing outbound tagged
+   “proxy” and keep all configured outbounds available so sing-box
+   can periodically probe and switch to a faster one\.
+
+clashApiPort is only used with “selector” or “urltest”\.
+urlTest\.\* options are only used with “urltest”\.
+Per-outbound tags are only individually meaningful with “selector”
+or “urltest”\.
+
+
+
+*Type:*
+one of “first”, “selector”, “urltest”
+
+
+
+*Default:*
+
+```nix
+"first"
+```
+
+
+
+*Example:*
+
+```nix
+"urltest"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.subscriptionUpdateInterval
+
+
+
+How often the proxy-suite-subscription-update timer fires and refreshes
+all subscription caches\. Accepts any systemd time span string
+(e\.g\. “1h”, “6h”, “1d”, “12h”)\.
+
+Only used when singBox\.subscriptions is non-empty\. The timer also runs
+once shortly after boot\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"1d"
+```
+
+
+
+*Example:*
+
+```nix
+"6h"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.subscriptions
+
+
+
+Subscription URLs that provide dynamic lists of proxy outbounds\.
+Each URL must return a base64-encoded newline-separated list of proxy URIs
+(standard v2rayN / Clash subscription format) or plain text of the same\.
+
+On first service start, each subscription is fetched live and cached
+under /var/lib/proxy-suite/subscriptions/\<tag>\.json\. Later restarts
+reuse the cache, so ordinary service restarts do not need network access\.
+
+A systemd timer (proxy-suite-subscription-update) refreshes all caches on
+the interval set by subscriptionUpdateInterval and restarts the running
+sing-box services after a successful refresh\.
+
+
+
+*Type:*
+list of (submodule)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  {
+    tag = "community";
+    url = "https://example.com/sub/token";
+  }
+  {
+    tag = "private";
+    urlFile = "/run/secrets/private-sub-url";
+  }
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.subscriptions\.\*\.tag
+
+
+
+Unique identifier for this subscription\.
+Used as a prefix for all outbound tags generated from its proxy list,
+e\.g\. “my-sub” -> tags like “my-sub-Server-DE”\.
+
+
+
+*Type:*
+string
+
+
+
+*Example:*
+
+```nix
+"community-list"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.subscriptions\.\*\.url
+
+
+
+Literal subscription URL\. The response must be a base64-encoded
+newline-separated list of proxy URIs (standard v2rayN format) or
+a plain-text list of the same\.
+
+This value is embedded in the Nix store\. Prefer urlFile for private
+subscription links or tokens\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"https://example.com/sub/token123"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.subscriptions\.\*\.urlFile
+
+
+
+Runtime path to a file containing the subscription URL\.
+Intended for use with secret managers (sops-nix, agenix, etc\.)\.
+The file is read at service start time and never lands in the Nix store\.
+
+Set exactly one of urlFile or url for each subscription entry\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-subscription-url"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tproxy\.enable
+
+
+
+Whether to enable TProxy mode service (opt-in, transparent proxy via nftables)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tproxy\.localSubnets
+
+
+
+Subnets whose traffic bypasses TProxy interception, except DNS (port 53)\.
+Only relevant when singBox\.tproxy\.enable = true\.
+
+Typically this should include your LAN subnet(s)\. VM bridge networks
+should usually go here too, or use zapret\.cidrExemption for
+subnet-specific NFQUEUE exemption on the zapret side\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[
+  "192.168.0.0/16"
+]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "192.168.0.0/16"
+  "10.0.0.0/8"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tproxyPort
+
+
+
+Listen port for the local sing-box TProxy inbound\.
+Only relevant when singBox\.tproxy\.enable = true\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+1081
+```
+
+
+
+*Example:*
+
+```nix
+1081
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tun\.enable
+
+
+
+Whether to enable TUN mode service (opt-in, mutually exclusive with proxy-suite-tproxy)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tun\.address
+
+
+
+Address assigned to the TUN interface in CIDR notation\.
+Only relevant when singBox\.tun\.enable = true\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"172.19.0.1/30"
+```
+
+
+
+*Example:*
+
+```nix
+"172.19.0.1/30"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tun\.interface
+
+
+
+Name of the TUN interface created by proxy-suite-tun\.
+Only relevant when singBox\.tun\.enable = true\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"singtun0"
+```
+
+
+
+*Example:*
+
+```nix
+"singtun0"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.tun\.mtu
+
+
+
+MTU for the TUN interface created by proxy-suite-tun\.
+Only relevant when singBox\.tun\.enable = true\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+1400
+```
+
+
+
+*Example:*
+
+```nix
+1400
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.urlTest\.interval
+
+
+
+How often sing-box re-tests all outbounds\. Accepts a Go duration
+string (e\.g\. “1m”, “3m”, “10m”)\.
+Only used when selection = “urltest”\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"3m"
+```
+
+
+
+*Example:*
+
+```nix
+"1m"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.urlTest\.tolerance
+
+
+
+Latency tolerance in milliseconds\. The current proxy is only replaced
+when a competing one is faster by more than this value\.
+
+Only used when selection = “urltest”\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+50
+```
+
+
+
+*Example:*
+
+```nix
+100
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.urlTest\.url
+
+
+
+URL that sing-box fetches through each proxy to measure latency\.
+Only used when selection = “urltest”\.
+
+Set this to a URL that is actually blocked in your region (e\.g\.
+“https://telegram\.org”) so that only proxies that bypass the
+blocking get selected\. If left at the default, any responding proxy
+wins – including ones that might not unblock your target site\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"https://www.gstatic.com/generate_204"
+```
+
+
+
+*Example:*
+
+```nix
+"https://telegram.org"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.enable
+
+
+
+Whether to enable Telegram MTProto WebSocket proxy\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.dcIps
+
+
+
+Map of Telegram DC ID to IP address for relay\.
+Only relevant when tgWsProxy\.enable = true\.
+
+
+
+*Type:*
+attribute set of string
+
+
+
+*Default:*
+
+```nix
+{
+  "2" = "149.154.167.220";
+  "4" = "149.154.167.220";
+}
+```
+
+
+
+*Example:*
+
+```nix
+{
+  "1" = "149.154.175.50";
+  "2" = "149.154.167.51";
+  "3" = "149.154.175.100";
+  "4" = "149.154.167.91";
+  "5" = "91.108.56.130";
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.host
+
+
+
+Address to bind tg-ws-proxy to\.
+Only relevant when tgWsProxy\.enable = true\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"0.0.0.0"
+```
+
+
+
+*Example:*
+
+```nix
+"0.0.0.0"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.port
+
+
+
+Listen port for the tg-ws-proxy service\.
+Only relevant when tgWsProxy\.enable = true\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+1076
+```
+
+
+
+*Example:*
+
+```nix
+1076
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.secret
+
+
+
+MTProto proxy secret (hex string)\. Legacy inline form; this value ends up
+in the Nix store\. Prefer secretFile for real deployments\.
+
+Set exactly one of secret or secretFile when tgWsProxy\.enable = true\.
+Generate one with: openssl rand -hex 16
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tgWsProxy\.secretFile
+
+
+
+Runtime path to a file containing the MTProto proxy secret\.
+Intended for use with secret managers so the secret stays out of the Nix store\.
+
+Set exactly one of secretFile or secret when tgWsProxy\.enable = true\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/tg-ws-proxy-secret"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tray\.enable
+
+
+
+Whether to enable system tray indicator for proxy-suite\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tray\.autostart
+
+
+
+Whether to install an XDG autostart entry for the tray application for
+graphical users\.
+Only relevant when tray\.enable = true\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.tray\.pollInterval
+
+
+
+Status polling interval in seconds for the tray application\.
+Only relevant when tray\.enable = true\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+5
+```
+
+
+
+*Example:*
+
+```nix
+5
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.enable
+
+
+
+Whether to enable zapret DPI bypass\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.cidrExemption\.enable
+
+
+
+Whether to enable CIDR exemption from zapret NFQUEUE\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.cidrExemption\.cidrs
+
+
+
+Subnets to exempt from zapret’s NFQUEUE mangle rules\.
+Only relevant when zapret\.enable = true and cidrExemption\.enable = true\.
+
+Useful when a VM (libvirt, etc\.) is behind NAT and zapret
+would corrupt its traffic through the host’s nftables\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "192.168.123.0/24"
+  "10.0.0.0/8"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.configName
+
+
+
+zapret strategy preset name passed through to the generated zapret
+configuration\.
+Only relevant when zapret\.enable = true\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"general(ALT)"
+```
+
+
+
+*Example:*
+
+```nix
+"general(ALT)"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.gameFilter
+
+
+
+zapret game traffic filter mode: “all”, “tcp”, “udp”, or “null” to disable\.
+Only relevant when zapret\.enable = true\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"null"
+```
+
+
+
+*Example:*
+
+```nix
+"null"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules
+
+
+
+Additional named zapret hostlists with per-list DPI mitigation rules\.
+Each entry generates hostlists/list-\<name>\.txt and can clone a built-in
+zapret family, add custom NFQWS rule fragments, or both\.
+
+Each entry must define at least one domain and at least one of preset
+or nfqwsArgs\.
+
+
+
+*Type:*
+list of (submodule)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  {
+    domains = [
+      "googlevideo.com"
+      "ggpht.com"
+    ];
+    name = "googlevideo";
+    preset = "google";
+  }
+  {
+    domains = [
+      "example.com"
+      "example.de"
+    ];
+    name = "example";
+    nfqwsArgs = [
+      "--filter-tcp=443 --dpi-desync=fake,multisplit"
+    ];
+    preset = "general";
+  }
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.enableDirectSync
+
+
+
+Whether this custom hostlist should also be mirrored into sing-box
+direct domain routing when zapret\.syncDirectRouting = true\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.domains
+
+
+
+Domains written into the generated custom zapret hostlist file\.
+Must be non-empty for every hostlistRules entry\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "example.com"
+  "example.de"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.name
+
+
+
+Custom hostlist name\. Used to generate hostlists/list-\<name>\.txt
+inside the derived zapret config directory\.
+
+
+
+*Type:*
+string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
+
+
+
+*Example:*
+
+```nix
+"cloudflare"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.nfqwsArgs
+
+
+
+Additional NFQWS argument fragments for this hostlist\.
+The module injects --hostlist=… and trailing --new automatically\.
+
+Each hostlistRules entry must define preset, nfqwsArgs, or both\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "--filter-tcp=443 --dpi-desync=fake,multisplit"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.preset
+
+
+
+Clone the active zapret config’s built-in NFQWS rule family for this
+hostlist\. Can be combined with nfqwsArgs for additional custom rules\.
+
+
+
+*Type:*
+null or one of “general”, “google”, “instagram”, “soundcloud”, “twitter”
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"google"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.includeExtraUpstreamLists
+
+
+
+Automatically activate upstream list-instagram\.txt, list-soundcloud\.txt,
+and list-twitter\.txt in the generated zapret config when the selected
+upstream preset does not already reference them\.
+
+When syncDirectRouting = true, domains from these extra lists are also
+mirrored into sing-box direct routing\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.ipsetAll
+
+
+
+Extra IPs/CIDRs to add to zapret’s ipset\.
+Mirrored into sing-box direct IP routing when
+syncDirectRoutingUserIps = true\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "203.0.113.0/24"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.ipsetExclude
+
+
+
+IPs/CIDRs to exclude from zapret’s ipset\.
+Also excluded from zapret-derived sing-box direct IP routing when
+syncDirectRoutingUserIps = true\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "203.0.113.10/32"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.listExclude
+
+
+
+Domains to exclude from zapret interception\.
+When syncDirectRouting = true, these exclusions also remove matching
+domains from the zapret-derived sing-box direct-routing set\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "music.youtube.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.listGeneral
+
+
+
+Extra domains to include in zapret’s interception list\.
+When syncDirectRouting = true, these domains are also mirrored into
+sing-box direct routing\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "youtube.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.syncDirectRouting
+
+
+
+When zapret\.enable = true, mirror zapret’s upstream domain hostlists
+into sing-box direct domain routing\.
+
+This includes the default zapret domain lists and any custom
+hostlistRules entries with enableDirectSync = true\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.syncDirectRoutingUpstreamIps
+
+
+
+When zapret\.enable = true, mirror zapret’s upstream ipset ranges
+(such as ipset-all\.txt minus exclusions) into sing-box direct IP routing\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.zapret\.syncDirectRoutingUserIps
+
+
+
+When zapret\.enable = true, mirror user-defined zapret\.ipsetAll and
+zapret\.ipsetExclude entries into sing-box direct IP routing\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+

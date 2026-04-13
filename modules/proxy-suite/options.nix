@@ -9,7 +9,10 @@ let
     domains = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      description = "Domain suffixes to match.";
+      description = ''
+        Domain suffixes to match in this routing rule.
+        Leave empty to skip domain-based matching for this rule entry.
+      '';
       example = [
         "youtube.com"
         "discord.com"
@@ -18,13 +21,19 @@ let
     ips = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      description = "IP CIDRs to match.";
+      description = ''
+        IP CIDRs to match in this routing rule.
+        Leave empty to skip IP-based matching for this rule entry.
+      '';
       example = [ "1.1.1.0/24" ];
     };
     geosites = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      description = "sing-geosite rule-set names to match.";
+      description = ''
+        sing-geosite rule-set names to match in this routing rule.
+        Each name becomes a sing-box geosite rule-set reference.
+      '';
       example = [
         "netflix"
         "google"
@@ -33,7 +42,10 @@ let
     geoips = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      description = "sing-geoip rule-set names to match.";
+      description = ''
+        sing-geoip rule-set names to match in this routing rule.
+        Each name becomes a sing-box geoip rule-set reference.
+      '';
       example = [
         "us"
         "de"
@@ -50,6 +62,10 @@ let
           Target outbound tag. Can be a specific server tag (only useful with
           selection = "selector" or "urltest"), or one of the built-in tags:
           "proxy" (the active proxy outbound), "direct", "block".
+
+          With selection = "first", named proxy outbounds are collapsed into the
+          single active "proxy" outbound at runtime, so per-tag routing no longer
+          distinguishes between individual proxy servers.
         '';
         example = "vps-de";
       };
@@ -62,9 +78,9 @@ let
       tag = mkOption {
         type = types.str;
         description = ''
-          Unique identifier for this subscription. Used as a prefix for all
-          outbound tags generated from its proxy list, e.g. "my-sub" →
-          tags like "my-sub-Server-DE".
+          Unique identifier for this subscription.
+          Used as a prefix for all outbound tags generated from its proxy list,
+          e.g. "my-sub" -> tags like "my-sub-Server-DE".
         '';
         example = "community-list";
       };
@@ -76,7 +92,9 @@ let
           Literal subscription URL. The response must be a base64-encoded
           newline-separated list of proxy URIs (standard v2rayN format) or
           a plain-text list of the same.
-          The URL will end up in the nix store. Use urlFile for actual secrets.
+
+          This value is embedded in the Nix store. Prefer urlFile for private
+          subscription links or tokens.
         '';
         example = "https://example.com/sub/token123";
       };
@@ -87,9 +105,11 @@ let
         description = ''
           Runtime path to a file containing the subscription URL.
           Intended for use with secret managers (sops-nix, agenix, etc.).
-          The file is read at service start time and never lands in the nix store.
+          The file is read at service start time and never lands in the Nix store.
+
+          Set exactly one of urlFile or url for each subscription entry.
         '';
-        example = "/run/secrets/my-sub-url";
+        example = "/run/secrets/proxy-subscription-url";
       };
     };
   };
@@ -98,7 +118,14 @@ let
     options = {
       tag = mkOption {
         type = types.str;
-        description = "Outbound tag. Used in routing rules and multi-outbound selection.";
+        description = ''
+          Outbound tag used in routing rules and multi-outbound selection.
+
+          With selection = "selector" or "urltest", each outbound keeps its own
+          tag and can be selected directly. With selection = "first", sing-box
+          routes through a single active outbound tagged "proxy", so individual
+          proxy tags are mainly useful for documentation and config structure.
+        '';
         example = "vps-de";
       };
 
@@ -108,11 +135,11 @@ let
         description = ''
           Runtime path to a file containing the proxy URL.
           Intended for use with secret managers (sops-nix, agenix, etc.).
-          The file is read at service start time and never lands in the nix store.
+          The file is read at service start time and never lands in the Nix store.
 
-          Example with sops-nix:
-            urlFile = config.sops.secrets.my_proxy_url.path;
+          Set exactly one of urlFile, url, or json for each outbound.
         '';
+        example = "/run/secrets/my-proxy-url";
       };
 
       url = mkOption {
@@ -120,7 +147,10 @@ let
         default = null;
         description = ''
           Literal proxy URL. Convenient for non-secret configs, but the URL
-          will end up in the nix store. Use urlFile for actual credentials.
+          will end up in the Nix store.
+
+          Set exactly one of urlFile, url, or json for each outbound.
+          Prefer urlFile for real credentials.
         '';
         example = "hy2://password@example.com:443?sni=example.com";
       };
@@ -132,6 +162,10 @@ let
           Raw sing-box outbound configuration as a Nix attribute set.
           Embedded directly into the config at build time. The tag field
           is overridden by the outbound's tag option.
+
+          Set exactly one of urlFile, url, or json for each outbound.
+          Use this when the proxy definition is easier to generate as native Nix
+          than as a single URL string.
         '';
         example = {
           type = "vless";
@@ -161,14 +195,20 @@ let
     options = {
       name = mkOption {
         type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
-        description = "Custom hostlist name. Used to generate list-<name>.txt.";
+        description = ''
+          Custom hostlist name. Used to generate hostlists/list-<name>.txt
+          inside the derived zapret config directory.
+        '';
         example = "cloudflare";
       };
 
       domains = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "Domains written into the generated custom zapret hostlist.";
+        description = ''
+          Domains written into the generated custom zapret hostlist file.
+          Must be non-empty for every hostlistRules entry.
+        '';
         example = [
           "example.com"
           "example.de"
@@ -178,7 +218,10 @@ let
       preset = mkOption {
         type = types.nullOr zapretPresetType;
         default = null;
-        description = "Clone the active zapret config's built-in rule family for this hostlist.";
+        description = ''
+          Clone the active zapret config's built-in NFQWS rule family for this
+          hostlist. Can be combined with nfqwsArgs for additional custom rules.
+        '';
         example = "google";
       };
 
@@ -188,6 +231,8 @@ let
         description = ''
           Additional NFQWS argument fragments for this hostlist.
           The module injects --hostlist=... and trailing --new automatically.
+
+          Each hostlistRules entry must define preset, nfqwsArgs, or both.
         '';
         example = [
           "--filter-tcp=443 --dpi-desync=fake,multisplit"
@@ -197,7 +242,10 @@ let
       enableDirectSync = mkOption {
         type = types.bool;
         default = true;
-        description = "Whether this custom hostlist should also be mirrored into sing-box direct domain routing.";
+        description = ''
+          Whether this custom hostlist should also be mirrored into sing-box
+          direct domain routing when zapret.syncDirectRouting = true.
+        '';
       };
     };
   };
@@ -211,16 +259,33 @@ in
       enable = mkOption {
         type = types.bool;
         default = true;
-        description = "Whether to configure and run sing-box.";
+        description = ''
+          Whether to configure and run sing-box services for proxy-suite.
+          When disabled, singBox.* options are ignored even if proxy-suite itself
+          is enabled.
+        '';
       };
 
       outbounds = mkOption {
         type = types.listOf outboundType;
         default = [ ];
         description = ''
-          List of proxy outbounds. Set exactly one of urlFile, url, or json per entry.
-          At least one outbound (or one subscription) is required when singBox.enable = true.
+          List of static proxy outbounds.
+          Set exactly one of urlFile, url, or json per entry.
+
+          At least one outbound or one subscription is required when
+          singBox.enable = true.
         '';
+        example = [
+          {
+            tag = "de-vps";
+            urlFile = "/run/secrets/proxy-de-url";
+          }
+          {
+            tag = "nl-vps";
+            url = "hy2://password@example.com:443?sni=example.com";
+          }
+        ];
       };
 
       subscriptions = mkOption {
@@ -231,11 +296,13 @@ in
           Each URL must return a base64-encoded newline-separated list of proxy URIs
           (standard v2rayN / Clash subscription format) or plain text of the same.
 
-          On first service start the subscription is fetched live. Subsequent starts
-          use the on-disk cache under /var/lib/proxy-suite/subscriptions/.
+          On first service start, each subscription is fetched live and cached
+          under /var/lib/proxy-suite/subscriptions/<tag>.json. Later restarts
+          reuse the cache, so ordinary service restarts do not need network access.
 
           A systemd timer (proxy-suite-subscription-update) refreshes all caches on
-          the interval set by subscriptionUpdateInterval and restarts the service.
+          the interval set by subscriptionUpdateInterval and restarts the running
+          sing-box services after a successful refresh.
         '';
         example = [
           {
@@ -256,7 +323,9 @@ in
           How often the proxy-suite-subscription-update timer fires and refreshes
           all subscription caches. Accepts any systemd time span string
           (e.g. "1h", "6h", "1d", "12h").
-          Only used when subscriptions is non-empty.
+
+          Only used when singBox.subscriptions is non-empty. The timer also runs
+          once shortly after boot.
         '';
         example = "6h";
       };
@@ -269,11 +338,24 @@ in
         ];
         default = "first";
         description = ''
-          How to pick between multiple outbounds:
-          - "first": use the first outbound only (no overhead, simplest)
-          - "selector": expose a Clash-compatible API for manual switching
-          - "urltest": measure latency periodically and auto-switch to the fastest
+          How to pick between multiple proxy outbounds:
+
+          - "first": route through a single active outbound tagged "proxy".
+            The first static outbound is used, or the first subscription
+            outbound if only subscriptions are configured.
+          - "selector": create a Clash-compatible selector outbound tagged
+            "proxy" and keep all configured outbounds available for manual
+            switching via the Clash API.
+          - "urltest": create an automatic latency-testing outbound tagged
+            "proxy" and keep all configured outbounds available so sing-box
+            can periodically probe and switch to a faster one.
+
+          clashApiPort is only used with "selector" or "urltest".
+          urlTest.* options are only used with "urltest".
+          Per-outbound tags are only individually meaningful with "selector"
+          or "urltest".
         '';
+        example = "urltest";
       };
 
       urlTest = {
@@ -287,7 +369,7 @@ in
             Set this to a URL that is actually blocked in your region (e.g.
             "https://telegram.org") so that only proxies that bypass the
             blocking get selected. If left at the default, any responding proxy
-            wins — including ones that might not unblock your target site.
+            wins – including ones that might not unblock your target site.
           '';
           example = "https://telegram.org";
         };
@@ -297,7 +379,8 @@ in
           default = "3m";
           description = ''
             How often sing-box re-tests all outbounds. Accepts a Go duration
-            string (e.g. "1m", "3m", "10m"). Only used when selection = "urltest".
+            string (e.g. "1m", "3m", "10m").
+            Only used when selection = "urltest".
           '';
           example = "1m";
         };
@@ -308,6 +391,7 @@ in
           description = ''
             Latency tolerance in milliseconds. The current proxy is only replaced
             when a competing one is faster by more than this value.
+
             Only used when selection = "urltest".
           '';
           example = 100;
@@ -317,7 +401,12 @@ in
       clashApiPort = mkOption {
         type = types.port;
         default = 9090;
-        description = "Port for the Clash-compatible REST API. Only used when selection is selector or urltest.";
+        description = ''
+          Port for the Clash-compatible REST API exposed by sing-box.
+          Only used when selection is "selector" or "urltest". Ignored in
+          "first" mode because there is no selector-style outbound to control.
+        '';
+        example = 9090;
       };
 
       listenAddress = mkOption {
@@ -325,44 +414,78 @@ in
         default = "127.0.0.1";
         description = ''
           Address for the SOCKS5/HTTP mixed inbound to bind to.
-          Use "0.0.0.0" only if you intentionally want to expose the proxy.
+          This affects the always-on proxy-suite-socks service.
+
+          Use "0.0.0.0" only if you intentionally want to expose the proxy to
+          other machines on your network.
         '';
+        example = "127.0.0.1";
       };
 
       port = mkOption {
         type = types.port;
         default = 1080;
-        description = "SOCKS5/HTTP mixed inbound listen port.";
+        description = ''
+          Listen port for the always-on SOCKS5/HTTP mixed inbound provided by
+          proxy-suite-socks.
+        '';
+        example = 1080;
       };
 
       tproxyPort = mkOption {
         type = types.port;
         default = 1081;
-        description = "Transparent proxy (TProxy) inbound listen port.";
+        description = ''
+          Listen port for the local sing-box TProxy inbound.
+          Only relevant when singBox.tproxy.enable = true.
+        '';
+        example = 1081;
       };
 
       fwmark = mkOption {
         type = types.int;
         default = 1;
-        description = "Netfilter mark set on packets intercepted by TProxy for policy routing.";
+        description = ''
+          Netfilter mark set on packets intercepted by TProxy so policy routing
+          can send them to the local loopback route table.
+          Only relevant when singBox.tproxy.enable = true.
+        '';
+        example = 1;
       };
 
       proxyMark = mkOption {
         type = types.int;
         default = 2;
-        description = "Netfilter mark set on sing-box's own outbound packets so they bypass TProxy re-interception.";
+        description = ''
+          Netfilter mark set on sing-box's own outbound packets so they bypass
+          TProxy re-interception loops.
+          Only relevant when singBox.tproxy.enable = true.
+        '';
+        example = 2;
       };
 
       routeTable = mkOption {
         type = types.int;
         default = 100;
-        description = "Policy routing table used to redirect TProxy-marked packets to the loopback interface.";
+        description = ''
+          Policy routing table used to redirect TProxy-marked packets to the
+          loopback interface.
+          Only relevant when singBox.tproxy.enable = true.
+        '';
+        example = 100;
       };
 
       proxyByDefault = mkOption {
         type = types.bool;
         default = true;
-        description = "If true, traffic not matching any routing rule goes through the proxy. If false, it goes direct.";
+        description = ''
+          Whether traffic that does not match any explicit routing rule should
+          go through the proxy or go direct.
+
+          This affects both sing-box route.final and the default DNS resolver
+          choice in the generated config.
+        '';
+        example = true;
       };
 
       tun = {
@@ -371,19 +494,31 @@ in
         interface = mkOption {
           type = types.str;
           default = "singtun0";
-          description = "TUN interface name.";
+          description = ''
+            Name of the TUN interface created by proxy-suite-tun.
+            Only relevant when singBox.tun.enable = true.
+          '';
+          example = "singtun0";
         };
 
         address = mkOption {
           type = types.str;
           default = "172.19.0.1/30";
-          description = "TUN interface address (CIDR).";
+          description = ''
+            Address assigned to the TUN interface in CIDR notation.
+            Only relevant when singBox.tun.enable = true.
+          '';
+          example = "172.19.0.1/30";
         };
 
         mtu = mkOption {
           type = types.int;
           default = 1400;
-          description = "TUN interface MTU.";
+          description = ''
+            MTU for the TUN interface created by proxy-suite-tun.
+            Only relevant when singBox.tun.enable = true.
+          '';
+          example = 1400;
         };
       };
 
@@ -395,8 +530,11 @@ in
           default = [ "192.168.0.0/16" ];
           description = ''
             Subnets whose traffic bypasses TProxy interception, except DNS (port 53).
-            Typically your LAN subnet(s). VM bridge networks should go here too,
-            or use zapret.cidrExemption for subnet-specific NFQUEUE exemption.
+            Only relevant when singBox.tproxy.enable = true.
+
+            Typically this should include your LAN subnet(s). VM bridge networks
+            should usually go here too, or use zapret.cidrExemption for
+            subnet-specific NFQUEUE exemption on the zapret side.
           '';
           example = [
             "192.168.0.0/16"
@@ -409,7 +547,13 @@ in
         enableRuDirect = mkOption {
           type = types.bool;
           default = true;
-          description = "Automatically send sing-geosite category-ru and sing-geoip ru traffic direct.";
+          description = ''
+            Automatically append "category-ru" to routing.direct.geosites and
+            "ru" to routing.direct.geoips.
+
+            This is additive: user-defined routing.direct.* entries still apply.
+          '';
+          example = true;
         };
 
         proxy = routingFields;
@@ -418,22 +562,40 @@ in
           domains = mkOption {
             type = types.listOf types.str;
             default = [ ];
-            description = "Domain suffixes to send direct (bypass proxy).";
+            description = ''
+              Domain suffixes to send direct (bypass proxy).
+              Merged with zapret-synced direct domains when zapret direct sync
+              options are enabled.
+            '';
+            example = [ "internal.example" ];
           };
           ips = mkOption {
             type = types.listOf types.str;
             default = [ ];
-            description = "IP CIDRs to send direct.";
+            description = ''
+              IP CIDRs to send direct.
+              Merged with zapret-synced direct IPs when the corresponding zapret
+              sync options are enabled.
+            '';
+            example = [ "10.10.0.0/16" ];
           };
           geosites = mkOption {
             type = types.listOf types.str;
             default = [ ];
-            description = "sing-geosite names to send direct.";
+            description = ''
+              sing-geosite names to send direct.
+              "category-ru" is added automatically when enableRuDirect = true.
+            '';
+            example = [ "category-ru" ];
           };
           geoips = mkOption {
             type = types.listOf types.str;
             default = [ ];
-            description = "sing-geoip names to send direct.";
+            description = ''
+              sing-geoip names to send direct.
+              "ru" is added automatically when enableRuDirect = true.
+            '';
+            example = [ "ru" ];
           };
         };
 
@@ -442,21 +604,25 @@ in
             type = types.listOf types.str;
             default = [ ];
             description = "Domain suffixes to block entirely.";
+            example = [ "ads.example.com" ];
           };
           ips = mkOption {
             type = types.listOf types.str;
             default = [ ];
             description = "IP CIDRs to block.";
+            example = [ "203.0.113.0/24" ];
           };
           geosites = mkOption {
             type = types.listOf types.str;
             default = [ ];
             description = "sing-geosite names to block.";
+            example = [ "category-ads-all" ];
           };
           geoips = mkOption {
             type = types.listOf types.str;
             default = [ ];
             description = "sing-geoip names to block.";
+            example = [ "cn" ];
           };
         };
 
@@ -478,12 +644,16 @@ in
 
             The outbound can be a configured outbound tag (useful with selector/urltest),
             or one of: "proxy" (active proxy), "direct", "block".
+
+            Order is preserved. The first matching rule wins in sing-box.
+            With selection = "first", non-built-in outbound tags are effectively
+            routed to the single active "proxy" outbound.
           '';
           example = [
             {
               outbound = "vps-de";
+              domains = [ "netflix.com" ];
               geosites = [ "netflix" ];
-              geoips = [ "us" ];
             }
             {
               outbound = "direct";
@@ -504,55 +674,99 @@ in
       syncDirectRouting = mkOption {
         type = types.bool;
         default = true;
-        description = "When zapret is enabled, mirror its upstream domain hostlists into sing-box direct routing.";
+        description = ''
+          When zapret.enable = true, mirror zapret's upstream domain hostlists
+          into sing-box direct domain routing.
+
+          This includes the default zapret domain lists and any custom
+          hostlistRules entries with enableDirectSync = true.
+        '';
+        example = true;
       };
 
       syncDirectRoutingUpstreamIps = mkOption {
         type = types.bool;
         default = false;
-        description = "When zapret is enabled, mirror its upstream ipset ranges into sing-box direct routing.";
+        description = ''
+          When zapret.enable = true, mirror zapret's upstream ipset ranges
+          (such as ipset-all.txt minus exclusions) into sing-box direct IP routing.
+        '';
+        example = false;
       };
 
       syncDirectRoutingUserIps = mkOption {
         type = types.bool;
         default = true;
-        description = "When zapret is enabled, mirror user-defined ipsetAll/ipsetExclude entries into sing-box direct routing.";
+        description = ''
+          When zapret.enable = true, mirror user-defined zapret.ipsetAll and
+          zapret.ipsetExclude entries into sing-box direct IP routing.
+        '';
+        example = true;
       };
 
       configName = mkOption {
         type = types.str;
         default = "general(ALT)";
-        description = "zapret strategy preset name.";
+        description = ''
+          zapret strategy preset name passed through to the generated zapret
+          configuration.
+          Only relevant when zapret.enable = true.
+        '';
+        example = "general(ALT)";
       };
 
       gameFilter = mkOption {
         type = types.str;
         default = "null";
-        description = ''zapret game traffic filter mode: "all", "tcp", "udp", or "null" to disable.'';
+        description = ''
+          zapret game traffic filter mode: "all", "tcp", "udp", or "null" to disable.
+          Only relevant when zapret.enable = true.
+        '';
+        example = "null";
       };
 
       listGeneral = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "Extra domains to include in zapret's interception list.";
+        description = ''
+          Extra domains to include in zapret's interception list.
+          When syncDirectRouting = true, these domains are also mirrored into
+          sing-box direct routing.
+        '';
+        example = [ "youtube.com" ];
       };
 
       listExclude = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "Domains to exclude from zapret interception.";
+        description = ''
+          Domains to exclude from zapret interception.
+          When syncDirectRouting = true, these exclusions also remove matching
+          domains from the zapret-derived sing-box direct-routing set.
+        '';
+        example = [ "music.youtube.com" ];
       };
 
       ipsetAll = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "Extra IPs/CIDRs to add to zapret's ipset.";
+        description = ''
+          Extra IPs/CIDRs to add to zapret's ipset.
+          Mirrored into sing-box direct IP routing when
+          syncDirectRoutingUserIps = true.
+        '';
+        example = [ "203.0.113.0/24" ];
       };
 
       ipsetExclude = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "IPs/CIDRs to exclude from zapret's ipset.";
+        description = ''
+          IPs/CIDRs to exclude from zapret's ipset.
+          Also excluded from zapret-derived sing-box direct IP routing when
+          syncDirectRoutingUserIps = true.
+        '';
+        example = [ "203.0.113.10/32" ];
       };
 
       includeExtraUpstreamLists = mkOption {
@@ -562,7 +776,11 @@ in
           Automatically activate upstream list-instagram.txt, list-soundcloud.txt,
           and list-twitter.txt in the generated zapret config when the selected
           upstream preset does not already reference them.
+
+          When syncDirectRouting = true, domains from these extra lists are also
+          mirrored into sing-box direct routing.
         '';
+        example = false;
       };
 
       hostlistRules = mkOption {
@@ -572,6 +790,9 @@ in
           Additional named zapret hostlists with per-list DPI mitigation rules.
           Each entry generates hostlists/list-<name>.txt and can clone a built-in
           zapret family, add custom NFQWS rule fragments, or both.
+
+          Each entry must define at least one domain and at least one of preset
+          or nfqwsArgs.
         '';
         example = [
           {
@@ -588,6 +809,7 @@ in
               "example.com"
               "example.de"
             ];
+            preset = "general";
             nfqwsArgs = [
               "--filter-tcp=443 --dpi-desync=fake,multisplit"
             ];
@@ -607,6 +829,8 @@ in
           ];
           description = ''
             Subnets to exempt from zapret's NFQUEUE mangle rules.
+            Only relevant when zapret.enable = true and cidrExemption.enable = true.
+
             Useful when a VM (libvirt, etc.) is behind NAT and zapret
             would corrupt its traffic through the host's nftables.
           '';
@@ -620,13 +844,22 @@ in
       pollInterval = mkOption {
         type = types.int;
         default = 5;
-        description = "Status polling interval in seconds.";
+        description = ''
+          Status polling interval in seconds for the tray application.
+          Only relevant when tray.enable = true.
+        '';
+        example = 5;
       };
 
       autostart = mkOption {
         type = types.bool;
         default = true;
-        description = "Whether to autostart the tray application for all graphical users via XDG desktop autostart.";
+        description = ''
+          Whether to install an XDG autostart entry for the tray application for
+          graphical users.
+          Only relevant when tray.enable = true.
+        '';
+        example = true;
       };
     };
 
@@ -636,13 +869,21 @@ in
       port = mkOption {
         type = types.port;
         default = 1076;
-        description = "Port to listen on.";
+        description = ''
+          Listen port for the tg-ws-proxy service.
+          Only relevant when tgWsProxy.enable = true.
+        '';
+        example = 1076;
       };
 
       host = mkOption {
         type = types.str;
         default = "0.0.0.0";
-        description = "Address to bind to.";
+        description = ''
+          Address to bind tg-ws-proxy to.
+          Only relevant when tgWsProxy.enable = true.
+        '';
+        example = "0.0.0.0";
       };
 
       secret = mkOption {
@@ -650,7 +891,9 @@ in
         default = null;
         description = ''
           MTProto proxy secret (hex string). Legacy inline form; this value ends up
-          in the nix store. Prefer secretFile for real deployments.
+          in the Nix store. Prefer secretFile for real deployments.
+
+          Set exactly one of secret or secretFile when tgWsProxy.enable = true.
           Generate one with: openssl rand -hex 16
         '';
         example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -661,7 +904,9 @@ in
         default = null;
         description = ''
           Runtime path to a file containing the MTProto proxy secret.
-          Intended for use with secret managers so the secret stays out of the nix store.
+          Intended for use with secret managers so the secret stays out of the Nix store.
+
+          Set exactly one of secretFile or secret when tgWsProxy.enable = true.
         '';
         example = "/run/secrets/tg-ws-proxy-secret";
       };
@@ -672,7 +917,10 @@ in
           "2" = "149.154.167.220";
           "4" = "149.154.167.220";
         };
-        description = "Map of Telegram DC ID to IP address for relay.";
+        description = ''
+          Map of Telegram DC ID to IP address for relay.
+          Only relevant when tgWsProxy.enable = true.
+        '';
         example = {
           "1" = "149.154.175.50";
           "2" = "149.154.167.51";

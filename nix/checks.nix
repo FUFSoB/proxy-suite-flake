@@ -2,6 +2,7 @@
   system,
   nixpkgs,
   proxySuiteModule,
+  generatedOptionsDoc,
   zapret,
 }:
 
@@ -1005,6 +1006,11 @@ in
       echo "secret-like content detected in source tree" >&2
       exit 1
     fi
+    touch "$out"
+  '';
+
+  options-doc = pkgs.runCommand "proxy-suite-options-doc-check" { nativeBuildInputs = [ pkgs.diffutils ]; } ''
+    diff -u ${../docs/options.md} ${generatedOptionsDoc}
     touch "$out"
   '';
 }

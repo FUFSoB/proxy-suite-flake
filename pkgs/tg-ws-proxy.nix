@@ -4,7 +4,7 @@ let
   src = pkgs.fetchFromGitHub {
     owner = "Flowseal";
     repo = "tg-ws-proxy";
-    rev = "b48ac67b9f0b6818fc8a98e3cf06765926c94c92";
+    rev = "v1.6.1";
     hash = "sha256-7dFHrD8lrxzQsjGanCWao5zEIIx+swcKRKo+mI/fMlQ=";
   };
 
