@@ -3,6 +3,123 @@
 This file is generated from the `services.proxy-suite` option descriptions in [`modules/proxy-suite/options.nix`](modules/proxy-suite/options.nix).
 Update module option docs there instead of editing this file by hand.
 
+## Table of contents
+
+- Config samples
+  - [Complete default config](#complete-default-config)
+  - [Complete example config](#complete-example-config)
+- services.proxy-suite
+  - [enable](#services-proxy-suite-enable)
+  - singBox
+    - [enable](#services-proxy-suite-singbox-enable)
+    - [clashApiPort](#services-proxy-suite-singbox-clashapiport)
+    - dns
+      - [local](#services-proxy-suite-singbox-dns-local)
+        - [address](#services-proxy-suite-singbox-dns-local-address)
+        - [port](#services-proxy-suite-singbox-dns-local-port)
+        - [type](#services-proxy-suite-singbox-dns-local-type)
+      - [remote](#services-proxy-suite-singbox-dns-remote)
+        - [address](#services-proxy-suite-singbox-dns-remote-address)
+        - [port](#services-proxy-suite-singbox-dns-remote-port)
+        - [type](#services-proxy-suite-singbox-dns-remote-type)
+    - [fwmark](#services-proxy-suite-singbox-fwmark)
+    - [listenAddress](#services-proxy-suite-singbox-listenaddress)
+    - [outbounds](#services-proxy-suite-singbox-outbounds)
+      - item
+        - [json](#services-proxy-suite-singbox-outbounds-json)
+        - routing
+          - [domains](#services-proxy-suite-singbox-outbounds-routing-domains)
+          - [geoips](#services-proxy-suite-singbox-outbounds-routing-geoips)
+          - [geosites](#services-proxy-suite-singbox-outbounds-routing-geosites)
+          - [ips](#services-proxy-suite-singbox-outbounds-routing-ips)
+        - [tag](#services-proxy-suite-singbox-outbounds-tag)
+        - [url](#services-proxy-suite-singbox-outbounds-url)
+        - [urlFile](#services-proxy-suite-singbox-outbounds-urlfile)
+    - [port](#services-proxy-suite-singbox-port)
+    - [proxyByDefault](#services-proxy-suite-singbox-proxybydefault)
+    - [proxyMark](#services-proxy-suite-singbox-proxymark)
+    - [routeTable](#services-proxy-suite-singbox-routetable)
+    - routing
+      - [enableRuDirect](#services-proxy-suite-singbox-routing-enablerudirect)
+      - block
+        - [domains](#services-proxy-suite-singbox-routing-block-domains)
+        - [geoips](#services-proxy-suite-singbox-routing-block-geoips)
+        - [geosites](#services-proxy-suite-singbox-routing-block-geosites)
+        - [ips](#services-proxy-suite-singbox-routing-block-ips)
+      - direct
+        - [domains](#services-proxy-suite-singbox-routing-direct-domains)
+        - [geoips](#services-proxy-suite-singbox-routing-direct-geoips)
+        - [geosites](#services-proxy-suite-singbox-routing-direct-geosites)
+        - [ips](#services-proxy-suite-singbox-routing-direct-ips)
+      - proxy
+        - [domains](#services-proxy-suite-singbox-routing-proxy-domains)
+        - [geoips](#services-proxy-suite-singbox-routing-proxy-geoips)
+        - [geosites](#services-proxy-suite-singbox-routing-proxy-geosites)
+        - [ips](#services-proxy-suite-singbox-routing-proxy-ips)
+      - [rules](#services-proxy-suite-singbox-routing-rules)
+        - item
+          - [domains](#services-proxy-suite-singbox-routing-rules-domains)
+          - [geoips](#services-proxy-suite-singbox-routing-rules-geoips)
+          - [geosites](#services-proxy-suite-singbox-routing-rules-geosites)
+          - [ips](#services-proxy-suite-singbox-routing-rules-ips)
+          - [outbound](#services-proxy-suite-singbox-routing-rules-outbound)
+    - [selection](#services-proxy-suite-singbox-selection)
+    - [subscriptionUpdateInterval](#services-proxy-suite-singbox-subscriptionupdateinterval)
+    - [subscriptions](#services-proxy-suite-singbox-subscriptions)
+      - item
+        - [tag](#services-proxy-suite-singbox-subscriptions-tag)
+        - [url](#services-proxy-suite-singbox-subscriptions-url)
+        - [urlFile](#services-proxy-suite-singbox-subscriptions-urlfile)
+    - tproxy
+      - [enable](#services-proxy-suite-singbox-tproxy-enable)
+      - [autostart](#services-proxy-suite-singbox-tproxy-autostart)
+      - [localSubnets](#services-proxy-suite-singbox-tproxy-localsubnets)
+    - [tproxyPort](#services-proxy-suite-singbox-tproxyport)
+    - tun
+      - [enable](#services-proxy-suite-singbox-tun-enable)
+      - [address](#services-proxy-suite-singbox-tun-address)
+      - [autostart](#services-proxy-suite-singbox-tun-autostart)
+      - [interface](#services-proxy-suite-singbox-tun-interface)
+      - [mtu](#services-proxy-suite-singbox-tun-mtu)
+    - urlTest
+      - [interval](#services-proxy-suite-singbox-urltest-interval)
+      - [tolerance](#services-proxy-suite-singbox-urltest-tolerance)
+      - [url](#services-proxy-suite-singbox-urltest-url)
+  - tgWsProxy
+    - [enable](#services-proxy-suite-tgwsproxy-enable)
+    - [dcIps](#services-proxy-suite-tgwsproxy-dcips)
+    - [host](#services-proxy-suite-tgwsproxy-host)
+    - [port](#services-proxy-suite-tgwsproxy-port)
+    - [secret](#services-proxy-suite-tgwsproxy-secret)
+    - [secretFile](#services-proxy-suite-tgwsproxy-secretfile)
+  - tray
+    - [enable](#services-proxy-suite-tray-enable)
+    - [autostart](#services-proxy-suite-tray-autostart)
+    - [pollInterval](#services-proxy-suite-tray-pollinterval)
+  - zapret
+    - [enable](#services-proxy-suite-zapret-enable)
+    - cidrExemption
+      - [enable](#services-proxy-suite-zapret-cidrexemption-enable)
+      - [cidrs](#services-proxy-suite-zapret-cidrexemption-cidrs)
+    - [configName](#services-proxy-suite-zapret-configname)
+    - [gameFilter](#services-proxy-suite-zapret-gamefilter)
+    - [hostlistRules](#services-proxy-suite-zapret-hostlistrules)
+      - item
+        - [enableDirectSync](#services-proxy-suite-zapret-hostlistrules-enabledirectsync)
+        - [domains](#services-proxy-suite-zapret-hostlistrules-domains)
+        - [name](#services-proxy-suite-zapret-hostlistrules-name)
+        - [nfqwsArgs](#services-proxy-suite-zapret-hostlistrules-nfqwsargs)
+        - [preset](#services-proxy-suite-zapret-hostlistrules-preset)
+    - [includeExtraUpstreamLists](#services-proxy-suite-zapret-includeextraupstreamlists)
+    - [ipsetAll](#services-proxy-suite-zapret-ipsetall)
+    - [ipsetExclude](#services-proxy-suite-zapret-ipsetexclude)
+    - [listExclude](#services-proxy-suite-zapret-listexclude)
+    - [listGeneral](#services-proxy-suite-zapret-listgeneral)
+    - [syncDirectRouting](#services-proxy-suite-zapret-syncdirectrouting)
+    - [syncDirectRoutingUpstreamIps](#services-proxy-suite-zapret-syncdirectroutingupstreamips)
+    - [syncDirectRoutingUserIps](#services-proxy-suite-zapret-syncdirectroutinguserips)
+
+<a id="complete-default-config"></a>
 ## Complete default config
 
 ```nix
@@ -110,6 +227,220 @@ services.proxy-suite = {
 };
 ```
 
+<a id="complete-example-config"></a>
+## Complete example config
+
+This is generated by filling in all the options with example values (or defaults if no example is provided). This is not meant to be a recommended config, just a comprehensive example of how to set all the options.
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  singBox = {
+    clashApiPort = 9090;
+    dns = {
+      local = {
+        address = "9.9.9.9";
+        port = 53;
+        type = "tcp";
+      };
+      remote = {
+        address = "1.1.1.1";
+        port = 853;
+        type = "tls";
+      };
+    };
+    enable = true;
+    fwmark = 1;
+    listenAddress = "127.0.0.1";
+    outbounds = [
+      {
+        tag = "de-vps";
+        urlFile = "/run/secrets/proxy-de-url";
+      }
+      {
+        tag = "nl-vps";
+        url = "hy2://password@example.com:443?sni=example.com";
+      }
+    ];
+    port = 1080;
+    proxyByDefault = true;
+    proxyMark = 2;
+    routeTable = 100;
+    routing = {
+      block = {
+        domains = [
+          "ads.example.com"
+        ];
+        geoips = [
+          "cn"
+        ];
+        geosites = [
+          "category-ads-all"
+        ];
+        ips = [
+          "203.0.113.0/24"
+        ];
+      };
+      direct = {
+        domains = [
+          "internal.example"
+        ];
+        geoips = [
+          "ru"
+        ];
+        geosites = [
+          "category-ru"
+        ];
+        ips = [
+          "10.10.0.0/16"
+        ];
+      };
+      enableRuDirect = true;
+      proxy = {
+        domains = [
+          "youtube.com"
+          "discord.com"
+        ];
+        geoips = [
+          "us"
+          "de"
+        ];
+        geosites = [
+          "netflix"
+          "google"
+        ];
+        ips = [
+          "1.1.1.0/24"
+        ];
+      };
+      rules = [
+        {
+          domains = [
+            "netflix.com"
+          ];
+          geosites = [
+            "netflix"
+          ];
+          outbound = "vps-de";
+        }
+        {
+          domains = [
+            "internal.corp"
+          ];
+          outbound = "direct";
+        }
+        {
+          domains = [
+            "ads.example.com"
+          ];
+          outbound = "block";
+        }
+      ];
+    };
+    selection = "urltest";
+    subscriptionUpdateInterval = "6h";
+    subscriptions = [
+      {
+        tag = "community";
+        url = "https://example.com/sub/token";
+      }
+      {
+        tag = "private";
+        urlFile = "/run/secrets/private-sub-url";
+      }
+    ];
+    tproxy = {
+      autostart = true;
+      enable = true;
+      localSubnets = [
+        "192.168.0.0/16"
+        "10.0.0.0/8"
+      ];
+    };
+    tproxyPort = 1081;
+    tun = {
+      address = "172.19.0.1/30";
+      autostart = true;
+      enable = true;
+      interface = "singtun0";
+      mtu = 1400;
+    };
+    urlTest = {
+      interval = "1m";
+      tolerance = 100;
+      url = "https://telegram.org";
+    };
+  };
+  tgWsProxy = {
+    dcIps = {
+      "2" = "149.154.167.220";
+      "203" = "149.154.167.220";
+      "4" = "149.154.167.220";
+    };
+    enable = true;
+    host = "127.0.0.1";
+    port = 1076;
+    secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    secretFile = "/run/secrets/tg-ws-proxy-secret";
+  };
+  tray = {
+    autostart = true;
+    enable = true;
+    pollInterval = 5;
+  };
+  zapret = {
+    cidrExemption = {
+      cidrs = [
+        "192.168.123.0/24"
+        "10.0.0.0/8"
+      ];
+      enable = true;
+    };
+    configName = "general(ALT)";
+    enable = true;
+    gameFilter = "null";
+    hostlistRules = [
+      {
+        domains = [
+          "googlevideo.com"
+          "ggpht.com"
+        ];
+        name = "googlevideo";
+        preset = "google";
+      }
+      {
+        domains = [
+          "example.com"
+          "example.de"
+        ];
+        name = "example";
+        nfqwsArgs = [
+          "--filter-tcp=443 --dpi-desync=fake,multisplit"
+        ];
+        preset = "general";
+      }
+    ];
+    includeExtraUpstreamLists = false;
+    ipsetAll = [
+      "203.0.113.0/24"
+    ];
+    ipsetExclude = [
+      "203.0.113.10/32"
+    ];
+    listExclude = [
+      "music.youtube.com"
+    ];
+    listGeneral = [
+      "youtube.com"
+    ];
+    syncDirectRouting = true;
+    syncDirectRoutingUpstreamIps = false;
+    syncDirectRoutingUserIps = true;
+  };
+};
+```
+
+<a id="services-proxy-suite-enable"></a>
 ## services\.proxy-suite\.enable
 
 Whether to enable proxy suite (sing-box + zapret + tg-ws-proxy)\.
@@ -140,6 +471,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-enable"></a>
 ## services\.proxy-suite\.singBox\.enable
 
 
@@ -166,6 +498,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-clashapiport"></a>
 ## services\.proxy-suite\.singBox\.clashApiPort
 
 
@@ -200,6 +533,7 @@ Only used when selection is “selector” or “urltest”\. Ignored in
 
 
 
+<a id="services-proxy-suite-singbox-dns-local"></a>
 ## services\.proxy-suite\.singBox\.dns\.local
 
 
@@ -245,6 +579,7 @@ submodule
 
 
 
+<a id="services-proxy-suite-singbox-dns-local-address"></a>
 ## services\.proxy-suite\.singBox\.dns\.local\.address
 
 
@@ -269,6 +604,7 @@ string matching the pattern \.+
 
 
 
+<a id="services-proxy-suite-singbox-dns-local-port"></a>
 ## services\.proxy-suite\.singBox\.dns\.local\.port
 
 
@@ -301,6 +637,7 @@ Destination port for this DNS upstream\.
 
 
 
+<a id="services-proxy-suite-singbox-dns-local-type"></a>
 ## services\.proxy-suite\.singBox\.dns\.local\.type
 
 
@@ -333,6 +670,7 @@ one of “udp”, “tcp”, “tls”
 
 
 
+<a id="services-proxy-suite-singbox-dns-remote"></a>
 ## services\.proxy-suite\.singBox\.dns\.remote
 
 
@@ -376,6 +714,7 @@ submodule
 
 
 
+<a id="services-proxy-suite-singbox-dns-remote-address"></a>
 ## services\.proxy-suite\.singBox\.dns\.remote\.address
 
 
@@ -400,6 +739,7 @@ string matching the pattern \.+
 
 
 
+<a id="services-proxy-suite-singbox-dns-remote-port"></a>
 ## services\.proxy-suite\.singBox\.dns\.remote\.port
 
 
@@ -432,6 +772,7 @@ Destination port for this DNS upstream\.
 
 
 
+<a id="services-proxy-suite-singbox-dns-remote-type"></a>
 ## services\.proxy-suite\.singBox\.dns\.remote\.type
 
 
@@ -464,6 +805,7 @@ one of “udp”, “tcp”, “tls”
 
 
 
+<a id="services-proxy-suite-singbox-fwmark"></a>
 ## services\.proxy-suite\.singBox\.fwmark
 
 
@@ -498,6 +840,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-singbox-listenaddress"></a>
 ## services\.proxy-suite\.singBox\.listenAddress
 
 
@@ -534,6 +877,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds"></a>
 ## services\.proxy-suite\.singBox\.outbounds
 
 
@@ -579,6 +923,7 @@ list of (submodule)
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-json"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.json
 
 
@@ -622,6 +967,7 @@ null
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-routing-domains"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.domains
 
 
@@ -658,6 +1004,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-routing-geoips"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geoips
 
 
@@ -694,6 +1041,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-routing-geosites"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geosites
 
 
@@ -730,6 +1078,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-routing-ips"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.ips
 
 
@@ -765,6 +1114,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-tag"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.tag
 
 
@@ -794,6 +1144,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-url"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.url
 
 
@@ -830,6 +1181,7 @@ null
 
 
 
+<a id="services-proxy-suite-singbox-outbounds-urlfile"></a>
 ## services\.proxy-suite\.singBox\.outbounds\.\*\.urlFile
 
 
@@ -866,6 +1218,7 @@ null
 
 
 
+<a id="services-proxy-suite-singbox-port"></a>
 ## services\.proxy-suite\.singBox\.port
 
 
@@ -899,6 +1252,7 @@ proxy-suite-socks\.
 
 
 
+<a id="services-proxy-suite-singbox-proxybydefault"></a>
 ## services\.proxy-suite\.singBox\.proxyByDefault
 
 
@@ -935,6 +1289,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-proxymark"></a>
 ## services\.proxy-suite\.singBox\.proxyMark
 
 
@@ -969,6 +1324,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-singbox-routetable"></a>
 ## services\.proxy-suite\.singBox\.routeTable
 
 
@@ -1003,6 +1359,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-singbox-routing-enablerudirect"></a>
 ## services\.proxy-suite\.singBox\.routing\.enableRuDirect
 
 
@@ -1038,6 +1395,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-routing-block-domains"></a>
 ## services\.proxy-suite\.singBox\.routing\.block\.domains
 
 
@@ -1072,6 +1430,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-block-geoips"></a>
 ## services\.proxy-suite\.singBox\.routing\.block\.geoips
 
 
@@ -1106,6 +1465,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-block-geosites"></a>
 ## services\.proxy-suite\.singBox\.routing\.block\.geosites
 
 
@@ -1140,6 +1500,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-block-ips"></a>
 ## services\.proxy-suite\.singBox\.routing\.block\.ips
 
 
@@ -1174,6 +1535,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-direct-domains"></a>
 ## services\.proxy-suite\.singBox\.routing\.direct\.domains
 
 
@@ -1210,6 +1572,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-direct-geoips"></a>
 ## services\.proxy-suite\.singBox\.routing\.direct\.geoips
 
 
@@ -1245,6 +1608,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-direct-geosites"></a>
 ## services\.proxy-suite\.singBox\.routing\.direct\.geosites
 
 
@@ -1280,6 +1644,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-direct-ips"></a>
 ## services\.proxy-suite\.singBox\.routing\.direct\.ips
 
 
@@ -1316,6 +1681,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-proxy-domains"></a>
 ## services\.proxy-suite\.singBox\.routing\.proxy\.domains
 
 
@@ -1352,6 +1718,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-proxy-geoips"></a>
 ## services\.proxy-suite\.singBox\.routing\.proxy\.geoips
 
 
@@ -1388,6 +1755,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-proxy-geosites"></a>
 ## services\.proxy-suite\.singBox\.routing\.proxy\.geosites
 
 
@@ -1424,6 +1792,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-proxy-ips"></a>
 ## services\.proxy-suite\.singBox\.routing\.proxy\.ips
 
 
@@ -1459,6 +1828,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules
 
 
@@ -1521,6 +1891,7 @@ list of (submodule)
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules-domains"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules\.\*\.domains
 
 
@@ -1557,6 +1928,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules-geoips"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geoips
 
 
@@ -1593,6 +1965,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules-geosites"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geosites
 
 
@@ -1629,6 +2002,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules-ips"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules\.\*\.ips
 
 
@@ -1664,6 +2038,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-routing-rules-outbound"></a>
 ## services\.proxy-suite\.singBox\.routing\.rules\.\*\.outbound
 
 
@@ -1694,6 +2069,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-selection"></a>
 ## services\.proxy-suite\.singBox\.selection
 
 
@@ -1741,6 +2117,7 @@ one of “first”, “selector”, “urltest”
 
 
 
+<a id="services-proxy-suite-singbox-subscriptionupdateinterval"></a>
 ## services\.proxy-suite\.singBox\.subscriptionUpdateInterval
 
 
@@ -1778,6 +2155,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-subscriptions"></a>
 ## services\.proxy-suite\.singBox\.subscriptions
 
 
@@ -1829,6 +2207,7 @@ list of (submodule)
 
 
 
+<a id="services-proxy-suite-singbox-subscriptions-tag"></a>
 ## services\.proxy-suite\.singBox\.subscriptions\.\*\.tag
 
 
@@ -1855,6 +2234,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-subscriptions-url"></a>
 ## services\.proxy-suite\.singBox\.subscriptions\.\*\.url
 
 
@@ -1892,6 +2272,7 @@ null
 
 
 
+<a id="services-proxy-suite-singbox-subscriptions-urlfile"></a>
 ## services\.proxy-suite\.singBox\.subscriptions\.\*\.urlFile
 
 
@@ -1928,6 +2309,7 @@ null
 
 
 
+<a id="services-proxy-suite-singbox-tproxy-enable"></a>
 ## services\.proxy-suite\.singBox\.tproxy\.enable
 
 
@@ -1960,6 +2342,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-tproxy-autostart"></a>
 ## services\.proxy-suite\.singBox\.tproxy\.autostart
 
 
@@ -1995,6 +2378,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.singBox\.tproxy\.localSubnets
 
 
@@ -2037,6 +2421,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-singbox-tproxyport"></a>
 ## services\.proxy-suite\.singBox\.tproxyPort
 
 
@@ -2070,6 +2455,7 @@ Only relevant when singBox\.tproxy\.enable = true\.
 
 
 
+<a id="services-proxy-suite-singbox-tun-enable"></a>
 ## services\.proxy-suite\.singBox\.tun\.enable
 
 
@@ -2102,6 +2488,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-tun-address"></a>
 ## services\.proxy-suite\.singBox\.tun\.address
 
 
@@ -2135,6 +2522,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-tun-autostart"></a>
 ## services\.proxy-suite\.singBox\.tun\.autostart
 
 
@@ -2170,6 +2558,7 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-tun-interface"></a>
 ## services\.proxy-suite\.singBox\.tun\.interface
 
 
@@ -2203,6 +2592,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-tun-mtu"></a>
 ## services\.proxy-suite\.singBox\.tun\.mtu
 
 
@@ -2236,6 +2626,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-singbox-urltest-interval"></a>
 ## services\.proxy-suite\.singBox\.urlTest\.interval
 
 
@@ -2270,6 +2661,7 @@ string
 
 
 
+<a id="services-proxy-suite-singbox-urltest-tolerance"></a>
 ## services\.proxy-suite\.singBox\.urlTest\.tolerance
 
 
@@ -2305,6 +2697,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-singbox-urltest-url"></a>
 ## services\.proxy-suite\.singBox\.urlTest\.url
 
 
@@ -2343,6 +2736,7 @@ string
 
 
 
+<a id="services-proxy-suite-tgwsproxy-enable"></a>
 ## services\.proxy-suite\.tgWsProxy\.enable
 
 
@@ -2375,6 +2769,7 @@ true
 
 
 
+<a id="services-proxy-suite-tgwsproxy-dcips"></a>
 ## services\.proxy-suite\.tgWsProxy\.dcIps
 
 
@@ -2412,6 +2807,7 @@ attribute set of string
 
 
 
+<a id="services-proxy-suite-tgwsproxy-host"></a>
 ## services\.proxy-suite\.tgWsProxy\.host
 
 
@@ -2445,6 +2841,7 @@ string
 
 
 
+<a id="services-proxy-suite-tgwsproxy-port"></a>
 ## services\.proxy-suite\.tgWsProxy\.port
 
 
@@ -2478,6 +2875,7 @@ Only relevant when tgWsProxy\.enable = true\.
 
 
 
+<a id="services-proxy-suite-tgwsproxy-secret"></a>
 ## services\.proxy-suite\.tgWsProxy\.secret
 
 
@@ -2514,6 +2912,7 @@ null
 
 
 
+<a id="services-proxy-suite-tgwsproxy-secretfile"></a>
 ## services\.proxy-suite\.tgWsProxy\.secretFile
 
 
@@ -2549,6 +2948,7 @@ null
 
 
 
+<a id="services-proxy-suite-tray-enable"></a>
 ## services\.proxy-suite\.tray\.enable
 
 
@@ -2581,6 +2981,7 @@ true
 
 
 
+<a id="services-proxy-suite-tray-autostart"></a>
 ## services\.proxy-suite\.tray\.autostart
 
 
@@ -2615,6 +3016,7 @@ true
 
 
 
+<a id="services-proxy-suite-tray-pollinterval"></a>
 ## services\.proxy-suite\.tray\.pollInterval
 
 
@@ -2648,6 +3050,7 @@ signed integer
 
 
 
+<a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
 
 
@@ -2680,6 +3083,7 @@ true
 
 
 
+<a id="services-proxy-suite-zapret-cidrexemption-enable"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.enable
 
 
@@ -2712,6 +3116,7 @@ true
 
 
 
+<a id="services-proxy-suite-zapret-cidrexemption-cidrs"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.cidrs
 
 
@@ -2751,6 +3156,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-configname"></a>
 ## services\.proxy-suite\.zapret\.configName
 
 
@@ -2785,6 +3191,7 @@ string
 
 
 
+<a id="services-proxy-suite-zapret-gamefilter"></a>
 ## services\.proxy-suite\.zapret\.gameFilter
 
 
@@ -2818,6 +3225,7 @@ string
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules
 
 
@@ -2875,6 +3283,7 @@ list of (submodule)
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-enabledirectsync"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.enableDirectSync
 
 
@@ -2900,6 +3309,7 @@ true
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-domains"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.domains
 
 
@@ -2936,6 +3346,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-name"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.name
 
 
@@ -2961,6 +3372,7 @@ string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-nfqwsargs"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.nfqwsArgs
 
 
@@ -2998,6 +3410,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-preset"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.preset
 
 
@@ -3031,6 +3444,7 @@ null
 
 
 
+<a id="services-proxy-suite-zapret-includeextraupstreamlists"></a>
 ## services\.proxy-suite\.zapret\.includeExtraUpstreamLists
 
 
@@ -3068,6 +3482,7 @@ false
 
 
 
+<a id="services-proxy-suite-zapret-ipsetall"></a>
 ## services\.proxy-suite\.zapret\.ipsetAll
 
 
@@ -3104,6 +3519,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-ipsetexclude"></a>
 ## services\.proxy-suite\.zapret\.ipsetExclude
 
 
@@ -3140,6 +3556,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-listexclude"></a>
 ## services\.proxy-suite\.zapret\.listExclude
 
 
@@ -3176,6 +3593,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-listgeneral"></a>
 ## services\.proxy-suite\.zapret\.listGeneral
 
 
@@ -3212,6 +3630,7 @@ list of string
 
 
 
+<a id="services-proxy-suite-zapret-syncdirectrouting"></a>
 ## services\.proxy-suite\.zapret\.syncDirectRouting
 
 
@@ -3248,6 +3667,7 @@ true
 
 
 
+<a id="services-proxy-suite-zapret-syncdirectroutingupstreamips"></a>
 ## services\.proxy-suite\.zapret\.syncDirectRoutingUpstreamIps
 
 
@@ -3281,6 +3701,7 @@ false
 
 
 
+<a id="services-proxy-suite-zapret-syncdirectroutinguserips"></a>
 ## services\.proxy-suite\.zapret\.syncDirectRoutingUserIps
 
 

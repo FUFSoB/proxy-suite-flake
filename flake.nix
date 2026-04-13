@@ -23,65 +23,9 @@
       forAll = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: import nixpkgs { inherit system; };
       proxySuiteModule = import ./modules/proxy-suite { inherit zapret; };
-      mkOptionsDoc =
-        system:
-        let
-          pkgs = pkgsFor system;
-          lib = pkgs.lib;
-          eval = import "${nixpkgs}/nixos/lib/eval-config.nix" {
-            inherit system;
-            modules = [
-              proxySuiteModule
-              {
-                system.stateVersion = lib.trivial.release;
-              }
-            ];
-          };
-          defaultConfigText = lib.generators.toPretty { } eval.config.services.proxy-suite;
-          repoRoot = toString ./.;
-          repoUrl = "https://github.com/FUFSoB/proxy-suite-flake/blob/main";
-          transformDeclaration =
-            decl:
-            let
-              declStr = toString decl;
-              subpath = lib.removePrefix "/" (lib.removePrefix repoRoot declStr);
-            in
-            if lib.hasPrefix repoRoot declStr then
-              {
-                url = "${repoUrl}/${subpath}";
-                name = subpath;
-              }
-            else
-              decl;
-          optionDocs = pkgs.nixosOptionsDoc {
-            options = {
-              services = {
-                "proxy-suite" = eval.options.services.proxy-suite;
-              };
-            };
-            documentType = "none";
-            variablelistId = "proxy-suite-options";
-            optionIdPrefix = "proxy-suite-opt-";
-            transformOptions = opt: opt // { declarations = map transformDeclaration opt.declarations; };
-          };
-        in
-        pkgs.runCommand "proxy-suite-options.md" { } ''
-          cat >"$out" <<'EOF'
-# proxy-suite options
-
-This file is generated from the `services.proxy-suite` option descriptions in [`modules/proxy-suite/options.nix`](modules/proxy-suite/options.nix).
-Update module option docs there instead of editing this file by hand.
-
-## Complete default config
-
-```nix
-services.proxy-suite = ${defaultConfigText};
-```
-
-EOF
-
-          cat ${optionDocs.optionsCommonMark} >>"$out"
-        '';
+      mkOptionsDoc = import ./nix/options-doc.nix {
+        inherit nixpkgs pkgsFor proxySuiteModule;
+      };
     in
     {
       # Main module – bakes in the zapret flake so consumers don't need it as a separate input.
