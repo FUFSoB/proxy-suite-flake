@@ -37,6 +37,17 @@ let
       };
     in
     builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tproxyFile));
+  mkTunConfig =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+      rules = mkRouting fixture;
+      configs = import ../modules/proxy-suite/config.nix {
+        lib = pkgs.lib;
+        inherit pkgs cfg rules;
+      };
+    in
+    builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tunFile));
   hasDirectDomain =
     rules: domain:
     builtins.any (
@@ -55,6 +66,9 @@ let
   dnsHasRuleSet =
     dnsRules: ruleSet:
     builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
+  dnsServerByTag =
+    dnsConfig: tag:
+    builtins.head (builtins.filter (server: server.tag == tag) dnsConfig.dns.servers);
   mkZapretBase =
     fixture:
     let
@@ -276,6 +290,31 @@ let
     }
   ];
   ruExplicitConfig = mkTProxyConfig ruExplicitFixture;
+
+  dnsLocalOverrideFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.dns.local = {
+        type = "tcp";
+        address = "9.9.9.9";
+        port = 5353;
+      };
+    }
+  ];
+  dnsLocalOverrideConfig = mkTProxyConfig dnsLocalOverrideFixture;
+
+  dnsRemoteOverrideFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.dns.remote = {
+        type = "tls";
+        address = "1.0.0.1";
+        port = 853;
+      };
+    }
+  ];
+  dnsRemoteOverrideConfig = mkTProxyConfig dnsRemoteOverrideFixture;
+  tunDefaultConfig = mkTunConfig tunManualFixture;
 
   zapretSyncFixture = evalProxySuite [
     baseModule
@@ -783,6 +822,21 @@ let
       true
     )
     (
+      let
+        localDns = dnsServerByTag ruDefaultConfig "local";
+        remoteDns = dnsServerByTag ruDefaultConfig "remote";
+      in
+      assert localDns.type == "udp";
+      assert localDns.server == "1.1.1.1";
+      assert localDns.server_port == 53;
+      assert localDns.detour == "direct";
+      assert remoteDns.type == "udp";
+      assert remoteDns.server == "1.1.1.1";
+      assert remoteDns.server_port == 53;
+      assert remoteDns.detour == "proxy";
+      true
+    )
+    (
       assert hasRuleSet ruDefaultRules "direct" "geosite-category-ru";
       true
     )
@@ -808,6 +862,33 @@ let
     )
     (
       assert dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru";
+      true
+    )
+    (
+      let
+        localDns = dnsServerByTag dnsLocalOverrideConfig "local";
+      in
+      assert localDns.type == "tcp";
+      assert localDns.server == "9.9.9.9";
+      assert localDns.server_port == 5353;
+      assert localDns.detour == "direct";
+      true
+    )
+    (
+      let
+        remoteDns = dnsServerByTag dnsRemoteOverrideConfig "remote";
+      in
+      assert remoteDns.type == "tls";
+      assert remoteDns.server == "1.0.0.1";
+      assert remoteDns.server_port == 853;
+      assert remoteDns.detour == "proxy";
+      true
+    )
+    (
+      let
+        localDns = dnsServerByTag tunDefaultConfig "local";
+      in
+      assert localDns.detour == "proxy";
       true
     )
     (

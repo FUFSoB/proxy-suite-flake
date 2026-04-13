@@ -10,6 +10,18 @@ services.proxy-suite = {
   enable = false;
   singBox = {
     clashApiPort = 9090;
+    dns = {
+      local = {
+        address = "1.1.1.1";
+        port = 53;
+        type = "udp";
+      };
+      remote = {
+        address = "1.1.1.1";
+        port = 53;
+        type = "udp";
+      };
+    };
     enable = true;
     fwmark = 1;
     listenAddress = "127.0.0.1";
@@ -181,6 +193,270 @@ Only used when selection is “selector” or “urltest”\. Ignored in
 
 ```nix
 9090
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.local
+
+
+
+DNS upstream used for the built-in “local” resolver role\.
+This resolver is also used as sing-box route\.default_domain_resolver\.
+
+The module keeps detour policy automatic: in mixed/TProxy mode,
+“local” uses direct; in TUN mode, it is forced through the proxy to
+avoid auto_redirect conflicts\.
+
+
+
+*Type:*
+submodule
+
+
+
+*Default:*
+
+```nix
+{
+  address = "1.1.1.1";
+  port = 53;
+  type = "udp";
+}
+```
+
+
+
+*Example:*
+
+```nix
+{
+  address = "9.9.9.9";
+  port = 53;
+  type = "tcp";
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.local\.address
+
+
+
+Resolver address or hostname used for this DNS upstream\.
+
+
+
+*Type:*
+string matching the pattern \.+
+
+
+
+*Example:*
+
+```nix
+"1.1.1.1"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.local\.port
+
+
+
+Destination port for this DNS upstream\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+53
+```
+
+
+
+*Example:*
+
+```nix
+853
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.local\.type
+
+
+
+sing-box DNS transport type for this upstream resolver\.
+
+
+
+*Type:*
+one of “udp”, “tcp”, “tls”
+
+
+
+*Default:*
+
+```nix
+"udp"
+```
+
+
+
+*Example:*
+
+```nix
+"tls"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.remote
+
+
+
+DNS upstream used for the built-in “remote” resolver role\.
+
+This resolver always detours through the proxy and becomes the
+generated dns\.final target when singBox\.proxyByDefault = true\.
+
+
+
+*Type:*
+submodule
+
+
+
+*Default:*
+
+```nix
+{
+  address = "1.1.1.1";
+  port = 53;
+  type = "udp";
+}
+```
+
+
+
+*Example:*
+
+```nix
+{
+  address = "1.1.1.1";
+  port = 853;
+  type = "tls";
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.remote\.address
+
+
+
+Resolver address or hostname used for this DNS upstream\.
+
+
+
+*Type:*
+string matching the pattern \.+
+
+
+
+*Example:*
+
+```nix
+"1.1.1.1"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.remote\.port
+
+
+
+Destination port for this DNS upstream\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+53
+```
+
+
+
+*Example:*
+
+```nix
+853
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+## services\.proxy-suite\.singBox\.dns\.remote\.type
+
+
+
+sing-box DNS transport type for this upstream resolver\.
+
+
+
+*Type:*
+one of “udp”, “tcp”, “tls”
+
+
+
+*Default:*
+
+```nix
+"udp"
+```
+
+
+
+*Example:*
+
+```nix
+"tls"
 ```
 
 *Declared by:*

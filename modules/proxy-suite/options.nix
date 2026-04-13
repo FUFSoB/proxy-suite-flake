@@ -183,6 +183,40 @@ let
     };
   };
 
+  dnsUpstreamType = types.submodule {
+    options = {
+      type = mkOption {
+        type = types.enum [
+          "udp"
+          "tcp"
+          "tls"
+        ];
+        default = "udp";
+        description = ''
+          sing-box DNS transport type for this upstream resolver.
+        '';
+        example = "tls";
+      };
+
+      address = mkOption {
+        type = types.strMatching ".+";
+        description = ''
+          Resolver address or hostname used for this DNS upstream.
+        '';
+        example = "1.1.1.1";
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 53;
+        description = ''
+          Destination port for this DNS upstream.
+        '';
+        example = 853;
+      };
+    };
+  };
+
   zapretPresetType = types.enum [
     "general"
     "google"
@@ -486,6 +520,50 @@ in
           choice in the generated config.
         '';
         example = true;
+      };
+
+      dns = {
+        local = mkOption {
+          type = dnsUpstreamType;
+          default = {
+            type = "udp";
+            address = "1.1.1.1";
+            port = 53;
+          };
+          description = ''
+            DNS upstream used for the built-in "local" resolver role.
+            This resolver is also used as sing-box route.default_domain_resolver.
+
+            The module keeps detour policy automatic: in mixed/TProxy mode,
+            "local" uses direct; in TUN mode, it is forced through the proxy to
+            avoid auto_redirect conflicts.
+          '';
+          example = {
+            type = "tcp";
+            address = "9.9.9.9";
+            port = 53;
+          };
+        };
+
+        remote = mkOption {
+          type = dnsUpstreamType;
+          default = {
+            type = "udp";
+            address = "1.1.1.1";
+            port = 53;
+          };
+          description = ''
+            DNS upstream used for the built-in "remote" resolver role.
+
+            This resolver always detours through the proxy and becomes the
+            generated dns.final target when singBox.proxyByDefault = true.
+          '';
+          example = {
+            type = "tls";
+            address = "1.1.1.1";
+            port = 853;
+          };
+        };
       };
 
       tun = {

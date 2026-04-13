@@ -11,6 +11,14 @@ let
   sb = cfg.singBox;
   direct = rules.direct;
 
+  mkDnsServer =
+    tag: upstream: detour: {
+      inherit tag detour;
+      type = upstream.type;
+      server = upstream.address;
+      server_port = upstream.port;
+    };
+
   clashApiBlock = lib.optionalAttrs (sb.selection != "first") {
     experimental = {
       clash_api = {
@@ -21,20 +29,12 @@ let
 
   dnsConfig = {
     servers = [
-      {
-        tag = "remote";
-        type = "udp";
-        server = "1.1.1.1";
-        detour = "proxy";
-      }
-      {
-        tag = "local";
-        type = "udp";
-        server = "1.1.1.1";
+      (mkDnsServer "remote" sb.dns.remote "proxy")
+      (
         # In TUN mode, routing DNS through direct can conflict with auto_redirect.
         # In TProxy/mixed mode, direct is fine for local traffic.
-        detour = "direct";
-      }
+        mkDnsServer "local" sb.dns.local "direct"
+      )
     ];
     rules =
       lib.optional (builtins.elem "google" sb.routing.proxy.geosites) {

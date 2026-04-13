@@ -49,6 +49,24 @@ services.proxy-suite = {
 
 By default, `zapret` and `tgWsProxy` stay disabled until you enable them explicitly.
 
+Example: override the built-in DNS upstreams while keeping proxy-suite's
+default routing behavior:
+
+```nix
+services.proxy-suite.singBox.dns = {
+  local = {
+    type = "tcp";
+    address = "9.9.9.9";
+    port = 53;
+  };
+  remote = {
+    type = "tls";
+    address = "1.1.1.1";
+    port = 853;
+  };
+};
+```
+
 ---
 
 ## Options
