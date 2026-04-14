@@ -83,6 +83,21 @@ let
     builtins.any (
       pkg: builtins.match pattern (builtins.unsafeDiscardStringContext (toString pkg)) != null
     ) packages;
+  packageByPattern =
+    packages: pattern:
+    builtins.head (
+      builtins.filter (
+        pkg: builtins.match pattern (builtins.unsafeDiscardStringContext (toString pkg)) != null
+      ) packages
+    );
+  lineByPrefix =
+    text: prefix:
+    builtins.head (
+      builtins.filter (line: pkgs.lib.hasPrefix prefix line) (pkgs.lib.splitString "\n" text)
+    );
+  quotedValueByPrefix =
+    text: prefix:
+    pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix prefix (lineByPrefix text prefix));
 
   baseModule = {
     system.stateVersion = "26.05";
@@ -660,6 +675,116 @@ let
     }
   ];
 
+  appRoutingProxychainsFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.appRouting = {
+        enable = true;
+        proxychains.enable = true;
+        profiles = [
+          {
+            name = "steam-browser";
+            route = "proxychains";
+          }
+          {
+            name = "native-direct";
+            route = "direct";
+          }
+        ];
+      };
+    }
+  ];
+  appRoutingProxychainsScript =
+    builtins.readFile (
+      "${packageByPattern appRoutingProxychainsFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  appRoutingProxychainsConfig =
+    builtins.readFile (
+      quotedValueByPrefix appRoutingProxychainsScript "PROXYCHAINS_CONFIG=\""
+    );
+  appRoutingProxychainsProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix appRoutingProxychainsScript "APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+
+  appRoutingDefaultProfilesFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.appRouting = {
+        enable = true;
+        createDefaultProfiles = true;
+        proxychains.enable = true;
+      };
+    }
+  ];
+  appRoutingDefaultProfilesScript =
+    builtins.readFile (
+      "${packageByPattern appRoutingDefaultProfilesFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  appRoutingDefaultProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix appRoutingDefaultProfilesScript "APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+
+  appRoutingDefaultProfilesWithoutProxychainsEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  duplicateAppRoutingProfiles = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          profiles = [
+            { name = "dup"; }
+            { name = "dup"; }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingProfilesWithoutEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting.profiles = [ { name = "oops"; } ];
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingProxychainsWithoutEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "steam-browser";
+              route = "proxychains";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   # Validation failures
   subscriptionBothSources = forceEval (
     (evalProxySuite [
@@ -1085,6 +1210,73 @@ let
     # -- subscription: neither url nor urlFile fails --
     (
       assert subscriptionNoSources.success == false;
+      true
+    )
+
+    # -- appRouting: proxychains/direct profile config is accepted --
+    (
+      assert appRoutingProxychainsFixture.config.services.proxy-suite.appRouting.enable;
+      true
+    )
+    (
+      assert builtins.length appRoutingProxychainsFixture.config.services.proxy-suite.appRouting.profiles == 2;
+      true
+    )
+    (
+      assert builtins.length appRoutingProxychainsProfiles == 2;
+      true
+    )
+
+    # -- appRouting: createDefaultProfiles injects curated proxychains profile --
+    (
+      assert builtins.length appRoutingDefaultProfiles == 1;
+      assert (builtins.head appRoutingDefaultProfiles).name == "proxychains";
+      assert (builtins.head appRoutingDefaultProfiles).route == "proxychains";
+      true
+    )
+
+    # -- appRouting: proxy-ctl script embeds wrap/apps commands --
+    (
+      assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" appRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "apps" appRoutingProxychainsScript;
+      true
+    )
+
+    # -- appRouting: proxychains config is quiet and points at local SOCKS listener --
+    (
+      assert pkgs.lib.hasInfix "quiet_mode" appRoutingProxychainsConfig;
+      assert pkgs.lib.hasInfix "proxy_dns" appRoutingProxychainsConfig;
+      assert pkgs.lib.hasInfix "socks5 127.0.0.1 1080" appRoutingProxychainsConfig;
+      true
+    )
+
+    # -- appRouting: generated proxy-ctl script dispatches through proxychains4 --
+    (
+      assert pkgs.lib.hasInfix "proxychains4 -q -f \"$PROXYCHAINS_CONFIG\" \"$@\"" appRoutingProxychainsScript;
+      true
+    )
+
+    # -- appRouting: route=proxychains requires proxychains.enable --
+    (
+      assert appRoutingProxychainsWithoutEnable.success == false;
+      true
+    )
+
+    # -- appRouting: profiles require appRouting.enable --
+    (
+      assert appRoutingProfilesWithoutEnable.success == false;
+      true
+    )
+
+    # -- appRouting: default proxychains profile still requires proxychains.enable --
+    (
+      assert appRoutingDefaultProfilesWithoutProxychainsEnable.success == false;
+      true
+    )
+
+    # -- appRouting: profile names must be unique --
+    (
+      assert duplicateAppRoutingProfiles.success == false;
       true
     )
 

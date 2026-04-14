@@ -284,6 +284,37 @@ let
     };
   };
 
+  appRoutingProfileType = types.submodule {
+    options = {
+      name = mkOption {
+        type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
+        description = ''
+          Profile name used by `proxy-ctl wrap <name> -- <command>`.
+          Must be unique within appRouting.profiles.
+        '';
+        example = "steam-browser";
+      };
+
+      route = mkOption {
+        type = types.enum [
+          "direct"
+          "proxychains"
+        ];
+        default = "proxychains";
+        description = ''
+          Per-app route backend used by proxy-ctl wrap.
+
+          - "direct": run the command unchanged.
+          - "proxychains": run the command through proxychains-ng using the
+            local proxy-suite mixed SOCKS endpoint.
+
+          Additional route backends may be added in the future.
+        '';
+        example = "proxychains";
+      };
+    };
+  };
+
 in
 {
   options.services.proxy-suite = {
@@ -766,6 +797,83 @@ in
               domains = [ "ads.example.com" ];
             }
           ];
+        };
+      };
+    };
+
+    appRouting = {
+      enable = mkEnableOption "per-app routing helpers via proxy-ctl wrap";
+
+      createDefaultProfiles = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether to automatically add curated appRouting profiles.
+
+          This is opt-in. Generated defaults are appended only when no
+          user-defined profile with the same name already exists.
+
+          Current curated defaults:
+          - `proxychains`: route = "proxychains"
+
+          This makes `proxy-ctl wrap proxychains -- <command>` available
+          without defining the profile manually.
+        '';
+        example = true;
+      };
+
+      profiles = mkOption {
+        type = types.listOf appRoutingProfileType;
+        default = [ ];
+        description = ''
+          Named per-app route profiles consumed by `proxy-ctl wrap`.
+
+          This initial implementation supports:
+          - "direct" for running a command unchanged
+          - "proxychains" for TCP apps that can use an LD_PRELOAD wrapper
+            instead of global TUN or TProxy interception
+
+          proxychains-based wrapping depends on the local proxy-suite mixed
+          proxy listener provided by sing-box.
+
+          When createDefaultProfiles = true, curated defaults are added on top
+          of this list unless a user-defined profile already uses the same
+          name.
+        '';
+        example = [
+          {
+            name = "steam-browser";
+            route = "proxychains";
+          }
+          {
+            name = "native-direct";
+            route = "direct";
+          }
+        ];
+      };
+
+      proxychains = {
+        enable = mkEnableOption "proxychains-backed appRouting profiles";
+
+        quiet = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Whether generated proxychains wrappers should suppress their normal
+            startup chatter. This maps to proxychains-ng quiet_mode.
+          '';
+          example = true;
+        };
+
+        proxyDns = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Whether generated proxychains wrappers should resolve DNS through
+            the proxy instead of the local resolver. This maps to proxychains-ng
+            proxy_dns.
+          '';
+          example = true;
         };
       };
     };

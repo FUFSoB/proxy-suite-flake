@@ -14,6 +14,7 @@
 let
   sb = cfg.singBox;
   t = cfg.tgWsProxy;
+  ar = cfg.appRouting;
   builtinTags = [
     "proxy"
     "direct"
@@ -29,6 +30,7 @@ let
   jq = "${pkgs.jq}/bin/jq";
   python3 = "${pkgs.python3}/bin/python3";
   singBox = "${pkgs.sing-box}/bin/sing-box";
+  proxychains4 = "${pkgs.proxychains-ng}/bin/proxychains4";
 
   fetchSubscriptionPy = ../../scripts/fetch-subscription.py;
 
@@ -236,18 +238,49 @@ let
   # Subscription tags embedded at build time for proxy-ctl.
   subscriptionTagsList = lib.concatStringsSep " " (map (sub: lib.escapeShellArg sub.tag) sb.subscriptions);
   hasSubscriptions = sb.subscriptions != [ ];
+  appRoutingProfileNames = map (profile: profile.name) ar.profiles;
+  defaultAppRoutingProfiles = lib.optionals ar.createDefaultProfiles [
+    {
+      name = "proxychains";
+      route = "proxychains";
+    }
+  ];
+  effectiveAppRoutingProfiles =
+    ar.profiles
+    ++ builtins.filter (profile: !(builtins.elem profile.name appRoutingProfileNames)) defaultAppRoutingProfiles;
+  effectiveAppRoutingProfileNames = map (profile: profile.name) effectiveAppRoutingProfiles;
+  appRoutingProfilesFile = pkgs.writeText "proxy-suite-app-routing-profiles.json" (
+    builtins.toJSON effectiveAppRoutingProfiles
+  );
+  proxychainsConfigFile = pkgs.writeText "proxy-suite-proxychains.conf" ''
+    strict_chain
+    ${lib.optionalString ar.proxychains.quiet "quiet_mode"}
+    ${lib.optionalString ar.proxychains.proxyDns "proxy_dns"}
+    tcp_read_time_out 15000
+    tcp_connect_time_out 8000
+
+    [ProxyList]
+    socks5 ${sb.listenAddress} ${toString sb.port}
+  '';
+  proxychainsQuietArg = lib.optionalString ar.proxychains.quiet "-q ";
+  hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectiveAppRoutingProfiles;
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
     runtimeInputs = with pkgs; [
       curl
       jq
+      proxychains-ng
     ];
     text = ''
       # Embedded at build time from module config
       CLASH_API="${clashApi}"
       SELECTION="${selection}"
       SUB_TAGS=(${subscriptionTagsList})
+      APP_ROUTING_ENABLED="${if ar.enable then "1" else "0"}"
+      APP_ROUTING_PROXYCHAINS_ENABLED="${if ar.proxychains.enable then "1" else "0"}"
+      APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
+      PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -269,6 +302,8 @@ let
         echo "  logs [service]            follow service logs  (default: proxy-suite-socks)"
         echo "  outbounds                 list outbounds and current selection"
         echo "  select <tag>              switch to a specific outbound  (selector mode)"
+        echo "  apps                      list configured per-app routing profiles"
+        echo "  wrap <profile> -- <cmd>   run a command via an appRouting profile"
         echo "  subscription list         show subscriptions, cache age, and proxy count"
         echo "  subscription update       force-refresh all subscription caches and restart"
         exit 1
@@ -282,6 +317,18 @@ let
         local state
         state=$(systemctl is-active "$svc" 2>/dev/null || true)
         printf "  %-44s %s\n" "$svc" "$state"
+      }
+
+      _ensure_app_routing() {
+        if [ "$APP_ROUTING_ENABLED" != "1" ]; then
+          echo "appRouting is not enabled in services.proxy-suite.appRouting."
+          exit 1
+        fi
+      }
+
+      _profile_route() {
+        local profile="$1"
+        ${jq} -r --arg name "$profile" '.[] | select(.name == $name) | .route' "$APP_ROUTING_PROFILES_FILE"
       }
 
       cmd="''${1:-status}"
@@ -357,6 +404,56 @@ let
           fi
           ;;
 
+        apps)
+          _ensure_app_routing
+          if [ "$(${jq} 'length' "$APP_ROUTING_PROFILES_FILE")" -eq 0 ]; then
+            echo "No appRouting profiles configured."
+          else
+            printf "  %-24s %s\n" "PROFILE" "ROUTE"
+            ${jq} -r '.[] | "  " + (.name | tostring) + "\t" + (.route | tostring)' \
+              "$APP_ROUTING_PROFILES_FILE" \
+              | while IFS=$'\t' read -r profile route; do
+                  printf "%-26s %s\n" "$profile" "$route"
+                done
+          fi
+          ;;
+
+        wrap)
+          profile="''${1:?Usage: proxy-ctl wrap <profile> -- <command> [args...]}"
+          shift || true
+          if [ "''${1:-}" = "--" ]; then
+            shift
+          fi
+          if [ "$#" -eq 0 ]; then
+            echo "Usage: proxy-ctl wrap <profile> -- <command> [args...]"
+            exit 1
+          fi
+
+          _ensure_app_routing
+          route="$(_profile_route "$profile")"
+          if [ -z "$route" ] || [ "$route" = "null" ]; then
+            echo "Unknown appRouting profile: $profile"
+            exit 1
+          fi
+
+          case "$route" in
+            direct)
+              exec "$@"
+              ;;
+            proxychains)
+              if [ "$APP_ROUTING_PROXYCHAINS_ENABLED" != "1" ]; then
+                echo "Profile '$profile' uses route=proxychains, but appRouting.proxychains.enable is false."
+                exit 1
+              fi
+              exec ${proxychains4} ${proxychainsQuietArg}-f "$PROXYCHAINS_CONFIG" "$@"
+              ;;
+            *)
+              echo "Route backend '$route' is not implemented in this build."
+              exit 1
+              ;;
+          esac
+          ;;
+
         subscription)
           subcmd="''${1:-list}"
           shift || true
@@ -423,6 +520,22 @@ in
     {
       assertion = !(sb.tproxy.enable && sb.tproxy.autostart && sb.tun.enable && sb.tun.autostart);
       message = "proxy-suite: singBox.tproxy.autostart and singBox.tun.autostart cannot both be enabled at the same time";
+    }
+    {
+      assertion = ar.enable || ar.profiles == [ ];
+      message = "proxy-suite: appRouting.profiles requires appRouting.enable = true";
+    }
+    {
+      assertion = !ar.proxychains.enable || ar.enable;
+      message = "proxy-suite: appRouting.proxychains.enable requires appRouting.enable = true";
+    }
+    {
+      assertion = builtins.length appRoutingProfileNames == builtins.length (lib.unique appRoutingProfileNames);
+      message = "proxy-suite: appRouting profile names must be unique";
+    }
+    {
+      assertion = !hasProxychainsProfiles || ar.proxychains.enable;
+      message = "proxy-suite: route=proxychains in appRouting.profiles requires appRouting.proxychains.enable = true";
     }
     {
       assertion =
