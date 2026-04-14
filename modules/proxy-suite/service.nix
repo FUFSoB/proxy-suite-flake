@@ -9,6 +9,7 @@
   appTunFile,
   nftablesRulesFile,
   appTproxyRulesFile,
+  appZapretRulesFile,
   ip,
   nft,
 }:
@@ -19,6 +20,7 @@ let
   ar = cfg.appRouting;
   art = ar.backends.tun;
   artp = ar.backends.tproxy;
+  arz = ar.backends.zapret;
   builtinTags = [
     "proxy"
     "direct"
@@ -277,6 +279,11 @@ let
       name = "tproxy";
       route = "tproxy";
     }
+  ] ++ lib.optionals (arz.enable && cfg.zapret.enable) [
+    {
+      name = "zapret";
+      route = "zapret";
+    }
   ];
   effectiveAppRoutingProfiles =
     ar.profiles
@@ -299,8 +306,10 @@ let
   hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectiveAppRoutingProfiles;
   hasTunProfiles = builtins.any (profile: profile.route == "tun") effectiveAppRoutingProfiles;
   hasTproxyProfiles = builtins.any (profile: profile.route == "tproxy") effectiveAppRoutingProfiles;
+  hasZapretProfiles = builtins.any (profile: profile.route == "zapret") effectiveAppRoutingProfiles;
   appTunSliceName = "proxy-suite-app-tun.slice";
   appTproxySliceName = "proxy-suite-app-tproxy.slice";
+  appZapretSliceName = "proxy-suite-app-zapret.slice";
   appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
     define RESERVED_IP = {
         10.0.0.0/8,
@@ -462,6 +471,55 @@ ${lib.concatMapStrings (cidr: ''
         done <<< "$handles"
       fi
     '';
+  appZapretUserRuleStart =
+    pkgs.writeShellScript "proxy-suite-app-zapret-user-start" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-zapret-user-$uid"
+      mark_comment="$rule_comment_prefix-mark"
+      cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
+      if ! [ -d "$cgroup_root" ]; then
+        echo "proxy-suite: user cgroup root does not exist for uid $uid: $cgroup_root" >&2
+        exit 1
+      fi
+
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appZapretSliceName} | ${headBin} -n1 || true)
+      if [ -z "$cgroup_dir" ]; then
+        echo "proxy-suite: app zapret slice cgroup does not exist for uid $uid under $cgroup_root" >&2
+        exit 1
+      fi
+      cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
+      cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
+
+      handles=$(${nft} -a list chain inet proxy_suite_app_zapret_mark output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule inet proxy_suite_app_zapret_mark output handle "$handle" || true
+        done <<< "$handles"
+      fi
+
+      printf '%s\n' \
+        "add rule inet proxy_suite_app_zapret_mark output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set meta mark or ${toString arz.filterMark} ct mark set ct mark or ${toString arz.filterMark} comment \"$mark_comment\"" \
+        | ${nft} -f -
+    '';
+  appZapretUserRuleStop =
+    pkgs.writeShellScript "proxy-suite-app-zapret-user-stop" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-zapret-user-$uid"
+      handles=$(${nft} -a list chain inet proxy_suite_app_zapret_mark output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule inet proxy_suite_app_zapret_mark output handle "$handle" || true
+        done <<< "$handles"
+      fi
+    '';
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
@@ -483,12 +541,15 @@ ${lib.concatMapStrings (cidr: ''
       APP_ROUTING_PROXYCHAINS_ENABLED="${if ar.proxychains.enable then "1" else "0"}"
       APP_ROUTING_TUN_ENABLED="${if art.enable then "1" else "0"}"
       APP_ROUTING_TPROXY_ENABLED="${if artp.enable then "1" else "0"}"
+      APP_ROUTING_ZAPRET_ENABLED="${if (arz.enable && cfg.zapret.enable) then "1" else "0"}"
       APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
       PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
       APP_TUN_SLICE_BASE="proxy-suite-app-tun"
       APP_TUN_ANCHOR_UNIT="proxy-suite-app-tun-anchor.service"
       APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"
       APP_TPROXY_ANCHOR_UNIT="proxy-suite-app-tproxy-anchor.service"
+      APP_ZAPRET_SLICE_BASE="proxy-suite-app-zapret"
+      APP_ZAPRET_ANCHOR_UNIT="proxy-suite-app-zapret-anchor.service"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -556,6 +617,16 @@ ${lib.concatMapStrings (cidr: ''
 
       _any_app_tproxy_user_active() {
         ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tproxy-user@*.service' \
+          | ${grepBin} -q .
+      }
+
+      _zapret_scope_running() {
+        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-zapret-*' \
+          | ${grepBin} -q .
+      }
+
+      _any_app_zapret_user_active() {
+        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-zapret-user@*.service' \
           | ${grepBin} -q .
       }
 
@@ -747,6 +818,46 @@ ${lib.concatMapStrings (cidr: ''
 
               exit "$status"
               ;;
+            zapret)
+              if [ "$APP_ROUTING_ZAPRET_ENABLED" != "1" ]; then
+                echo "Profile '$profile' uses route=zapret, but the app-zapret backend or zapret service is not enabled."
+                exit 1
+              fi
+              if ${systemctl} is-active --quiet proxy-suite-tun.service; then
+                echo "Global proxy-suite-tun.service is active. Stop it before using route=zapret profiles."
+                exit 1
+              fi
+              if ${systemctl} is-active --quiet proxy-suite-tproxy.service; then
+                echo "Global proxy-suite-tproxy.service is active. Stop it before using route=zapret profiles."
+                exit 1
+              fi
+
+              uid="$(${idBin} -u)"
+              scope_unit="proxy-suite-app-zapret-$profile-$$"
+
+              ${systemctl} --user start "$APP_ZAPRET_ANCHOR_UNIT"
+              ${systemctl} start proxy-suite-app-zapret.service
+              ${systemctl} start "proxy-suite-app-zapret-user@$uid.service"
+
+              if ${systemdRun} --user --scope --quiet --collect --same-dir \
+                --slice="$APP_ZAPRET_SLICE_BASE" \
+                --unit="$scope_unit" \
+                "$@"; then
+                status=0
+              else
+                status=$?
+              fi
+
+              if ! _zapret_scope_running; then
+                ${systemctl} stop "proxy-suite-app-zapret-user@$uid.service" || true
+                ${systemctl} --user stop "$APP_ZAPRET_ANCHOR_UNIT" || true
+                if ! _any_app_zapret_user_active; then
+                  ${systemctl} stop proxy-suite-app-zapret.service || true
+                fi
+              fi
+
+              exit "$status"
+              ;;
             *)
               echo "Route backend '$route' is not implemented in this build."
               exit 1
@@ -798,14 +909,14 @@ in
   environment.systemPackages = [ proxyCtl ];
 
   # nftables must be on for TProxy to work.
-  networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable || artp.enable) (lib.mkDefault true);
+  networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable || artp.enable || arz.enable) (lib.mkDefault true);
 
-  users.groups = lib.mkIf (art.enable || artp.enable) {
+  users.groups = lib.mkIf (art.enable || artp.enable || arz.enable) {
     "${ar.userControl.group}" = { };
   };
 
-  security.polkit.enable = lib.mkIf (art.enable || artp.enable) true;
-  security.polkit.extraConfig = lib.mkIf (art.enable || artp.enable) (lib.mkAfter ''
+  security.polkit.enable = lib.mkIf (art.enable || artp.enable || arz.enable) true;
+  security.polkit.extraConfig = lib.mkIf (art.enable || artp.enable || arz.enable) (lib.mkAfter ''
     polkit.addRule(function(action, subject) {
       if (!subject.isInGroup("${ar.userControl.group}")) {
         return null;
@@ -819,7 +930,9 @@ in
       if (unit === "proxy-suite-app-tun.service" ||
           unit.indexOf("proxy-suite-app-tun-user@") === 0 ||
           unit === "proxy-suite-app-tproxy.service" ||
-          unit.indexOf("proxy-suite-app-tproxy-user@") === 0) {
+          unit.indexOf("proxy-suite-app-tproxy-user@") === 0 ||
+          unit === "proxy-suite-app-zapret.service" ||
+          unit.indexOf("proxy-suite-app-zapret-user@") === 0) {
         return polkit.Result.YES;
       }
 
@@ -847,6 +960,18 @@ in
           Type = "oneshot";
           RemainAfterExit = true;
           Slice = appTproxySliceName;
+          ExecStart = "${pkgs.coreutils}/bin/true";
+          ExecStop = "${pkgs.coreutils}/bin/true";
+        };
+      };
+    }
+    // lib.optionalAttrs (arz.enable && cfg.zapret.enable) {
+      proxy-suite-app-zapret-anchor = {
+        description = "Anchor service for proxy-suite app zapret slice";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          Slice = appZapretSliceName;
           ExecStart = "${pkgs.coreutils}/bin/true";
           ExecStop = "${pkgs.coreutils}/bin/true";
         };
@@ -907,6 +1032,18 @@ in
       message = "proxy-suite: route=tproxy in appRouting profiles requires appRouting.backends.tproxy.enable = true";
     }
     {
+      assertion = !arz.enable || ar.enable;
+      message = "proxy-suite: appRouting.backends.zapret.enable requires appRouting.enable = true";
+    }
+    {
+      assertion = !arz.enable || cfg.zapret.enable;
+      message = "proxy-suite: appRouting.backends.zapret.enable requires zapret.enable = true";
+    }
+    {
+      assertion = !(hasZapretProfiles && (!arz.enable || !cfg.zapret.enable));
+      message = "proxy-suite: route=zapret in appRouting profiles requires appRouting.backends.zapret.enable = true and zapret.enable = true";
+    }
+    {
       assertion = !(art.enable && sb.tproxy.enable && art.fwmark == sb.fwmark);
       message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.fwmark when singBox.tproxy.enable = true";
     }
@@ -937,6 +1074,46 @@ in
     {
       assertion = !(art.enable && artp.enable && art.routeTable == artp.routeTable);
       message = "proxy-suite: appRouting.backends.tun.routeTable and appRouting.backends.tproxy.routeTable must differ";
+    }
+    {
+      assertion = !(arz.enable && arz.filterMark == sb.fwmark);
+      message = "proxy-suite: appRouting.backends.zapret.filterMark must differ from singBox.fwmark";
+    }
+    {
+      assertion = !(arz.enable && arz.filterMark == sb.proxyMark);
+      message = "proxy-suite: appRouting.backends.zapret.filterMark must differ from singBox.proxyMark";
+    }
+    {
+      assertion = !(art.enable && arz.enable && art.fwmark == arz.filterMark);
+      message = "proxy-suite: appRouting.backends.tun.fwmark and appRouting.backends.zapret.filterMark must differ";
+    }
+    {
+      assertion = !(artp.enable && arz.enable && artp.fwmark == arz.filterMark);
+      message = "proxy-suite: appRouting.backends.tproxy.fwmark and appRouting.backends.zapret.filterMark must differ";
+    }
+    {
+      assertion = !(arz.enable && builtins.elem arz.filterMark [ 536870912 1073741824 ]);
+      message = "proxy-suite: appRouting.backends.zapret.filterMark must not use zapret internal desync mark bits";
+    }
+    {
+      assertion = !(arz.enable && builtins.elem sb.fwmark [ 67108864 134217728 ]);
+      message = "proxy-suite: singBox.fwmark must not use app-zapret internal desync mark bits";
+    }
+    {
+      assertion = !(arz.enable && builtins.elem sb.proxyMark [ 67108864 134217728 ]);
+      message = "proxy-suite: singBox.proxyMark must not use app-zapret internal desync mark bits";
+    }
+    {
+      assertion = !(art.enable && arz.enable && builtins.elem art.fwmark [ 67108864 134217728 ]);
+      message = "proxy-suite: appRouting.backends.tun.fwmark must not use app-zapret internal desync mark bits";
+    }
+    {
+      assertion = !(artp.enable && arz.enable && builtins.elem artp.fwmark [ 67108864 134217728 ]);
+      message = "proxy-suite: appRouting.backends.tproxy.fwmark must not use app-zapret internal desync mark bits";
+    }
+    {
+      assertion = !(arz.enable && builtins.elem arz.filterMark [ 67108864 134217728 ]);
+      message = "proxy-suite: appRouting.backends.zapret.filterMark must not use app-zapret internal desync mark bits";
     }
     {
       assertion =
@@ -1101,6 +1278,19 @@ in
         RemainAfterExit = true;
         ExecStart = "${appTproxyUserRuleStart} %i";
         ExecStop = "${appTproxyUserRuleStop} %i";
+      };
+    };
+  }
+  // lib.optionalAttrs (arz.enable && cfg.zapret.enable) {
+    "proxy-suite-app-zapret-user@" = {
+      description = "Enable proxy-suite app zapret marking for user %i";
+      requires = [ "proxy-suite-app-zapret.service" ];
+      after = [ "proxy-suite-app-zapret.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${appZapretUserRuleStart} %i";
+        ExecStop = "${appZapretUserRuleStop} %i";
       };
     };
   }

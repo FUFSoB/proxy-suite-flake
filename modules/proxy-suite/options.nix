@@ -301,6 +301,7 @@ let
           "proxychains"
           "tun"
           "tproxy"
+          "zapret"
         ];
         default = "proxychains";
         description = ''
@@ -314,6 +315,9 @@ let
           - "tproxy": launch the command in the dedicated app-routing TProxy
             slice so only that app's traffic is transparently intercepted by
             the local sing-box TProxy inbound.
+          - "zapret": launch the command in the dedicated app-routing zapret
+            slice so only that app's traffic is handled by the separate
+            app-scoped zapret instance.
 
           Additional route backends may be added in the future.
         '';
@@ -825,11 +829,14 @@ in
           - `proxychains`: route = "proxychains"
           - `tun`: route = "tun" when appRouting.backends.tun.enable = true
           - `tproxy`: route = "tproxy" when appRouting.backends.tproxy.enable = true
+          - `zapret`: route = "zapret" when appRouting.backends.zapret.enable = true
+            and zapret.enable = true
 
           This makes `proxy-ctl wrap proxychains -- <command>` available
           without defining the profile manually, and similarly exposes
           `proxy-ctl wrap tun -- <command>` or
-          `proxy-ctl wrap tproxy -- <command>` when the corresponding backend
+          `proxy-ctl wrap tproxy -- <command>` or
+          `proxy-ctl wrap zapret -- <command>` when the corresponding backend
           is enabled.
         '';
         example = true;
@@ -849,11 +856,14 @@ in
             backend
           - "tproxy" for app-scoped transparent interception through the
             dedicated app TProxy backend
+          - "zapret" for app-scoped zapret handling through a separate
+            zapret instance without changing the app's network path or exit IP
 
           proxychains-based wrapping depends on the local proxy-suite mixed
           proxy listener provided by sing-box. The "tun" route depends on
           appRouting.backends.tun.enable = true. The "tproxy" route depends on
-          appRouting.backends.tproxy.enable = true.
+          appRouting.backends.tproxy.enable = true. The "zapret" route depends
+          on appRouting.backends.zapret.enable = true and zapret.enable = true.
 
           When createDefaultProfiles = true, curated defaults are added on top
           of this list unless a user-defined profile already uses the same
@@ -997,6 +1007,31 @@ in
             ];
           };
         };
+
+        zapret = {
+          enable = mkEnableOption "app-scoped zapret backend for appRouting profiles";
+
+          filterMark = mkOption {
+            type = types.int;
+            default = 268435456;
+            description = ''
+              Packet mark bit used to mark wrapped app traffic for the
+              dedicated app-scoped zapret instance.
+            '';
+            example = 268435456;
+          };
+
+          qnum = mkOption {
+            type = types.int;
+            default = 201;
+            description = ''
+              NFQUEUE number used by the dedicated app-scoped zapret instance.
+              This backend runs as a second zapret daemon and should use a
+              queue distinct from the global zapret instance.
+            '';
+            example = 201;
+          };
+        };
       };
 
       userControl = {
@@ -1006,8 +1041,8 @@ in
           description = ''
             Local group allowed to start and stop app-routing backend units via
             polkit. Add desktop users who should be able to run
-            `proxy-ctl wrap ...` for route = "tun" or route = "tproxy"
-            profiles to this group.
+            `proxy-ctl wrap ...` for route = "tun", route = "tproxy", or
+            route = "zapret" profiles to this group.
           '';
           example = "proxy-suite";
         };

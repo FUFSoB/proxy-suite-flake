@@ -80,15 +80,16 @@ let
   dnsServerByTag =
     dnsConfig: tag:
     builtins.head (builtins.filter (server: server.tag == tag) dnsConfig.dns.servers);
-  mkZapretBase =
-    fixture:
+  mkZapretBaseFor =
+    fixture: serviceName:
     let
-      env = fixture.config.systemd.services.zapret-discord-youtube.serviceConfig.Environment;
+      env = fixture.config.systemd.services.${serviceName}.serviceConfig.Environment;
       zapretBaseEnv = builtins.head (
         builtins.filter (value: pkgs.lib.hasPrefix "ZAPRET_BASE=" value) env
       );
     in
     pkgs.lib.removePrefix "ZAPRET_BASE=" zapretBaseEnv;
+  mkZapretBase = fixture: mkZapretBaseFor fixture "zapret-discord-youtube";
   packagePathMatches =
     packages: pattern:
     builtins.any (
@@ -106,6 +107,13 @@ let
     builtins.head (
       builtins.filter (line: pkgs.lib.hasPrefix prefix line) (pkgs.lib.splitString "\n" text)
     );
+  normalizeExec = value: if builtins.isList value then builtins.head value else value;
+  readExecScripts =
+    value:
+    let
+      execs = if builtins.isList value then value else [ value ];
+    in
+    pkgs.lib.concatStringsSep "\n" (map builtins.readFile execs);
   quotedValueByPrefix =
     text: prefix:
     pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix prefix (lineByPrefix text prefix));
@@ -867,6 +875,76 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
+  appRoutingZapretFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        zapret.enable = true;
+        appRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+          proxychains.enable = true;
+          backends.zapret.enable = true;
+        };
+      };
+    }
+  ];
+  appRoutingZapretScript =
+    builtins.readFile (
+      "${packageByPattern appRoutingZapretFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  appRoutingZapretProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix appRoutingZapretScript "APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+  appRoutingZapretStartScript =
+    readExecScripts appRoutingZapretFixture.config.systemd.services."proxy-suite-app-zapret".serviceConfig.ExecStartPre;
+  appRoutingZapretUserStartExec =
+    appRoutingZapretFixture.config.systemd.services."proxy-suite-app-zapret-user@".serviceConfig.ExecStart;
+  appRoutingZapretUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingZapretUserStartExec));
+  appRoutingZapretBase = mkZapretBase appRoutingZapretFixture;
+  appRoutingZapretConfig = builtins.readFile "${appRoutingZapretBase}/config";
+  appRoutingAppZapretBase = mkZapretBaseFor appRoutingZapretFixture "proxy-suite-app-zapret";
+  appRoutingAppZapretConfig = builtins.readFile "${appRoutingAppZapretBase}/config";
+  appRoutingZapretGlobalCustomScript =
+    builtins.readFile "${appRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
+
+  appRoutingZapretWithoutEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          zapret.enable = true;
+          appRouting = {
+            enable = true;
+            profiles = [
+              {
+                name = "yt";
+                route = "zapret";
+              }
+            ];
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingZapretWithoutZapretService = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          backends.zapret.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   duplicateAppRoutingProfiles = forceEval (
     (evalProxySuite [
       baseModule
@@ -982,6 +1060,49 @@ let
             tproxy = {
               enable = true;
               routeTable = 123;
+            };
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingZapretFilterMarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          zapret.enable = true;
+          singBox.proxyMark = 268435456;
+          appRouting = {
+            enable = true;
+            backends.zapret = {
+              enable = true;
+              filterMark = 268435456;
+            };
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingTproxyZapretMarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          zapret.enable = true;
+          appRouting = {
+            enable = true;
+            backends = {
+              tproxy = {
+                enable = true;
+                fwmark = 23;
+              };
+              zapret = {
+                enable = true;
+                filterMark = 23;
+              };
             };
           };
         };
@@ -1459,6 +1580,13 @@ let
       true
     )
 
+    # -- appRouting: createDefaultProfiles injects curated zapret profile when backend and zapret are enabled --
+    (
+      assert builtins.length appRoutingZapretProfiles == 2;
+      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") appRoutingZapretProfiles;
+      true
+    )
+
     # -- appRouting: proxy-ctl script embeds wrap/apps commands --
     (
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" appRoutingProxychainsScript;
@@ -1493,6 +1621,14 @@ let
       assert pkgs.lib.hasInfix "APP_ROUTING_TPROXY_ENABLED" appRoutingTproxyScript;
       assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-user@$uid.service" appRoutingTproxyScript;
       assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-$profile-$$" appRoutingTproxyScript;
+      true
+    )
+
+    # -- appRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
+    (
+      assert pkgs.lib.hasInfix "APP_ROUTING_ZAPRET_ENABLED" appRoutingZapretScript;
+      assert pkgs.lib.hasInfix "proxy-suite-app-zapret-user@$uid.service" appRoutingZapretScript;
+      assert pkgs.lib.hasInfix "proxy-suite-app-zapret-$profile-$$" appRoutingZapretScript;
       true
     )
 
@@ -1558,6 +1694,14 @@ let
       true
     )
 
+    # -- appRouting: app zapret service and helper units are created --
+    (
+      assert appRoutingZapretFixture.config.systemd.services ? "proxy-suite-app-zapret";
+      assert appRoutingZapretFixture.config.systemd.services ? "proxy-suite-app-zapret-user@";
+      assert appRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-app-zapret-anchor";
+      true
+    )
+
     # -- appRouting: app TUN enables nftables and user control group --
     (
       assert appRoutingTunFixture.config.networking.nftables.enable;
@@ -1578,6 +1722,45 @@ let
       assert pkgs.lib.hasInfix "proxy_suite_app_tproxy" appRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "route replace local default dev lo table 102" appRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" appRoutingTproxyStartScript;
+      true
+    )
+
+    # -- appRouting: app zapret helper installs socket cgroup bitwise mark rules --
+    (
+      assert pkgs.lib.hasInfix "socket cgroupv2" appRoutingZapretUserStartScript;
+      assert pkgs.lib.hasInfix "meta mark set meta mark or 268435456" appRoutingZapretUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set ct mark or 268435456" appRoutingZapretUserStartScript;
+      true
+    )
+
+    # -- appRouting: app zapret startup installs nftables backend --
+    (
+      assert pkgs.lib.hasInfix "proxy_suite_app_zapret_mark" appRoutingZapretStartScript;
+      true
+    )
+
+    # -- appRouting: global zapret config keeps FILTER_MARK disabled --
+    (
+      assert pkgs.lib.hasInfix "FILTER_MARK=" appRoutingZapretConfig;
+      assert builtins.match ".*FILTER_MARK=0x10000000.*" appRoutingZapretConfig == null;
+      true
+    )
+
+    # -- appRouting: app zapret config is a separate instance with its own filter/qnum/marks --
+    (
+      assert pkgs.lib.hasInfix "FILTER_MARK=0x10000000" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "MODE_FILTER=none" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "QNUM=201" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "DESYNC_MARK=0x8000000" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "DESYNC_MARK_POSTNAT=0x4000000" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_app_zapret" appRoutingAppZapretConfig;
+      true
+    )
+
+    # -- appRouting: global zapret installs a bypass hook for app-marked traffic --
+    (
+      assert pkgs.lib.hasInfix "proxy-suite app-zapret bypass" appRoutingZapretGlobalCustomScript;
+      assert pkgs.lib.hasInfix "mark and 268435456 != 0 return" appRoutingZapretGlobalCustomScript;
       true
     )
 
@@ -1611,6 +1794,16 @@ let
       true
     )
 
+    # -- appRouting: route=zapret requires appRouting.backends.zapret.enable and zapret.enable --
+    (
+      assert appRoutingZapretWithoutEnable.success == false;
+      true
+    )
+    (
+      assert appRoutingZapretWithoutZapretService.success == false;
+      true
+    )
+
     # -- appRouting: profile names must be unique --
     (
       assert duplicateAppRoutingProfiles.success == false;
@@ -1638,6 +1831,18 @@ let
     # -- appRouting: app TUN and app TProxy route tables must differ --
     (
       assert appRoutingTunTproxyRouteTableCollision.success == false;
+      true
+    )
+
+    # -- appRouting: app zapret filter mark must differ from sing-box proxyMark --
+    (
+      assert appRoutingZapretFilterMarkCollision.success == false;
+      true
+    )
+
+    # -- appRouting: app TProxy and app zapret marks must differ --
+    (
+      assert appRoutingTproxyZapretMarkCollision.success == false;
       true
     )
 

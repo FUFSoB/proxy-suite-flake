@@ -9,6 +9,7 @@ let
   sb = cfg.singBox;
   art = cfg.appRouting.backends.tun;
   artp = cfg.appRouting.backends.tproxy;
+  arz = cfg.appRouting.backends.zapret;
 
   mkLocalSubnetLines = subnets: lib.concatMapStrings (cidr: ''
     ip daddr ${cidr} tcp dport != 53 return
@@ -88,10 +89,25 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
       }
   '';
 
+  appZapretRulesFile = pkgs.writeText "proxy-suite-app-zapret.nft" ''
+      table inet proxy_suite_app_zapret_mark {
+          chain prerouting {
+              type filter hook prerouting priority -103; policy accept;
+              ct mark and ${toString arz.filterMark} == ${toString arz.filterMark} meta mark set meta mark or ${toString arz.filterMark}
+          }
+
+          chain output {
+              type route hook output priority -103; policy accept;
+              ct mark and ${toString arz.filterMark} == ${toString arz.filterMark} meta mark set meta mark or ${toString arz.filterMark}
+              meta mark and ${toString arz.filterMark} == ${toString arz.filterMark} return
+          }
+      }
+  '';
+
   ip = "${pkgs.iproute2}/bin/ip";
   nft = "${pkgs.nftables}/bin/nft";
 
 in
 {
-  inherit nftablesRulesFile appTproxyRulesFile ip nft;
+  inherit nftablesRulesFile appTproxyRulesFile appZapretRulesFile ip nft;
 }

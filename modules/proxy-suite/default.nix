@@ -11,13 +11,11 @@
 
 let
   cfg = config.services.proxy-suite;
+  nftr = import ./nftables.nix { inherit lib pkgs cfg; };
 in
 {
   imports = [
     ./options.nix
-    # Always import the zapret module so its options are available,
-    # but we only activate services when cfg.zapret.enable = true.
-    zapret.nixosModules.default
   ];
 
   config = lib.mkIf cfg.enable (
@@ -40,7 +38,6 @@ in
               rules
               ;
           };
-          nftr = import ./nftables.nix { inherit lib pkgs cfg; };
         in
         import ./service.nix {
           inherit
@@ -50,7 +47,7 @@ in
             cfg
             ;
           inherit (configs) tproxyFile tunFile appTunFile;
-          inherit (nftr) nftablesRulesFile appTproxyRulesFile ip nft;
+          inherit (nftr) nftablesRulesFile appTproxyRulesFile appZapretRulesFile ip nft;
         }
       ))
 
@@ -62,6 +59,7 @@ in
             cfg
             zapret
             ;
+          inherit (nftr) appZapretRulesFile nft;
         }
       ))
 
