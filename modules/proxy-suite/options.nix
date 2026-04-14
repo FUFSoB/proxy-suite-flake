@@ -299,6 +299,7 @@ let
         type = types.enum [
           "direct"
           "proxychains"
+          "tun"
         ];
         default = "proxychains";
         description = ''
@@ -307,6 +308,8 @@ let
           - "direct": run the command unchanged.
           - "proxychains": run the command through proxychains-ng using the
             local proxy-suite mixed SOCKS endpoint.
+          - "tun": launch the command in the dedicated app-routing TUN slice so
+            only that app's traffic is policy-routed into the app TUN backend.
 
           Additional route backends may be added in the future.
         '';
@@ -547,8 +550,8 @@ in
           Whether traffic that does not match any explicit routing rule should
           go through the proxy or go direct.
 
-          This affects both sing-box route.final and the default DNS resolver
-          choice in the generated config.
+          This affects sing-box route.final and dns.final in the generated
+          config.
         '';
         example = true;
       };
@@ -565,9 +568,10 @@ in
             DNS upstream used for the built-in "local" resolver role.
             This resolver is also used as sing-box route.default_domain_resolver.
 
-            The module keeps detour policy automatic: in mixed/TProxy mode,
-            "local" uses direct; in TUN mode, it is forced through the proxy to
-            avoid auto_redirect conflicts.
+            The module keeps detour policy automatic: in mixed/TProxy mode and
+            app-routing TUN mode, "local" stays on the direct path (without an
+            explicit detour); in global TUN mode, it is forced through the proxy to avoid
+            auto_redirect conflicts.
           '';
           example = {
             type = "tcp";
@@ -815,9 +819,11 @@ in
 
           Current curated defaults:
           - `proxychains`: route = "proxychains"
+          - `tun`: route = "tun" when appRouting.backends.tun.enable = true
 
           This makes `proxy-ctl wrap proxychains -- <command>` available
-          without defining the profile manually.
+          without defining the profile manually, and similarly exposes
+          `proxy-ctl wrap tun -- <command>` when the app TUN backend is enabled.
         '';
         example = true;
       };
@@ -832,9 +838,12 @@ in
           - "direct" for running a command unchanged
           - "proxychains" for TCP apps that can use an LD_PRELOAD wrapper
             instead of global TUN or TProxy interception
+          - "tun" for app-scoped policy routing into the dedicated app TUN
+            backend
 
           proxychains-based wrapping depends on the local proxy-suite mixed
-          proxy listener provided by sing-box.
+          proxy listener provided by sing-box. The "tun" route depends on
+          appRouting.backends.tun.enable = true.
 
           When createDefaultProfiles = true, curated defaults are added on top
           of this list unless a user-defined profile already uses the same
@@ -874,6 +883,86 @@ in
             proxy_dns.
           '';
           example = true;
+        };
+      };
+
+      backends = {
+        tun = {
+          enable = mkEnableOption "app-scoped TUN backend for appRouting profiles";
+
+          interface = mkOption {
+            type = types.str;
+            default = "psapptun0";
+            description = ''
+              Name of the dedicated app-routing TUN interface used by
+              proxy-suite-app-tun.
+            '';
+            example = "psapptun0";
+          };
+
+          address = mkOption {
+            type = types.str;
+            default = "172.20.0.1/30";
+            description = ''
+              Address assigned to the app-routing TUN interface in CIDR
+              notation.
+            '';
+            example = "172.20.0.1/30";
+          };
+
+          mtu = mkOption {
+            type = types.int;
+            default = 1400;
+            description = ''
+              MTU for the app-routing TUN interface.
+            '';
+            example = 1400;
+          };
+
+          fwmark = mkOption {
+            type = types.int;
+            default = 16;
+            description = ''
+              Packet mark used to steer wrapped app traffic into the app-routing
+              TUN policy-routing table.
+            '';
+            example = 16;
+          };
+
+          routeTable = mkOption {
+            type = types.int;
+            default = 101;
+            description = ''
+              Policy-routing table used by the app-routing TUN backend.
+            '';
+            example = 101;
+          };
+
+          localSubnets = mkOption {
+            type = types.listOf types.str;
+            default = [ "192.168.0.0/16" ];
+            description = ''
+              Destination subnets that should bypass the app-routing TUN mark,
+              so wrapped apps can still reach local LAN resources directly.
+            '';
+            example = [
+              "192.168.0.0/16"
+              "10.0.0.0/8"
+            ];
+          };
+        };
+      };
+
+      userControl = {
+        group = mkOption {
+          type = types.strMatching "^[a-z_][a-z0-9_-]*$";
+          default = "proxy-suite";
+          description = ''
+            Local group allowed to start and stop app-routing backend units via
+            polkit. Add desktop users who should be able to run
+            `proxy-ctl wrap ...` for route = "tun" profiles to this group.
+          '';
+          example = "proxy-suite";
         };
       };
     };

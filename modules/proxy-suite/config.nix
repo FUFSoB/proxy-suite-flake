@@ -9,14 +9,36 @@
 
 let
   sb = cfg.singBox;
+  art = cfg.appRouting.backends.tun;
   direct = rules.direct;
 
   mkDnsServer =
-    tag: upstream: detour: {
-      inherit tag detour;
+    tag: upstream: detour:
+    {
+      inherit tag;
       type = upstream.type;
       server = upstream.address;
       server_port = upstream.port;
+    }
+    // lib.optionalAttrs (detour != null) { inherit detour; };
+
+  mkDnsConfig =
+    { localDetour ? null }:
+    {
+      servers = [
+        (mkDnsServer "remote" sb.dns.remote "proxy")
+        (mkDnsServer "local" sb.dns.local localDetour)
+      ];
+      rules =
+        lib.optional (builtins.elem "google" sb.routing.proxy.geosites) {
+          rule_set = [ "geosite-google" ];
+          server = "remote";
+        }
+        ++ lib.optional (direct.geosites != [ ]) {
+          rule_set = map (s: "geosite-${s}") direct.geosites;
+          server = "local";
+        };
+      final = if sb.proxyByDefault then "remote" else "local";
     };
 
   clashApiBlock = lib.optionalAttrs (sb.selection != "first") {
@@ -27,42 +49,30 @@ let
     };
   };
 
-  dnsConfig = {
-    servers = [
-      (mkDnsServer "remote" sb.dns.remote "proxy")
-      (
-        # In TUN mode, routing DNS through direct can conflict with auto_redirect.
-        # In TProxy/mixed mode, direct is fine for local traffic.
-        mkDnsServer "local" sb.dns.local "direct"
-      )
-    ];
-    rules =
-      lib.optional (builtins.elem "google" sb.routing.proxy.geosites) {
-        rule_set = [ "geosite-google" ];
-        server = "remote";
-      }
-      ++ lib.optional (direct.geosites != [ ]) {
-        rule_set = map (s: "geosite-${s}") direct.geosites;
-        server = "local";
-      };
-    final = if sb.proxyByDefault then "remote" else "local";
-  };
-
-  dnsConfigTun = dnsConfig // {
-    servers = map (s: if s.tag == "local" then s // { detour = "proxy"; } else s) dnsConfig.servers;
-  };
-
   mkConfig =
     {
       enableMixed ? false,
       enableTProxy ? false,
       enableTun ? false,
+      tunInterface ? sb.tun.interface,
+      tunAddress ? sb.tun.address,
+      tunMtu ? sb.tun.mtu,
+      tunAutoRoute ? true,
+      tunAutoRedirect ? true,
+      tunStrictRoute ? true,
+      forceLocalDnsViaProxy ? false,
       useOutboundRoutingMark ? false,
+      enableClashApi ? true,
     }:
     {
       log.level = "warn";
 
-      dns = if enableTun then dnsConfigTun else dnsConfig;
+      # Keep "local" DNS on the direct path by default, but avoid explicit
+      # detour="direct" because sing-box rejects detouring to an empty
+      # direct outbound. Global TUN can force local DNS through proxy.
+      dns = mkDnsConfig {
+        localDetour = if forceLocalDnsViaProxy then "proxy" else null;
+      };
 
       inbounds =
         lib.optional enableMixed {
@@ -80,12 +90,12 @@ let
         ++ lib.optional enableTun {
           type = "tun";
           tag = "tun-in";
-          interface_name = sb.tun.interface;
-          address = [ sb.tun.address ];
-          mtu = sb.tun.mtu;
-          auto_route = true;
-          auto_redirect = true;
-          strict_route = true;
+          interface_name = tunInterface;
+          address = [ tunAddress ];
+          mtu = tunMtu;
+          auto_route = tunAutoRoute;
+          auto_redirect = tunAutoRedirect;
+          strict_route = tunStrictRoute;
           stack = "mixed";
         };
 
@@ -110,24 +120,49 @@ let
         rules = rules.routingRules;
         final = if sb.proxyByDefault then "proxy" else "direct";
       }
-      // lib.optionalAttrs enableTun { auto_detect_interface = true; };
+      // lib.optionalAttrs (enableTun && tunAutoRoute) { auto_detect_interface = true; };
     }
-    // clashApiBlock;
+    // lib.optionalAttrs enableClashApi clashApiBlock;
 
   tproxyTemplate = mkConfig {
     enableMixed = true;
     enableTProxy = true;
     useOutboundRoutingMark = true;
+    enableClashApi = true;
   };
 
   tunTemplate = mkConfig {
     enableTun = true;
+    tunInterface = sb.tun.interface;
+    tunAddress = sb.tun.address;
+    tunMtu = sb.tun.mtu;
+    tunAutoRoute = true;
+    tunAutoRedirect = true;
+    tunStrictRoute = true;
+    forceLocalDnsViaProxy = true;
+    enableClashApi = false;
+  };
+
+  appTunTemplate = mkConfig {
+    enableTun = true;
+    tunInterface = art.interface;
+    tunAddress = art.address;
+    tunMtu = art.mtu;
+    tunAutoRoute = false;
+    tunAutoRedirect = false;
+    tunStrictRoute = false;
+    forceLocalDnsViaProxy = false;
+    # App TUN can be used alongside TProxy; mark direct egress so TProxy output
+    # rules do not re-intercept sing-box's own packets.
+    useOutboundRoutingMark = sb.tproxy.enable;
+    enableClashApi = false;
   };
 
   tproxyFile = pkgs.writeText "proxy-suite-tproxy-template.json" (builtins.toJSON tproxyTemplate);
   tunFile = pkgs.writeText "proxy-suite-tun-template.json" (builtins.toJSON tunTemplate);
+  appTunFile = pkgs.writeText "proxy-suite-app-tun-template.json" (builtins.toJSON appTunTemplate);
 
 in
 {
-  inherit tproxyFile tunFile;
+  inherit tproxyFile tunFile appTunFile;
 }

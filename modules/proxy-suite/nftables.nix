@@ -7,6 +7,7 @@
 
 let
   sb = cfg.singBox;
+  art = cfg.appRouting.backends.tun;
 
   localSubnetLines = lib.concatMapStrings (cidr: ''
     ip daddr ${cidr} tcp dport != 53 return
@@ -42,7 +43,7 @@ let
               ip daddr $RESERVED_IP return
     ${localSubnetLines}
               meta mark ${toString sb.proxyMark} return
-              ip protocol tcp meta mark set ${toString sb.fwmark}
+${lib.optionalString art.enable "              meta mark ${toString art.fwmark} return\n"}              ip protocol tcp meta mark set ${toString sb.fwmark}
               ip protocol udp meta mark set ${toString sb.fwmark}
           }
       }

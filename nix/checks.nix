@@ -48,6 +48,17 @@ let
       };
     in
     builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tunFile));
+  mkAppTunConfig =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+      rules = mkRouting fixture;
+      configs = import ../modules/proxy-suite/config.nix {
+        lib = pkgs.lib;
+        inherit pkgs cfg rules;
+      };
+    in
+    builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.appTunFile));
   hasDirectDomain =
     rules: domain:
     builtins.any (
@@ -744,6 +755,73 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
+  appRoutingTunFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.appRouting = {
+        enable = true;
+        createDefaultProfiles = true;
+        backends.tun.enable = true;
+      };
+    }
+  ];
+  appRoutingTunScript =
+    builtins.readFile (
+      "${packageByPattern appRoutingTunFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  appRoutingTunProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix appRoutingTunScript "APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+  appRoutingTunStartScript =
+    builtins.readFile appRoutingTunFixture.config.systemd.services."proxy-suite-app-tun".serviceConfig.ExecStart;
+  appRoutingTunConfig = mkAppTunConfig appRoutingTunFixture;
+  appRoutingTunDirectOutbound =
+    builtins.head (builtins.filter (item: item.tag == "direct") appRoutingTunConfig.outbounds);
+  appRoutingTunUserStartExec =
+    appRoutingTunFixture.config.systemd.services."proxy-suite-app-tun-user@".serviceConfig.ExecStart;
+  appRoutingTunUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingTunUserStartExec));
+
+  appRoutingTunWithTproxyFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox.tproxy.enable = true;
+        appRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+          backends.tun.enable = true;
+        };
+      };
+    }
+  ];
+  appRoutingTunWithTproxyStartScript =
+    builtins.readFile appRoutingTunWithTproxyFixture.config.systemd.services."proxy-suite-app-tun".serviceConfig.ExecStart;
+  appRoutingTunWithTproxyConfig = mkAppTunConfig appRoutingTunWithTproxyFixture;
+  appRoutingTunWithTproxyDirectOutbound =
+    builtins.head (builtins.filter (item: item.tag == "direct") appRoutingTunWithTproxyConfig.outbounds);
+
+  appRoutingTunWithoutEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "game";
+              route = "tun";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   duplicateAppRoutingProfiles = forceEval (
     (evalProxySuite [
       baseModule
@@ -780,6 +858,27 @@ let
               route = "proxychains";
             }
           ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingTunFwmarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox = {
+            tproxy.enable = true;
+            proxyMark = 16;
+          };
+          appRouting = {
+            enable = true;
+            backends.tun = {
+              enable = true;
+              fwmark = 16;
+            };
+          };
         };
       }
     ]).config.system.build.toplevel.drvPath
@@ -954,7 +1053,7 @@ let
       assert localDns.type == "udp";
       assert localDns.server == "1.1.1.1";
       assert localDns.server_port == 53;
-      assert localDns.detour == "direct";
+      assert !(localDns ? detour);
       assert remoteDns.type == "udp";
       assert remoteDns.server == "1.1.1.1";
       assert remoteDns.server_port == 53;
@@ -996,7 +1095,7 @@ let
       assert localDns.type == "tcp";
       assert localDns.server == "9.9.9.9";
       assert localDns.server_port == 5353;
-      assert localDns.detour == "direct";
+      assert !(localDns ? detour);
       true
     )
     (
@@ -1110,6 +1209,12 @@ let
     )
     (
       assert ruDefaultConfig.dns.final == "remote";
+      true
+    )
+    (
+      assert ruDefaultConfig.route.default_domain_resolver == "local";
+      assert tunDefaultConfig.route.default_domain_resolver == "local";
+      assert appRoutingTunConfig.route.default_domain_resolver == "local";
       true
     )
     (
@@ -1235,6 +1340,13 @@ let
       true
     )
 
+    # -- appRouting: createDefaultProfiles injects curated tun profile when backend is enabled --
+    (
+      assert builtins.length appRoutingTunProfiles == 2;
+      assert builtins.any (profile: profile.name == "tun" && profile.route == "tun") appRoutingTunProfiles;
+      true
+    )
+
     # -- appRouting: proxy-ctl script embeds wrap/apps commands --
     (
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" appRoutingProxychainsScript;
@@ -1256,6 +1368,75 @@ let
       true
     )
 
+    # -- appRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
+    (
+      assert pkgs.lib.hasInfix "APP_ROUTING_TUN_ENABLED" appRoutingTunScript;
+      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" appRoutingTunScript;
+      assert pkgs.lib.hasInfix "proxy-suite-app-tun-user@$uid.service" appRoutingTunScript;
+      true
+    )
+
+    # -- appRouting: user mark script installs fwmark + conntrack mark rules --
+    (
+      assert pkgs.lib.hasInfix "meta mark set" appRoutingTunUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set" appRoutingTunUserStartScript;
+      true
+    )
+
+    # -- appRouting: app TUN config is separate and does not auto-route globally --
+    (
+      let
+        inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") appRoutingTunConfig.inbounds);
+      in
+      assert inbound.interface_name == "psapptun0";
+      assert inbound.address == [ "172.20.0.1/30" ];
+      assert inbound.auto_route == false;
+      assert inbound.auto_redirect == false;
+      assert inbound.strict_route == false;
+      true
+    )
+
+    # -- appRouting: app TUN local DNS keeps direct path without explicit detour --
+    (
+      let
+        localDns = dnsServerByTag appRoutingTunConfig "local";
+      in
+      assert !(localDns ? detour);
+      true
+    )
+
+    # -- appRouting: app TUN does not set outbound routing marks when TProxy is disabled --
+    (
+      assert builtins.match ".*--routing-mark.*" appRoutingTunStartScript == null;
+      assert !(appRoutingTunDirectOutbound ? routing_mark);
+      true
+    )
+
+    # -- appRouting: app TUN applies outbound routing marks when TProxy is enabled --
+    (
+      let
+        expectedMark = appRoutingTunWithTproxyFixture.config.services.proxy-suite.singBox.proxyMark;
+      in
+      assert builtins.match ".*--routing-mark.*" appRoutingTunWithTproxyStartScript != null;
+      assert appRoutingTunWithTproxyDirectOutbound.routing_mark == expectedMark;
+      true
+    )
+
+    # -- appRouting: app TUN service and helper units are created --
+    (
+      assert appRoutingTunFixture.config.systemd.services ? "proxy-suite-app-tun";
+      assert appRoutingTunFixture.config.systemd.services ? "proxy-suite-app-tun-user@";
+      assert appRoutingTunFixture.config.systemd.user.services ? "proxy-suite-app-tun-anchor";
+      true
+    )
+
+    # -- appRouting: app TUN enables nftables and user control group --
+    (
+      assert appRoutingTunFixture.config.networking.nftables.enable;
+      assert appRoutingTunFixture.config.users.groups ? "proxy-suite";
+      true
+    )
+
     # -- appRouting: route=proxychains requires proxychains.enable --
     (
       assert appRoutingProxychainsWithoutEnable.success == false;
@@ -1274,9 +1455,21 @@ let
       true
     )
 
+    # -- appRouting: route=tun requires appRouting.backends.tun.enable --
+    (
+      assert appRoutingTunWithoutEnable.success == false;
+      true
+    )
+
     # -- appRouting: profile names must be unique --
     (
       assert duplicateAppRoutingProfiles.success == false;
+      true
+    )
+
+    # -- appRouting: with TProxy enabled, app TUN fwmark must differ from proxyMark --
+    (
+      assert appRoutingTunFwmarkCollision.success == false;
       true
     )
 

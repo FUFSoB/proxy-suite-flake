@@ -6,6 +6,7 @@
   cfg,
   tproxyFile,
   tunFile,
+  appTunFile,
   nftablesRulesFile,
   ip,
   nft,
@@ -15,6 +16,7 @@ let
   sb = cfg.singBox;
   t = cfg.tgWsProxy;
   ar = cfg.appRouting;
+  art = ar.backends.tun;
   builtinTags = [
     "proxy"
     "direct"
@@ -31,6 +33,16 @@ let
   python3 = "${pkgs.python3}/bin/python3";
   singBox = "${pkgs.sing-box}/bin/sing-box";
   proxychains4 = "${pkgs.proxychains-ng}/bin/proxychains4";
+  systemdRun = "${pkgs.systemd}/bin/systemd-run";
+  systemctl = "${pkgs.systemd}/bin/systemctl";
+  journalctl = "${pkgs.systemd}/bin/journalctl";
+  idBin = "${pkgs.coreutils}/bin/id";
+  grepBin = "${pkgs.gnugrep}/bin/grep";
+  awk = "${pkgs.gawk}/bin/awk";
+  sleepBin = "${pkgs.coreutils}/bin/sleep";
+  headBin = "${pkgs.coreutils}/bin/head";
+  seqBin = "${pkgs.coreutils}/bin/seq";
+  findBin = "${pkgs.findutils}/bin/find";
 
   fetchSubscriptionPy = ../../scripts/fetch-subscription.py;
 
@@ -192,6 +204,15 @@ let
     routingMark = null;
   };
 
+  startAppTun = mkStartScript {
+    name = "proxy-suite-start-app-tun";
+    runtimeDir = "/run/proxy-suite-app-tun";
+    configFile = appTunFile;
+    # Only needed when TProxy mode is enabled; otherwise avoid tagging app TUN
+    # proxy outbounds with a host-global mark.
+    routingMark = if sb.tproxy.enable then sb.proxyMark else null;
+  };
+
   clashApi = "http://127.0.0.1:${toString sb.clashApiPort}";
   selection = sb.selection;
 
@@ -244,6 +265,11 @@ let
       name = "proxychains";
       route = "proxychains";
     }
+  ] ++ lib.optionals art.enable [
+    {
+      name = "tun";
+      route = "tun";
+    }
   ];
   effectiveAppRoutingProfiles =
     ar.profiles
@@ -264,13 +290,118 @@ let
   '';
   proxychainsQuietArg = lib.optionalString ar.proxychains.quiet "-q ";
   hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectiveAppRoutingProfiles;
+  hasTunProfiles = builtins.any (profile: profile.route == "tun") effectiveAppRoutingProfiles;
+  appTunSliceName = "proxy-suite-app-tun.slice";
+  appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
+    define RESERVED_IP = {
+        10.0.0.0/8,
+        100.64.0.0/10,
+        127.0.0.0/8,
+        169.254.0.0/16,
+        172.16.0.0/12,
+        192.0.0.0/24,
+        224.0.0.0/4,
+        240.0.0.0/4,
+        255.255.255.255/32
+    }
+
+    table inet proxy_suite_app_tun {
+        chain output {
+            type route hook output priority mangle; policy accept;
+            ip daddr $RESERVED_IP return
+${lib.concatMapStrings (cidr: ''
+            ip daddr ${cidr} return
+    '') art.localSubnets}
+            ct mark ${toString art.fwmark} meta mark set ${toString art.fwmark}
+            meta mark ${toString art.fwmark} return
+        }
+    }
+  '';
+  appTunWaitForInterface = pkgs.writeShellScript "proxy-suite-app-tun-wait-for-interface" ''
+    set -euo pipefail
+    for _ in $(${seqBin} 1 50); do
+      if ${ip} link show dev ${lib.escapeShellArg art.interface} >/dev/null 2>&1; then
+        exit 0
+      fi
+      ${sleepBin} 0.1
+    done
+    echo "proxy-suite: app TUN interface ${art.interface} did not appear in time" >&2
+    exit 1
+  '';
+  appTunUpScript = pkgs.writeShellScript "proxy-suite-app-tun-up" ''
+    set -euo pipefail
+    ${nft} delete table inet proxy_suite_app_tun 2>/dev/null || true
+    ${nft} -f ${appTunChainFile}
+    ${appTunWaitForInterface}
+    ${ip} route replace default dev ${lib.escapeShellArg art.interface} table ${toString art.routeTable}
+    ${ip} rule add fwmark ${toString art.fwmark} table ${toString art.routeTable} 2>/dev/null || true
+  '';
+  appTunDownScript = pkgs.writeShellScript "proxy-suite-app-tun-down" ''
+    set -euo pipefail
+    ${nft} delete table inet proxy_suite_app_tun 2>/dev/null || true
+    ${ip} route del default dev ${lib.escapeShellArg art.interface} table ${toString art.routeTable} 2>/dev/null || true
+    ${ip} rule del fwmark ${toString art.fwmark} table ${toString art.routeTable} 2>/dev/null || true
+  '';
+  appTunUserRuleStart =
+    pkgs.writeShellScript "proxy-suite-app-tun-user-start" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-tun-user-$uid"
+      mark_comment="$rule_comment_prefix-mark"
+      cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
+      if ! [ -d "$cgroup_root" ]; then
+        echo "proxy-suite: user cgroup root does not exist for uid $uid: $cgroup_root" >&2
+        exit 1
+      fi
+
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appTunSliceName} | ${headBin} -n1 || true)
+      if [ -z "$cgroup_dir" ]; then
+        echo "proxy-suite: app TUN slice cgroup does not exist for uid $uid under $cgroup_root" >&2
+        exit 1
+      fi
+      cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
+      cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
+
+      handles=$(${nft} -a list chain inet proxy_suite_app_tun output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule inet proxy_suite_app_tun output handle "$handle" || true
+        done <<< "$handles"
+      fi
+
+      printf '%s\n' \
+        "add rule inet proxy_suite_app_tun output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set ${toString art.fwmark} ct mark set ${toString art.fwmark} comment \"$mark_comment\"" \
+        | ${nft} -f -
+    '';
+  appTunUserRuleStop =
+    pkgs.writeShellScript "proxy-suite-app-tun-user-stop" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-tun-user-$uid"
+      handles=$(${nft} -a list chain inet proxy_suite_app_tun output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule inet proxy_suite_app_tun output handle "$handle" || true
+        done <<< "$handles"
+      fi
+    '';
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
     runtimeInputs = with pkgs; [
+      coreutils
       curl
+      gawk
+      gnugrep
       jq
       proxychains-ng
+      systemd
     ];
     text = ''
       # Embedded at build time from module config
@@ -279,8 +410,11 @@ let
       SUB_TAGS=(${subscriptionTagsList})
       APP_ROUTING_ENABLED="${if ar.enable then "1" else "0"}"
       APP_ROUTING_PROXYCHAINS_ENABLED="${if ar.proxychains.enable then "1" else "0"}"
+      APP_ROUTING_TUN_ENABLED="${if art.enable then "1" else "0"}"
       APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
       PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
+      APP_TUN_SLICE_BASE="proxy-suite-app-tun"
+      APP_TUN_ANCHOR_UNIT="proxy-suite-app-tun-anchor.service"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -329,6 +463,16 @@ let
       _profile_route() {
         local profile="$1"
         ${jq} -r --arg name "$profile" '.[] | select(.name == $name) | .route' "$APP_ROUTING_PROFILES_FILE"
+      }
+
+      _tun_scope_running() {
+        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-tun-*' \
+          | ${grepBin} -q .
+      }
+
+      _any_app_tun_user_active() {
+        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tun-user@*.service' \
+          | ${grepBin} -q .
       }
 
       cmd="''${1:-status}"
@@ -447,6 +591,38 @@ let
               fi
               exec ${proxychains4} ${proxychainsQuietArg}-f "$PROXYCHAINS_CONFIG" "$@"
               ;;
+            tun)
+              if [ "$APP_ROUTING_TUN_ENABLED" != "1" ]; then
+                echo "Profile '$profile' uses route=tun, but appRouting.backends.tun.enable is false."
+                exit 1
+              fi
+
+              uid="$(${idBin} -u)"
+              scope_unit="proxy-suite-app-tun-$profile-$$"
+
+              ${systemctl} --user start "$APP_TUN_ANCHOR_UNIT"
+              ${systemctl} start proxy-suite-app-tun.service
+              ${systemctl} start "proxy-suite-app-tun-user@$uid.service"
+
+              if ${systemdRun} --user --scope --quiet --collect --same-dir \
+                --slice="$APP_TUN_SLICE_BASE" \
+                --unit="$scope_unit" \
+                "$@"; then
+                status=0
+              else
+                status=$?
+              fi
+
+              if ! _tun_scope_running; then
+                ${systemctl} stop "proxy-suite-app-tun-user@$uid.service" || true
+                ${systemctl} --user stop "$APP_TUN_ANCHOR_UNIT" || true
+                if ! _any_app_tun_user_active; then
+                  ${systemctl} stop proxy-suite-app-tun.service || true
+                fi
+              fi
+
+              exit "$status"
+              ;;
             *)
               echo "Route backend '$route' is not implemented in this build."
               exit 1
@@ -498,7 +674,45 @@ in
   environment.systemPackages = [ proxyCtl ];
 
   # nftables must be on for TProxy to work.
-  networking.nftables.enable = lib.mkIf sb.tproxy.enable (lib.mkDefault true);
+  networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable) (lib.mkDefault true);
+
+  users.groups = lib.mkIf art.enable {
+    "${ar.userControl.group}" = { };
+  };
+
+  security.polkit.enable = lib.mkIf art.enable true;
+  security.polkit.extraConfig = lib.mkIf art.enable (lib.mkAfter ''
+    polkit.addRule(function(action, subject) {
+      if (!subject.isInGroup("${ar.userControl.group}")) {
+        return null;
+      }
+
+      if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return null;
+      }
+
+      var unit = action.lookup("unit");
+      if (unit === "proxy-suite-app-tun.service" ||
+          unit.indexOf("proxy-suite-app-tun-user@") === 0) {
+        return polkit.Result.YES;
+      }
+
+      return null;
+    });
+  '');
+
+  systemd.user.services = lib.optionalAttrs art.enable {
+    proxy-suite-app-tun-anchor = {
+      description = "Anchor service for proxy-suite app TUN slice";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        Slice = appTunSliceName;
+        ExecStart = "${pkgs.coreutils}/bin/true";
+        ExecStop = "${pkgs.coreutils}/bin/true";
+      };
+    };
+  };
 
   assertions = [
     {
@@ -530,12 +744,32 @@ in
       message = "proxy-suite: appRouting.proxychains.enable requires appRouting.enable = true";
     }
     {
-      assertion = builtins.length appRoutingProfileNames == builtins.length (lib.unique appRoutingProfileNames);
+      assertion = builtins.length effectiveAppRoutingProfileNames == builtins.length (lib.unique effectiveAppRoutingProfileNames);
       message = "proxy-suite: appRouting profile names must be unique";
     }
     {
       assertion = !hasProxychainsProfiles || ar.proxychains.enable;
       message = "proxy-suite: route=proxychains in appRouting.profiles requires appRouting.proxychains.enable = true";
+    }
+    {
+      assertion = !art.enable || ar.enable;
+      message = "proxy-suite: appRouting.backends.tun.enable requires appRouting.enable = true";
+    }
+    {
+      assertion = !(hasTunProfiles && !art.enable);
+      message = "proxy-suite: route=tun in appRouting profiles requires appRouting.backends.tun.enable = true";
+    }
+    {
+      assertion = !(art.enable && sb.tproxy.enable && art.fwmark == sb.fwmark);
+      message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.fwmark when singBox.tproxy.enable = true";
+    }
+    {
+      assertion = !(art.enable && sb.tproxy.enable && art.fwmark == sb.proxyMark);
+      message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.proxyMark when singBox.tproxy.enable = true";
+    }
+    {
+      assertion = !(art.enable && sb.tproxy.enable && art.routeTable == sb.routeTable);
+      message = "proxy-suite: appRouting.backends.tun.routeTable must differ from singBox.routeTable when singBox.tproxy.enable = true";
     }
     {
       assertion =
@@ -637,6 +871,34 @@ in
         RestartSec = 5;
         RuntimeDirectory = "proxy-suite-tun";
         StateDirectory = "proxy-suite";
+      };
+    };
+  }
+  // lib.optionalAttrs art.enable {
+    proxy-suite-app-tun = {
+      description = "sing-box app-routing TUN backend";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      serviceConfig = {
+        ExecStart = "${startAppTun}";
+        ExecStartPost = "${appTunUpScript}";
+        ExecStopPost = "${appTunDownScript}";
+        Restart = "on-failure";
+        RestartSec = 5;
+        RuntimeDirectory = "proxy-suite-app-tun";
+        StateDirectory = "proxy-suite";
+      };
+    };
+
+    "proxy-suite-app-tun-user@" = {
+      description = "Enable proxy-suite app TUN marking for user %i";
+      requires = [ "proxy-suite-app-tun.service" ];
+      after = [ "proxy-suite-app-tun.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${appTunUserRuleStart} %i";
+        ExecStop = "${appTunUserRuleStop} %i";
       };
     };
   }

@@ -49,7 +49,7 @@ in
             pkgs
             cfg
             ;
-          inherit (configs) tproxyFile tunFile;
+          inherit (configs) tproxyFile tunFile appTunFile;
           inherit (nftr) nftablesRulesFile ip nft;
         }
       ))
