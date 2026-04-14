@@ -822,6 +822,51 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
+  appRoutingTproxyFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.appRouting = {
+        enable = true;
+        createDefaultProfiles = true;
+        backends.tproxy.enable = true;
+      };
+    }
+  ];
+  appRoutingTproxyScript =
+    builtins.readFile (
+      "${packageByPattern appRoutingTproxyFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  appRoutingTproxyProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix appRoutingTproxyScript "APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+  appRoutingTproxyStartScript =
+    builtins.readFile appRoutingTproxyFixture.config.systemd.services."proxy-suite-app-tproxy".serviceConfig.ExecStart;
+  appRoutingTproxyUserStartExec =
+    appRoutingTproxyFixture.config.systemd.services."proxy-suite-app-tproxy-user@".serviceConfig.ExecStart;
+  appRoutingTproxyUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingTproxyUserStartExec));
+
+  appRoutingTproxyWithoutEnable = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "browser";
+              route = "tproxy";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
   duplicateAppRoutingProfiles = forceEval (
     (evalProxySuite [
       baseModule
@@ -877,6 +922,66 @@ let
             backends.tun = {
               enable = true;
               fwmark = 16;
+            };
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingTproxyFwmarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox.proxyMark = 17;
+          appRouting = {
+            enable = true;
+            backends.tproxy = {
+              enable = true;
+              fwmark = 17;
+            };
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingTunTproxyFwmarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          backends = {
+            tun = {
+              enable = true;
+              fwmark = 23;
+            };
+            tproxy = {
+              enable = true;
+              fwmark = 23;
+            };
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  appRoutingTunTproxyRouteTableCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.appRouting = {
+          enable = true;
+          backends = {
+            tun = {
+              enable = true;
+              routeTable = 123;
+            };
+            tproxy = {
+              enable = true;
+              routeTable = 123;
             };
           };
         };
@@ -1347,6 +1452,13 @@ let
       true
     )
 
+    # -- appRouting: createDefaultProfiles injects curated tproxy profile when backend is enabled --
+    (
+      assert builtins.length appRoutingTproxyProfiles == 2;
+      assert builtins.any (profile: profile.name == "tproxy" && profile.route == "tproxy") appRoutingTproxyProfiles;
+      true
+    )
+
     # -- appRouting: proxy-ctl script embeds wrap/apps commands --
     (
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" appRoutingProxychainsScript;
@@ -1373,6 +1485,14 @@ let
       assert pkgs.lib.hasInfix "APP_ROUTING_TUN_ENABLED" appRoutingTunScript;
       assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" appRoutingTunScript;
       assert pkgs.lib.hasInfix "proxy-suite-app-tun-user@$uid.service" appRoutingTunScript;
+      true
+    )
+
+    # -- appRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
+    (
+      assert pkgs.lib.hasInfix "APP_ROUTING_TPROXY_ENABLED" appRoutingTproxyScript;
+      assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-user@$uid.service" appRoutingTproxyScript;
+      assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-$profile-$$" appRoutingTproxyScript;
       true
     )
 
@@ -1430,10 +1550,34 @@ let
       true
     )
 
+    # -- appRouting: app TProxy service and helper units are created --
+    (
+      assert appRoutingTproxyFixture.config.systemd.services ? "proxy-suite-app-tproxy";
+      assert appRoutingTproxyFixture.config.systemd.services ? "proxy-suite-app-tproxy-user@";
+      assert appRoutingTproxyFixture.config.systemd.user.services ? "proxy-suite-app-tproxy-anchor";
+      true
+    )
+
     # -- appRouting: app TUN enables nftables and user control group --
     (
       assert appRoutingTunFixture.config.networking.nftables.enable;
       assert appRoutingTunFixture.config.users.groups ? "proxy-suite";
+      true
+    )
+
+    # -- appRouting: app TProxy helper installs socket cgroup mark rules --
+    (
+      assert pkgs.lib.hasInfix "socket cgroupv2" appRoutingTproxyUserStartScript;
+      assert pkgs.lib.hasInfix "meta mark set" appRoutingTproxyUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set" appRoutingTproxyUserStartScript;
+      true
+    )
+
+    # -- appRouting: app TProxy startup installs nftables and loopback policy route --
+    (
+      assert pkgs.lib.hasInfix "proxy_suite_app_tproxy" appRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "route replace local default dev lo table 102" appRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" appRoutingTproxyStartScript;
       true
     )
 
@@ -1461,6 +1605,12 @@ let
       true
     )
 
+    # -- appRouting: route=tproxy requires appRouting.backends.tproxy.enable --
+    (
+      assert appRoutingTproxyWithoutEnable.success == false;
+      true
+    )
+
     # -- appRouting: profile names must be unique --
     (
       assert duplicateAppRoutingProfiles.success == false;
@@ -1470,6 +1620,24 @@ let
     # -- appRouting: with TProxy enabled, app TUN fwmark must differ from proxyMark --
     (
       assert appRoutingTunFwmarkCollision.success == false;
+      true
+    )
+
+    # -- appRouting: app TProxy fwmark must differ from sing-box proxyMark --
+    (
+      assert appRoutingTproxyFwmarkCollision.success == false;
+      true
+    )
+
+    # -- appRouting: app TUN and app TProxy fwmarks must differ --
+    (
+      assert appRoutingTunTproxyFwmarkCollision.success == false;
+      true
+    )
+
+    # -- appRouting: app TUN and app TProxy route tables must differ --
+    (
+      assert appRoutingTunTproxyRouteTableCollision.success == false;
       true
     )
 

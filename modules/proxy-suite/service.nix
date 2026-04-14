@@ -8,6 +8,7 @@
   tunFile,
   appTunFile,
   nftablesRulesFile,
+  appTproxyRulesFile,
   ip,
   nft,
 }:
@@ -17,6 +18,7 @@ let
   t = cfg.tgWsProxy;
   ar = cfg.appRouting;
   art = ar.backends.tun;
+  artp = ar.backends.tproxy;
   builtinTags = [
     "proxy"
     "direct"
@@ -270,6 +272,11 @@ let
       name = "tun";
       route = "tun";
     }
+  ] ++ lib.optionals artp.enable [
+    {
+      name = "tproxy";
+      route = "tproxy";
+    }
   ];
   effectiveAppRoutingProfiles =
     ar.profiles
@@ -291,7 +298,9 @@ let
   proxychainsQuietArg = lib.optionalString ar.proxychains.quiet "-q ";
   hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectiveAppRoutingProfiles;
   hasTunProfiles = builtins.any (profile: profile.route == "tun") effectiveAppRoutingProfiles;
+  hasTproxyProfiles = builtins.any (profile: profile.route == "tproxy") effectiveAppRoutingProfiles;
   appTunSliceName = "proxy-suite-app-tun.slice";
+  appTproxySliceName = "proxy-suite-app-tproxy.slice";
   appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
     define RESERVED_IP = {
         10.0.0.0/8,
@@ -391,6 +400,68 @@ ${lib.concatMapStrings (cidr: ''
         done <<< "$handles"
       fi
     '';
+  appTproxyUpScript = pkgs.writeShellScript "proxy-suite-app-tproxy-up" ''
+    set -euo pipefail
+    ${nft} delete table ip proxy_suite_app_tproxy 2>/dev/null || true
+    ${nft} -f ${appTproxyRulesFile}
+    ${ip} route replace local default dev lo table ${toString artp.routeTable}
+    ${ip} rule add fwmark ${toString artp.fwmark} table ${toString artp.routeTable} 2>/dev/null || true
+  '';
+  appTproxyDownScript = pkgs.writeShellScript "proxy-suite-app-tproxy-down" ''
+    set -euo pipefail
+    ${nft} delete table ip proxy_suite_app_tproxy 2>/dev/null || true
+    ${ip} route del local default dev lo table ${toString artp.routeTable} 2>/dev/null || true
+    ${ip} rule del fwmark ${toString artp.fwmark} table ${toString artp.routeTable} 2>/dev/null || true
+  '';
+  appTproxyUserRuleStart =
+    pkgs.writeShellScript "proxy-suite-app-tproxy-user-start" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-tproxy-user-$uid"
+      mark_comment="$rule_comment_prefix-mark"
+      cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
+      if ! [ -d "$cgroup_root" ]; then
+        echo "proxy-suite: user cgroup root does not exist for uid $uid: $cgroup_root" >&2
+        exit 1
+      fi
+
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appTproxySliceName} | ${headBin} -n1 || true)
+      if [ -z "$cgroup_dir" ]; then
+        echo "proxy-suite: app TProxy slice cgroup does not exist for uid $uid under $cgroup_root" >&2
+        exit 1
+      fi
+      cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
+      cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
+
+      handles=$(${nft} -a list chain ip proxy_suite_app_tproxy output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule ip proxy_suite_app_tproxy output handle "$handle" || true
+        done <<< "$handles"
+      fi
+
+      printf '%s\n' \
+        "add rule ip proxy_suite_app_tproxy output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set ${toString artp.fwmark} ct mark set ${toString artp.fwmark} comment \"$mark_comment\"" \
+        | ${nft} -f -
+    '';
+  appTproxyUserRuleStop =
+    pkgs.writeShellScript "proxy-suite-app-tproxy-user-stop" ''
+      set -euo pipefail
+      uid="$1"
+      rule_comment_prefix="proxy-suite-app-tproxy-user-$uid"
+      handles=$(${nft} -a list chain ip proxy_suite_app_tproxy output 2>/dev/null \
+        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${awk} '{ print $NF }' || true)
+      if [ -n "$handles" ]; then
+        while IFS= read -r handle; do
+          [ -n "$handle" ] || continue
+          ${nft} delete rule ip proxy_suite_app_tproxy output handle "$handle" || true
+        done <<< "$handles"
+      fi
+    '';
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
@@ -411,10 +482,13 @@ ${lib.concatMapStrings (cidr: ''
       APP_ROUTING_ENABLED="${if ar.enable then "1" else "0"}"
       APP_ROUTING_PROXYCHAINS_ENABLED="${if ar.proxychains.enable then "1" else "0"}"
       APP_ROUTING_TUN_ENABLED="${if art.enable then "1" else "0"}"
+      APP_ROUTING_TPROXY_ENABLED="${if artp.enable then "1" else "0"}"
       APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
       PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
       APP_TUN_SLICE_BASE="proxy-suite-app-tun"
       APP_TUN_ANCHOR_UNIT="proxy-suite-app-tun-anchor.service"
+      APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"
+      APP_TPROXY_ANCHOR_UNIT="proxy-suite-app-tproxy-anchor.service"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -472,6 +546,16 @@ ${lib.concatMapStrings (cidr: ''
 
       _any_app_tun_user_active() {
         ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tun-user@*.service' \
+          | ${grepBin} -q .
+      }
+
+      _tproxy_scope_running() {
+        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-tproxy-*' \
+          | ${grepBin} -q .
+      }
+
+      _any_app_tproxy_user_active() {
+        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tproxy-user@*.service' \
           | ${grepBin} -q .
       }
 
@@ -623,6 +707,46 @@ ${lib.concatMapStrings (cidr: ''
 
               exit "$status"
               ;;
+            tproxy)
+              if [ "$APP_ROUTING_TPROXY_ENABLED" != "1" ]; then
+                echo "Profile '$profile' uses route=tproxy, but appRouting.backends.tproxy.enable is false."
+                exit 1
+              fi
+              if ${systemctl} is-active --quiet proxy-suite-tun.service; then
+                echo "Global proxy-suite-tun.service is active. Stop it before using route=tproxy profiles."
+                exit 1
+              fi
+              if ${systemctl} is-active --quiet proxy-suite-tproxy.service; then
+                echo "Global proxy-suite-tproxy.service is active. Stop it before using route=tproxy profiles."
+                exit 1
+              fi
+
+              uid="$(${idBin} -u)"
+              scope_unit="proxy-suite-app-tproxy-$profile-$$"
+
+              ${systemctl} --user start "$APP_TPROXY_ANCHOR_UNIT"
+              ${systemctl} start proxy-suite-app-tproxy.service
+              ${systemctl} start "proxy-suite-app-tproxy-user@$uid.service"
+
+              if ${systemdRun} --user --scope --quiet --collect --same-dir \
+                --slice="$APP_TPROXY_SLICE_BASE" \
+                --unit="$scope_unit" \
+                "$@"; then
+                status=0
+              else
+                status=$?
+              fi
+
+              if ! _tproxy_scope_running; then
+                ${systemctl} stop "proxy-suite-app-tproxy-user@$uid.service" || true
+                ${systemctl} --user stop "$APP_TPROXY_ANCHOR_UNIT" || true
+                if ! _any_app_tproxy_user_active; then
+                  ${systemctl} stop proxy-suite-app-tproxy.service || true
+                fi
+              fi
+
+              exit "$status"
+              ;;
             *)
               echo "Route backend '$route' is not implemented in this build."
               exit 1
@@ -674,14 +798,14 @@ in
   environment.systemPackages = [ proxyCtl ];
 
   # nftables must be on for TProxy to work.
-  networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable) (lib.mkDefault true);
+  networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable || artp.enable) (lib.mkDefault true);
 
-  users.groups = lib.mkIf art.enable {
+  users.groups = lib.mkIf (art.enable || artp.enable) {
     "${ar.userControl.group}" = { };
   };
 
-  security.polkit.enable = lib.mkIf art.enable true;
-  security.polkit.extraConfig = lib.mkIf art.enable (lib.mkAfter ''
+  security.polkit.enable = lib.mkIf (art.enable || artp.enable) true;
+  security.polkit.extraConfig = lib.mkIf (art.enable || artp.enable) (lib.mkAfter ''
     polkit.addRule(function(action, subject) {
       if (!subject.isInGroup("${ar.userControl.group}")) {
         return null;
@@ -693,7 +817,9 @@ in
 
       var unit = action.lookup("unit");
       if (unit === "proxy-suite-app-tun.service" ||
-          unit.indexOf("proxy-suite-app-tun-user@") === 0) {
+          unit.indexOf("proxy-suite-app-tun-user@") === 0 ||
+          unit === "proxy-suite-app-tproxy.service" ||
+          unit.indexOf("proxy-suite-app-tproxy-user@") === 0) {
         return polkit.Result.YES;
       }
 
@@ -701,18 +827,31 @@ in
     });
   '');
 
-  systemd.user.services = lib.optionalAttrs art.enable {
-    proxy-suite-app-tun-anchor = {
-      description = "Anchor service for proxy-suite app TUN slice";
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        Slice = appTunSliceName;
-        ExecStart = "${pkgs.coreutils}/bin/true";
-        ExecStop = "${pkgs.coreutils}/bin/true";
+  systemd.user.services =
+    lib.optionalAttrs art.enable {
+      proxy-suite-app-tun-anchor = {
+        description = "Anchor service for proxy-suite app TUN slice";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          Slice = appTunSliceName;
+          ExecStart = "${pkgs.coreutils}/bin/true";
+          ExecStop = "${pkgs.coreutils}/bin/true";
+        };
+      };
+    }
+    // lib.optionalAttrs artp.enable {
+      proxy-suite-app-tproxy-anchor = {
+        description = "Anchor service for proxy-suite app TProxy slice";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          Slice = appTproxySliceName;
+          ExecStart = "${pkgs.coreutils}/bin/true";
+          ExecStop = "${pkgs.coreutils}/bin/true";
+        };
       };
     };
-  };
 
   assertions = [
     {
@@ -760,6 +899,14 @@ in
       message = "proxy-suite: route=tun in appRouting profiles requires appRouting.backends.tun.enable = true";
     }
     {
+      assertion = !artp.enable || ar.enable;
+      message = "proxy-suite: appRouting.backends.tproxy.enable requires appRouting.enable = true";
+    }
+    {
+      assertion = !(hasTproxyProfiles && !artp.enable);
+      message = "proxy-suite: route=tproxy in appRouting profiles requires appRouting.backends.tproxy.enable = true";
+    }
+    {
       assertion = !(art.enable && sb.tproxy.enable && art.fwmark == sb.fwmark);
       message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.fwmark when singBox.tproxy.enable = true";
     }
@@ -770,6 +917,26 @@ in
     {
       assertion = !(art.enable && sb.tproxy.enable && art.routeTable == sb.routeTable);
       message = "proxy-suite: appRouting.backends.tun.routeTable must differ from singBox.routeTable when singBox.tproxy.enable = true";
+    }
+    {
+      assertion = !(artp.enable && artp.fwmark == sb.fwmark);
+      message = "proxy-suite: appRouting.backends.tproxy.fwmark must differ from singBox.fwmark";
+    }
+    {
+      assertion = !(artp.enable && artp.fwmark == sb.proxyMark);
+      message = "proxy-suite: appRouting.backends.tproxy.fwmark must differ from singBox.proxyMark";
+    }
+    {
+      assertion = !(artp.enable && artp.routeTable == sb.routeTable);
+      message = "proxy-suite: appRouting.backends.tproxy.routeTable must differ from singBox.routeTable";
+    }
+    {
+      assertion = !(art.enable && artp.enable && art.fwmark == artp.fwmark);
+      message = "proxy-suite: appRouting.backends.tun.fwmark and appRouting.backends.tproxy.fwmark must differ";
+    }
+    {
+      assertion = !(art.enable && artp.enable && art.routeTable == artp.routeTable);
+      message = "proxy-suite: appRouting.backends.tun.routeTable and appRouting.backends.tproxy.routeTable must differ";
     }
     {
       assertion =
@@ -837,7 +1004,10 @@ in
       ];
       wantedBy = lib.optionals sb.tproxy.autostart [ "multi-user.target" ];
       requires = [ "proxy-suite-socks.service" ];
-      conflicts = [ "proxy-suite-tun.service" ];
+      conflicts = [
+        "proxy-suite-tun.service"
+        "proxy-suite-app-tproxy.service"
+      ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -899,6 +1069,38 @@ in
         RemainAfterExit = true;
         ExecStart = "${appTunUserRuleStart} %i";
         ExecStop = "${appTunUserRuleStop} %i";
+      };
+    };
+  }
+  // lib.optionalAttrs artp.enable {
+    proxy-suite-app-tproxy = {
+      description = "proxy-suite app-routing TProxy backend";
+      after = [
+        "network.target"
+        "proxy-suite-socks.service"
+      ];
+      requires = [ "proxy-suite-socks.service" ];
+      conflicts = [
+        "proxy-suite-tproxy.service"
+        "proxy-suite-tun.service"
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${appTproxyUpScript}";
+        ExecStop = "${appTproxyDownScript}";
+      };
+    };
+
+    "proxy-suite-app-tproxy-user@" = {
+      description = "Enable proxy-suite app TProxy marking for user %i";
+      requires = [ "proxy-suite-app-tproxy.service" ];
+      after = [ "proxy-suite-app-tproxy.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${appTproxyUserRuleStart} %i";
+        ExecStop = "${appTproxyUserRuleStop} %i";
       };
     };
   }

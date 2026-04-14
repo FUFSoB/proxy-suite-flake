@@ -300,6 +300,7 @@ let
           "direct"
           "proxychains"
           "tun"
+          "tproxy"
         ];
         default = "proxychains";
         description = ''
@@ -310,6 +311,9 @@ let
             local proxy-suite mixed SOCKS endpoint.
           - "tun": launch the command in the dedicated app-routing TUN slice so
             only that app's traffic is policy-routed into the app TUN backend.
+          - "tproxy": launch the command in the dedicated app-routing TProxy
+            slice so only that app's traffic is transparently intercepted by
+            the local sing-box TProxy inbound.
 
           Additional route backends may be added in the future.
         '';
@@ -820,10 +824,13 @@ in
           Current curated defaults:
           - `proxychains`: route = "proxychains"
           - `tun`: route = "tun" when appRouting.backends.tun.enable = true
+          - `tproxy`: route = "tproxy" when appRouting.backends.tproxy.enable = true
 
           This makes `proxy-ctl wrap proxychains -- <command>` available
           without defining the profile manually, and similarly exposes
-          `proxy-ctl wrap tun -- <command>` when the app TUN backend is enabled.
+          `proxy-ctl wrap tun -- <command>` or
+          `proxy-ctl wrap tproxy -- <command>` when the corresponding backend
+          is enabled.
         '';
         example = true;
       };
@@ -840,10 +847,13 @@ in
             instead of global TUN or TProxy interception
           - "tun" for app-scoped policy routing into the dedicated app TUN
             backend
+          - "tproxy" for app-scoped transparent interception through the
+            dedicated app TProxy backend
 
           proxychains-based wrapping depends on the local proxy-suite mixed
           proxy listener provided by sing-box. The "tun" route depends on
-          appRouting.backends.tun.enable = true.
+          appRouting.backends.tun.enable = true. The "tproxy" route depends on
+          appRouting.backends.tproxy.enable = true.
 
           When createDefaultProfiles = true, curated defaults are added on top
           of this list unless a user-defined profile already uses the same
@@ -951,6 +961,42 @@ in
             ];
           };
         };
+
+        tproxy = {
+          enable = mkEnableOption "app-scoped TProxy backend for appRouting profiles";
+
+          fwmark = mkOption {
+            type = types.int;
+            default = 17;
+            description = ''
+              Packet mark used to steer wrapped app traffic into the app-routing
+              TProxy policy-routing table.
+            '';
+            example = 17;
+          };
+
+          routeTable = mkOption {
+            type = types.int;
+            default = 102;
+            description = ''
+              Policy-routing table used by the app-routing TProxy backend.
+            '';
+            example = 102;
+          };
+
+          localSubnets = mkOption {
+            type = types.listOf types.str;
+            default = [ "192.168.0.0/16" ];
+            description = ''
+              Destination subnets that should bypass app-routing TProxy
+              interception, except DNS traffic on port 53.
+            '';
+            example = [
+              "192.168.0.0/16"
+              "10.0.0.0/8"
+            ];
+          };
+        };
       };
 
       userControl = {
@@ -960,7 +1006,8 @@ in
           description = ''
             Local group allowed to start and stop app-routing backend units via
             polkit. Add desktop users who should be able to run
-            `proxy-ctl wrap ...` for route = "tun" profiles to this group.
+            `proxy-ctl wrap ...` for route = "tun" or route = "tproxy"
+            profiles to this group.
           '';
           example = "proxy-suite";
         };

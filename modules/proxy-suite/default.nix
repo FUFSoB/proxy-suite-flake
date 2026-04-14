@@ -50,7 +50,7 @@ in
             cfg
             ;
           inherit (configs) tproxyFile tunFile appTunFile;
-          inherit (nftr) nftablesRulesFile ip nft;
+          inherit (nftr) nftablesRulesFile appTproxyRulesFile ip nft;
         }
       ))
 
