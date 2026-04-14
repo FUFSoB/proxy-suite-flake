@@ -36,7 +36,7 @@ No need to add zapret separately – it comes along as a transitive input.
 Add the module to your NixOS configuration:
 
 ```nix
-imports = [ inputs.proxy-suite.nixosModules.default ];
+modules = [ inputs.proxy-suite.nixosModules.default ];
 ```
 
 Enable the service with all defaults:
