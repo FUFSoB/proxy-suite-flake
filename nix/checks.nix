@@ -912,6 +912,7 @@ let
   appRoutingAppZapretConfig = builtins.readFile "${appRoutingAppZapretBase}/config";
   appRoutingZapretGlobalCustomScript =
     builtins.readFile "${appRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
+  appRoutingTunPolkitConfig = appRoutingTunFixture.config.security.polkit.extraConfig;
 
   appRoutingZapretWithoutEnable = forceEval (
     (evalProxySuite [
@@ -1706,6 +1707,13 @@ let
     (
       assert appRoutingTunFixture.config.networking.nftables.enable;
       assert appRoutingTunFixture.config.users.groups ? "proxy-suite";
+      true
+    )
+
+    # -- appRouting: proxy-suite group polkit rule covers global proxy-ctl managed units --
+    (
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" appRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" appRoutingTunPolkitConfig;
       true
     )
 

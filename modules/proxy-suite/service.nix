@@ -911,12 +911,12 @@ in
   # nftables must be on for TProxy to work.
   networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable || artp.enable || arz.enable) (lib.mkDefault true);
 
-  users.groups = lib.mkIf (art.enable || artp.enable || arz.enable) {
+  users.groups = lib.mkIf cfg.enable {
     "${ar.userControl.group}" = { };
   };
 
-  security.polkit.enable = lib.mkIf (art.enable || artp.enable || arz.enable) true;
-  security.polkit.extraConfig = lib.mkIf (art.enable || artp.enable || arz.enable) (lib.mkAfter ''
+  security.polkit.enable = lib.mkIf cfg.enable true;
+  security.polkit.extraConfig = lib.mkIf cfg.enable (lib.mkAfter ''
     polkit.addRule(function(action, subject) {
       if (!subject.isInGroup("${ar.userControl.group}")) {
         return null;
@@ -927,12 +927,8 @@ in
       }
 
       var unit = action.lookup("unit");
-      if (unit === "proxy-suite-app-tun.service" ||
-          unit.indexOf("proxy-suite-app-tun-user@") === 0 ||
-          unit === "proxy-suite-app-tproxy.service" ||
-          unit.indexOf("proxy-suite-app-tproxy-user@") === 0 ||
-          unit === "proxy-suite-app-zapret.service" ||
-          unit.indexOf("proxy-suite-app-zapret-user@") === 0) {
+      if (unit.indexOf("proxy-suite-") === 0 ||
+          unit === "zapret-discord-youtube.service") {
         return polkit.Result.YES;
       }
 
