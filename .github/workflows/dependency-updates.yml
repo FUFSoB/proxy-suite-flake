@@ -1,0 +1,89 @@
+name: Dependency updates
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependency-updates
+  cancel-in-progress: false
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Decide whether nixpkgs should be updated
+        id: nixpkgs_gate
+        run: |
+          set -euo pipefail
+          chmod +x scripts/check-nixpkgs-relevance.sh
+          scripts/check-nixpkgs-relevance.sh >> "$GITHUB_OUTPUT"
+
+      - name: Update flake inputs
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}" == "true" ]]; then
+            nix flake lock --update-input nixpkgs
+          else
+            echo "Skipping nixpkgs update: watched package versions on nixos-unstable are unchanged."
+          fi
+          nix flake lock --update-input zapret
+
+      - name: Update tg-ws-proxy pin
+        run: |
+          set -euo pipefail
+          chmod +x scripts/update-tg-ws-proxy.sh
+          scripts/update-tg-ws-proxy.sh
+
+      - name: Detect dependency file changes
+        id: changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- flake.lock pkgs/tg-ws-proxy.nix; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run flake checks
+        if: steps.changes.outputs.has_changes == 'true'
+        run: nix flake check
+
+      - name: Create or update pull request
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ci/update-dependencies
+          delete-branch: false
+          commit-message: "chore(deps): refresh flakes and external pins"
+          title: "chore(deps): refresh flakes and external pins"
+          labels: |
+            dependencies
+            nix
+          body: |
+            ## Automated dependency update
+
+            This PR is managed by CI and the same branch is reused across runs.
+
+            ### Included updates
+            - `flake.lock` updates (`zapret` always, `nixpkgs` only when watched package versions change on `nixos-unstable`)
+            - `pkgs/tg-ws-proxy.nix` pin refresh (`rev` + `hash`)
+
+            ### Nixpkgs gate result
+            - should update nixpkgs: `${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}`
+            - changed watched attrs: `${{ steps.nixpkgs_gate.outputs.nixpkgs_changed_watch_attrs }}`
+
+      - name: No dependency changes
+        if: steps.changes.outputs.has_changes != 'true'
+        run: echo "No dependency updates detected."
