@@ -16,8 +16,6 @@
 static AppIndicator *indicator;
 static GtkWidget *menu;
 static GtkWidget *status_item;
-static GtkWidget *traffic_status_item;
-static GtkWidget *zapret_status_item;
 static GtkWidget *proxy_item;
 static GtkWidget *tproxy_item;
 static GtkWidget *tun_item;
@@ -321,12 +319,6 @@ static void update_status(void) {
         if (status_item) {
             gtk_menu_item_set_label(GTK_MENU_ITEM(status_item), "[Status] proxy-ctl status unavailable");
         }
-        if (traffic_status_item) {
-            gtk_menu_item_set_label(GTK_MENU_ITEM(traffic_status_item), "[Traffic] Mode: Unknown");
-        }
-        if (zapret_status_item) {
-            gtk_menu_item_set_label(GTK_MENU_ITEM(zapret_status_item), "[Zapret] zapret-discord-youtube: Unknown");
-        }
         if (controls_summary_label) {
             gtk_label_set_text(GTK_LABEL(controls_summary_label), "[Status] proxy-ctl status unavailable");
         }
@@ -391,12 +383,6 @@ static void update_status(void) {
 
     if (status_item) {
         gtk_menu_item_set_label(GTK_MENU_ITEM(status_item), summary_text);
-    }
-    if (traffic_status_item) {
-        gtk_menu_item_set_label(GTK_MENU_ITEM(traffic_status_item), traffic_text);
-    }
-    if (zapret_status_item) {
-        gtk_menu_item_set_label(GTK_MENU_ITEM(zapret_status_item), zapret_text);
     }
     if (controls_summary_label) {
         gtk_label_set_text(GTK_LABEL(controls_summary_label), summary_text);
@@ -630,14 +616,6 @@ static void build_menu(void) {
     status_item = gtk_menu_item_new_with_label("[Status] Loading service state...");
     gtk_widget_set_sensitive(status_item, FALSE);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), status_item);
-
-    traffic_status_item = gtk_menu_item_new_with_label("[Traffic] Mode: Unknown");
-    gtk_widget_set_sensitive(traffic_status_item, FALSE);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), traffic_status_item);
-
-    zapret_status_item = gtk_menu_item_new_with_label("[Zapret] zapret-discord-youtube: Unknown");
-    gtk_widget_set_sensitive(zapret_status_item, FALSE);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), zapret_status_item);
 
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
