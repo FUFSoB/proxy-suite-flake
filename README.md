@@ -40,15 +40,79 @@ Add the module to your NixOS configuration:
 modules = [ inputs.proxy-suite.nixosModules.default ];
 ```
 
-Enable the service with all defaults:
+Feature-complete starter config:
 
 ```nix
 services.proxy-suite = {
   enable = true;
+
+  singBox = {
+    enable = true;
+    port = 1080;
+
+    # Individual proxy example
+    outbounds = [
+      {
+        tag = "nl-vps";
+        # Inline url is convenient for testing, but ends up in the Nix store.
+        # For real use, prefer urlFile with a url file.
+        url = "hy2://password@example.com:443?sni=example.com";
+      }
+    ];
+
+    # Subscription example
+    subscriptions = [
+      {
+        tag = "main-sub";
+        # urlFile is also available to keep the URL out of the Nix store.
+        url = "https://example.com/subscription-list.txt";
+      }
+    ];
+    # Automatic switching of outbound based on latency.
+    # Default is "first", which just uses the first one in the list.
+    selection = "urltest";
+
+    # Keep both available; autostart only one global tunnel.
+    tproxy = {
+      enable = true;
+      autostart = false;
+    };
+    tun = {
+      enable = true;
+      autostart = false;
+    };
+  };
+
+  zapret = {
+    enable = true;
+  };
+
+  appRouting = {
+    enable = true;
+    createDefaultProfiles = true;
+    proxychains.enable = true;
+    backends = {
+      tun.enable = true;
+      tproxy.enable = true;
+      zapret.enable = true;
+    };
+  };
+
+  tray = {
+    enable = true;
+    autostart = true;
+  };
+
+  tgWsProxy = {
+    enable = true;
+    host = "127.0.0.1";
+    port = 1076;
+    # Inline secret is convenient for testing, but ends up in the Nix store.
+    # For real use, prefer secretFile with a secret file.
+    secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  };
 };
 ```
-
-By default, `zapret` and `tgWsProxy` stay disabled until you enable them explicitly.
 
 ---
 
