@@ -65,7 +65,7 @@ let
   findBin = "${pkgs.findutils}/bin/find";
 
   proxySuiteScriptsDir = ../../scripts;
-  parserScriptsPythonPath = lib.escapeShellArg (toString proxySuiteScriptsDir);
+  parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
   fetchSubscriptionPy = "${proxySuiteScriptsDir}/fetch-subscription.py";
   mkSubscriptionUrlSource =
@@ -73,15 +73,15 @@ let
     if sub.urlFile != null then
       sub.urlFile
     else
-      "${pkgs.writeText "proxy-suite-sub-url-${sub.tag}" sub.url}";
+      pkgs.writeText "proxy-suite-sub-url-${sub.tag}" sub.url;
   mkSubscriptionFetchCommand =
     sub:
     let
       urlSource = mkSubscriptionUrlSource sub;
     in
     ''
-      printf '%s' "$(cat ${lib.escapeShellArg urlSource})" \
-        | PYTHONPATH=${parserScriptsPythonPath} ${python3} ${fetchSubscriptionPy} --tag-prefix ${lib.escapeShellArg sub.tag}
+      printf '%s' "$(cat "${urlSource}")" \
+        | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} --tag-prefix ${lib.escapeShellArg sub.tag}
     '';
 
   # Build the shell code block for a single outbound entry.
@@ -101,7 +101,7 @@ let
       in
       ''
         # outbound: ${tag} (static json)
-        OB_JSON=$(cat ${lib.escapeShellArg jsonFile})
+        OB_JSON=$(cat "${jsonFile}")
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       ''
     else
@@ -112,12 +112,12 @@ let
           else
             # Literal URL – write to nix store so the script can cat it.
             # Less secret than urlFile, but convenient for non-sensitive configs.
-            "${pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url}";
+            pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
       in
       ''
         # outbound: ${tag}
-        URL=$(cat ${lib.escapeShellArg urlSource})
-        OB_JSON=$(printf '%s' "$URL" | PYTHONPATH=${parserScriptsPythonPath} ${python3} ${buildOutboundPy} --tag ${lib.escapeShellArg tag}${markArg})
+        URL=$(cat "${urlSource}")
+        OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} --tag ${lib.escapeShellArg tag}${markArg})
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       '';
 
