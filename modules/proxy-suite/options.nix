@@ -331,6 +331,43 @@ in
   options.services.proxy-suite = {
     enable = mkEnableOption "proxy suite (sing-box + zapret + tg-ws-proxy)";
 
+    userControl = {
+      group = mkOption {
+        type = types.strMatching "^[a-z_][a-z0-9_-]*$";
+        default = "proxy-suite";
+        description = ''
+          Local group allowed to use passwordless polkit-backed `proxy-ctl`
+          commands when userControl.global.enable or userControl.perApp.enable
+          is turned on.
+        '';
+        example = "proxy-suite";
+      };
+
+      global.enable =
+        (mkEnableOption "passwordless proxy-ctl control over global proxy-suite units")
+        // {
+          default = true;
+          description = ''
+            Whether members of userControl.group may manage global
+            proxy-suite units without password prompts via commands like
+            `proxy-ctl tun on|off`, `proxy-ctl tproxy on|off`,
+            `proxy-ctl restart`, or `proxy-ctl subscription update`.
+          '';
+        };
+
+      perApp.enable =
+        (mkEnableOption "passwordless proxy-ctl control over per-app routing helpers")
+        // {
+          default = true;
+          description = ''
+            Whether members of userControl.group may start and stop the
+            app-scoped backend units used by `proxy-ctl wrap ...` for
+            route = "tun", route = "tproxy", or route = "zapret" profiles
+            without password prompts.
+          '';
+        };
+    };
+
     singBox = {
       enable = mkOption {
         type = types.bool;
@@ -1034,19 +1071,6 @@ in
         };
       };
 
-      userControl = {
-        group = mkOption {
-          type = types.strMatching "^[a-z_][a-z0-9_-]*$";
-          default = "proxy-suite";
-          description = ''
-            Local group allowed to start and stop app-routing backend units via
-            polkit. Add desktop users who should be able to run
-            `proxy-ctl wrap ...` for route = "tun", route = "tproxy", or
-            route = "zapret" profiles to this group.
-          '';
-          example = "proxy-suite";
-        };
-      };
     };
 
     zapret = {

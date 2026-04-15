@@ -39,8 +39,6 @@ Update module option docs there instead of editing this file by hand.
       - [enable](#services-proxy-suite-approuting-proxychains-enable)
       - [proxyDns](#services-proxy-suite-approuting-proxychains-proxydns)
       - [quiet](#services-proxy-suite-approuting-proxychains-quiet)
-    - userControl
-      - [group](#services-proxy-suite-approuting-usercontrol-group)
   - singBox
     - [enable](#services-proxy-suite-singbox-enable)
     - [clashApiPort](#services-proxy-suite-singbox-clashapiport)
@@ -127,6 +125,12 @@ Update module option docs there instead of editing this file by hand.
     - [enable](#services-proxy-suite-tray-enable)
     - [autostart](#services-proxy-suite-tray-autostart)
     - [pollInterval](#services-proxy-suite-tray-pollinterval)
+  - userControl
+    - global
+      - [enable](#services-proxy-suite-usercontrol-global-enable)
+    - [group](#services-proxy-suite-usercontrol-group)
+    - perApp
+      - [enable](#services-proxy-suite-usercontrol-perapp-enable)
   - zapret
     - [enable](#services-proxy-suite-zapret-enable)
     - cidrExemption
@@ -189,9 +193,6 @@ services.proxy-suite = {
       enable = false;
       proxyDns = true;
       quiet = true;
-    };
-    userControl = {
-      group = "proxy-suite";
     };
   };
   enable = false;
@@ -276,6 +277,15 @@ services.proxy-suite = {
     enable = false;
     pollInterval = 5;
   };
+  userControl = {
+    global = {
+      enable = true;
+    };
+    group = "proxy-suite";
+    perApp = {
+      enable = true;
+    };
+  };
   zapret = {
     cidrExemption = {
       cidrs = [ ];
@@ -349,9 +359,6 @@ services.proxy-suite = {
       enable = true;
       proxyDns = true;
       quiet = true;
-    };
-    userControl = {
-      group = "proxy-suite";
     };
   };
   enable = true;
@@ -507,6 +514,15 @@ services.proxy-suite = {
     autostart = true;
     enable = true;
     pollInterval = 5;
+  };
+  userControl = {
+    global = {
+      enable = true;
+    };
+    group = "proxy-suite";
+    perApp = {
+      enable = true;
+    };
   };
   zapret = {
     cidrExemption = {
@@ -1388,42 +1404,6 @@ true
 
 ```nix
 true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
-
-
-
-<a id="services-proxy-suite-approuting-usercontrol-group"></a>
-## services\.proxy-suite\.appRouting\.userControl\.group
-
-
-
-Local group allowed to start and stop app-routing backend units via
-polkit\. Add desktop users who should be able to run
-` proxy-ctl wrap ... ` for route = “tun”, route = “tproxy”, or
-route = “zapret” profiles to this group\.
-
-
-
-*Type:*
-string matching the pattern ^\[a-z_]\[a-z0-9_-]\*$
-
-
-
-*Default:*
-
-```nix
-"proxy-suite"
-```
-
-
-
-*Example:*
-
-```nix
-"proxy-suite"
 ```
 
 *Declared by:*
@@ -4011,10 +3991,115 @@ signed integer
 
 
 
+<a id="services-proxy-suite-usercontrol-global-enable"></a>
+## services\.proxy-suite\.userControl\.global\.enable
+
+
+
+Whether members of userControl\.group may manage global
+proxy-suite units without password prompts via commands like
+` proxy-ctl tun on|off `, ` proxy-ctl tproxy on|off `,
+` proxy-ctl restart `, or ` proxy-ctl subscription update `\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+<a id="services-proxy-suite-usercontrol-group"></a>
+## services\.proxy-suite\.userControl\.group
+
+
+
+Local group allowed to use passwordless polkit-backed ` proxy-ctl `
+commands when userControl\.global\.enable or userControl\.perApp\.enable
+is turned on\.
+
+
+
+*Type:*
+string matching the pattern ^\[a-z_]\[a-z0-9_-]\*$
+
+
+
+*Default:*
+
+```nix
+"proxy-suite"
+```
+
+
+
+*Example:*
+
+```nix
+"proxy-suite"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
+<a id="services-proxy-suite-usercontrol-perapp-enable"></a>
+## services\.proxy-suite\.userControl\.perApp\.enable
+
+
+
+Whether members of userControl\.group may start and stop the
+app-scoped backend units used by ` proxy-ctl wrap ... ` for
+route = “tun”, route = “tproxy”, or route = “zapret” profiles
+without password prompts\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options.nix)
+
+
+
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
-
-
 
 Whether to enable zapret DPI bypass\.
 
@@ -4188,6 +4273,8 @@ string
 
 <a id="services-proxy-suite-zapret-hostlistrules"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules
+
+
 
 Additional named zapret hostlists with per-list DPI mitigation rules\.
 Each entry generates hostlists/list-\<name>\.txt and can clone a built-in

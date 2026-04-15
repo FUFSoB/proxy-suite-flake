@@ -18,9 +18,24 @@ let
   sb = cfg.singBox;
   t = cfg.tgWsProxy;
   ar = cfg.appRouting;
+  uc = cfg.userControl;
   art = ar.backends.tun;
   artp = ar.backends.tproxy;
   arz = ar.backends.zapret;
+  userControlEnabled = uc.global.enable || uc.perApp.enable;
+  userControlPolkitRules =
+    lib.optionalString uc.perApp.enable ''
+      if (unit.indexOf("proxy-suite-app-") === 0) {
+        return polkit.Result.YES;
+      }
+    ''
+    + lib.optionalString uc.global.enable ''
+      if ((unit.indexOf("proxy-suite-") === 0 &&
+           unit.indexOf("proxy-suite-app-") !== 0) ||
+          unit === "zapret-discord-youtube.service") {
+        return polkit.Result.YES;
+      }
+    '';
   builtinTags = [
     "proxy"
     "direct"
@@ -911,14 +926,14 @@ in
   # nftables must be on for TProxy to work.
   networking.nftables.enable = lib.mkIf (sb.tproxy.enable || art.enable || artp.enable || arz.enable) (lib.mkDefault true);
 
-  users.groups = lib.mkIf cfg.enable {
-    "${ar.userControl.group}" = { };
+  users.groups = lib.mkIf (cfg.enable && userControlEnabled) {
+    "${uc.group}" = { };
   };
 
-  security.polkit.enable = lib.mkIf cfg.enable true;
-  security.polkit.extraConfig = lib.mkIf cfg.enable (lib.mkAfter ''
+  security.polkit.enable = lib.mkIf (cfg.enable && userControlEnabled) true;
+  security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (lib.mkAfter ''
     polkit.addRule(function(action, subject) {
-      if (!subject.isInGroup("${ar.userControl.group}")) {
+      if (!subject.isInGroup("${uc.group}")) {
         return null;
       }
 
@@ -927,10 +942,7 @@ in
       }
 
       var unit = action.lookup("unit");
-      if (unit.indexOf("proxy-suite-") === 0 ||
-          unit === "zapret-discord-youtube.service") {
-        return polkit.Result.YES;
-      }
+      ${userControlPolkitRules}
 
       return null;
     });
