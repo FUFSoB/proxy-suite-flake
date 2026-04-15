@@ -549,8 +549,7 @@ in
         type = types.port;
         default = 1081;
         description = ''
-          Listen port for the local sing-box TProxy inbound.
-          Only relevant when singBox.tproxy.enable = true.
+          Listen port for the local sing-box TProxy inbound. Used by TProxy mode.
         '';
         example = 1081;
       };
@@ -560,8 +559,7 @@ in
         default = 1;
         description = ''
           Netfilter mark set on packets intercepted by TProxy so policy routing
-          can send them to the local loopback route table.
-          Only relevant when singBox.tproxy.enable = true.
+          can send them to the local loopback route table. Used by TProxy mode.
         '';
         example = 1;
       };
@@ -571,8 +569,7 @@ in
         default = 2;
         description = ''
           Netfilter mark set on sing-box's own outbound packets so they bypass
-          TProxy re-interception loops.
-          Only relevant when singBox.tproxy.enable = true.
+          TProxy re-interception loops. Used by TProxy mode.
         '';
         example = 2;
       };
@@ -582,8 +579,7 @@ in
         default = 100;
         description = ''
           Policy routing table used to redirect TProxy-marked packets to the
-          loopback interface.
-          Only relevant when singBox.tproxy.enable = true.
+          loopback interface. Used by TProxy mode.
         '';
         example = 100;
       };
@@ -655,7 +651,6 @@ in
           description = ''
             Whether to start proxy-suite-tun automatically during boot by
             attaching it to multi-user.target.
-            Only relevant when singBox.tun.enable = true.
             Cannot be enabled together with singBox.tproxy.autostart.
           '';
           example = true;
@@ -664,30 +659,21 @@ in
         interface = mkOption {
           type = types.str;
           default = "singtun0";
-          description = ''
-            Name of the TUN interface created by proxy-suite-tun.
-            Only relevant when singBox.tun.enable = true.
-          '';
+          description = "Name of the TUN interface created by proxy-suite-tun.";
           example = "singtun0";
         };
 
         address = mkOption {
           type = types.str;
           default = "172.19.0.1/30";
-          description = ''
-            Address assigned to the TUN interface in CIDR notation.
-            Only relevant when singBox.tun.enable = true.
-          '';
+          description = "Address assigned to the TUN interface in CIDR notation.";
           example = "172.19.0.1/30";
         };
 
         mtu = mkOption {
           type = types.int;
           default = 1400;
-          description = ''
-            MTU for the TUN interface created by proxy-suite-tun.
-            Only relevant when singBox.tun.enable = true.
-          '';
+          description = "MTU for the TUN interface created by proxy-suite-tun.";
           example = 1400;
         };
       };
@@ -701,7 +687,6 @@ in
           description = ''
             Whether to start proxy-suite-tproxy automatically during boot by
             attaching it to multi-user.target.
-            Only relevant when singBox.tproxy.enable = true.
             Cannot be enabled together with singBox.tun.autostart.
           '';
           example = true;
@@ -712,7 +697,6 @@ in
           default = [ "192.168.0.0/16" ];
           description = ''
             Subnets whose traffic bypasses TProxy interception, except DNS (port 53).
-            Only relevant when singBox.tproxy.enable = true.
 
             Typically this should include your LAN subnet(s). VM bridge networks
             should usually go here too, or use zapret.cidrExemption for
@@ -808,15 +792,8 @@ in
           };
         };
 
-        # Per-outbound and per-action routing rules.
-        # These are evaluated before the global proxy/direct/block lists above.
-        # Use this for fine-grained control: route specific services to specific
-        # servers, or override the default for particular domains/IPs/geos.
-        #
-        # Alternatively, attach routing directly to an outbound via outbound.routing.*
-        # which is equivalent to adding an entry here with outbound = <that tag>.
-        #
-        # Order within this list is preserved (first matching rule wins in sing-box).
+        # Per-outbound routing rules evaluated before global proxy/direct/block lists.
+        # Equivalent to setting outbound.routing.* directly on each outbound definition.
         rules = mkOption {
           type = types.listOf routingRuleType;
           default = [ ];
@@ -1112,21 +1089,14 @@ in
       configName = mkOption {
         type = types.str;
         default = "general(ALT)";
-        description = ''
-          zapret strategy preset name passed through to the generated zapret
-          configuration.
-          Only relevant when zapret.enable = true.
-        '';
+        description = "zapret strategy preset name passed through to the generated zapret configuration.";
         example = "general(ALT)";
       };
 
       gameFilter = mkOption {
         type = types.str;
         default = "null";
-        description = ''
-          zapret game traffic filter mode: "all", "tcp", "udp", or "null" to disable.
-          Only relevant when zapret.enable = true.
-        '';
+        description = ''zapret game traffic filter mode: "all", "tcp", "udp", or "null" to disable.'';
         example = "null";
       };
 
@@ -1234,8 +1204,6 @@ in
           ];
           description = ''
             Subnets to exempt from zapret's NFQUEUE mangle rules.
-            Only relevant when zapret.enable = true and cidrExemption.enable = true.
-
             Useful when a VM (libvirt, etc.) is behind NAT and zapret
             would corrupt its traffic through the host's nftables.
           '';
@@ -1249,10 +1217,7 @@ in
       pollInterval = mkOption {
         type = types.int;
         default = 5;
-        description = ''
-          Status polling interval in seconds for the tray application.
-          Only relevant when tray.enable = true.
-        '';
+        description = "Status polling interval in seconds for the tray application.";
         example = 5;
       };
 
@@ -1260,9 +1225,8 @@ in
         type = types.bool;
         default = true;
         description = ''
-          Whether to install an XDG autostart entry for the tray application for
-          graphical users.
-          Only relevant when tray.enable = true.
+          Whether to install an XDG autostart entry for the tray application
+          for graphical users.
         '';
         example = true;
       };
@@ -1274,20 +1238,14 @@ in
       port = mkOption {
         type = types.port;
         default = 1076;
-        description = ''
-          Listen port for the tg-ws-proxy service.
-          Only relevant when tgWsProxy.enable = true.
-        '';
+        description = "Listen port for the tg-ws-proxy service.";
         example = 1076;
       };
 
       host = mkOption {
         type = types.str;
         default = "127.0.0.1";
-        description = ''
-          Address to bind tg-ws-proxy to.
-          Only relevant when tgWsProxy.enable = true.
-        '';
+        description = "Address to bind tg-ws-proxy to.";
         example = "127.0.0.1";
       };
 
@@ -1319,10 +1277,7 @@ in
       dcIps = mkOption {
         type = types.attrsOf types.str;
         default = { };
-        description = ''
-          Map of Telegram DC ID to IP address for relay.
-          Only relevant when tgWsProxy.enable = true.
-        '';
+        description = "Map of Telegram DC ID to IP address for relay.";
         example = {
           "2" = "149.154.167.220";
           "4" = "149.154.167.220";

@@ -47,7 +47,7 @@ in
             cfg
             ;
           inherit (configs) tproxyFile tunFile appTunFile;
-          inherit (nftr) nftablesRulesFile appTproxyRulesFile appZapretRulesFile ip nft;
+          inherit (nftr) nftablesRulesFile appTproxyRulesFile appZapretRulesFile appTunChainFile ip nft;
         }
       ))
 

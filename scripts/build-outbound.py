@@ -20,18 +20,55 @@ def _qs(query: str) -> dict:
     return dict(urllib.parse.parse_qsl(query))
 
 
+def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
+    """Strip scheme+fragment, return (userinfo, host, port_str, params).
+    userinfo is "" when no '@' is present."""
+    rest = url[len(f"{scheme}://"):]
+    rest, _, _ = rest.partition("#")
+    if "@" in rest:
+        userinfo, _, rest = rest.partition("@")
+    else:
+        userinfo = ""
+    hostpart, _, query = rest.partition("?")
+    host, _, port = hostpart.rpartition(":")
+    return userinfo, host, port, _qs(query)
+
+
+def _mk_transport(
+    transport_type: str,
+    path: str = "/",
+    host_header: str = "",
+    service_name: str = "",
+) -> "dict | None":
+    """Build a sing-box transport dict for ws/grpc/h2. Returns None for tcp."""
+    if transport_type == "ws":
+        return {
+            "type": "ws",
+            "path": urllib.parse.unquote(path),
+            "headers": {"Host": host_header},
+        }
+    elif transport_type == "grpc":
+        return {
+            "type": "grpc",
+            "service_name": urllib.parse.unquote(service_name),
+        }
+    elif transport_type == "h2":
+        return {
+            "type": "http",
+            "host": [host_header],
+            "path": urllib.parse.unquote(path),
+        }
+    return None
+
+
 def parse_vless(url: str, tag: str) -> dict:
     """
     vless://UUID@HOST:PORT?security=reality&pbk=KEY&fp=chrome&sni=SNI&sid=SID&flow=FLOW&type=tcp
     vless://UUID@HOST:PORT?security=tls&sni=SNI&fp=chrome&type=ws&path=/path&host=HOST
     """
-    rest = url[len("vless://"):]
-    rest, _, _ = rest.partition("#")
-
-    userinfo, _, rest = rest.partition("@")
-    hostpart, _, query = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
-    params = _qs(query)
+    userinfo, host, port, params = _parse_url_parts(url, "vless")
+    security = params.get("security", "none")
+    transport = params.get("type", "tcp")
 
     ob: dict = {
         "type": "vless",
@@ -41,9 +78,6 @@ def parse_vless(url: str, tag: str) -> dict:
         "uuid": userinfo,
         "packet_encoding": "xudp",
     }
-
-    security = params.get("security", "none")
-    transport = params.get("type", "tcp")
 
     if security == "reality":
         ob["tls"] = {
@@ -66,23 +100,14 @@ def parse_vless(url: str, tag: str) -> dict:
         if params.get("alpn"):
             ob["tls"]["alpn"] = params["alpn"].split(",")
 
-    if transport == "ws":
-        ob["transport"] = {
-            "type": "ws",
-            "path": urllib.parse.unquote(params.get("path", "/")),
-            "headers": {"Host": params.get("host", host)},
-        }
-    elif transport == "grpc":
-        ob["transport"] = {
-            "type": "grpc",
-            "service_name": urllib.parse.unquote(params.get("serviceName", "")),
-        }
-    elif transport == "h2":
-        ob["transport"] = {
-            "type": "http",
-            "host": [params.get("host", host)],
-            "path": urllib.parse.unquote(params.get("path", "/")),
-        }
+    tr = _mk_transport(
+        transport,
+        path=params.get("path", "/"),
+        host_header=params.get("host", host),
+        service_name=params.get("serviceName", ""),
+    )
+    if tr is not None:
+        ob["transport"] = tr
 
     flow = urllib.parse.unquote(params.get("flow", ""))
     if flow:
@@ -129,23 +154,15 @@ def parse_vmess(url: str, tag: str) -> dict:
     path = str(data.get("path") or "/")
     h_host = str(data.get("host") or host)
 
-    if net == "ws":
-        ob["transport"] = {
-            "type": "ws",
-            "path": path,
-            "headers": {"Host": h_host},
-        }
-    elif net == "grpc":
-        ob["transport"] = {
-            "type": "grpc",
-            "service_name": path.lstrip("/"),
-        }
-    elif net in ("h2", "http"):
-        ob["transport"] = {
-            "type": "http",
-            "host": [h_host],
-            "path": path,
-        }
+    # vmess grpc uses path as service_name; other transports use path/h_host directly
+    tr = _mk_transport(
+        net if net != "http" else "h2",
+        path=path,
+        host_header=h_host,
+        service_name=path.lstrip("/"),
+    )
+    if tr is not None:
+        ob["transport"] = tr
 
     return ob
 
@@ -154,15 +171,7 @@ def parse_trojan(url: str, tag: str) -> dict:
     """
     trojan://PASSWORD@HOST:PORT?sni=SNI&fp=chrome&security=tls&type=tcp|ws|grpc&path=...
     """
-    rest = url[len("trojan://"):]
-    rest, _, _ = rest.partition("#")
-
-    userinfo, _, rest = rest.partition("@")
-    password = urllib.parse.unquote(userinfo)
-
-    hostpart, _, query = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
-    params = _qs(query)
+    userinfo, host, port, params = _parse_url_parts(url, "trojan")
     transport = params.get("type", "tcp")
 
     ob: dict = {
@@ -170,7 +179,7 @@ def parse_trojan(url: str, tag: str) -> dict:
         "tag": tag,
         "server": host,
         "server_port": int(port),
-        "password": password,
+        "password": urllib.parse.unquote(userinfo),
         "tls": {
             "enabled": True,
             "server_name": params.get("sni", host),
@@ -182,17 +191,14 @@ def parse_trojan(url: str, tag: str) -> dict:
     if params.get("alpn"):
         ob["tls"]["alpn"] = params["alpn"].split(",")
 
-    if transport == "ws":
-        ob["transport"] = {
-            "type": "ws",
-            "path": urllib.parse.unquote(params.get("path", "/")),
-            "headers": {"Host": params.get("host", host)},
-        }
-    elif transport == "grpc":
-        ob["transport"] = {
-            "type": "grpc",
-            "service_name": urllib.parse.unquote(params.get("serviceName", "")),
-        }
+    tr = _mk_transport(
+        transport,
+        path=params.get("path", "/"),
+        host_header=params.get("host", host),
+        service_name=params.get("serviceName", ""),
+    )
+    if tr is not None:
+        ob["transport"] = tr
 
     return ob
 
@@ -236,13 +242,7 @@ def parse_hysteria2(url: str, tag: str) -> dict:
     hy2://... (same, shorter alias)
     """
     scheme = "hysteria2" if url.startswith("hysteria2://") else "hy2"
-    rest = url[len(scheme) + 3:]
-    rest, _, _ = rest.partition("#")
-
-    userinfo, _, rest = rest.partition("@")
-    hostpart, _, query = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
-    params = _qs(query)
+    userinfo, host, port, params = _parse_url_parts(url, scheme)
 
     ob: dict = {
         "type": "hysteria2",
@@ -267,18 +267,9 @@ def parse_tuic(url: str, tag: str) -> dict:
     """
     tuic://UUID:PASSWORD@HOST:PORT?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=SNI
     """
-    rest = url[len("tuic://"):]
-    rest, _, _ = rest.partition("#")
-
-    userinfo, _, rest = rest.partition("@")
+    userinfo, host, port, params = _parse_url_parts(url, "tuic")
     uuid, _, password = userinfo.partition(":")
-
-    hostpart, _, query = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
-    params = _qs(query)
-
-    alpn_raw = params.get("alpn", "h3")
-    alpn = [a for a in alpn_raw.split(",") if a]
+    alpn = [a for a in params.get("alpn", "h3").split(",") if a]
 
     return {
         "type": "tuic",
@@ -306,25 +297,13 @@ def parse_socks(url: str, tag: str) -> dict:
     """
     scheme = url.split("://")[0].lower()
     version = "4" if scheme.startswith("socks4") else "5"
+    userinfo, host, port, _ = _parse_url_parts(url, scheme)
 
-    rest = url[len(scheme) + 3:]
-    rest, _, _ = rest.partition("#")
-
-    ob: dict = {
-        "type": "socks",
-        "tag": tag,
-        "version": version,
-    }
-
-    if "@" in rest:
-        userinfo, _, rest = rest.partition("@")
-        if ":" in userinfo:
-            username, _, password = userinfo.partition(":")
-            ob["username"] = urllib.parse.unquote(username)
-            ob["password"] = urllib.parse.unquote(password)
-
-    hostpart = rest.split("?")[0]
-    host, _, port = hostpart.rpartition(":")
+    ob: dict = {"type": "socks", "tag": tag, "version": version}
+    if userinfo and ":" in userinfo:
+        username, _, password = userinfo.partition(":")
+        ob["username"] = urllib.parse.unquote(username)
+        ob["password"] = urllib.parse.unquote(password)
     ob["server"] = host
     ob["server_port"] = int(port)
 
@@ -337,23 +316,13 @@ def parse_http_proxy(url: str, tag: str) -> dict:
     https://[user:pass@]host:port[#remark]  – HTTP CONNECT proxy over TLS
     """
     scheme = url.split("://")[0].lower()
-    rest = url[len(scheme) + 3:]
-    rest, _, _ = rest.partition("#")
+    userinfo, host, port, _ = _parse_url_parts(url, scheme)
 
-    ob: dict = {
-        "type": "http",
-        "tag": tag,
-    }
-
-    if "@" in rest:
-        userinfo, _, rest = rest.partition("@")
-        if ":" in userinfo:
-            username, _, password = userinfo.partition(":")
-            ob["username"] = urllib.parse.unquote(username)
-            ob["password"] = urllib.parse.unquote(password)
-
-    hostpart = rest.split("?")[0]
-    host, _, port = hostpart.rpartition(":")
+    ob: dict = {"type": "http", "tag": tag}
+    if userinfo and ":" in userinfo:
+        username, _, password = userinfo.partition(":")
+        ob["username"] = urllib.parse.unquote(username)
+        ob["password"] = urllib.parse.unquote(password)
     ob["server"] = host
     ob["server_port"] = int(port)
 

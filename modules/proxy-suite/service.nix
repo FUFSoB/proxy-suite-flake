@@ -10,6 +10,7 @@
   nftablesRulesFile,
   appTproxyRulesFile,
   appZapretRulesFile,
+  appTunChainFile,
   ip,
   nft,
 }:
@@ -325,31 +326,6 @@ let
   appTunSliceName = "proxy-suite-app-tun.slice";
   appTproxySliceName = "proxy-suite-app-tproxy.slice";
   appZapretSliceName = "proxy-suite-app-zapret.slice";
-  appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
-    define RESERVED_IP = {
-        10.0.0.0/8,
-        100.64.0.0/10,
-        127.0.0.0/8,
-        169.254.0.0/16,
-        172.16.0.0/12,
-        192.0.0.0/24,
-        224.0.0.0/4,
-        240.0.0.0/4,
-        255.255.255.255/32
-    }
-
-    table inet proxy_suite_app_tun {
-        chain output {
-            type route hook output priority mangle; policy accept;
-            ip daddr $RESERVED_IP return
-${lib.concatMapStrings (cidr: ''
-            ip daddr ${cidr} return
-    '') art.localSubnets}
-            ct mark ${toString art.fwmark} meta mark set ${toString art.fwmark}
-            meta mark ${toString art.fwmark} return
-        }
-    }
-  '';
   appTunWaitForInterface = pkgs.writeShellScript "proxy-suite-app-tun-wait-for-interface" ''
     set -euo pipefail
     for _ in $(${seqBin} 1 50); do
@@ -375,11 +351,21 @@ ${lib.concatMapStrings (cidr: ''
     ${ip} route del default dev ${lib.escapeShellArg art.interface} table ${toString art.routeTable} 2>/dev/null || true
     ${ip} rule del fwmark ${toString art.fwmark} table ${toString art.routeTable} 2>/dev/null || true
   '';
-  appTunUserRuleStart =
-    pkgs.writeShellScript "proxy-suite-app-tun-user-start" ''
+  # Generate a "start" script that adds a per-user cgroup nftables mark rule.
+  mkUserRuleStart =
+    {
+      name,
+      nftFamily,
+      nftTable,
+      nftChain,
+      sliceName,
+      sliceLabel,
+      markRule,
+    }:
+    pkgs.writeShellScript "proxy-suite-${name}-user-start" ''
       set -euo pipefail
       uid="$1"
-      rule_comment_prefix="proxy-suite-app-tun-user-$uid"
+      rule_comment_prefix="proxy-suite-${name}-user-$uid"
       mark_comment="$rule_comment_prefix-mark"
       cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
       if ! [ -d "$cgroup_root" ]; then
@@ -387,43 +373,100 @@ ${lib.concatMapStrings (cidr: ''
         exit 1
       fi
 
-      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appTunSliceName} | ${headBin} -n1 || true)
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg sliceName} | ${headBin} -n1 || true)
       if [ -z "$cgroup_dir" ]; then
-        echo "proxy-suite: app TUN slice cgroup does not exist for uid $uid under $cgroup_root" >&2
+        echo "proxy-suite: ${sliceLabel} slice cgroup does not exist for uid $uid under $cgroup_root" >&2
         exit 1
       fi
       cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
       cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
 
-      handles=$(${nft} -a list chain inet proxy_suite_app_tun output 2>/dev/null \
+      handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
         | ${grepBin} -F "comment \"$rule_comment_prefix" \
         | ${awk} '{ print $NF }' || true)
       if [ -n "$handles" ]; then
         while IFS= read -r handle; do
           [ -n "$handle" ] || continue
-          ${nft} delete rule inet proxy_suite_app_tun output handle "$handle" || true
+          ${nft} delete rule ${nftFamily} ${nftTable} ${nftChain} handle "$handle" || true
         done <<< "$handles"
       fi
 
       printf '%s\n' \
-        "add rule inet proxy_suite_app_tun output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set ${toString art.fwmark} ct mark set ${toString art.fwmark} comment \"$mark_comment\"" \
+        "add rule ${nftFamily} ${nftTable} ${nftChain} socket cgroupv2 level $cgroup_level \"$cgroup_path\" ${markRule} comment \"$mark_comment\"" \
         | ${nft} -f -
     '';
-  appTunUserRuleStop =
-    pkgs.writeShellScript "proxy-suite-app-tun-user-stop" ''
+
+  # Generate a "stop" script that removes all per-user cgroup nftables mark rules.
+  mkUserRuleStop =
+    {
+      name,
+      nftFamily,
+      nftTable,
+      nftChain,
+    }:
+    pkgs.writeShellScript "proxy-suite-${name}-user-stop" ''
       set -euo pipefail
       uid="$1"
-      rule_comment_prefix="proxy-suite-app-tun-user-$uid"
-      handles=$(${nft} -a list chain inet proxy_suite_app_tun output 2>/dev/null \
+      rule_comment_prefix="proxy-suite-${name}-user-$uid"
+      handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
         | ${grepBin} -F "comment \"$rule_comment_prefix" \
         | ${awk} '{ print $NF }' || true)
       if [ -n "$handles" ]; then
         while IFS= read -r handle; do
           [ -n "$handle" ] || continue
-          ${nft} delete rule inet proxy_suite_app_tun output handle "$handle" || true
+          ${nft} delete rule ${nftFamily} ${nftTable} ${nftChain} handle "$handle" || true
         done <<< "$handles"
       fi
     '';
+
+  appTunUserRuleStart = mkUserRuleStart {
+    name = "app-tun";
+    nftFamily = "inet";
+    nftTable = "proxy_suite_app_tun";
+    nftChain = "output";
+    sliceName = appTunSliceName;
+    sliceLabel = "app TUN";
+    markRule = "meta mark set ${toString art.fwmark} ct mark set ${toString art.fwmark}";
+  };
+  appTunUserRuleStop = mkUserRuleStop {
+    name = "app-tun";
+    nftFamily = "inet";
+    nftTable = "proxy_suite_app_tun";
+    nftChain = "output";
+  };
+
+  appTproxyUserRuleStart = mkUserRuleStart {
+    name = "app-tproxy";
+    nftFamily = "ip";
+    nftTable = "proxy_suite_app_tproxy";
+    nftChain = "output";
+    sliceName = appTproxySliceName;
+    sliceLabel = "app TProxy";
+    markRule = "meta mark set ${toString artp.fwmark} ct mark set ${toString artp.fwmark}";
+  };
+  appTproxyUserRuleStop = mkUserRuleStop {
+    name = "app-tproxy";
+    nftFamily = "ip";
+    nftTable = "proxy_suite_app_tproxy";
+    nftChain = "output";
+  };
+
+  appZapretUserRuleStart = mkUserRuleStart {
+    name = "app-zapret";
+    nftFamily = "inet";
+    nftTable = "proxy_suite_app_zapret_mark";
+    nftChain = "output";
+    sliceName = appZapretSliceName;
+    sliceLabel = "app zapret";
+    markRule = "meta mark set meta mark or ${toString arz.filterMark} ct mark set ct mark or ${toString arz.filterMark}";
+  };
+  appZapretUserRuleStop = mkUserRuleStop {
+    name = "app-zapret";
+    nftFamily = "inet";
+    nftTable = "proxy_suite_app_zapret_mark";
+    nftChain = "output";
+  };
+
   appTproxyUpScript = pkgs.writeShellScript "proxy-suite-app-tproxy-up" ''
     set -euo pipefail
     ${nft} delete table ip proxy_suite_app_tproxy 2>/dev/null || true
@@ -437,104 +480,6 @@ ${lib.concatMapStrings (cidr: ''
     ${ip} route del local default dev lo table ${toString artp.routeTable} 2>/dev/null || true
     ${ip} rule del fwmark ${toString artp.fwmark} table ${toString artp.routeTable} 2>/dev/null || true
   '';
-  appTproxyUserRuleStart =
-    pkgs.writeShellScript "proxy-suite-app-tproxy-user-start" ''
-      set -euo pipefail
-      uid="$1"
-      rule_comment_prefix="proxy-suite-app-tproxy-user-$uid"
-      mark_comment="$rule_comment_prefix-mark"
-      cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
-      if ! [ -d "$cgroup_root" ]; then
-        echo "proxy-suite: user cgroup root does not exist for uid $uid: $cgroup_root" >&2
-        exit 1
-      fi
-
-      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appTproxySliceName} | ${headBin} -n1 || true)
-      if [ -z "$cgroup_dir" ]; then
-        echo "proxy-suite: app TProxy slice cgroup does not exist for uid $uid under $cgroup_root" >&2
-        exit 1
-      fi
-      cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
-      cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
-
-      handles=$(${nft} -a list chain ip proxy_suite_app_tproxy output 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
-        | ${awk} '{ print $NF }' || true)
-      if [ -n "$handles" ]; then
-        while IFS= read -r handle; do
-          [ -n "$handle" ] || continue
-          ${nft} delete rule ip proxy_suite_app_tproxy output handle "$handle" || true
-        done <<< "$handles"
-      fi
-
-      printf '%s\n' \
-        "add rule ip proxy_suite_app_tproxy output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set ${toString artp.fwmark} ct mark set ${toString artp.fwmark} comment \"$mark_comment\"" \
-        | ${nft} -f -
-    '';
-  appTproxyUserRuleStop =
-    pkgs.writeShellScript "proxy-suite-app-tproxy-user-stop" ''
-      set -euo pipefail
-      uid="$1"
-      rule_comment_prefix="proxy-suite-app-tproxy-user-$uid"
-      handles=$(${nft} -a list chain ip proxy_suite_app_tproxy output 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
-        | ${awk} '{ print $NF }' || true)
-      if [ -n "$handles" ]; then
-        while IFS= read -r handle; do
-          [ -n "$handle" ] || continue
-          ${nft} delete rule ip proxy_suite_app_tproxy output handle "$handle" || true
-        done <<< "$handles"
-      fi
-    '';
-  appZapretUserRuleStart =
-    pkgs.writeShellScript "proxy-suite-app-zapret-user-start" ''
-      set -euo pipefail
-      uid="$1"
-      rule_comment_prefix="proxy-suite-app-zapret-user-$uid"
-      mark_comment="$rule_comment_prefix-mark"
-      cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
-      if ! [ -d "$cgroup_root" ]; then
-        echo "proxy-suite: user cgroup root does not exist for uid $uid: $cgroup_root" >&2
-        exit 1
-      fi
-
-      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg appZapretSliceName} | ${headBin} -n1 || true)
-      if [ -z "$cgroup_dir" ]; then
-        echo "proxy-suite: app zapret slice cgroup does not exist for uid $uid under $cgroup_root" >&2
-        exit 1
-      fi
-      cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
-      cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
-
-      handles=$(${nft} -a list chain inet proxy_suite_app_zapret_mark output 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
-        | ${awk} '{ print $NF }' || true)
-      if [ -n "$handles" ]; then
-        while IFS= read -r handle; do
-          [ -n "$handle" ] || continue
-          ${nft} delete rule inet proxy_suite_app_zapret_mark output handle "$handle" || true
-        done <<< "$handles"
-      fi
-
-      printf '%s\n' \
-        "add rule inet proxy_suite_app_zapret_mark output socket cgroupv2 level $cgroup_level \"$cgroup_path\" meta mark set meta mark or ${toString arz.filterMark} ct mark set ct mark or ${toString arz.filterMark} comment \"$mark_comment\"" \
-        | ${nft} -f -
-    '';
-  appZapretUserRuleStop =
-    pkgs.writeShellScript "proxy-suite-app-zapret-user-stop" ''
-      set -euo pipefail
-      uid="$1"
-      rule_comment_prefix="proxy-suite-app-zapret-user-$uid"
-      handles=$(${nft} -a list chain inet proxy_suite_app_zapret_mark output 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
-        | ${awk} '{ print $NF }' || true)
-      if [ -n "$handles" ]; then
-        while IFS= read -r handle; do
-          [ -n "$handle" ] || continue
-          ${nft} delete rule inet proxy_suite_app_zapret_mark output handle "$handle" || true
-        done <<< "$handles"
-      fi
-    '';
 
   proxyCtl = pkgs.writeShellApplication {
     name = "proxy-ctl";
@@ -560,11 +505,8 @@ ${lib.concatMapStrings (cidr: ''
       APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
       PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
       APP_TUN_SLICE_BASE="proxy-suite-app-tun"
-      APP_TUN_ANCHOR_UNIT="proxy-suite-app-tun-anchor.service"
       APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"
-      APP_TPROXY_ANCHOR_UNIT="proxy-suite-app-tproxy-anchor.service"
       APP_ZAPRET_SLICE_BASE="proxy-suite-app-zapret"
-      APP_ZAPRET_ANCHOR_UNIT="proxy-suite-app-zapret-anchor.service"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -645,34 +587,56 @@ ${lib.concatMapStrings (cidr: ''
         ${jq} -r --arg name "$profile" '.[] | select(.name == $name) | .route' "$APP_ROUTING_PROFILES_FILE"
       }
 
-      _tun_scope_running() {
-        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-tun-*' \
+      _scope_running() {
+        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend "$1-*" \
           | ${grepBin} -q .
       }
 
-      _any_app_tun_user_active() {
-        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tun-user@*.service' \
+      _any_user_active() {
+        ${systemctl} list-units --type=service --state=active --plain --no-legend "$1*.service" \
           | ${grepBin} -q .
       }
 
-      _tproxy_scope_running() {
-        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-tproxy-*' \
-          | ${grepBin} -q .
+      _check_no_global_proxy() {
+        if ${systemctl} is-active --quiet proxy-suite-tun.service; then
+          echo "Global proxy-suite-tun.service is active. Stop it before using route=$1 profiles."
+          exit 1
+        fi
+        if ${systemctl} is-active --quiet proxy-suite-tproxy.service; then
+          echo "Global proxy-suite-tproxy.service is active. Stop it before using route=$1 profiles."
+          exit 1
+        fi
       }
 
-      _any_app_tproxy_user_active() {
-        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-tproxy-user@*.service' \
-          | ${grepBin} -q .
-      }
+      # _wrap_slice <slice_base> <enabled_var> <disabled_msg> <backend_svc> [cmd...]
+      _wrap_slice() {
+        local slice_base="$1" enabled="$2" disabled_msg="$3" backend_svc="$4"
+        shift 4
+        if [ "$enabled" != "1" ]; then
+          echo "$disabled_msg"
+          exit 1
+        fi
+        local uid; uid="$(${idBin} -u)"
+        local scope_unit="$slice_base-''${profile}-$$"
+        local anchor_unit="$slice_base-anchor.service"
+        local user_svc="$slice_base-user@$uid.service"
 
-      _zapret_scope_running() {
-        ${systemctl} --user list-units --type=scope --state=running --plain --no-legend 'proxy-suite-app-zapret-*' \
-          | ${grepBin} -q .
-      }
+        ${systemctl} --user start "$anchor_unit"
+        ${systemctl} start "$backend_svc"
+        ${systemctl} start "$user_svc"
 
-      _any_app_zapret_user_active() {
-        ${systemctl} list-units --type=service --state=active --plain --no-legend 'proxy-suite-app-zapret-user@*.service' \
-          | ${grepBin} -q .
+        local status=0
+        ${systemdRun} --user --scope --quiet --collect --same-dir \
+          --slice="$slice_base" --unit="$scope_unit" "$@" || status=$?
+
+        if ! _scope_running "$slice_base"; then
+          ${systemctl} stop "$user_svc" || true
+          ${systemctl} --user stop "$anchor_unit" || true
+          if ! _any_user_active "$slice_base-user@"; then
+            ${systemctl} stop "$backend_svc" || true
+          fi
+        fi
+        exit "$status"
       }
 
       cmd="''${1:-status}"
@@ -825,116 +789,21 @@ ${lib.concatMapStrings (cidr: ''
               exec ${proxychains4} ${proxychainsQuietArg}-f "$PROXYCHAINS_CONFIG" "$@"
               ;;
             tun)
-              if [ "$APP_ROUTING_TUN_ENABLED" != "1" ]; then
-                echo "Profile '$profile' uses route=tun, but appRouting.backends.tun.enable is false."
-                exit 1
-              fi
-
-              uid="$(${idBin} -u)"
-              scope_unit="proxy-suite-app-tun-$profile-$$"
-
-              ${systemctl} --user start "$APP_TUN_ANCHOR_UNIT"
-              ${systemctl} start proxy-suite-app-tun.service
-              ${systemctl} start "proxy-suite-app-tun-user@$uid.service"
-
-              if ${systemdRun} --user --scope --quiet --collect --same-dir \
-                --slice="$APP_TUN_SLICE_BASE" \
-                --unit="$scope_unit" \
-                "$@"; then
-                status=0
-              else
-                status=$?
-              fi
-
-              if ! _tun_scope_running; then
-                ${systemctl} stop "proxy-suite-app-tun-user@$uid.service" || true
-                ${systemctl} --user stop "$APP_TUN_ANCHOR_UNIT" || true
-                if ! _any_app_tun_user_active; then
-                  ${systemctl} stop proxy-suite-app-tun.service || true
-                fi
-              fi
-
-              exit "$status"
+              _wrap_slice "$APP_TUN_SLICE_BASE" "$APP_ROUTING_TUN_ENABLED" \
+                "Profile '$profile' uses route=tun, but appRouting.backends.tun.enable is false." \
+                "proxy-suite-app-tun.service" "$@"
               ;;
             tproxy)
-              if [ "$APP_ROUTING_TPROXY_ENABLED" != "1" ]; then
-                echo "Profile '$profile' uses route=tproxy, but appRouting.backends.tproxy.enable is false."
-                exit 1
-              fi
-              if ${systemctl} is-active --quiet proxy-suite-tun.service; then
-                echo "Global proxy-suite-tun.service is active. Stop it before using route=tproxy profiles."
-                exit 1
-              fi
-              if ${systemctl} is-active --quiet proxy-suite-tproxy.service; then
-                echo "Global proxy-suite-tproxy.service is active. Stop it before using route=tproxy profiles."
-                exit 1
-              fi
-
-              uid="$(${idBin} -u)"
-              scope_unit="proxy-suite-app-tproxy-$profile-$$"
-
-              ${systemctl} --user start "$APP_TPROXY_ANCHOR_UNIT"
-              ${systemctl} start proxy-suite-app-tproxy.service
-              ${systemctl} start "proxy-suite-app-tproxy-user@$uid.service"
-
-              if ${systemdRun} --user --scope --quiet --collect --same-dir \
-                --slice="$APP_TPROXY_SLICE_BASE" \
-                --unit="$scope_unit" \
-                "$@"; then
-                status=0
-              else
-                status=$?
-              fi
-
-              if ! _tproxy_scope_running; then
-                ${systemctl} stop "proxy-suite-app-tproxy-user@$uid.service" || true
-                ${systemctl} --user stop "$APP_TPROXY_ANCHOR_UNIT" || true
-                if ! _any_app_tproxy_user_active; then
-                  ${systemctl} stop proxy-suite-app-tproxy.service || true
-                fi
-              fi
-
-              exit "$status"
+              _check_no_global_proxy tproxy
+              _wrap_slice "$APP_TPROXY_SLICE_BASE" "$APP_ROUTING_TPROXY_ENABLED" \
+                "Profile '$profile' uses route=tproxy, but appRouting.backends.tproxy.enable is false." \
+                "proxy-suite-app-tproxy.service" "$@"
               ;;
             zapret)
-              if [ "$APP_ROUTING_ZAPRET_ENABLED" != "1" ]; then
-                echo "Profile '$profile' uses route=zapret, but the app-zapret backend or zapret service is not enabled."
-                exit 1
-              fi
-              if ${systemctl} is-active --quiet proxy-suite-tun.service; then
-                echo "Global proxy-suite-tun.service is active. Stop it before using route=zapret profiles."
-                exit 1
-              fi
-              if ${systemctl} is-active --quiet proxy-suite-tproxy.service; then
-                echo "Global proxy-suite-tproxy.service is active. Stop it before using route=zapret profiles."
-                exit 1
-              fi
-
-              uid="$(${idBin} -u)"
-              scope_unit="proxy-suite-app-zapret-$profile-$$"
-
-              ${systemctl} --user start "$APP_ZAPRET_ANCHOR_UNIT"
-              ${systemctl} start proxy-suite-app-zapret.service
-              ${systemctl} start "proxy-suite-app-zapret-user@$uid.service"
-
-              if ${systemdRun} --user --scope --quiet --collect --same-dir \
-                --slice="$APP_ZAPRET_SLICE_BASE" \
-                --unit="$scope_unit" \
-                "$@"; then
-                status=0
-              else
-                status=$?
-              fi
-
-              if ! _zapret_scope_running; then
-                ${systemctl} stop "proxy-suite-app-zapret-user@$uid.service" || true
-                ${systemctl} --user stop "$APP_ZAPRET_ANCHOR_UNIT" || true
-                if ! _any_app_zapret_user_active; then
-                  ${systemctl} stop proxy-suite-app-zapret.service || true
-                fi
-              fi
-
-              exit "$status"
+              _check_no_global_proxy zapret
+              _wrap_slice "$APP_ZAPRET_SLICE_BASE" "$APP_ROUTING_ZAPRET_ENABLED" \
+                "Profile '$profile' uses route=zapret, but the app-zapret backend or zapret service is not enabled." \
+                "proxy-suite-app-zapret.service" "$@"
               ;;
             *)
               echo "Route backend '$route' is not implemented in this build."
@@ -982,6 +851,17 @@ ${lib.concatMapStrings (cidr: ''
     '';
   };
 
+  mkAnchorService = sliceName: desc: {
+    description = desc;
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      Slice = sliceName;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+      ExecStop = "${pkgs.coreutils}/bin/true";
+    };
+  };
+
 in
 {
   environment.systemPackages = [ proxyCtl ];
@@ -1013,40 +893,16 @@ in
 
   systemd.user.services =
     lib.optionalAttrs art.enable {
-      proxy-suite-app-tun-anchor = {
-        description = "Anchor service for proxy-suite app TUN slice";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Slice = appTunSliceName;
-          ExecStart = "${pkgs.coreutils}/bin/true";
-          ExecStop = "${pkgs.coreutils}/bin/true";
-        };
-      };
+      proxy-suite-app-tun-anchor =
+        mkAnchorService appTunSliceName "Anchor service for proxy-suite app TUN slice";
     }
     // lib.optionalAttrs artp.enable {
-      proxy-suite-app-tproxy-anchor = {
-        description = "Anchor service for proxy-suite app TProxy slice";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Slice = appTproxySliceName;
-          ExecStart = "${pkgs.coreutils}/bin/true";
-          ExecStop = "${pkgs.coreutils}/bin/true";
-        };
-      };
+      proxy-suite-app-tproxy-anchor =
+        mkAnchorService appTproxySliceName "Anchor service for proxy-suite app TProxy slice";
     }
     // lib.optionalAttrs (arz.enable && cfg.zapret.enable) {
-      proxy-suite-app-zapret-anchor = {
-        description = "Anchor service for proxy-suite app zapret slice";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          Slice = appZapretSliceName;
-          ExecStart = "${pkgs.coreutils}/bin/true";
-          ExecStop = "${pkgs.coreutils}/bin/true";
-        };
-      };
+      proxy-suite-app-zapret-anchor =
+        mkAnchorService appZapretSliceName "Anchor service for proxy-suite app zapret slice";
     };
 
   assertions = [
@@ -1226,7 +1082,6 @@ in
   ]) sb.subscriptions;
 
   systemd.services = {
-    # Always-on: SOCKS5/HTTP mixed inbound, also ready for TProxy interception.
     proxy-suite-socks = {
       description = "sing-box proxy client (SOCKS + TProxy-ready)";
       after = [ "network.target" ];
@@ -1241,9 +1096,6 @@ in
     };
   }
   // lib.optionalAttrs sb.tproxy.enable {
-    # Opt-in transparent proxy. Start/stop with:
-    #   systemctl start proxy-suite-tproxy
-    #   systemctl stop proxy-suite-tproxy
     proxy-suite-tproxy = {
       description = "sing-box TProxy – nftables rules and policy routing";
       after = [
@@ -1274,9 +1126,6 @@ in
     };
   }
   // lib.optionalAttrs sb.tun.enable {
-    # Opt-in TUN mode (full tunnel, no nftables needed). Start/stop with:
-    #   systemctl start proxy-suite-tun
-    #   systemctl stop proxy-suite-tun
     proxy-suite-tun = {
       description = "sing-box TUN proxy client";
       after = [ "network-online.target" ];

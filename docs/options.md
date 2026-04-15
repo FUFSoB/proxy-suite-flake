@@ -1752,8 +1752,7 @@ one of “udp”, “tcp”, “tls”
 
 
 Netfilter mark set on packets intercepted by TProxy so policy routing
-can send them to the local loopback route table\.
-Only relevant when singBox\.tproxy\.enable = true\.
+can send them to the local loopback route table\. Used by TProxy mode\.
 
 
 
@@ -2236,8 +2235,7 @@ true
 
 
 Netfilter mark set on sing-box’s own outbound packets so they bypass
-TProxy re-interception loops\.
-Only relevant when singBox\.tproxy\.enable = true\.
+TProxy re-interception loops\. Used by TProxy mode\.
 
 
 
@@ -2271,8 +2269,7 @@ signed integer
 
 
 Policy routing table used to redirect TProxy-marked packets to the
-loopback interface\.
-Only relevant when singBox\.tproxy\.enable = true\.
+loopback interface\. Used by TProxy mode\.
 
 
 
@@ -3290,7 +3287,6 @@ true
 
 Whether to start proxy-suite-tproxy automatically during boot by
 attaching it to multi-user\.target\.
-Only relevant when singBox\.tproxy\.enable = true\.
 Cannot be enabled together with singBox\.tun\.autostart\.
 
 
@@ -3325,7 +3321,6 @@ true
 
 
 Subnets whose traffic bypasses TProxy interception, except DNS (port 53)\.
-Only relevant when singBox\.tproxy\.enable = true\.
 
 Typically this should include your LAN subnet(s)\. VM bridge networks
 should usually go here too, or use zapret\.cidrExemption for
@@ -3367,8 +3362,7 @@ list of string
 
 
 
-Listen port for the local sing-box TProxy inbound\.
-Only relevant when singBox\.tproxy\.enable = true\.
+Listen port for the local sing-box TProxy inbound\. Used by TProxy mode\.
 
 
 
@@ -3435,7 +3429,6 @@ true
 
 
 Address assigned to the TUN interface in CIDR notation\.
-Only relevant when singBox\.tun\.enable = true\.
 
 
 
@@ -3470,7 +3463,6 @@ string
 
 Whether to start proxy-suite-tun automatically during boot by
 attaching it to multi-user\.target\.
-Only relevant when singBox\.tun\.enable = true\.
 Cannot be enabled together with singBox\.tproxy\.autostart\.
 
 
@@ -3505,7 +3497,6 @@ true
 
 
 Name of the TUN interface created by proxy-suite-tun\.
-Only relevant when singBox\.tun\.enable = true\.
 
 
 
@@ -3539,7 +3530,6 @@ string
 
 
 MTU for the TUN interface created by proxy-suite-tun\.
-Only relevant when singBox\.tun\.enable = true\.
 
 
 
@@ -3716,7 +3706,6 @@ true
 
 
 Map of Telegram DC ID to IP address for relay\.
-Only relevant when tgWsProxy\.enable = true\.
 
 
 
@@ -3754,7 +3743,6 @@ attribute set of string
 
 
 Address to bind tg-ws-proxy to\.
-Only relevant when tgWsProxy\.enable = true\.
 
 
 
@@ -3788,7 +3776,6 @@ string
 
 
 Listen port for the tg-ws-proxy service\.
-Only relevant when tgWsProxy\.enable = true\.
 
 
 
@@ -3927,9 +3914,8 @@ true
 
 
 
-Whether to install an XDG autostart entry for the tray application for
-graphical users\.
-Only relevant when tray\.enable = true\.
+Whether to install an XDG autostart entry for the tray application
+for graphical users\.
 
 
 
@@ -3963,7 +3949,6 @@ true
 
 
 Status polling interval in seconds for the tray application\.
-Only relevant when tray\.enable = true\.
 
 
 
@@ -4168,8 +4153,6 @@ true
 
 
 Subnets to exempt from zapret’s NFQUEUE mangle rules\.
-Only relevant when zapret\.enable = true and cidrExemption\.enable = true\.
-
 Useful when a VM (libvirt, etc\.) is behind NAT and zapret
 would corrupt its traffic through the host’s nftables\.
 
@@ -4207,9 +4190,7 @@ list of string
 
 
 
-zapret strategy preset name passed through to the generated zapret
-configuration\.
-Only relevant when zapret\.enable = true\.
+zapret strategy preset name passed through to the generated zapret configuration\.
 
 
 
@@ -4243,7 +4224,6 @@ string
 
 
 zapret game traffic filter mode: “all”, “tcp”, “udp”, or “null” to disable\.
-Only relevant when zapret\.enable = true\.
 
 
 

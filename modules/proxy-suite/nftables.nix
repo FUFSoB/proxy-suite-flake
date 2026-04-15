@@ -11,15 +11,8 @@ let
   artp = cfg.appRouting.backends.tproxy;
   arz = cfg.appRouting.backends.zapret;
 
-  mkLocalSubnetLines = subnets: lib.concatMapStrings (cidr: ''
-    ip daddr ${cidr} tcp dport != 53 return
-    ip daddr ${cidr} udp dport != 53 return
-  '') subnets;
-
-  tproxyLocalSubnetLines = mkLocalSubnetLines sb.tproxy.localSubnets;
-  appTproxyLocalSubnetLines = mkLocalSubnetLines artp.localSubnets;
-
-  nftablesRulesFile = pkgs.writeText "proxy-suite-tproxy.nft" ''
+  # Shared across all three nftables rule files that do IPv4 routing.
+  reservedIpBlock = ''
       define RESERVED_IP = {
           10.0.0.0/8,
           100.64.0.0/10,
@@ -31,7 +24,18 @@ let
           240.0.0.0/4,
           255.255.255.255/32
       }
+  '';
 
+  mkLocalSubnetLines = subnets: lib.concatMapStrings (cidr: ''
+    ip daddr ${cidr} tcp dport != 53 return
+    ip daddr ${cidr} udp dport != 53 return
+  '') subnets;
+
+  tproxyLocalSubnetLines = mkLocalSubnetLines sb.tproxy.localSubnets;
+  appTproxyLocalSubnetLines = mkLocalSubnetLines artp.localSubnets;
+
+  nftablesRulesFile = pkgs.writeText "proxy-suite-tproxy.nft" ''
+    ${reservedIpBlock}
       table ip singbox {
           chain prerouting {
               type filter hook prerouting priority mangle; policy accept;
@@ -55,18 +59,7 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
   '';
 
   appTproxyRulesFile = pkgs.writeText "proxy-suite-app-tproxy.nft" ''
-      define RESERVED_IP = {
-          10.0.0.0/8,
-          100.64.0.0/10,
-          127.0.0.0/8,
-          169.254.0.0/16,
-          172.16.0.0/12,
-          192.0.0.0/24,
-          224.0.0.0/4,
-          240.0.0.0/4,
-          255.255.255.255/32
-      }
-
+    ${reservedIpBlock}
       table ip proxy_suite_app_tproxy {
           chain prerouting {
               type filter hook prerouting priority mangle; policy accept;
@@ -104,10 +97,25 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
       }
   '';
 
+  appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
+    ${reservedIpBlock}
+      table inet proxy_suite_app_tun {
+          chain output {
+              type route hook output priority mangle; policy accept;
+              ip daddr $RESERVED_IP return
+${lib.concatMapStrings (cidr: ''
+              ip daddr ${cidr} return
+  '') art.localSubnets}
+              ct mark ${toString art.fwmark} meta mark set ${toString art.fwmark}
+              meta mark ${toString art.fwmark} return
+          }
+      }
+  '';
+
   ip = "${pkgs.iproute2}/bin/ip";
   nft = "${pkgs.nftables}/bin/nft";
 
 in
 {
-  inherit nftablesRulesFile appTproxyRulesFile appZapretRulesFile ip nft;
+  inherit nftablesRulesFile appTproxyRulesFile appZapretRulesFile appTunChainFile ip nft;
 }

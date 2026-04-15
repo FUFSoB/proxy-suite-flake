@@ -1652,23 +1652,24 @@ let
     (
       assert pkgs.lib.hasInfix "APP_ROUTING_TUN_ENABLED" appRoutingTunScript;
       assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" appRoutingTunScript;
-      assert pkgs.lib.hasInfix "proxy-suite-app-tun-user@$uid.service" appRoutingTunScript;
+      assert pkgs.lib.hasInfix ''APP_TUN_SLICE_BASE="proxy-suite-app-tun"'' appRoutingTunScript;
+      assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" appRoutingTunScript;
       true
     )
 
     # -- appRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "APP_ROUTING_TPROXY_ENABLED" appRoutingTproxyScript;
-      assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-user@$uid.service" appRoutingTproxyScript;
-      assert pkgs.lib.hasInfix "proxy-suite-app-tproxy-$profile-$$" appRoutingTproxyScript;
+      assert pkgs.lib.hasInfix ''APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"'' appRoutingTproxyScript;
+      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' appRoutingTproxyScript;
       true
     )
 
     # -- appRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "APP_ROUTING_ZAPRET_ENABLED" appRoutingZapretScript;
-      assert pkgs.lib.hasInfix "proxy-suite-app-zapret-user@$uid.service" appRoutingZapretScript;
-      assert pkgs.lib.hasInfix "proxy-suite-app-zapret-$profile-$$" appRoutingZapretScript;
+      assert pkgs.lib.hasInfix ''APP_ZAPRET_SLICE_BASE="proxy-suite-app-zapret"'' appRoutingZapretScript;
+      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' appRoutingZapretScript;
       true
     )
 
