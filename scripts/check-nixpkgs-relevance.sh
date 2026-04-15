@@ -44,7 +44,13 @@ let
   flake = builtins.getFlake (builtins.getEnv "REF");
   watched = builtins.fromJSON (builtins.getEnv "WATCH_ATTRS_JSON");
   system = builtins.getEnv "SYSTEM";
-  pkgs = flake.legacyPackages.${system};
+  pkgs =
+    if flake ? legacyPackages then
+      flake.legacyPackages.${system}
+    else if flake ? inputs && flake.inputs ? nixpkgs then
+      import flake.inputs.nixpkgs { inherit system; }
+    else
+      throw "Cannot evaluate watched nixpkgs attrs: flake has neither legacyPackages nor inputs.nixpkgs";
   lib = pkgs.lib;
   versionOf = attrPath:
     let value = lib.attrByPath (lib.splitString "." attrPath) null pkgs;
