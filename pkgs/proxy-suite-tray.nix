@@ -27,6 +27,24 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     mkdir -p $out/bin
     cp proxy-suite-tray $out/bin/
+
+    # Install custom icons in hicolor theme
+    if [ -d icons ]; then
+      mkdir -p $out/share/icons/hicolor/scalable/apps
+      mkdir -p $out/share/icons/hicolor/symbolic/apps
+      cp icons/proxy-suite-disabled.svg \
+         icons/proxy-suite-zapret.svg \
+         icons/proxy-suite-proxy.svg \
+         icons/proxy-suite-active.svg \
+         icons/proxy-suite-tunnel.svg \
+         $out/share/icons/hicolor/scalable/apps/
+      cp icons/proxy-suite-disabled-symbolic.svg \
+         icons/proxy-suite-zapret-symbolic.svg \
+         icons/proxy-suite-proxy-symbolic.svg \
+         icons/proxy-suite-active-symbolic.svg \
+         icons/proxy-suite-tunnel-symbolic.svg \
+         $out/share/icons/hicolor/symbolic/apps/
+    fi
   '';
 
   meta = {

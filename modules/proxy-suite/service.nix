@@ -579,10 +579,12 @@ ${lib.concatMapStrings (cidr: ''
         echo "Usage: proxy-ctl <command> [args]"
         echo ""
         echo "Commands:"
-        echo "  status                    show status of all proxy-suite services"
+        echo "  status [--tray]           show status of all proxy-suite services"
+        echo "  proxy on|off              enable/disable the core SOCKS proxy"
         echo "  tproxy on|off             enable/disable TProxy transparent mode"
         echo "  tun on|off                enable/disable TUN mode"
-        echo "  restart                   restart proxy-suite-socks and proxy-suite-tun if active"
+        echo "  zapret on|off             enable/disable zapret-discord-youtube"
+        echo "  restart                   restart active global proxy-suite services"
         echo "  logs [service]            follow service logs  (default: proxy-suite-socks)"
         echo "  outbounds                 list outbounds and current selection"
         echo "  select <tag>              switch to a specific outbound  (selector mode)"
@@ -601,6 +603,34 @@ ${lib.concatMapStrings (cidr: ''
         local state
         state=$(systemctl is-active "$svc" 2>/dev/null || true)
         printf "  %-44s %s\n" "$svc" "$state"
+      }
+
+      _bool() {
+        if "$@"; then
+          printf true
+        else
+          printf false
+        fi
+      }
+
+      _svc_exists() {
+        systemctl cat "$1" &>/dev/null
+      }
+
+      _svc_active() {
+        systemctl is-active --quiet "$1"
+      }
+
+      _status_tray() {
+        printf 'socks_available=%s\n' "$(_bool _svc_exists proxy-suite-socks)"
+        printf 'socks_active=%s\n' "$(_bool _svc_active proxy-suite-socks)"
+        printf 'tproxy_available=%s\n' "$(_bool _svc_exists proxy-suite-tproxy)"
+        printf 'tproxy_active=%s\n' "$(_bool _svc_active proxy-suite-tproxy)"
+        printf 'tun_available=%s\n' "$(_bool _svc_exists proxy-suite-tun)"
+        printf 'tun_active=%s\n' "$(_bool _svc_active proxy-suite-tun)"
+        printf 'zapret_available=%s\n' "$(_bool _svc_exists zapret-discord-youtube)"
+        printf 'zapret_active=%s\n' "$(_bool _svc_active zapret-discord-youtube)"
+        printf 'subscription_update_available=%s\n' "$(_bool _svc_exists proxy-suite-subscription-update)"
       }
 
       _ensure_app_routing() {
@@ -650,10 +680,29 @@ ${lib.concatMapStrings (cidr: ''
 
       case "$cmd" in
         status)
-          echo "proxy-suite services:"
-          for svc in "''${ALL_SERVICES[@]}"; do
-            _svc_status "$svc"
-          done
+          if [ "''${1:-}" = "--tray" ]; then
+            _status_tray
+          else
+            echo "proxy-suite services:"
+            for svc in "''${ALL_SERVICES[@]}"; do
+              _svc_status "$svc"
+            done
+          fi
+          ;;
+
+        proxy)
+          case "''${1:-on}" in
+            on)
+              systemctl start proxy-suite-socks
+              ;;
+            off)
+              systemctl stop proxy-suite-tproxy || true
+              systemctl stop proxy-suite-tun || true
+              systemctl stop proxy-suite-socks
+              ;;
+            *)
+              echo "Usage: proxy-ctl proxy on|off"; exit 1 ;;
+          esac
           ;;
 
         tproxy)
@@ -672,10 +721,24 @@ ${lib.concatMapStrings (cidr: ''
           esac
           ;;
 
+        zapret)
+          case "''${1:-on}" in
+            on)  systemctl start zapret-discord-youtube ;;
+            off) systemctl stop  zapret-discord-youtube ;;
+            *)   echo "Usage: proxy-ctl zapret on|off"; exit 1 ;;
+          esac
+          ;;
+
         restart)
           systemctl restart proxy-suite-socks
+          if systemctl is-active --quiet proxy-suite-tproxy; then
+            systemctl restart proxy-suite-tproxy
+          fi
           if systemctl is-active --quiet proxy-suite-tun; then
             systemctl restart proxy-suite-tun
+          fi
+          if systemctl is-active --quiet zapret-discord-youtube; then
+            systemctl restart zapret-discord-youtube
           fi
           ;;
 
