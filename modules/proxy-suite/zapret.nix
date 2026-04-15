@@ -40,36 +40,17 @@ let
       upstreamPackages = zapret.packages.${pkgs.stdenv.hostPlatform.system};
     in
     if upstreamPackages ? zapret then upstreamPackages.zapret else upstreamPackages.default;
-
-  listGeneralFile =
-    if z.listGeneral != [ ] then
-      pkgs.writeText "proxy-suite-zapret-list-general-user.txt" (
-        lib.concatStringsSep "\n" z.listGeneral + "\n"
-      )
+  mkOptionalHostlistFile =
+    fileName: entries:
+    if entries != [ ] then
+      pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n")
     else
       null;
 
-  listExcludeFile =
-    if z.listExclude != [ ] then
-      pkgs.writeText "proxy-suite-zapret-list-exclude-user.txt" (
-        lib.concatStringsSep "\n" z.listExclude + "\n"
-      )
-    else
-      null;
-
-  ipsetAllFile =
-    if z.ipsetAll != [ ] then
-      pkgs.writeText "proxy-suite-zapret-ipset-all.txt" (lib.concatStringsSep "\n" z.ipsetAll + "\n")
-    else
-      null;
-
-  ipsetExcludeFile =
-    if z.ipsetExclude != [ ] then
-      pkgs.writeText "proxy-suite-zapret-ipset-exclude-user.txt" (
-        lib.concatStringsSep "\n" z.ipsetExclude + "\n"
-      )
-    else
-      null;
+  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" z.listGeneral;
+  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" z.listExclude;
+  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" z.ipsetAll;
+  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" z.ipsetExclude;
 
   hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
     builtins.toJSON {

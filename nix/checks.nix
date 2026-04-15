@@ -130,6 +130,12 @@ let
       ];
     };
   };
+  mkFixture = proxySuiteConfig: evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = proxySuiteConfig;
+    }
+  ];
 
   minimal = evalProxySuite [ baseModule ];
 
@@ -145,66 +151,51 @@ let
   ];
 
   duplicateTags = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.outbounds = [
-            {
-              tag = "dup";
-              url = "http://one.example.com:8080";
-            }
-            {
-              tag = "dup";
-              url = "http://two.example.com:8080";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
+    (mkFixture {
+      enable = true;
+      singBox.outbounds = [
+        {
+          tag = "dup";
+          url = "http://one.example.com:8080";
+        }
+        {
+          tag = "dup";
+          url = "http://two.example.com:8080";
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
   );
 
   reservedTag = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.outbounds = [
-            {
-              tag = "proxy";
-              url = "http://proxy.example.com:8080";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
+    (mkFixture {
+      enable = true;
+      singBox.outbounds = [
+        {
+          tag = "proxy";
+          url = "http://proxy.example.com:8080";
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
   );
 
   unknownRoutingTarget = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox = {
-            outbounds = [
-              {
-                tag = "primary";
-                url = "http://proxy.example.com:8080";
-              }
-            ];
-            routing.rules = [
-              {
-                outbound = "missing";
-                domains = [ "example.com" ];
-              }
-            ];
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
+    (mkFixture {
+      enable = true;
+      singBox = {
+        outbounds = [
+          {
+            tag = "primary";
+            url = "http://proxy.example.com:8080";
+          }
+        ];
+        routing.rules = [
+          {
+            outbound = "missing";
+            domains = [ "example.com" ];
+          }
+        ];
+      };
+    }).config.system.build.toplevel.drvPath
   );
 
   tproxyWithFirewall = evalProxySuite [
@@ -1556,6 +1547,28 @@ let
       true
     )
 
+    # -- runtime parser: socks start script sets PYTHONPATH for static URL parser imports --
+    (
+      let
+        startScript =
+          subscriptionWithStaticFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+        scriptText = builtins.readFile startScript;
+      in
+      assert builtins.match ".*PYTHONPATH=.*build-outbound\\.py.*" scriptText != null;
+      true
+    )
+
+    # -- subscription/runtime parser: update script sets PYTHONPATH for parser module imports --
+    (
+      let
+        updateScript =
+          subscriptionOnlyFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart;
+        scriptText = builtins.readFile updateScript;
+      in
+      assert builtins.match ".*PYTHONPATH=.*fetch-subscription\\.py.*" scriptText != null;
+      true
+    )
+
     # -- subscription: no update service/timer without subscriptions --
     (
       assert !(minimal.config.systemd.services ? "proxy-suite-subscription-update");
@@ -1980,6 +1993,7 @@ in
     pkgs.runCommand "build-outbound-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
       ''
         export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONPATH=${../scripts}:$PYTHONPATH
         export BUILD_OUTBOUND_SCRIPT=${../scripts/build-outbound.py}
         python ${../scripts/test-build-outbound.py}
         touch "$out"
@@ -1989,6 +2003,7 @@ in
     pkgs.runCommand "fetch-subscription-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
       ''
         export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONPATH=${../scripts}:$PYTHONPATH
         export FETCH_SUBSCRIPTION_SCRIPT=${../scripts/fetch-subscription.py}
         python ${../scripts/test-fetch-subscription.py}
         touch "$out"

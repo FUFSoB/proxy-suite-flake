@@ -1751,8 +1751,9 @@ one of “udp”, “tcp”, “tls”
 
 
 
-Netfilter mark set on packets intercepted by TProxy so policy routing
-can send them to the local loopback route table\. Used by TProxy mode\.
+Mark applied to intercepted packets in TProxy mode\.
+A matching ` ip rule ` routes this mark to singBox\.routeTable, which
+points traffic to loopback for local proxy processing\.
 
 
 
@@ -2234,8 +2235,8 @@ true
 
 
 
-Netfilter mark set on sing-box’s own outbound packets so they bypass
-TProxy re-interception loops\. Used by TProxy mode\.
+Mark applied to sing-box egress packets in TProxy mode so they bypass
+re-interception and do not loop back into the transparent proxy path\.
 
 
 
@@ -2268,8 +2269,9 @@ signed integer
 
 
 
-Policy routing table used to redirect TProxy-marked packets to the
-loopback interface\. Used by TProxy mode\.
+Policy-routing table number used for TProxy interception flow\.
+The module installs a local default route in this table and binds it
+to singBox\.fwmark\.
 
 
 
@@ -3362,7 +3364,9 @@ list of string
 
 
 
-Listen port for the local sing-box TProxy inbound\. Used by TProxy mode\.
+Local listen port for sing-box’s TProxy inbound\.
+nftables redirection created by proxy-suite-tproxy sends intercepted
+TCP/UDP traffic to this port\.
 
 
 
@@ -3705,7 +3709,9 @@ true
 
 
 
-Map of Telegram DC ID to IP address for relay\.
+Mapping of Telegram DC IDs to relay IPs\.
+Keys are DC IDs as strings and values are IPv4/IPv6 addresses used by
+tg-ws-proxy for MTProto relay selection\.
 
 
 
@@ -3742,7 +3748,9 @@ attribute set of string
 
 
 
-Address to bind tg-ws-proxy to\.
+Bind address for tg-ws-proxy\.
+Keep ` 127.0.0.1 ` for local-only usage; bind to ` 0.0.0.0 ` only when you
+intentionally expose the proxy to other hosts\.
 
 
 
@@ -3775,7 +3783,9 @@ string
 
 
 
-Listen port for the tg-ws-proxy service\.
+TCP listen port for tg-ws-proxy\.
+Telegram clients connect to this endpoint when using the local MTProto
+WebSocket proxy\.
 
 
 
@@ -3948,7 +3958,9 @@ true
 
 
 
-Status polling interval in seconds for the tray application\.
+Tray status refresh interval in seconds\.
+Lower values make UI state changes appear faster, while higher values
+reduce background polling overhead\.
 
 
 

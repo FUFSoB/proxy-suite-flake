@@ -35,18 +35,23 @@
       nixosModules.zapret = zapret.nixosModules.default;
 
       overlays.default = final: prev: {
-        tg-ws-proxy = import ./pkgs/tg-ws-proxy.nix { pkgs = final; };
-        proxy-suite-tray = import ./pkgs/proxy-suite-tray.nix { pkgs = final; };
+        inherit (import ./pkgs/default.nix { pkgs = final; })
+          tg-ws-proxy
+          proxy-suite-tray
+          ;
       };
 
       packages = forAll (
         system:
         let
           pkgs = pkgsFor system;
+          suitePkgs = import ./pkgs/default.nix { inherit pkgs; };
         in
         {
-          tg-ws-proxy = import ./pkgs/tg-ws-proxy.nix { inherit pkgs; };
-          proxy-suite-tray = import ./pkgs/proxy-suite-tray.nix { inherit pkgs; };
+          inherit (suitePkgs)
+            tg-ws-proxy
+            proxy-suite-tray
+            ;
           optionsDoc = mkOptionsDoc system;
           update-options-doc = pkgs.writeShellApplication {
             name = "update-options-doc";
