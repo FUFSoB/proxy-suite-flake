@@ -6,21 +6,23 @@
   cfg,
   tproxyFile,
   tunFile,
-  appTunFile,
+  perAppTunFile,
   nftablesRulesFile,
-  appTproxyRulesFile,
-  appZapretRulesFile,
-  appTunChainFile,
+  perAppTproxyRulesFile,
+  perAppZapretRulesFile,
+  perAppTunChainFile,
   ip,
   nft,
 }:
 
 let
   singBoxCfg = cfg.singBox;
-  appRoutingCfg = cfg.appRouting;
-  appRoutingTun = appRoutingCfg.backends.tun;
-  appRoutingTproxy = appRoutingCfg.backends.tproxy;
-  appRoutingZapret = appRoutingCfg.backends.zapret;
+  perAppRoutingCfg = cfg.perAppRouting;
+  globalTun = singBoxCfg.tun;
+  globalTproxy = singBoxCfg.tproxy;
+  perAppRoutingTun = singBoxCfg.tun.perApp;
+  perAppRoutingTproxy = singBoxCfg.tproxy.perApp;
+  perAppZapretCfg = cfg.zapret.perApp;
   userControlCfg = cfg.userControl;
 
   builtinTags = [ "proxy" "direct" "block" ];
@@ -57,14 +59,15 @@ let
   };
 
   scripts = import ./scripts.nix {
-    inherit lib pkgs singBoxCfg appRoutingTun;
+    inherit lib pkgs singBoxCfg perAppRoutingTun;
     inherit jq python3 singBox parserScriptsPythonPath buildOutboundPy fetchSubscriptionPy;
-    inherit tproxyFile tunFile appTunFile;
+    inherit tproxyFile tunFile perAppTunFile;
   };
 
-  appRouting = import ./app-routing.nix {
-    inherit lib pkgs cfg singBoxCfg appRoutingCfg appRoutingTun appRoutingTproxy appRoutingZapret;
-    inherit appTunChainFile appTproxyRulesFile appZapretRulesFile;
+  perAppRouting = import ./per-app-routing.nix {
+    inherit lib pkgs cfg singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy;
+    perAppZapretCfg = perAppZapretCfg;
+    inherit perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile;
     inherit ip nft;
     inherit awk grepBin findBin headBin seqBin sleepBin;
     inherit jq proxychains4 systemdRun systemctl journalctl idBin;
@@ -74,11 +77,11 @@ let
   };
 in
 {
-  environment.systemPackages = [ appRouting.proxyCtl ];
+  environment.systemPackages = [ perAppRouting.proxyCtl ];
 
   # nftables must be on for TProxy to work.
   networking.nftables.enable = lib.mkIf (
-    singBoxCfg.tproxy.enable || appRoutingTun.enable || appRoutingTproxy.enable || appRoutingZapret.enable
+    globalTproxy.enable || perAppRoutingTun.enable || perAppRoutingTproxy.enable || perAppZapretCfg.enable
   ) (lib.mkDefault true);
 
   users.groups = lib.mkIf (cfg.enable && polkit.userControlEnabled) {
@@ -104,26 +107,27 @@ in
   '');
 
   systemd.user.services =
-    lib.optionalAttrs appRoutingTun.enable {
-      proxy-suite-app-tun-anchor =
-        appRouting.mkAnchorService appRouting.appTunSliceName "Anchor service for proxy-suite app TUN slice";
+    lib.optionalAttrs perAppRoutingTun.enable {
+      proxy-suite-per-app-tun-anchor =
+        perAppRouting.mkAnchorService perAppRouting.perAppTunSliceName "Anchor service for proxy-suite app TUN slice";
     }
-    // lib.optionalAttrs appRoutingTproxy.enable {
-      proxy-suite-app-tproxy-anchor =
-        appRouting.mkAnchorService appRouting.appTproxySliceName "Anchor service for proxy-suite app TProxy slice";
+    // lib.optionalAttrs perAppRoutingTproxy.enable {
+      proxy-suite-per-app-tproxy-anchor =
+        perAppRouting.mkAnchorService perAppRouting.perAppTproxySliceName "Anchor service for proxy-suite app TProxy slice";
     }
-    // lib.optionalAttrs (appRoutingZapret.enable && cfg.zapret.enable) {
-      proxy-suite-app-zapret-anchor =
-        appRouting.mkAnchorService appRouting.appZapretSliceName "Anchor service for proxy-suite app zapret slice";
+    // lib.optionalAttrs (perAppZapretCfg.enable && cfg.zapret.enable) {
+      proxy-suite-per-app-zapret-anchor =
+        perAppRouting.mkAnchorService perAppRouting.perAppZapretSliceName "Anchor service for proxy-suite app zapret slice";
     };
 
   assertions = import ../service-assertions.nix {
     inherit lib cfg;
-    inherit singBoxCfg appRoutingCfg appRoutingTun appRoutingTproxy appRoutingZapret;
+    inherit singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy;
+    perAppZapretCfg = perAppZapretCfg;
     tgWsProxyCfg = cfg.tgWsProxy;
     inherit builtinTags outboundTags invalidRoutingTargets;
-    inherit (appRouting)
-      effectiveAppRoutingProfileNames
+    inherit (perAppRouting)
+      effectivePerAppRoutingProfileNames
       hasProxychainsProfiles
       hasTunProfiles
       hasTproxyProfiles
@@ -132,6 +136,8 @@ in
   };
 
   systemd.services = {
+  }
+  // lib.optionalAttrs singBoxCfg.enable {
     proxy-suite-socks = {
       description = "sing-box proxy client (SOCKS + TProxy-ready)";
       after = [ "network.target" ];
@@ -145,18 +151,18 @@ in
       };
     };
   }
-  // lib.optionalAttrs singBoxCfg.tproxy.enable {
+  // lib.optionalAttrs (singBoxCfg.enable && globalTproxy.enable) {
     proxy-suite-tproxy = {
       description = "sing-box TProxy – nftables rules and policy routing";
       after = [
         "network.target"
         "proxy-suite-socks.service"
       ];
-      wantedBy = lib.optionals singBoxCfg.tproxy.autostart [ "multi-user.target" ];
+      wantedBy = lib.optionals globalTproxy.autostart [ "multi-user.target" ];
       requires = [ "proxy-suite-socks.service" ];
       conflicts = [
         "proxy-suite-tun.service"
-        "proxy-suite-app-tproxy.service"
+        "proxy-suite-per-app-tproxy.service"
       ];
       serviceConfig = {
         Type = "oneshot";
@@ -164,22 +170,22 @@ in
         ExecStart = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
           ${nft} delete table ip singbox 2>/dev/null || true
           ${nft} -f ${nftablesRulesFile}
-          ${ip} route add local default dev lo table ${toString singBoxCfg.routeTable}
-          ${ip} rule add fwmark ${toString singBoxCfg.fwmark} table ${toString singBoxCfg.routeTable}
+          ${ip} route add local default dev lo table ${toString globalTproxy.routeTable}
+          ${ip} rule add fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable}
         '';
         ExecStop = pkgs.writeShellScript "proxy-suite-tproxy-down" ''
           ${nft} delete table ip singbox 2>/dev/null || true
-          ${ip} route del local default dev lo table ${toString singBoxCfg.routeTable} 2>/dev/null || true
-          ${ip} rule del fwmark ${toString singBoxCfg.fwmark} table ${toString singBoxCfg.routeTable} 2>/dev/null || true
+          ${ip} route del local default dev lo table ${toString globalTproxy.routeTable} 2>/dev/null || true
+          ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null || true
         '';
       };
     };
   }
-  // lib.optionalAttrs singBoxCfg.tun.enable {
+  // lib.optionalAttrs (singBoxCfg.enable && globalTun.enable) {
     proxy-suite-tun = {
       description = "sing-box TUN proxy client";
       after = [ "network-online.target" ];
-      wantedBy = lib.optionals singBoxCfg.tun.autostart [ "multi-user.target" ];
+      wantedBy = lib.optionals globalTun.autostart [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       conflicts = [ "proxy-suite-tproxy.service" ];
       serviceConfig = {
@@ -191,37 +197,37 @@ in
       };
     };
   }
-  // lib.optionalAttrs appRoutingTun.enable {
-    proxy-suite-app-tun = {
-      description = "sing-box app-routing TUN backend";
+  // lib.optionalAttrs (singBoxCfg.enable && perAppRoutingTun.enable) {
+    proxy-suite-per-app-tun = {
+      description = "sing-box per-app-routing TUN backend";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
-        ExecStart = "${scripts.startAppTun}";
-        ExecStartPost = "${appRouting.appTunUpScript}";
-        ExecStopPost = "${appRouting.appTunDownScript}";
+        ExecStart = "${scripts.startPerAppTun}";
+        ExecStartPost = "${perAppRouting.perAppTunUpScript}";
+        ExecStopPost = "${perAppRouting.perAppTunDownScript}";
         Restart = "on-failure";
         RestartSec = 5;
-        RuntimeDirectory = "proxy-suite-app-tun";
+        RuntimeDirectory = "proxy-suite-per-app-tun";
         StateDirectory = "proxy-suite";
       };
     };
 
-    "proxy-suite-app-tun-user@" = {
+    "proxy-suite-per-app-tun-user@" = {
       description = "Enable proxy-suite app TUN marking for user %i";
-      requires = [ "proxy-suite-app-tun.service" ];
-      after = [ "proxy-suite-app-tun.service" ];
+      requires = [ "proxy-suite-per-app-tun.service" ];
+      after = [ "proxy-suite-per-app-tun.service" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${appRouting.appTunUserRuleStart} %i";
-        ExecStop = "${appRouting.appTunUserRuleStop} %i";
+        ExecStart = "${perAppRouting.perAppTunUserRuleStart} %i";
+        ExecStop = "${perAppRouting.perAppTunUserRuleStop} %i";
       };
     };
   }
-  // lib.optionalAttrs appRoutingTproxy.enable {
-    proxy-suite-app-tproxy = {
-      description = "proxy-suite app-routing TProxy backend";
+  // lib.optionalAttrs (singBoxCfg.enable && perAppRoutingTproxy.enable) {
+    proxy-suite-per-app-tproxy = {
+      description = "proxy-suite per-app-routing TProxy backend";
       after = [
         "network.target"
         "proxy-suite-socks.service"
@@ -234,37 +240,37 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${appRouting.appTproxyUpScript}";
-        ExecStop = "${appRouting.appTproxyDownScript}";
+        ExecStart = "${perAppRouting.perAppTproxyUpScript}";
+        ExecStop = "${perAppRouting.perAppTproxyDownScript}";
       };
     };
 
-    "proxy-suite-app-tproxy-user@" = {
+    "proxy-suite-per-app-tproxy-user@" = {
       description = "Enable proxy-suite app TProxy marking for user %i";
-      requires = [ "proxy-suite-app-tproxy.service" ];
-      after = [ "proxy-suite-app-tproxy.service" ];
+      requires = [ "proxy-suite-per-app-tproxy.service" ];
+      after = [ "proxy-suite-per-app-tproxy.service" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${appRouting.appTproxyUserRuleStart} %i";
-        ExecStop = "${appRouting.appTproxyUserRuleStop} %i";
+        ExecStart = "${perAppRouting.perAppTproxyUserRuleStart} %i";
+        ExecStop = "${perAppRouting.perAppTproxyUserRuleStop} %i";
       };
     };
   }
-  // lib.optionalAttrs (appRoutingZapret.enable && cfg.zapret.enable) {
-    "proxy-suite-app-zapret-user@" = {
+  // lib.optionalAttrs (perAppZapretCfg.enable && cfg.zapret.enable) {
+    "proxy-suite-per-app-zapret-user@" = {
       description = "Enable proxy-suite app zapret marking for user %i";
-      requires = [ "proxy-suite-app-zapret.service" ];
-      after = [ "proxy-suite-app-zapret.service" ];
+      requires = [ "proxy-suite-per-app-zapret.service" ];
+      after = [ "proxy-suite-per-app-zapret.service" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${appRouting.appZapretUserRuleStart} %i";
-        ExecStop = "${appRouting.appZapretUserRuleStop} %i";
+        ExecStart = "${perAppRouting.perAppZapretUserRuleStart} %i";
+        ExecStop = "${perAppRouting.perAppZapretUserRuleStop} %i";
       };
     };
   }
-  // lib.optionalAttrs scripts.hasSubscriptions {
+  // lib.optionalAttrs (singBoxCfg.enable && scripts.hasSubscriptions) {
     proxy-suite-subscription-update = {
       description = "Refresh proxy-suite subscription caches";
       after = [ "network-online.target" ];
@@ -277,7 +283,7 @@ in
     };
   };
 
-  systemd.timers = lib.optionalAttrs scripts.hasSubscriptions {
+  systemd.timers = lib.optionalAttrs (singBoxCfg.enable && scripts.hasSubscriptions) {
     proxy-suite-subscription-update = {
       description = "Periodic proxy-suite subscription refresh";
       wantedBy = [ "timers.target" ];

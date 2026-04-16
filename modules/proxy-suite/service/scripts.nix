@@ -3,7 +3,7 @@
   lib,
   pkgs,
   singBoxCfg,
-  appRoutingTun,
+  perAppRoutingTun,
   jq,
   python3,
   singBox,
@@ -12,10 +12,12 @@
   fetchSubscriptionPy,
   tproxyFile,
   tunFile,
-  appTunFile,
+  perAppTunFile,
 }:
 
 let
+  globalTproxy = singBoxCfg.tproxy;
+
   mkSubscriptionUrlSource =
     sub:
     if sub.urlFile != null then
@@ -171,7 +173,7 @@ let
     name = "proxy-suite-start-socks";
     runtimeDir = "/run/proxy-suite-socks";
     configFile = tproxyFile;
-    routingMark = singBoxCfg.proxyMark;
+    routingMark = globalTproxy.proxyMark;
   };
 
   startTun = mkStartScript {
@@ -181,13 +183,13 @@ let
     routingMark = null;
   };
 
-  startAppTun = mkStartScript {
-    name = "proxy-suite-start-app-tun";
-    runtimeDir = "/run/proxy-suite-app-tun";
-    configFile = appTunFile;
+  startPerAppTun = mkStartScript {
+    name = "proxy-suite-start-per-app-tun";
+    runtimeDir = "/run/proxy-suite-per-app-tun";
+    configFile = perAppTunFile;
     # Only needed when TProxy mode is enabled; otherwise avoid tagging app TUN
     # proxy outbounds with a host-global mark.
-    routingMark = if singBoxCfg.tproxy.enable then singBoxCfg.proxyMark else null;
+    routingMark = if globalTproxy.enable then globalTproxy.proxyMark else null;
   };
 
   # Shell code to fetch a single subscription into the cache (used in update service).
@@ -224,6 +226,6 @@ let
   subscriptionTagsList = lib.concatStringsSep " " (map (sub: lib.escapeShellArg sub.tag) singBoxCfg.subscriptions);
 in
 {
-  inherit startSocks startTun startAppTun;
+  inherit startSocks startTun startPerAppTun;
   inherit subscriptionUpdateScript hasSubscriptions subscriptionTagsList;
 }

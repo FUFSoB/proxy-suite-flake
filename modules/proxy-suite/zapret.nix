@@ -4,13 +4,13 @@
   pkgs,
   cfg,
   zapret,
-  appZapretRulesFile,
+  perAppZapretRulesFile,
   nft,
 }:
 
 let
   zapretCfg = cfg.zapret;
-  appRoutingZapret = cfg.appRouting.backends.zapret;
+  perAppZapretCfg = zapretCfg.perApp;
 
   iptables = "${pkgs.iptables}/bin/iptables";
 
@@ -76,10 +76,10 @@ let
     filterMark:
     pkgs.writeText "proxy-suite-zapret-global-bypass.sh" ''
       zapret_custom_firewall_nft() {
-        nft insert rule inet $ZAPRET_NFT_TABLE postrouting mark and ${filterMark} != 0 return comment "proxy-suite app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE postnat mark and ${filterMark} != 0 return comment "proxy-suite app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prerouting mark and ${filterMark} != 0 return comment "proxy-suite app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and ${filterMark} != 0 return comment "proxy-suite app-zapret bypass"
+        nft insert rule inet $ZAPRET_NFT_TABLE postrouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
+        nft insert rule inet $ZAPRET_NFT_TABLE postnat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
+        nft insert rule inet $ZAPRET_NFT_TABLE prerouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
+        nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
       }
     '';
 
@@ -221,19 +221,19 @@ let
     pidDir = "/run/proxy-suite-zapret";
     gameFilter = zapretCfg.gameFilter;
     forceDisableFilterMark = true;
-    customScript = if appRoutingZapret.enable then mkGlobalBypassScript (toString appRoutingZapret.filterMark) else null;
+    customScript = if perAppZapretCfg.enable then mkGlobalBypassScript (toString perAppZapretCfg.filterMark) else null;
   };
 
-  appZapretPackage = mkDerivedZapretPackage {
-    packageName = "proxy-suite-app-zapret-${selectedConfigName}";
-    pidDir = "/run/proxy-suite-app-zapret";
+  perAppZapretPackage = mkDerivedZapretPackage {
+    packageName = "proxy-suite-per-app-zapret-${selectedConfigName}";
+    pidDir = "/run/proxy-suite-per-app-zapret";
     gameFilter = "all";
-    filterMark = appRoutingZapret.filterMark;
-    qnum = appRoutingZapret.qnum;
+    filterMark = perAppZapretCfg.filterMark;
+    qnum = perAppZapretCfg.qnum;
     modeFilter = "none";
     desyncMark = 134217728;
     desyncMarkPostnat = 67108864;
-    nftTable = "proxy_suite_app_zapret";
+    nftTable = "proxy_suite_per_app_zapret";
   };
 
   zapretCommonPreStart = package: ''
@@ -253,17 +253,17 @@ let
     "PATH=${lib.makeBinPath runtimeDeps}"
   ];
   globalZapretEnv = mkZapretEnv globalZapretPackage;
-  appZapretEnv    = mkZapretEnv appZapretPackage;
+  perAppZapretEnv    = mkZapretEnv perAppZapretPackage;
 
-  appZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-app-zapret-mark-up" ''
+  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-up" ''
     set -euo pipefail
-    ${nft} delete table inet proxy_suite_app_zapret_mark 2>/dev/null || true
-    ${nft} -f ${appZapretRulesFile}
+    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
+    ${nft} -f ${perAppZapretRulesFile}
   '';
 
-  appZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-app-zapret-mark-down" ''
+  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-down" ''
     set -euo pipefail
-    ${nft} delete table inet proxy_suite_app_zapret_mark 2>/dev/null || true
+    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
   '';
 
   exemptStart = lib.concatMapStrings (cidr: ''
@@ -294,7 +294,7 @@ in
 
   environment.systemPackages =
     lib.mkBefore (
-      [ globalZapretPackage ] ++ lib.optionals appRoutingZapret.enable [ appZapretPackage ]
+      [ globalZapretPackage ] ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
     );
 
   systemd.services.zapret-discord-youtube = {
@@ -313,23 +313,23 @@ in
     };
   };
 
-  systemd.services.proxy-suite-app-zapret = lib.mkIf appRoutingZapret.enable {
-    description = "proxy-suite app-routing zapret backend";
+  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable {
+    description = "proxy-suite per-app-routing zapret backend";
     after = [ "network.target" ];
     conflicts = [
       "proxy-suite-tproxy.service"
       "proxy-suite-tun.service"
     ];
-    preStart = zapretCommonPreStart appZapretPackage;
+    preStart = zapretCommonPreStart perAppZapretPackage;
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      RuntimeDirectory = "proxy-suite-app-zapret";
-      ExecStartPre = "${appZapretMarkUpScript}";
-      ExecStart = "${appZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-      ExecStop = "${appZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-      ExecStopPost = "${appZapretMarkDownScript}";
-      Environment = appZapretEnv;
+      RuntimeDirectory = "proxy-suite-per-app-zapret";
+      ExecStartPre = "${perAppZapretMarkUpScript}";
+      ExecStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+      ExecStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+      ExecStopPost = "${perAppZapretMarkDownScript}";
+      Environment = perAppZapretEnv;
     };
   };
 

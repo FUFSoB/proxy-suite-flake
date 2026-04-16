@@ -284,13 +284,13 @@ let
     };
   };
 
-  appRoutingProfileType = types.submodule {
+  perAppRoutingProfileType = types.submodule {
     options = {
       name = mkOption {
         type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
         description = ''
           Profile name used by `proxy-ctl wrap <name> -- <command>`.
-          Must be unique within appRouting.profiles.
+          Must be unique within perAppRouting.profiles.
         '';
         example = "steam-browser";
       };
@@ -310,14 +310,14 @@ let
           - "direct": run the command unchanged.
           - "proxychains": run the command through proxychains-ng using the
             local proxy-suite mixed SOCKS endpoint.
-          - "tun": launch the command in the dedicated app-routing TUN slice so
+          - "tun": launch the command in the dedicated per-app-routing TUN slice so
             only that app's traffic is policy-routed into the app TUN backend.
-          - "tproxy": launch the command in the dedicated app-routing TProxy
+          - "tproxy": launch the command in the dedicated per-app-routing TProxy
             slice so only that app's traffic is transparently intercepted by
             the local sing-box TProxy inbound.
-          - "zapret": launch the command in the dedicated app-routing zapret
+          - "zapret": launch the command in the dedicated per-app-routing zapret
             slice so only that app's traffic is handled by the separate
-            app-scoped zapret instance.
+            per-app-scoped zapret instance.
 
           Additional route backends may be added in the future.
         '';
@@ -336,6 +336,6 @@ in
     dnsUpstreamType
     zapretPresetType
     zapretHostlistRuleType
-    appRoutingProfileType
+    perAppRoutingProfileType
     ;
 }

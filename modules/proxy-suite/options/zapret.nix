@@ -9,6 +9,31 @@ in
   options.services.proxy-suite.zapret = {
     enable = mkEnableOption "zapret DPI bypass";
 
+    perApp = {
+      enable = mkEnableOption "per-app-scoped zapret backend for perAppRouting profiles";
+
+      filterMark = mkOption {
+        type = types.int;
+        default = 268435456;
+        description = ''
+          Packet mark bit used to mark wrapped app traffic for the
+          dedicated per-app-scoped zapret instance.
+        '';
+        example = 268435456;
+      };
+
+      qnum = mkOption {
+        type = types.int;
+        default = 201;
+        description = ''
+          NFQUEUE number used by the dedicated per-app-scoped zapret instance.
+          This backend runs as a second zapret daemon and should use a
+          queue distinct from the global zapret instance.
+        '';
+        example = 201;
+      };
+    };
+
     syncDirectRouting = mkOption {
       type = types.bool;
       default = true;

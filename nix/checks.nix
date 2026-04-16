@@ -48,7 +48,7 @@ let
       };
     in
     builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.tunFile));
-  mkAppTunConfig =
+  mkPerAppTunConfig =
     fixture:
     let
       cfg = fixture.config.services.proxy-suite;
@@ -58,7 +58,7 @@ let
         inherit pkgs cfg rules;
       };
     in
-    builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.appTunFile));
+    builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.perAppTunFile));
   hasDirectDomain =
     rules: domain:
     builtins.any (
@@ -264,6 +264,30 @@ let
             enable = true;
             autostart = true;
           };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  globalTunWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.singBox = {
+          enable = false;
+          tun.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  globalTproxyWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite.singBox = {
+          enable = false;
+          tproxy.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
@@ -685,10 +709,10 @@ let
     }
   ];
 
-  appRoutingProxychainsFixture = evalProxySuite [
+  perAppRoutingProxychainsFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.appRouting = {
+      services.proxy-suite.perAppRouting = {
         enable = true;
         proxychains.enable = true;
         profiles = [
@@ -704,49 +728,81 @@ let
       };
     }
   ];
-  appRoutingProxychainsScript =
+  perAppRoutingProxychainsScript =
     builtins.readFile (
-      "${packageByPattern appRoutingProxychainsFixture.config.environment.systemPackages
+      "${packageByPattern perAppRoutingProxychainsFixture.config.environment.systemPackages
           ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
     );
-  appRoutingProxychainsConfig =
+  perAppRoutingProxychainsConfig =
     builtins.readFile (
-      quotedValueByPrefix appRoutingProxychainsScript "PROXYCHAINS_CONFIG=\""
+      quotedValueByPrefix perAppRoutingProxychainsScript "PROXYCHAINS_CONFIG=\""
     );
-  appRoutingProxychainsProfiles =
+  perAppRoutingProxychainsProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix appRoutingProxychainsScript "APP_ROUTING_PROFILES_FILE=\""
+        quotedValueByPrefix perAppRoutingProxychainsScript "PER_APP_ROUTING_PROFILES_FILE=\""
       )
     );
 
-  appRoutingDefaultProfilesFixture = evalProxySuite [
+  perAppRoutingDefaultProfilesFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.appRouting = {
+      services.proxy-suite.perAppRouting = {
         enable = true;
         createDefaultProfiles = true;
         proxychains.enable = true;
       };
     }
   ];
-  appRoutingDefaultProfilesScript =
+  perAppRoutingDefaultProfilesScript =
     builtins.readFile (
-      "${packageByPattern appRoutingDefaultProfilesFixture.config.environment.systemPackages
+      "${packageByPattern perAppRoutingDefaultProfilesFixture.config.environment.systemPackages
           ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
     );
-  appRoutingDefaultProfiles =
+  perAppRoutingDefaultProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix appRoutingDefaultProfilesScript "APP_ROUTING_PROFILES_FILE=\""
+        quotedValueByPrefix perAppRoutingDefaultProfilesScript "PER_APP_ROUTING_PROFILES_FILE=\""
       )
     );
 
-  appRoutingDefaultProfilesWithoutProxychainsEnable = forceEval (
+  perAppRoutingNoDefaultProfilesFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox = {
+          tun.perApp.enable = true;
+          tproxy.perApp.enable = true;
+        };
+        zapret = {
+          enable = true;
+          perApp.enable = true;
+        };
+        perAppRouting = {
+          enable = true;
+          createDefaultProfiles = false;
+          proxychains.enable = true;
+        };
+      };
+    }
+  ];
+  perAppRoutingNoDefaultProfilesScript =
+    builtins.readFile (
+      "${packageByPattern perAppRoutingNoDefaultProfilesFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  perAppRoutingNoDefaultProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix perAppRoutingNoDefaultProfilesScript "PER_APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+
+  perAppRoutingDefaultProfilesWithoutProxychainsEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
+        services.proxy-suite.perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
         };
@@ -754,61 +810,65 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTunFixture = evalProxySuite [
-    baseModule
-    {
-      services.proxy-suite.appRouting = {
-        enable = true;
-        createDefaultProfiles = true;
-        backends.tun.enable = true;
-      };
-    }
-  ];
-  appRoutingTunScript =
-    builtins.readFile (
-      "${packageByPattern appRoutingTunFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
-  appRoutingTunProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        quotedValueByPrefix appRoutingTunScript "APP_ROUTING_PROFILES_FILE=\""
-      )
-    );
-  appRoutingTunStartScript =
-    builtins.readFile appRoutingTunFixture.config.systemd.services."proxy-suite-app-tun".serviceConfig.ExecStart;
-  appRoutingTunConfig = mkAppTunConfig appRoutingTunFixture;
-  appRoutingTunDirectOutbound =
-    builtins.head (builtins.filter (item: item.tag == "direct") appRoutingTunConfig.outbounds);
-  appRoutingTunUserStartExec =
-    appRoutingTunFixture.config.systemd.services."proxy-suite-app-tun-user@".serviceConfig.ExecStart;
-  appRoutingTunUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingTunUserStartExec));
-
-  appRoutingTunWithTproxyFixture = evalProxySuite [
+  perAppRoutingTunFixture = evalProxySuite [
     baseModule
     {
       services.proxy-suite = {
-        singBox.tproxy.enable = true;
-        appRouting = {
+        singBox.tun.perApp.enable = true;
+        perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
-          backends.tun.enable = true;
         };
       };
     }
   ];
-  appRoutingTunWithTproxyStartScript =
-    builtins.readFile appRoutingTunWithTproxyFixture.config.systemd.services."proxy-suite-app-tun".serviceConfig.ExecStart;
-  appRoutingTunWithTproxyConfig = mkAppTunConfig appRoutingTunWithTproxyFixture;
-  appRoutingTunWithTproxyDirectOutbound =
-    builtins.head (builtins.filter (item: item.tag == "direct") appRoutingTunWithTproxyConfig.outbounds);
+  perAppRoutingTunScript =
+    builtins.readFile (
+      "${packageByPattern perAppRoutingTunFixture.config.environment.systemPackages
+          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
+    );
+  perAppRoutingTunProfiles =
+    builtins.fromJSON (
+      builtins.readFile (
+        quotedValueByPrefix perAppRoutingTunScript "PER_APP_ROUTING_PROFILES_FILE=\""
+      )
+    );
+  perAppRoutingTunStartScript =
+    builtins.readFile perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
+  perAppRoutingTunConfig = mkPerAppTunConfig perAppRoutingTunFixture;
+  perAppRoutingTunDirectOutbound =
+    builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunConfig.outbounds);
+  perAppRoutingTunUserStartExec =
+    perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".serviceConfig.ExecStart;
+  perAppRoutingTunUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingTunUserStartExec));
 
-  appRoutingTunWithoutEnable = forceEval (
+  perAppRoutingTunWithTproxyFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox = {
+          tproxy.enable = true;
+          tun.perApp.enable = true;
+        };
+        perAppRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+        };
+      };
+    }
+  ];
+  perAppRoutingTunWithTproxyStartScript =
+    builtins.readFile perAppRoutingTunWithTproxyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
+  perAppRoutingTunWithTproxyConfig = mkPerAppTunConfig perAppRoutingTunWithTproxyFixture;
+  perAppRoutingTunWithTproxyDirectOutbound =
+    builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunWithTproxyConfig.outbounds);
+
+  perAppRoutingTunWithoutEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
+        services.proxy-suite.perAppRouting = {
           enable = true;
           profiles = [
             {
@@ -821,39 +881,41 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTproxyFixture = evalProxySuite [
+  perAppRoutingTproxyFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.appRouting = {
-        enable = true;
-        createDefaultProfiles = true;
-        backends.tproxy.enable = true;
+      services.proxy-suite = {
+        singBox.tproxy.perApp.enable = true;
+        perAppRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+        };
       };
     }
   ];
-  appRoutingTproxyScript =
+  perAppRoutingTproxyScript =
     builtins.readFile (
-      "${packageByPattern appRoutingTproxyFixture.config.environment.systemPackages
+      "${packageByPattern perAppRoutingTproxyFixture.config.environment.systemPackages
           ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
     );
-  appRoutingTproxyProfiles =
+  perAppRoutingTproxyProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix appRoutingTproxyScript "APP_ROUTING_PROFILES_FILE=\""
+        quotedValueByPrefix perAppRoutingTproxyScript "PER_APP_ROUTING_PROFILES_FILE=\""
       )
     );
-  appRoutingTproxyStartScript =
-    builtins.readFile appRoutingTproxyFixture.config.systemd.services."proxy-suite-app-tproxy".serviceConfig.ExecStart;
-  appRoutingTproxyUserStartExec =
-    appRoutingTproxyFixture.config.systemd.services."proxy-suite-app-tproxy-user@".serviceConfig.ExecStart;
-  appRoutingTproxyUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingTproxyUserStartExec));
+  perAppRoutingTproxyStartScript =
+    builtins.readFile perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig.ExecStart;
+  perAppRoutingTproxyUserStartExec =
+    perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".serviceConfig.ExecStart;
+  perAppRoutingTproxyUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingTproxyUserStartExec));
 
-  appRoutingTproxyWithoutEnable = forceEval (
+  perAppRoutingTproxyWithoutEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
+        services.proxy-suite.perAppRouting = {
           enable = true;
           profiles = [
             {
@@ -866,44 +928,131 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingZapretFixture = evalProxySuite [
+  perAppRoutingProxychainsWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox.enable = false;
+          perAppRouting = {
+            enable = true;
+            proxychains.enable = true;
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingTunBackendWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox = {
+            enable = false;
+            tun.perApp.enable = true;
+          };
+          perAppRouting.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingTproxyBackendWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox = {
+            enable = false;
+            tproxy.perApp.enable = true;
+          };
+          perAppRouting.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingTunProfileWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox.enable = false;
+          perAppRouting = {
+            enable = true;
+            profiles = [
+              {
+                name = "game";
+                route = "tun";
+              }
+            ];
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingTproxyProfileWithoutSingBox = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox.enable = false;
+          perAppRouting = {
+            enable = true;
+            profiles = [
+              {
+                name = "browser";
+                route = "tproxy";
+              }
+            ];
+          };
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingZapretFixture = evalProxySuite [
     baseModule
     {
       services.proxy-suite = {
-        zapret.enable = true;
-        appRouting = {
+        zapret = {
+          enable = true;
+          perApp.enable = true;
+        };
+        perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
           proxychains.enable = true;
-          backends.zapret.enable = true;
         };
       };
     }
   ];
-  appRoutingZapretScript =
+  perAppRoutingZapretScript =
     builtins.readFile (
-      "${packageByPattern appRoutingZapretFixture.config.environment.systemPackages
+      "${packageByPattern perAppRoutingZapretFixture.config.environment.systemPackages
           ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
     );
-  appRoutingZapretProfiles =
+  perAppRoutingZapretProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix appRoutingZapretScript "APP_ROUTING_PROFILES_FILE=\""
+        quotedValueByPrefix perAppRoutingZapretScript "PER_APP_ROUTING_PROFILES_FILE=\""
       )
     );
-  appRoutingZapretStartScript =
-    readExecScripts appRoutingZapretFixture.config.systemd.services."proxy-suite-app-zapret".serviceConfig.ExecStartPre;
-  appRoutingZapretUserStartExec =
-    appRoutingZapretFixture.config.systemd.services."proxy-suite-app-zapret-user@".serviceConfig.ExecStart;
-  appRoutingZapretUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " appRoutingZapretUserStartExec));
-  appRoutingZapretBase = mkZapretBase appRoutingZapretFixture;
-  appRoutingZapretConfig = builtins.readFile "${appRoutingZapretBase}/config";
-  appRoutingAppZapretBase = mkZapretBaseFor appRoutingZapretFixture "proxy-suite-app-zapret";
-  appRoutingAppZapretConfig = builtins.readFile "${appRoutingAppZapretBase}/config";
-  appRoutingZapretGlobalCustomScript =
-    builtins.readFile "${appRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
-  appRoutingTunPolkitConfig = appRoutingTunFixture.config.security.polkit.extraConfig;
+  perAppRoutingZapretStartScript =
+    readExecScripts perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret".serviceConfig.ExecStartPre;
+  perAppRoutingZapretUserStartExec =
+    perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".serviceConfig.ExecStart;
+  perAppRoutingZapretUserStartScript =
+    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingZapretUserStartExec));
+  perAppRoutingZapretBase = mkZapretBase perAppRoutingZapretFixture;
+  perAppRoutingZapretConfig = builtins.readFile "${perAppRoutingZapretBase}/config";
+  perAppRoutingPerAppZapretBase = mkZapretBaseFor perAppRoutingZapretFixture "proxy-suite-per-app-zapret";
+  perAppRoutingPerAppZapretConfig = builtins.readFile "${perAppRoutingPerAppZapretBase}/config";
+  perAppRoutingZapretGlobalCustomScript =
+    builtins.readFile "${perAppRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
+  perAppRoutingTunPolkitConfig = perAppRoutingTunFixture.config.security.polkit.extraConfig;
 
   userControlGlobalOnlyFixture = evalProxySuite [
     baseModule
@@ -920,10 +1069,10 @@ let
     baseModule
     {
       services.proxy-suite = {
-        appRouting = {
+        singBox.tun.perApp.enable = true;
+        perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
-          backends.tun.enable = true;
         };
         userControl = {
           global.enable = false;
@@ -944,13 +1093,13 @@ let
     }
   ];
 
-  appRoutingZapretWithoutEnable = forceEval (
+  perAppRoutingZapretWithoutEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
         services.proxy-suite = {
           zapret.enable = true;
-          appRouting = {
+          perAppRouting = {
             enable = true;
             profiles = [
               {
@@ -964,23 +1113,26 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingZapretWithoutZapretService = forceEval (
+  perAppRoutingZapretWithoutZapretService = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
-          enable = true;
-          backends.zapret.enable = true;
+        services.proxy-suite = {
+          zapret = {
+            enable = false;
+            perApp.enable = true;
+          };
+          perAppRouting.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
   );
 
-  duplicateAppRoutingProfiles = forceEval (
+  duplicatePerAppRoutingProfiles = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
+        services.proxy-suite.perAppRouting = {
           enable = true;
           profiles = [
             { name = "dup"; }
@@ -991,20 +1143,20 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingProfilesWithoutEnable = forceEval (
+  perAppRoutingProfilesWithoutEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting.profiles = [ { name = "oops"; } ];
+        services.proxy-suite.perAppRouting.profiles = [ { name = "oops"; } ];
       }
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingProxychainsWithoutEnable = forceEval (
+  perAppRoutingProxychainsWithoutEnable = forceEval (
     (evalProxySuite [
       baseModule
       {
-        services.proxy-suite.appRouting = {
+        services.proxy-suite.perAppRouting = {
           enable = true;
           profiles = [
             {
@@ -1017,125 +1169,123 @@ let
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTunFwmarkCollision = forceEval (
+  perAppRoutingTunFwmarkCollision = forceEval (
     (evalProxySuite [
       baseModule
       {
         services.proxy-suite = {
           singBox = {
-            tproxy.enable = true;
-            proxyMark = 16;
-          };
-          appRouting = {
-            enable = true;
-            backends.tun = {
+            tproxy = {
+              enable = true;
+              proxyMark = 16;
+            };
+            tun.perApp = {
               enable = true;
               fwmark = 16;
             };
           };
+          perAppRouting.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTproxyFwmarkCollision = forceEval (
+  perAppRoutingTproxyFwmarkCollision = forceEval (
     (evalProxySuite [
       baseModule
       {
         services.proxy-suite = {
-          singBox.proxyMark = 17;
-          appRouting = {
-            enable = true;
-            backends.tproxy = {
+          singBox.tproxy = {
+            proxyMark = 17;
+            perApp = {
               enable = true;
               fwmark = 17;
             };
           };
+          perAppRouting.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTunTproxyFwmarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.appRouting = {
-          enable = true;
-          backends = {
-            tun = {
-              enable = true;
-              fwmark = 23;
-            };
-            tproxy = {
-              enable = true;
-              fwmark = 23;
-            };
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
-
-  appRoutingTunTproxyRouteTableCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.appRouting = {
-          enable = true;
-          backends = {
-            tun = {
-              enable = true;
-              routeTable = 123;
-            };
-            tproxy = {
-              enable = true;
-              routeTable = 123;
-            };
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
-
-  appRoutingZapretFilterMarkCollision = forceEval (
+  perAppRoutingTunTproxyFwmarkCollision = forceEval (
     (evalProxySuite [
       baseModule
       {
         services.proxy-suite = {
-          zapret.enable = true;
-          singBox.proxyMark = 268435456;
-          appRouting = {
+          singBox = {
+            tun.perApp = {
+              enable = true;
+              fwmark = 23;
+            };
+            tproxy.perApp = {
+              enable = true;
+              fwmark = 23;
+            };
+          };
+          perAppRouting.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingTunTproxyRouteTableCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          singBox = {
+            tun.perApp = {
+              enable = true;
+              routeTable = 123;
+            };
+            tproxy.perApp = {
+              enable = true;
+              routeTable = 123;
+            };
+          };
+          perAppRouting.enable = true;
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  perAppRoutingZapretFilterMarkCollision = forceEval (
+    (evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          zapret = {
             enable = true;
-            backends.zapret = {
+            perApp = {
               enable = true;
               filterMark = 268435456;
             };
           };
+          singBox.tproxy.proxyMark = 268435456;
+          perAppRouting.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
   );
 
-  appRoutingTproxyZapretMarkCollision = forceEval (
+  perAppRoutingTproxyZapretMarkCollision = forceEval (
     (evalProxySuite [
       baseModule
       {
         services.proxy-suite = {
-          zapret.enable = true;
-          appRouting = {
+          zapret = {
             enable = true;
-            backends = {
-              tproxy = {
-                enable = true;
-                fwmark = 23;
-              };
-              zapret = {
-                enable = true;
-                filterMark = 23;
-              };
+            perApp = {
+              enable = true;
+              filterMark = 23;
             };
           };
+          singBox.tproxy.perApp = {
+            enable = true;
+            fwmark = 23;
+          };
+          perAppRouting.enable = true;
         };
       }
     ]).config.system.build.toplevel.drvPath
@@ -1284,6 +1434,11 @@ let
     )
     (
       assert conflictingAutostartModes.success == false;
+      true
+    )
+    (
+      assert globalTunWithoutSingBox.success == false;
+      assert globalTproxyWithoutSingBox.success == false;
       true
     )
     (
@@ -1471,7 +1626,7 @@ let
     (
       assert ruDefaultConfig.route.default_domain_resolver == "local";
       assert tunDefaultConfig.route.default_domain_resolver == "local";
-      assert appRoutingTunConfig.route.default_domain_resolver == "local";
+      assert perAppRoutingTunConfig.route.default_domain_resolver == "local";
       true
     )
     (
@@ -1597,108 +1752,114 @@ let
       true
     )
 
-    # -- appRouting: proxychains/direct profile config is accepted --
+    # -- perAppRouting: proxychains/direct profile config is accepted --
     (
-      assert appRoutingProxychainsFixture.config.services.proxy-suite.appRouting.enable;
+      assert perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.enable;
       true
     )
     (
-      assert builtins.length appRoutingProxychainsFixture.config.services.proxy-suite.appRouting.profiles == 2;
+      assert builtins.length perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.profiles == 2;
       true
     )
     (
-      assert builtins.length appRoutingProxychainsProfiles == 2;
-      true
-    )
-
-    # -- appRouting: createDefaultProfiles injects curated proxychains profile --
-    (
-      assert builtins.length appRoutingDefaultProfiles == 1;
-      assert (builtins.head appRoutingDefaultProfiles).name == "proxychains";
-      assert (builtins.head appRoutingDefaultProfiles).route == "proxychains";
+      assert builtins.length perAppRoutingProxychainsProfiles == 2;
       true
     )
 
-    # -- appRouting: createDefaultProfiles injects curated tun profile when backend is enabled --
+    # -- perAppRouting: createDefaultProfiles injects curated proxychains profile --
     (
-      assert builtins.length appRoutingTunProfiles == 2;
-      assert builtins.any (profile: profile.name == "tun" && profile.route == "tun") appRoutingTunProfiles;
+      assert builtins.length perAppRoutingDefaultProfiles == 1;
+      assert (builtins.head perAppRoutingDefaultProfiles).name == "proxychains";
+      assert (builtins.head perAppRoutingDefaultProfiles).route == "proxychains";
       true
     )
 
-    # -- appRouting: createDefaultProfiles injects curated tproxy profile when backend is enabled --
+    # -- perAppRouting: createDefaultProfiles = false injects no curated profiles --
     (
-      assert builtins.length appRoutingTproxyProfiles == 2;
-      assert builtins.any (profile: profile.name == "tproxy" && profile.route == "tproxy") appRoutingTproxyProfiles;
+      assert builtins.length perAppRoutingNoDefaultProfiles == 0;
       true
     )
 
-    # -- appRouting: createDefaultProfiles injects curated zapret profile when backend and zapret are enabled --
+    # -- perAppRouting: createDefaultProfiles injects curated tun profile when backend is enabled --
     (
-      assert builtins.length appRoutingZapretProfiles == 2;
-      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") appRoutingZapretProfiles;
+      assert builtins.length perAppRoutingTunProfiles == 2;
+      assert builtins.any (profile: profile.name == "tun" && profile.route == "tun") perAppRoutingTunProfiles;
       true
     )
 
-    # -- appRouting: proxy-ctl script embeds wrap/apps commands --
+    # -- perAppRouting: createDefaultProfiles injects curated tproxy profile when backend is enabled --
     (
-      assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" appRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "apps" appRoutingProxychainsScript;
+      assert builtins.length perAppRoutingTproxyProfiles == 2;
+      assert builtins.any (profile: profile.name == "tproxy" && profile.route == "tproxy") perAppRoutingTproxyProfiles;
       true
     )
 
-    # -- appRouting: proxychains config is quiet and points at local SOCKS listener --
+    # -- perAppRouting: createDefaultProfiles injects curated zapret profile when backend and zapret are enabled --
     (
-      assert pkgs.lib.hasInfix "quiet_mode" appRoutingProxychainsConfig;
-      assert pkgs.lib.hasInfix "proxy_dns" appRoutingProxychainsConfig;
-      assert pkgs.lib.hasInfix "socks5 127.0.0.1 1080" appRoutingProxychainsConfig;
+      assert builtins.length perAppRoutingZapretProfiles == 2;
+      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") perAppRoutingZapretProfiles;
       true
     )
 
-    # -- appRouting: generated proxy-ctl script dispatches through proxychains4 --
+    # -- perAppRouting: proxy-ctl script embeds wrap/apps commands --
     (
-      assert pkgs.lib.hasInfix "proxychains4 -q -f \"$PROXYCHAINS_CONFIG\" \"$@\"" appRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true
     )
 
-    # -- appRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
+    # -- perAppRouting: proxychains config is quiet and points at local SOCKS listener --
     (
-      assert pkgs.lib.hasInfix "APP_ROUTING_TUN_ENABLED" appRoutingTunScript;
-      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" appRoutingTunScript;
-      assert pkgs.lib.hasInfix ''APP_TUN_SLICE_BASE="proxy-suite-app-tun"'' appRoutingTunScript;
-      assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" appRoutingTunScript;
+      assert pkgs.lib.hasInfix "quiet_mode" perAppRoutingProxychainsConfig;
+      assert pkgs.lib.hasInfix "proxy_dns" perAppRoutingProxychainsConfig;
+      assert pkgs.lib.hasInfix "socks5 127.0.0.1 1080" perAppRoutingProxychainsConfig;
       true
     )
 
-    # -- appRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
+    # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
     (
-      assert pkgs.lib.hasInfix "APP_ROUTING_TPROXY_ENABLED" appRoutingTproxyScript;
-      assert pkgs.lib.hasInfix ''APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"'' appRoutingTproxyScript;
-      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' appRoutingTproxyScript;
+      assert pkgs.lib.hasInfix "proxychains4 -q -f \"$PROXYCHAINS_CONFIG\" \"$@\"" perAppRoutingProxychainsScript;
       true
     )
 
-    # -- appRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
+    # -- perAppRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
     (
-      assert pkgs.lib.hasInfix "APP_ROUTING_ZAPRET_ENABLED" appRoutingZapretScript;
-      assert pkgs.lib.hasInfix ''APP_ZAPRET_SLICE_BASE="proxy-suite-app-zapret"'' appRoutingZapretScript;
-      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' appRoutingZapretScript;
+      assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix ''PER_APP_TUN_SLICE_BASE="proxy-suite-per-app-tun"'' perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
       true
     )
 
-    # -- appRouting: user mark script installs fwmark + conntrack mark rules --
+    # -- perAppRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
     (
-      assert pkgs.lib.hasInfix "meta mark set" appRoutingTunUserStartScript;
-      assert pkgs.lib.hasInfix "ct mark set" appRoutingTunUserStartScript;
+      assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
+      assert pkgs.lib.hasInfix ''PER_APP_TPROXY_SLICE_BASE="proxy-suite-per-app-tproxy"'' perAppRoutingTproxyScript;
+      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingTproxyScript;
       true
     )
 
-    # -- appRouting: app TUN config is separate and does not auto-route globally --
+    # -- perAppRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
+    (
+      assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
+      assert pkgs.lib.hasInfix ''PER_APP_ZAPRET_SLICE_BASE="proxy-suite-per-app-zapret"'' perAppRoutingZapretScript;
+      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingZapretScript;
+      true
+    )
+
+    # -- perAppRouting: user mark script installs fwmark + conntrack mark rules --
+    (
+      assert pkgs.lib.hasInfix "meta mark set" perAppRoutingTunUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set" perAppRoutingTunUserStartScript;
+      true
+    )
+
+    # -- perAppRouting: app TUN config is separate and does not auto-route globally --
     (
       let
-        inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") appRoutingTunConfig.inbounds);
+        inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") perAppRoutingTunConfig.inbounds);
       in
-      assert inbound.interface_name == "psapptun0";
+      assert inbound.interface_name == "psperapptun0";
       assert inbound.address == [ "172.20.0.1/30" ];
       assert inbound.auto_route == false;
       assert inbound.auto_redirect == false;
@@ -1706,69 +1867,69 @@ let
       true
     )
 
-    # -- appRouting: app TUN local DNS keeps direct path without explicit detour --
+    # -- perAppRouting: app TUN local DNS keeps direct path without explicit detour --
     (
       let
-        localDns = dnsServerByTag appRoutingTunConfig "local";
+        localDns = dnsServerByTag perAppRoutingTunConfig "local";
       in
       assert !(localDns ? detour);
       true
     )
 
-    # -- appRouting: app TUN does not set outbound routing marks when TProxy is disabled --
+    # -- perAppRouting: app TUN does not set outbound routing marks when TProxy is disabled --
     (
-      assert builtins.match ".*--routing-mark.*" appRoutingTunStartScript == null;
-      assert !(appRoutingTunDirectOutbound ? routing_mark);
+      assert builtins.match ".*--routing-mark.*" perAppRoutingTunStartScript == null;
+      assert !(perAppRoutingTunDirectOutbound ? routing_mark);
       true
     )
 
-    # -- appRouting: app TUN applies outbound routing marks when TProxy is enabled --
+    # -- perAppRouting: app TUN applies outbound routing marks when TProxy is enabled --
     (
       let
-        expectedMark = appRoutingTunWithTproxyFixture.config.services.proxy-suite.singBox.proxyMark;
+        expectedMark = perAppRoutingTunWithTproxyFixture.config.services.proxy-suite.singBox.tproxy.proxyMark;
       in
-      assert builtins.match ".*--routing-mark.*" appRoutingTunWithTproxyStartScript != null;
-      assert appRoutingTunWithTproxyDirectOutbound.routing_mark == expectedMark;
+      assert builtins.match ".*--routing-mark.*" perAppRoutingTunWithTproxyStartScript != null;
+      assert perAppRoutingTunWithTproxyDirectOutbound.routing_mark == expectedMark;
       true
     )
 
-    # -- appRouting: app TUN service and helper units are created --
+    # -- perAppRouting: app TUN service and helper units are created --
     (
-      assert appRoutingTunFixture.config.systemd.services ? "proxy-suite-app-tun";
-      assert appRoutingTunFixture.config.systemd.services ? "proxy-suite-app-tun-user@";
-      assert appRoutingTunFixture.config.systemd.user.services ? "proxy-suite-app-tun-anchor";
+      assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun";
+      assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun-user@";
+      assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
       true
     )
 
-    # -- appRouting: app TProxy service and helper units are created --
+    # -- perAppRouting: app TProxy service and helper units are created --
     (
-      assert appRoutingTproxyFixture.config.systemd.services ? "proxy-suite-app-tproxy";
-      assert appRoutingTproxyFixture.config.systemd.services ? "proxy-suite-app-tproxy-user@";
-      assert appRoutingTproxyFixture.config.systemd.user.services ? "proxy-suite-app-tproxy-anchor";
+      assert perAppRoutingTproxyFixture.config.systemd.services ? "proxy-suite-per-app-tproxy";
+      assert perAppRoutingTproxyFixture.config.systemd.services ? "proxy-suite-per-app-tproxy-user@";
+      assert perAppRoutingTproxyFixture.config.systemd.user.services ? "proxy-suite-per-app-tproxy-anchor";
       true
     )
 
-    # -- appRouting: app zapret service and helper units are created --
+    # -- perAppRouting: app zapret service and helper units are created --
     (
-      assert appRoutingZapretFixture.config.systemd.services ? "proxy-suite-app-zapret";
-      assert appRoutingZapretFixture.config.systemd.services ? "proxy-suite-app-zapret-user@";
-      assert appRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-app-zapret-anchor";
+      assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
+      assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret-user@";
+      assert perAppRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
       true
     )
 
-    # -- appRouting: app TUN enables nftables and user control group --
+    # -- perAppRouting: app TUN enables nftables and user control group --
     (
-      assert appRoutingTunFixture.config.networking.nftables.enable;
-      assert appRoutingTunFixture.config.users.groups ? "proxy-suite";
+      assert perAppRoutingTunFixture.config.networking.nftables.enable;
+      assert perAppRoutingTunFixture.config.users.groups ? "proxy-suite";
       true
     )
 
     # -- userControl: default polkit rule covers both per-app and global proxy-ctl managed units --
     (
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-app-\") === 0" appRoutingTunPolkitConfig;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" appRoutingTunPolkitConfig;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-app-\") !== 0" appRoutingTunPolkitConfig;
-      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" appRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0" perAppRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" perAppRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0" perAppRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" perAppRoutingTunPolkitConfig;
       true
     )
 
@@ -1776,17 +1937,17 @@ let
     (
       assert userControlGlobalOnlyFixture.config.users.groups ? "proxy-suite";
       assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" userControlGlobalOnlyPolkitConfig;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-app-\") !== 0" userControlGlobalOnlyPolkitConfig;
-      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-app-\"\\) === 0.*" userControlGlobalOnlyPolkitConfig == null;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0" userControlGlobalOnlyPolkitConfig;
+      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) === 0.*" userControlGlobalOnlyPolkitConfig == null;
       assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" userControlGlobalOnlyPolkitConfig;
       true
     )
 
-    # -- userControl: per-app-only rule covers app-scoped helpers only --
+    # -- userControl: per-app-only rule covers per-app-scoped helpers only --
     (
       assert userControlPerAppOnlyFixture.config.users.groups ? "proxy-suite";
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-app-\") === 0" userControlPerAppOnlyPolkitConfig;
-      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-app-\"\\) !== 0.*" userControlPerAppOnlyPolkitConfig == null;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0" userControlPerAppOnlyPolkitConfig;
+      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) !== 0.*" userControlPerAppOnlyPolkitConfig == null;
       assert builtins.match ".*unit === \"zapret-discord-youtube\\.service\".*" userControlPerAppOnlyPolkitConfig == null;
       true
     )
@@ -1800,140 +1961,160 @@ let
       true
     )
 
-    # -- appRouting: app TProxy helper installs socket cgroup mark rules --
+    # -- perAppRouting: app TProxy helper installs socket cgroup mark rules --
     (
-      assert pkgs.lib.hasInfix "socket cgroupv2" appRoutingTproxyUserStartScript;
-      assert pkgs.lib.hasInfix "meta mark set" appRoutingTproxyUserStartScript;
-      assert pkgs.lib.hasInfix "ct mark set" appRoutingTproxyUserStartScript;
+      assert pkgs.lib.hasInfix "socket cgroupv2" perAppRoutingTproxyUserStartScript;
+      assert pkgs.lib.hasInfix "meta mark set" perAppRoutingTproxyUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set" perAppRoutingTproxyUserStartScript;
       true
     )
 
-    # -- appRouting: app TProxy startup installs nftables and loopback policy route --
+    # -- perAppRouting: app TProxy startup installs nftables and loopback policy route --
     (
-      assert pkgs.lib.hasInfix "proxy_suite_app_tproxy" appRoutingTproxyStartScript;
-      assert pkgs.lib.hasInfix "route replace local default dev lo table 102" appRoutingTproxyStartScript;
-      assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" appRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "proxy_suite_per_app_tproxy" perAppRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "route replace local default dev lo table 102" perAppRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" perAppRoutingTproxyStartScript;
       true
     )
 
-    # -- appRouting: app zapret helper installs socket cgroup bitwise mark rules --
+    # -- perAppRouting: app zapret helper installs socket cgroup bitwise mark rules --
     (
-      assert pkgs.lib.hasInfix "socket cgroupv2" appRoutingZapretUserStartScript;
-      assert pkgs.lib.hasInfix "meta mark set meta mark or 268435456" appRoutingZapretUserStartScript;
-      assert pkgs.lib.hasInfix "ct mark set ct mark or 268435456" appRoutingZapretUserStartScript;
+      assert pkgs.lib.hasInfix "socket cgroupv2" perAppRoutingZapretUserStartScript;
+      assert pkgs.lib.hasInfix "meta mark set meta mark or 268435456" perAppRoutingZapretUserStartScript;
+      assert pkgs.lib.hasInfix "ct mark set ct mark or 268435456" perAppRoutingZapretUserStartScript;
       true
     )
 
-    # -- appRouting: app zapret startup installs nftables backend --
+    # -- perAppRouting: app zapret startup installs nftables backend --
     (
-      assert pkgs.lib.hasInfix "proxy_suite_app_zapret_mark" appRoutingZapretStartScript;
+      assert pkgs.lib.hasInfix "proxy_suite_per_app_zapret_mark" perAppRoutingZapretStartScript;
       true
     )
 
-    # -- appRouting: global zapret config keeps FILTER_MARK disabled --
+    # -- perAppRouting: global zapret config keeps FILTER_MARK disabled --
     (
-      assert pkgs.lib.hasInfix "FILTER_MARK=" appRoutingZapretConfig;
-      assert builtins.match ".*FILTER_MARK=0x10000000.*" appRoutingZapretConfig == null;
+      assert pkgs.lib.hasInfix "FILTER_MARK=" perAppRoutingZapretConfig;
+      assert builtins.match ".*FILTER_MARK=0x10000000.*" perAppRoutingZapretConfig == null;
       true
     )
 
-    # -- appRouting: app zapret config is a separate instance with its own filter/qnum/marks --
+    # -- perAppRouting: app zapret config is a separate instance with its own filter/qnum/marks --
     (
-      assert pkgs.lib.hasInfix "FILTER_MARK=0x10000000" appRoutingAppZapretConfig;
-      assert pkgs.lib.hasInfix "MODE_FILTER=none" appRoutingAppZapretConfig;
-      assert pkgs.lib.hasInfix "QNUM=201" appRoutingAppZapretConfig;
-      assert pkgs.lib.hasInfix "DESYNC_MARK=0x8000000" appRoutingAppZapretConfig;
-      assert pkgs.lib.hasInfix "DESYNC_MARK_POSTNAT=0x4000000" appRoutingAppZapretConfig;
-      assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_app_zapret" appRoutingAppZapretConfig;
+      assert pkgs.lib.hasInfix "FILTER_MARK=0x10000000" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "MODE_FILTER=none" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "QNUM=201" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "DESYNC_MARK=0x8000000" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "DESYNC_MARK_POSTNAT=0x4000000" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_per_app_zapret" perAppRoutingPerAppZapretConfig;
       true
     )
 
-    # -- appRouting: global zapret installs a bypass hook for app-marked traffic --
+    # -- perAppRouting: global zapret installs a bypass hook for app-marked traffic --
     (
-      assert pkgs.lib.hasInfix "proxy-suite app-zapret bypass" appRoutingZapretGlobalCustomScript;
-      assert pkgs.lib.hasInfix "mark and 268435456 != 0 return" appRoutingZapretGlobalCustomScript;
+      assert pkgs.lib.hasInfix "proxy-suite per-app-zapret bypass" perAppRoutingZapretGlobalCustomScript;
+      assert pkgs.lib.hasInfix "mark and 268435456 != 0 return" perAppRoutingZapretGlobalCustomScript;
       true
     )
 
-    # -- appRouting: route=proxychains requires proxychains.enable --
+    # -- perAppRouting: route=proxychains requires proxychains.enable --
     (
-      assert appRoutingProxychainsWithoutEnable.success == false;
+      assert perAppRoutingProxychainsWithoutEnable.success == false;
       true
     )
 
-    # -- appRouting: profiles require appRouting.enable --
+    # -- perAppRouting: proxychains requires singBox.enable --
     (
-      assert appRoutingProfilesWithoutEnable.success == false;
+      assert perAppRoutingProxychainsWithoutSingBox.success == false;
       true
     )
 
-    # -- appRouting: default proxychains profile still requires proxychains.enable --
+    # -- perAppRouting: profiles require perAppRouting.enable --
     (
-      assert appRoutingDefaultProfilesWithoutProxychainsEnable.success == false;
+      assert perAppRoutingProfilesWithoutEnable.success == false;
       true
     )
 
-    # -- appRouting: route=tun requires appRouting.backends.tun.enable --
+    # -- perAppRouting: default proxychains profile still requires proxychains.enable --
     (
-      assert appRoutingTunWithoutEnable.success == false;
+      assert perAppRoutingDefaultProfilesWithoutProxychainsEnable.success == false;
       true
     )
 
-    # -- appRouting: route=tproxy requires appRouting.backends.tproxy.enable --
+    # -- perAppRouting: route=tun requires singBox.tun.perApp.enable --
     (
-      assert appRoutingTproxyWithoutEnable.success == false;
+      assert perAppRoutingTunWithoutEnable.success == false;
       true
     )
 
-    # -- appRouting: route=zapret requires appRouting.backends.zapret.enable and zapret.enable --
+    # -- perAppRouting: app TUN backend requires singBox.enable --
     (
-      assert appRoutingZapretWithoutEnable.success == false;
-      true
-    )
-    (
-      assert appRoutingZapretWithoutZapretService.success == false;
+      assert perAppRoutingTunBackendWithoutSingBox.success == false;
+      assert perAppRoutingTunProfileWithoutSingBox.success == false;
       true
     )
 
-    # -- appRouting: profile names must be unique --
+    # -- perAppRouting: route=tproxy requires singBox.tproxy.perApp.enable --
     (
-      assert duplicateAppRoutingProfiles.success == false;
+      assert perAppRoutingTproxyWithoutEnable.success == false;
       true
     )
 
-    # -- appRouting: with TProxy enabled, app TUN fwmark must differ from proxyMark --
+    # -- perAppRouting: app TProxy backend requires singBox.enable --
     (
-      assert appRoutingTunFwmarkCollision.success == false;
+      assert perAppRoutingTproxyBackendWithoutSingBox.success == false;
+      assert perAppRoutingTproxyProfileWithoutSingBox.success == false;
       true
     )
 
-    # -- appRouting: app TProxy fwmark must differ from sing-box proxyMark --
+    # -- perAppRouting: route=zapret requires zapret.perApp.enable and zapret.enable --
     (
-      assert appRoutingTproxyFwmarkCollision.success == false;
+      assert perAppRoutingZapretWithoutEnable.success == false;
+      true
+    )
+    (
+      assert perAppRoutingZapretWithoutZapretService.success == false;
       true
     )
 
-    # -- appRouting: app TUN and app TProxy fwmarks must differ --
+    # -- perAppRouting: profile names must be unique --
     (
-      assert appRoutingTunTproxyFwmarkCollision.success == false;
+      assert duplicatePerAppRoutingProfiles.success == false;
       true
     )
 
-    # -- appRouting: app TUN and app TProxy route tables must differ --
+    # -- perAppRouting: with TProxy enabled, app TUN fwmark must differ from proxyMark --
     (
-      assert appRoutingTunTproxyRouteTableCollision.success == false;
+      assert perAppRoutingTunFwmarkCollision.success == false;
       true
     )
 
-    # -- appRouting: app zapret filter mark must differ from sing-box proxyMark --
+    # -- perAppRouting: app TProxy fwmark must differ from sing-box proxyMark --
     (
-      assert appRoutingZapretFilterMarkCollision.success == false;
+      assert perAppRoutingTproxyFwmarkCollision.success == false;
       true
     )
 
-    # -- appRouting: app TProxy and app zapret marks must differ --
+    # -- perAppRouting: app TUN and app TProxy fwmarks must differ --
     (
-      assert appRoutingTproxyZapretMarkCollision.success == false;
+      assert perAppRoutingTunTproxyFwmarkCollision.success == false;
+      true
+    )
+
+    # -- perAppRouting: app TUN and app TProxy route tables must differ --
+    (
+      assert perAppRoutingTunTproxyRouteTableCollision.success == false;
+      true
+    )
+
+    # -- perAppRouting: app zapret filter mark must differ from sing-box proxyMark --
+    (
+      assert perAppRoutingZapretFilterMarkCollision.success == false;
+      true
+    )
+
+    # -- perAppRouting: app TProxy and app zapret marks must differ --
+    (
+      assert perAppRoutingTproxyZapretMarkCollision.success == false;
       true
     )
 

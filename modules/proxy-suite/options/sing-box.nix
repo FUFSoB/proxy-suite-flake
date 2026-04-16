@@ -4,6 +4,38 @@
 let
   inherit (lib) mkOption mkEnableOption types;
   t = import ./types.nix { inherit lib; };
+
+  mkTunCommonFields =
+    {
+      interfaceDefault,
+      interfaceDescription,
+      addressDefault,
+      addressDescription,
+      mtuDefault,
+      mtuDescription,
+    }:
+    {
+      interface = mkOption {
+        type = types.str;
+        default = interfaceDefault;
+        description = interfaceDescription;
+        example = interfaceDefault;
+      };
+
+      address = mkOption {
+        type = types.str;
+        default = addressDefault;
+        description = addressDescription;
+        example = addressDefault;
+      };
+
+      mtu = mkOption {
+        type = types.int;
+        default = mtuDefault;
+        description = mtuDescription;
+        example = mtuDefault;
+      };
+    };
 in
 {
   options.services.proxy-suite.singBox = {
@@ -12,8 +44,8 @@ in
       default = true;
       description = ''
         Whether to configure and run sing-box services for proxy-suite.
-        When disabled, singBox.* options are ignored even if proxy-suite itself
-        is enabled.
+        When disabled, sing-box services and generated sing-box configs are
+        skipped even if proxy-suite itself is enabled.
       '';
     };
 
@@ -183,49 +215,6 @@ in
       example = 1080;
     };
 
-    tproxyPort = mkOption {
-      type = types.port;
-      default = 1081;
-      description = ''
-        Local listen port for sing-box's TProxy inbound.
-        nftables redirection created by proxy-suite-tproxy sends intercepted
-        TCP/UDP traffic to this port.
-      '';
-      example = 1081;
-    };
-
-    fwmark = mkOption {
-      type = types.int;
-      default = 1;
-      description = ''
-        Mark applied to intercepted packets in TProxy mode.
-        A matching `ip rule` routes this mark to singBox.routeTable, which
-        points traffic to loopback for local proxy processing.
-      '';
-      example = 1;
-    };
-
-    proxyMark = mkOption {
-      type = types.int;
-      default = 2;
-      description = ''
-        Mark applied to sing-box egress packets in TProxy mode so they bypass
-        re-interception and do not loop back into the transparent proxy path.
-      '';
-      example = 2;
-    };
-
-    routeTable = mkOption {
-      type = types.int;
-      default = 100;
-      description = ''
-        Policy-routing table number used for TProxy interception flow.
-        The module installs a local default route in this table and binds it
-        to singBox.fwmark.
-      '';
-      example = 100;
-    };
-
     proxyByDefault = mkOption {
       type = types.bool;
       default = true;
@@ -252,7 +241,7 @@ in
           This resolver is also used as sing-box route.default_domain_resolver.
 
           The module keeps detour policy automatic: in mixed/TProxy mode and
-          app-routing TUN mode, "local" stays on the direct path (without an
+          per-app-routing TUN mode, "local" stays on the direct path (without an
           explicit detour); in global TUN mode, it is forced through the proxy to avoid
           auto_redirect conflicts.
         '';
@@ -285,7 +274,7 @@ in
     };
 
     tun = {
-      enable = mkEnableOption "TUN mode service (opt-in, mutually exclusive with proxy-suite-tproxy)";
+      enable = mkEnableOption "global sing-box TUN mode service";
 
       autostart = mkOption {
         type = types.bool;
@@ -298,30 +287,67 @@ in
         example = true;
       };
 
-      interface = mkOption {
-        type = types.str;
-        default = "singtun0";
-        description = "Name of the TUN interface created by proxy-suite-tun.";
-        example = "singtun0";
-      };
+      perApp = {
+        enable = mkEnableOption "per-app-scoped sing-box TUN backend for perAppRouting profiles";
 
-      address = mkOption {
-        type = types.str;
-        default = "172.19.0.1/30";
-        description = "Address assigned to the TUN interface in CIDR notation.";
-        example = "172.19.0.1/30";
-      };
+        fwmark = mkOption {
+          type = types.int;
+          default = 16;
+          description = ''
+            Packet mark used to steer wrapped app traffic into the per-app-scoped
+            TUN policy-routing table.
+          '';
+          example = 16;
+        };
 
-      mtu = mkOption {
-        type = types.int;
-        default = 1400;
-        description = "MTU for the TUN interface created by proxy-suite-tun.";
-        example = 1400;
+        routeTable = mkOption {
+          type = types.int;
+          default = 101;
+          description = ''
+            Policy-routing table used by the per-app-scoped TUN backend.
+          '';
+          example = 101;
+        };
+
+        localSubnets = mkOption {
+          type = types.listOf types.str;
+          default = [ "192.168.0.0/16" ];
+          description = ''
+            Destination subnets that should bypass the per-app-scoped TUN mark,
+            so wrapped apps can still reach local LAN resources directly.
+          '';
+          example = [
+            "192.168.0.0/16"
+            "10.0.0.0/8"
+          ];
+        };
+      }
+      // mkTunCommonFields {
+        interfaceDefault = "psperapptun0";
+        interfaceDescription = ''
+          Name of the dedicated per-app-routing TUN interface used by
+          proxy-suite-per-app-tun.
+        '';
+        addressDefault = "172.20.0.1/30";
+        addressDescription = ''
+          Address assigned to the dedicated per-app-routing TUN interface in CIDR
+          notation.
+        '';
+        mtuDefault = 1400;
+        mtuDescription = "MTU for the dedicated per-app-routing TUN interface.";
       };
+    }
+    // mkTunCommonFields {
+      interfaceDefault = "singtun0";
+      interfaceDescription = "Name of the TUN interface created by proxy-suite-tun.";
+      addressDefault = "172.19.0.1/30";
+      addressDescription = "Address assigned to the global TUN interface in CIDR notation.";
+      mtuDefault = 1400;
+      mtuDescription = "MTU for the global TUN interface created by proxy-suite-tun.";
     };
 
     tproxy = {
-      enable = mkEnableOption "TProxy mode service (opt-in, transparent proxy via nftables)";
+      enable = mkEnableOption "global sing-box TProxy mode service";
 
       autostart = mkOption {
         type = types.bool;
@@ -334,11 +360,57 @@ in
         example = true;
       };
 
+      port = mkOption {
+        type = types.port;
+        default = 1081;
+        description = ''
+          Local listen port for sing-box's TProxy inbound.
+          nftables redirection created by proxy-suite-tproxy sends intercepted
+          TCP/UDP traffic to this port.
+        '';
+        example = 1081;
+      };
+
+      fwmark = mkOption {
+        type = types.int;
+        default = 1;
+        description = ''
+          Mark applied to intercepted packets in global TProxy mode.
+          A matching `ip rule` routes this mark to
+          singBox.tproxy.routeTable, which points traffic to
+          loopback for local proxy processing.
+        '';
+        example = 1;
+      };
+
+      proxyMark = mkOption {
+        type = types.int;
+        default = 2;
+        description = ''
+          Mark applied to sing-box egress packets in global TProxy mode so
+          they bypass re-interception and do not loop back into the
+          transparent proxy path.
+        '';
+        example = 2;
+      };
+
+      routeTable = mkOption {
+        type = types.int;
+        default = 100;
+        description = ''
+          Policy-routing table number used for global TProxy interception flow.
+          The module installs a local default route in this table and binds it
+          to singBox.tproxy.fwmark.
+        '';
+        example = 100;
+      };
+
       localSubnets = mkOption {
         type = types.listOf types.str;
         default = [ "192.168.0.0/16" ];
         description = ''
-          Subnets whose traffic bypasses TProxy interception, except DNS (port 53).
+          Subnets whose traffic bypasses global TProxy interception, except
+          DNS (port 53).
 
           Typically this should include your LAN subnet(s). VM bridge networks
           should usually go here too, or use zapret.cidrExemption for
@@ -348,6 +420,42 @@ in
           "192.168.0.0/16"
           "10.0.0.0/8"
         ];
+      };
+
+      perApp = {
+        enable = mkEnableOption "per-app-scoped sing-box TProxy backend for perAppRouting profiles";
+
+        fwmark = mkOption {
+          type = types.int;
+          default = 17;
+          description = ''
+            Packet mark used to steer wrapped app traffic into the per-app-scoped
+            TProxy policy-routing table.
+          '';
+          example = 17;
+        };
+
+        routeTable = mkOption {
+          type = types.int;
+          default = 102;
+          description = ''
+            Policy-routing table used by the per-app-scoped TProxy backend.
+          '';
+          example = 102;
+        };
+
+        localSubnets = mkOption {
+          type = types.listOf types.str;
+          default = [ "192.168.0.0/16" ];
+          description = ''
+            Subnets whose traffic bypasses per-app-scoped TProxy interception,
+            except DNS (port 53).
+          '';
+          example = [
+            "192.168.0.0/16"
+            "10.0.0.0/8"
+          ];
+        };
       };
     };
 

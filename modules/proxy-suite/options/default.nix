@@ -4,7 +4,7 @@
   imports = [
     ./other.nix
     ./sing-box.nix
-    ./app-routing.nix
+    ./per-app-routing.nix
     ./zapret.nix
   ];
 }

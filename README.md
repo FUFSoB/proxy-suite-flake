@@ -76,26 +76,24 @@ services.proxy-suite = {
     tproxy = {
       enable = true;
       autostart = false;
+      perApp.enable = true;
     };
     tun = {
       enable = true;
       autostart = false;
+      perApp.enable = true;
     };
   };
 
   zapret = {
     enable = true;
+    perApp.enable = true;
   };
 
-  appRouting = {
+  perAppRouting = {
     enable = true;
     createDefaultProfiles = true;
     proxychains.enable = true;
-    backends = {
-      tun.enable = true;
-      tproxy.enable = true;
-      zapret.enable = true;
-    };
   };
 
   tray = {

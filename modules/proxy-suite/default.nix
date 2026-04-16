@@ -19,37 +19,35 @@ in
   ];
 
   config = lib.mkIf cfg.enable (
+    let
+      rules = import ./rules.nix {
+        inherit
+          lib
+          pkgs
+          cfg
+          zapret
+          ;
+      };
+      configs = import ./config.nix {
+        inherit
+          lib
+          pkgs
+          cfg
+          rules
+          ;
+      };
+    in
     lib.mkMerge [
-      (lib.mkIf cfg.singBox.enable (
-        let
-          rules = import ./rules.nix {
-            inherit
-              lib
-              pkgs
-              cfg
-              zapret
-              ;
-          };
-          configs = import ./config.nix {
-            inherit
-              lib
-              pkgs
-              cfg
-              rules
-              ;
-          };
-        in
-        import ./service {
-          inherit
-            config
-            lib
-            pkgs
-            cfg
-            ;
-          inherit (configs) tproxyFile tunFile appTunFile;
-          inherit (nftr) nftablesRulesFile appTproxyRulesFile appZapretRulesFile appTunChainFile ip nft;
-        }
-      ))
+      (import ./service {
+        inherit
+          config
+          lib
+          pkgs
+          cfg
+          ;
+        inherit (configs) tproxyFile tunFile perAppTunFile;
+        inherit (nftr) nftablesRulesFile perAppTproxyRulesFile perAppZapretRulesFile perAppTunChainFile ip nft;
+      })
 
       (lib.mkIf cfg.zapret.enable (
         import ./zapret.nix {
@@ -59,7 +57,7 @@ in
             cfg
             zapret
             ;
-          inherit (nftr) appZapretRulesFile nft;
+          inherit (nftr) perAppZapretRulesFile nft;
         }
       ))
 

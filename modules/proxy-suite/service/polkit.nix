@@ -6,13 +6,13 @@ let
 
   userControlPolkitRules =
     lib.optionalString userControlCfg.perApp.enable ''
-      if (unit.indexOf("proxy-suite-app-") === 0) {
+      if (unit.indexOf("proxy-suite-per-app-") === 0) {
         return polkit.Result.YES;
       }
     ''
     + lib.optionalString userControlCfg.global.enable ''
       if ((unit.indexOf("proxy-suite-") === 0 &&
-           unit.indexOf("proxy-suite-app-") !== 0) ||
+           unit.indexOf("proxy-suite-per-app-") !== 0) ||
           unit === "zapret-discord-youtube.service") {
         return polkit.Result.YES;
       }

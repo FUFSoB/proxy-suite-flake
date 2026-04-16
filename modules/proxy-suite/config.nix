@@ -9,7 +9,9 @@
 
 let
   singBoxCfg = cfg.singBox;
-  appRoutingTun = cfg.appRouting.backends.tun;
+  globalTun = singBoxCfg.tun;
+  globalTproxy = singBoxCfg.tproxy;
+  perAppTun = singBoxCfg.tun.perApp;
   direct = rules.direct;
 
   mkDnsServer =
@@ -54,9 +56,9 @@ let
       enableMixed ? false,
       enableTProxy ? false,
       enableTun ? false,
-      tunInterface ? singBoxCfg.tun.interface,
-      tunAddress ? singBoxCfg.tun.address,
-      tunMtu ? singBoxCfg.tun.mtu,
+      tunInterface ? globalTun.interface,
+      tunAddress ? globalTun.address,
+      tunMtu ? globalTun.mtu,
       tunAutoRoute ? true,
       tunAutoRedirect ? true,
       tunStrictRoute ? true,
@@ -85,7 +87,7 @@ let
           type = "tproxy";
           tag = "tproxy-in";
           listen = "127.0.0.1";
-          listen_port = singBoxCfg.tproxyPort;
+          listen_port = globalTproxy.port;
         }
         ++ lib.optional enableTun {
           type = "tun";
@@ -106,7 +108,7 @@ let
             type = "direct";
             tag = "direct";
           }
-          // lib.optionalAttrs useOutboundRoutingMark { routing_mark = singBoxCfg.proxyMark; }
+          // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
         )
         {
           type = "block";
@@ -133,9 +135,9 @@ let
 
   tunTemplate = mkConfig {
     enableTun = true;
-    tunInterface = singBoxCfg.tun.interface;
-    tunAddress = singBoxCfg.tun.address;
-    tunMtu = singBoxCfg.tun.mtu;
+    tunInterface = globalTun.interface;
+    tunAddress = globalTun.address;
+    tunMtu = globalTun.mtu;
     tunAutoRoute = true;
     tunAutoRedirect = true;
     tunStrictRoute = true;
@@ -143,26 +145,26 @@ let
     enableClashApi = false;
   };
 
-  appTunTemplate = mkConfig {
+  perAppTunTemplate = mkConfig {
     enableTun = true;
-    tunInterface = appRoutingTun.interface;
-    tunAddress = appRoutingTun.address;
-    tunMtu = appRoutingTun.mtu;
+    tunInterface = perAppTun.interface;
+    tunAddress = perAppTun.address;
+    tunMtu = perAppTun.mtu;
     tunAutoRoute = false;
     tunAutoRedirect = false;
     tunStrictRoute = false;
     forceLocalDnsViaProxy = false;
     # App TUN can be used alongside TProxy; mark direct egress so TProxy output
     # rules do not re-intercept sing-box's own packets.
-    useOutboundRoutingMark = singBoxCfg.tproxy.enable;
+    useOutboundRoutingMark = globalTproxy.enable;
     enableClashApi = false;
   };
 
   tproxyFile = pkgs.writeText "proxy-suite-tproxy-template.json" (builtins.toJSON tproxyTemplate);
   tunFile = pkgs.writeText "proxy-suite-tun-template.json" (builtins.toJSON tunTemplate);
-  appTunFile = pkgs.writeText "proxy-suite-app-tun-template.json" (builtins.toJSON appTunTemplate);
+  perAppTunFile = pkgs.writeText "proxy-suite-per-app-tun-template.json" (builtins.toJSON perAppTunTemplate);
 
 in
 {
-  inherit tproxyFile tunFile appTunFile;
+  inherit tproxyFile tunFile perAppTunFile;
 }

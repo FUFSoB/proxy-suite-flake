@@ -10,35 +10,17 @@ Update module option docs there instead of editing this file by hand.
   - [Complete example config](#complete-example-config)
 - services.proxy-suite
   - [enable](#services-proxy-suite-enable)
-  - appRouting
-    - [enable](#services-proxy-suite-approuting-enable)
-    - backends
-      - tproxy
-        - [enable](#services-proxy-suite-approuting-backends-tproxy-enable)
-        - [fwmark](#services-proxy-suite-approuting-backends-tproxy-fwmark)
-        - [localSubnets](#services-proxy-suite-approuting-backends-tproxy-localsubnets)
-        - [routeTable](#services-proxy-suite-approuting-backends-tproxy-routetable)
-      - tun
-        - [enable](#services-proxy-suite-approuting-backends-tun-enable)
-        - [address](#services-proxy-suite-approuting-backends-tun-address)
-        - [fwmark](#services-proxy-suite-approuting-backends-tun-fwmark)
-        - [interface](#services-proxy-suite-approuting-backends-tun-interface)
-        - [localSubnets](#services-proxy-suite-approuting-backends-tun-localsubnets)
-        - [mtu](#services-proxy-suite-approuting-backends-tun-mtu)
-        - [routeTable](#services-proxy-suite-approuting-backends-tun-routetable)
-      - zapret
-        - [enable](#services-proxy-suite-approuting-backends-zapret-enable)
-        - [filterMark](#services-proxy-suite-approuting-backends-zapret-filtermark)
-        - [qnum](#services-proxy-suite-approuting-backends-zapret-qnum)
-    - [createDefaultProfiles](#services-proxy-suite-approuting-createdefaultprofiles)
-    - [profiles](#services-proxy-suite-approuting-profiles)
+  - perAppRouting
+    - [enable](#services-proxy-suite-perapprouting-enable)
+    - [createDefaultProfiles](#services-proxy-suite-perapprouting-createdefaultprofiles)
+    - [profiles](#services-proxy-suite-perapprouting-profiles)
       - item
-        - [name](#services-proxy-suite-approuting-profiles-name)
-        - [route](#services-proxy-suite-approuting-profiles-route)
+        - [name](#services-proxy-suite-perapprouting-profiles-name)
+        - [route](#services-proxy-suite-perapprouting-profiles-route)
     - proxychains
-      - [enable](#services-proxy-suite-approuting-proxychains-enable)
-      - [proxyDns](#services-proxy-suite-approuting-proxychains-proxydns)
-      - [quiet](#services-proxy-suite-approuting-proxychains-quiet)
+      - [enable](#services-proxy-suite-perapprouting-proxychains-enable)
+      - [proxyDns](#services-proxy-suite-perapprouting-proxychains-proxydns)
+      - [quiet](#services-proxy-suite-perapprouting-proxychains-quiet)
   - singBox
     - [enable](#services-proxy-suite-singbox-enable)
     - [clashApiPort](#services-proxy-suite-singbox-clashapiport)
@@ -51,7 +33,6 @@ Update module option docs there instead of editing this file by hand.
         - [address](#services-proxy-suite-singbox-dns-remote-address)
         - [port](#services-proxy-suite-singbox-dns-remote-port)
         - [type](#services-proxy-suite-singbox-dns-remote-type)
-    - [fwmark](#services-proxy-suite-singbox-fwmark)
     - [listenAddress](#services-proxy-suite-singbox-listenaddress)
     - [outbounds](#services-proxy-suite-singbox-outbounds)
       - item
@@ -66,8 +47,6 @@ Update module option docs there instead of editing this file by hand.
         - [urlFile](#services-proxy-suite-singbox-outbounds-urlfile)
     - [port](#services-proxy-suite-singbox-port)
     - [proxyByDefault](#services-proxy-suite-singbox-proxybydefault)
-    - [proxyMark](#services-proxy-suite-singbox-proxymark)
-    - [routeTable](#services-proxy-suite-singbox-routetable)
     - routing
       - [enableRuDirect](#services-proxy-suite-singbox-routing-enablerudirect)
       - block
@@ -102,14 +81,30 @@ Update module option docs there instead of editing this file by hand.
     - tproxy
       - [enable](#services-proxy-suite-singbox-tproxy-enable)
       - [autostart](#services-proxy-suite-singbox-tproxy-autostart)
+      - [fwmark](#services-proxy-suite-singbox-tproxy-fwmark)
       - [localSubnets](#services-proxy-suite-singbox-tproxy-localsubnets)
-    - [tproxyPort](#services-proxy-suite-singbox-tproxyport)
+      - perApp
+        - [enable](#services-proxy-suite-singbox-tproxy-perapp-enable)
+        - [fwmark](#services-proxy-suite-singbox-tproxy-perapp-fwmark)
+        - [localSubnets](#services-proxy-suite-singbox-tproxy-perapp-localsubnets)
+        - [routeTable](#services-proxy-suite-singbox-tproxy-perapp-routetable)
+      - [port](#services-proxy-suite-singbox-tproxy-port)
+      - [proxyMark](#services-proxy-suite-singbox-tproxy-proxymark)
+      - [routeTable](#services-proxy-suite-singbox-tproxy-routetable)
     - tun
       - [enable](#services-proxy-suite-singbox-tun-enable)
       - [address](#services-proxy-suite-singbox-tun-address)
       - [autostart](#services-proxy-suite-singbox-tun-autostart)
       - [interface](#services-proxy-suite-singbox-tun-interface)
       - [mtu](#services-proxy-suite-singbox-tun-mtu)
+      - perApp
+        - [enable](#services-proxy-suite-singbox-tun-perapp-enable)
+        - [address](#services-proxy-suite-singbox-tun-perapp-address)
+        - [fwmark](#services-proxy-suite-singbox-tun-perapp-fwmark)
+        - [interface](#services-proxy-suite-singbox-tun-perapp-interface)
+        - [localSubnets](#services-proxy-suite-singbox-tun-perapp-localsubnets)
+        - [mtu](#services-proxy-suite-singbox-tun-perapp-mtu)
+        - [routeTable](#services-proxy-suite-singbox-tun-perapp-routetable)
     - urlTest
       - [interval](#services-proxy-suite-singbox-urltest-interval)
       - [tolerance](#services-proxy-suite-singbox-urltest-tolerance)
@@ -150,6 +145,10 @@ Update module option docs there instead of editing this file by hand.
     - [ipsetExclude](#services-proxy-suite-zapret-ipsetexclude)
     - [listExclude](#services-proxy-suite-zapret-listexclude)
     - [listGeneral](#services-proxy-suite-zapret-listgeneral)
+    - perApp
+      - [enable](#services-proxy-suite-zapret-perapp-enable)
+      - [filterMark](#services-proxy-suite-zapret-perapp-filtermark)
+      - [qnum](#services-proxy-suite-zapret-perapp-qnum)
     - [syncDirectRouting](#services-proxy-suite-zapret-syncdirectrouting)
     - [syncDirectRoutingUpstreamIps](#services-proxy-suite-zapret-syncdirectroutingupstreamips)
     - [syncDirectRoutingUserIps](#services-proxy-suite-zapret-syncdirectroutinguserips)
@@ -159,33 +158,8 @@ Update module option docs there instead of editing this file by hand.
 
 ```nix
 services.proxy-suite = {
-  appRouting = {
-    backends = {
-      tproxy = {
-        enable = false;
-        fwmark = 17;
-        localSubnets = [
-          "192.168.0.0/16"
-        ];
-        routeTable = 102;
-      };
-      tun = {
-        address = "172.20.0.1/30";
-        enable = false;
-        fwmark = 16;
-        interface = "psapptun0";
-        localSubnets = [
-          "192.168.0.0/16"
-        ];
-        mtu = 1400;
-        routeTable = 101;
-      };
-      zapret = {
-        enable = false;
-        filterMark = 268435456;
-        qnum = 201;
-      };
-    };
+  enable = false;
+  perAppRouting = {
     createDefaultProfiles = false;
     enable = false;
     profiles = [ ];
@@ -195,7 +169,6 @@ services.proxy-suite = {
       quiet = true;
     };
   };
-  enable = false;
   singBox = {
     clashApiPort = 9090;
     dns = {
@@ -211,13 +184,10 @@ services.proxy-suite = {
       };
     };
     enable = true;
-    fwmark = 1;
     listenAddress = "127.0.0.1";
     outbounds = [ ];
     port = 1080;
     proxyByDefault = true;
-    proxyMark = 2;
-    routeTable = 100;
     routing = {
       block = {
         domains = [ ];
@@ -246,17 +216,39 @@ services.proxy-suite = {
     tproxy = {
       autostart = false;
       enable = false;
+      fwmark = 1;
       localSubnets = [
         "192.168.0.0/16"
       ];
+      perApp = {
+        enable = false;
+        fwmark = 17;
+        localSubnets = [
+          "192.168.0.0/16"
+        ];
+        routeTable = 102;
+      };
+      port = 1081;
+      proxyMark = 2;
+      routeTable = 100;
     };
-    tproxyPort = 1081;
     tun = {
       address = "172.19.0.1/30";
       autostart = false;
       enable = false;
       interface = "singtun0";
       mtu = 1400;
+      perApp = {
+        address = "172.20.0.1/30";
+        enable = false;
+        fwmark = 16;
+        interface = "psperapptun0";
+        localSubnets = [
+          "192.168.0.0/16"
+        ];
+        mtu = 1400;
+        routeTable = 101;
+      };
     };
     urlTest = {
       interval = "3m";
@@ -300,6 +292,11 @@ services.proxy-suite = {
     ipsetExclude = [ ];
     listExclude = [ ];
     listGeneral = [ ];
+    perApp = {
+      enable = false;
+      filterMark = 268435456;
+      qnum = 201;
+    };
     syncDirectRouting = true;
     syncDirectRoutingUpstreamIps = false;
     syncDirectRoutingUserIps = true;
@@ -314,35 +311,8 @@ This is generated by filling in all the options with example values (or defaults
 
 ```nix
 services.proxy-suite = {
-  appRouting = {
-    backends = {
-      tproxy = {
-        enable = true;
-        fwmark = 17;
-        localSubnets = [
-          "192.168.0.0/16"
-          "10.0.0.0/8"
-        ];
-        routeTable = 102;
-      };
-      tun = {
-        address = "172.20.0.1/30";
-        enable = true;
-        fwmark = 16;
-        interface = "psapptun0";
-        localSubnets = [
-          "192.168.0.0/16"
-          "10.0.0.0/8"
-        ];
-        mtu = 1400;
-        routeTable = 101;
-      };
-      zapret = {
-        enable = true;
-        filterMark = 268435456;
-        qnum = 201;
-      };
-    };
+  enable = true;
+  perAppRouting = {
     createDefaultProfiles = true;
     enable = true;
     profiles = [
@@ -361,7 +331,6 @@ services.proxy-suite = {
       quiet = true;
     };
   };
-  enable = true;
   singBox = {
     clashApiPort = 9090;
     dns = {
@@ -377,7 +346,6 @@ services.proxy-suite = {
       };
     };
     enable = true;
-    fwmark = 1;
     listenAddress = "127.0.0.1";
     outbounds = [
       {
@@ -391,8 +359,6 @@ services.proxy-suite = {
     ];
     port = 1080;
     proxyByDefault = true;
-    proxyMark = 2;
-    routeTable = 100;
     routing = {
       block = {
         domains = [
@@ -479,18 +445,42 @@ services.proxy-suite = {
     tproxy = {
       autostart = true;
       enable = true;
+      fwmark = 1;
       localSubnets = [
         "192.168.0.0/16"
         "10.0.0.0/8"
       ];
+      perApp = {
+        enable = true;
+        fwmark = 17;
+        localSubnets = [
+          "192.168.0.0/16"
+          "10.0.0.0/8"
+        ];
+        routeTable = 102;
+      };
+      port = 1081;
+      proxyMark = 2;
+      routeTable = 100;
     };
-    tproxyPort = 1081;
     tun = {
       address = "172.19.0.1/30";
       autostart = true;
       enable = true;
       interface = "singtun0";
       mtu = 1400;
+      perApp = {
+        address = "172.20.0.1/30";
+        enable = true;
+        fwmark = 16;
+        interface = "psperapptun0";
+        localSubnets = [
+          "192.168.0.0/16"
+          "10.0.0.0/8"
+        ];
+        mtu = 1400;
+        routeTable = 101;
+      };
     };
     urlTest = {
       interval = "1m";
@@ -569,6 +559,11 @@ services.proxy-suite = {
     listGeneral = [
       "youtube.com"
     ];
+    perApp = {
+      enable = true;
+      filterMark = 268435456;
+      qnum = 201;
+    };
     syncDirectRouting = true;
     syncDirectRoutingUpstreamIps = false;
     syncDirectRoutingUserIps = true;
@@ -578,8 +573,6 @@ services.proxy-suite = {
 
 <a id="services-proxy-suite-enable"></a>
 ## services\.proxy-suite\.enable
-
-
 
 Whether to enable proxy suite (sing-box + zapret + tg-ws-proxy)\.
 
@@ -609,8 +602,8 @@ true
 
 
 
-<a id="services-proxy-suite-approuting-enable"></a>
-## services\.proxy-suite\.appRouting\.enable
+<a id="services-proxy-suite-perapprouting-enable"></a>
+## services\.proxy-suite\.perAppRouting\.enable
 
 
 
@@ -638,495 +631,16 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-backends-tproxy-enable"></a>
-## services\.proxy-suite\.appRouting\.backends\.tproxy\.enable
+<a id="services-proxy-suite-perapprouting-createdefaultprofiles"></a>
+## services\.proxy-suite\.perAppRouting\.createDefaultProfiles
 
-Whether to enable app-scoped TProxy backend for appRouting profiles\.
 
 
-
-*Type:*
-boolean
-
-
-
-*Default:*
-
-```nix
-false
-```
-
-
-
-*Example:*
-
-```nix
-true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tproxy-fwmark"></a>
-## services\.proxy-suite\.appRouting\.backends\.tproxy\.fwmark
-
-
-
-Packet mark used to steer wrapped app traffic into the app-routing
-TProxy policy-routing table\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-17
-```
-
-
-
-*Example:*
-
-```nix
-17
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tproxy-localsubnets"></a>
-## services\.proxy-suite\.appRouting\.backends\.tproxy\.localSubnets
-
-
-
-Destination subnets that should bypass app-routing TProxy
-interception, except DNS traffic on port 53\.
-
-
-
-*Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[
-  "192.168.0.0/16"
-]
-```
-
-
-
-*Example:*
-
-```nix
-[
-  "192.168.0.0/16"
-  "10.0.0.0/8"
-]
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tproxy-routetable"></a>
-## services\.proxy-suite\.appRouting\.backends\.tproxy\.routeTable
-
-
-
-Policy-routing table used by the app-routing TProxy backend\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-102
-```
-
-
-
-*Example:*
-
-```nix
-102
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-enable"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.enable
-
-
-
-Whether to enable app-scoped TUN backend for appRouting profiles\.
-
-
-
-*Type:*
-boolean
-
-
-
-*Default:*
-
-```nix
-false
-```
-
-
-
-*Example:*
-
-```nix
-true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-address"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.address
-
-
-
-Address assigned to the app-routing TUN interface in CIDR
-notation\.
-
-
-
-*Type:*
-string
-
-
-
-*Default:*
-
-```nix
-"172.20.0.1/30"
-```
-
-
-
-*Example:*
-
-```nix
-"172.20.0.1/30"
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-fwmark"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.fwmark
-
-
-
-Packet mark used to steer wrapped app traffic into the app-routing
-TUN policy-routing table\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-16
-```
-
-
-
-*Example:*
-
-```nix
-16
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-interface"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.interface
-
-
-
-Name of the dedicated app-routing TUN interface used by
-proxy-suite-app-tun\.
-
-
-
-*Type:*
-string
-
-
-
-*Default:*
-
-```nix
-"psapptun0"
-```
-
-
-
-*Example:*
-
-```nix
-"psapptun0"
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-localsubnets"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.localSubnets
-
-
-
-Destination subnets that should bypass the app-routing TUN mark,
-so wrapped apps can still reach local LAN resources directly\.
-
-
-
-*Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[
-  "192.168.0.0/16"
-]
-```
-
-
-
-*Example:*
-
-```nix
-[
-  "192.168.0.0/16"
-  "10.0.0.0/8"
-]
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-mtu"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.mtu
-
-
-
-MTU for the app-routing TUN interface\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-1400
-```
-
-
-
-*Example:*
-
-```nix
-1400
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-tun-routetable"></a>
-## services\.proxy-suite\.appRouting\.backends\.tun\.routeTable
-
-
-
-Policy-routing table used by the app-routing TUN backend\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-101
-```
-
-
-
-*Example:*
-
-```nix
-101
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-zapret-enable"></a>
-## services\.proxy-suite\.appRouting\.backends\.zapret\.enable
-
-
-
-Whether to enable app-scoped zapret backend for appRouting profiles\.
-
-
-
-*Type:*
-boolean
-
-
-
-*Default:*
-
-```nix
-false
-```
-
-
-
-*Example:*
-
-```nix
-true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-zapret-filtermark"></a>
-## services\.proxy-suite\.appRouting\.backends\.zapret\.filterMark
-
-
-
-Packet mark bit used to mark wrapped app traffic for the
-dedicated app-scoped zapret instance\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-268435456
-```
-
-
-
-*Example:*
-
-```nix
-268435456
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-backends-zapret-qnum"></a>
-## services\.proxy-suite\.appRouting\.backends\.zapret\.qnum
-
-
-
-NFQUEUE number used by the dedicated app-scoped zapret instance\.
-This backend runs as a second zapret daemon and should use a
-queue distinct from the global zapret instance\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-201
-```
-
-
-
-*Example:*
-
-```nix
-201
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
-
-
-
-<a id="services-proxy-suite-approuting-createdefaultprofiles"></a>
-## services\.proxy-suite\.appRouting\.createDefaultProfiles
-
-
-
-Whether to automatically add curated appRouting profiles\.
+Whether to automatically add curated perAppRouting profiles\.
 
 This is opt-in\. Generated defaults are appended only when no
 user-defined profile with the same name already exists\.
@@ -1134,10 +648,10 @@ user-defined profile with the same name already exists\.
 Current curated defaults:
 
  - ` proxychains `: route = “proxychains”
- - ` tun `: route = “tun” when appRouting\.backends\.tun\.enable = true
- - ` tproxy `: route = “tproxy” when appRouting\.backends\.tproxy\.enable = true
- - ` zapret `: route = “zapret” when appRouting\.backends\.zapret\.enable = true
-   and zapret\.enable = true
+ - ` tun `: route = “tun” when singBox\.tun\.perApp\.enable = true
+ - ` tproxy `: route = “tproxy” when singBox\.tproxy\.perApp\.enable = true
+ - ` zapret `: route = “zapret” when zapret\.perApp\.enable = true and
+   zapret\.enable = true
 
 This makes ` proxy-ctl wrap proxychains -- <command> ` available
 without defining the profile manually, and similarly exposes
@@ -1168,12 +682,12 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-profiles"></a>
-## services\.proxy-suite\.appRouting\.profiles
+<a id="services-proxy-suite-perapprouting-profiles"></a>
+## services\.proxy-suite\.perAppRouting\.profiles
 
 
 
@@ -1184,18 +698,18 @@ This initial implementation supports:
  - “direct” for running a command unchanged
  - “proxychains” for TCP apps that can use an LD_PRELOAD wrapper
    instead of global TUN or TProxy interception
- - “tun” for app-scoped policy routing into the dedicated app TUN
+ - “tun” for per-app-scoped policy routing into the dedicated app TUN
    backend
- - “tproxy” for app-scoped transparent interception through the
+ - “tproxy” for per-app-scoped transparent interception through the
    dedicated app TProxy backend
- - “zapret” for app-scoped zapret handling through a separate
+ - “zapret” for per-app-scoped zapret handling through a separate
    zapret instance without changing the app’s network path or exit IP
 
-proxychains-based wrapping depends on the local proxy-suite mixed
-proxy listener provided by sing-box\. The “tun” route depends on
-appRouting\.backends\.tun\.enable = true\. The “tproxy” route depends on
-appRouting\.backends\.tproxy\.enable = true\. The “zapret” route depends
-on appRouting\.backends\.zapret\.enable = true and zapret\.enable = true\.
+proxychains-based wrapping depends on singBox\.enable = true and the
+local proxy-suite mixed proxy listener provided by sing-box\. The
+“tun” route depends on singBox\.tun\.perApp\.enable = true\. The “tproxy”
+route depends on singBox\.tproxy\.perApp\.enable = true\. The “zapret”
+route depends on zapret\.perApp\.enable = true and zapret\.enable = true\.
 
 When createDefaultProfiles = true, curated defaults are added on top
 of this list unless a user-defined profile already uses the same
@@ -1232,17 +746,17 @@ list of (submodule)
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-profiles-name"></a>
-## services\.proxy-suite\.appRouting\.profiles\.\*\.name
+<a id="services-proxy-suite-perapprouting-profiles-name"></a>
+## services\.proxy-suite\.perAppRouting\.profiles\.\*\.name
 
 
 
 Profile name used by ` proxy-ctl wrap <name> -- <command> `\.
-Must be unique within appRouting\.profiles\.
+Must be unique within perAppRouting\.profiles\.
 
 
 
@@ -1258,12 +772,12 @@ string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-profiles-route"></a>
-## services\.proxy-suite\.appRouting\.profiles\.\*\.route
+<a id="services-proxy-suite-perapprouting-profiles-route"></a>
+## services\.proxy-suite\.perAppRouting\.profiles\.\*\.route
 
 
 
@@ -1272,14 +786,14 @@ Per-app route backend used by proxy-ctl wrap\.
  - “direct”: run the command unchanged\.
  - “proxychains”: run the command through proxychains-ng using the
    local proxy-suite mixed SOCKS endpoint\.
- - “tun”: launch the command in the dedicated app-routing TUN slice so
+ - “tun”: launch the command in the dedicated per-app-routing TUN slice so
    only that app’s traffic is policy-routed into the app TUN backend\.
- - “tproxy”: launch the command in the dedicated app-routing TProxy
+ - “tproxy”: launch the command in the dedicated per-app-routing TProxy
    slice so only that app’s traffic is transparently intercepted by
    the local sing-box TProxy inbound\.
- - “zapret”: launch the command in the dedicated app-routing zapret
+ - “zapret”: launch the command in the dedicated per-app-routing zapret
    slice so only that app’s traffic is handled by the separate
-   app-scoped zapret instance\.
+   per-app-scoped zapret instance\.
 
 Additional route backends may be added in the future\.
 
@@ -1305,16 +819,16 @@ one of “direct”, “proxychains”, “tun”, “tproxy”, “zapret”
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-proxychains-enable"></a>
-## services\.proxy-suite\.appRouting\.proxychains\.enable
+<a id="services-proxy-suite-perapprouting-proxychains-enable"></a>
+## services\.proxy-suite\.perAppRouting\.proxychains\.enable
 
 
 
-Whether to enable proxychains-backed appRouting profiles\.
+Whether to enable proxychains-backed perAppRouting profiles\.
 
 
 
@@ -1338,12 +852,12 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-proxychains-proxydns"></a>
-## services\.proxy-suite\.appRouting\.proxychains\.proxyDns
+<a id="services-proxy-suite-perapprouting-proxychains-proxydns"></a>
+## services\.proxy-suite\.perAppRouting\.proxychains\.proxyDns
 
 
 
@@ -1373,12 +887,12 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
-<a id="services-proxy-suite-approuting-proxychains-quiet"></a>
-## services\.proxy-suite\.appRouting\.proxychains\.quiet
+<a id="services-proxy-suite-perapprouting-proxychains-quiet"></a>
+## services\.proxy-suite\.perAppRouting\.proxychains\.quiet
 
 
 
@@ -1407,7 +921,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/app-routing.nix)
+ - [modules/proxy-suite/options/per-app-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/per-app-routing.nix)
 
 
 
@@ -1417,8 +931,8 @@ true
 
 
 Whether to configure and run sing-box services for proxy-suite\.
-When disabled, singBox\.\* options are ignored even if proxy-suite itself
-is enabled\.
+When disabled, sing-box services and generated sing-box configs are
+skipped even if proxy-suite itself is enabled\.
 
 
 
@@ -1482,7 +996,7 @@ DNS upstream used for the built-in “local” resolver role\.
 This resolver is also used as sing-box route\.default_domain_resolver\.
 
 The module keeps detour policy automatic: in mixed/TProxy mode and
-app-routing TUN mode, “local” stays on the direct path (without an
+per-app-routing TUN mode, “local” stays on the direct path (without an
 explicit detour); in global TUN mode, it is forced through the proxy to avoid
 auto_redirect conflicts\.
 
@@ -1739,41 +1253,6 @@ one of “udp”, “tcp”, “tls”
 
 ```nix
 "tls"
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
-
-
-
-<a id="services-proxy-suite-singbox-fwmark"></a>
-## services\.proxy-suite\.singBox\.fwmark
-
-
-
-Mark applied to intercepted packets in TProxy mode\.
-A matching ` ip rule ` routes this mark to singBox\.routeTable, which
-points traffic to loopback for local proxy processing\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-1
-```
-
-
-
-*Example:*
-
-```nix
-1
 ```
 
 *Declared by:*
@@ -2223,75 +1702,6 @@ true
 
 ```nix
 true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
-
-
-
-<a id="services-proxy-suite-singbox-proxymark"></a>
-## services\.proxy-suite\.singBox\.proxyMark
-
-
-
-Mark applied to sing-box egress packets in TProxy mode so they bypass
-re-interception and do not loop back into the transparent proxy path\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-2
-```
-
-
-
-*Example:*
-
-```nix
-2
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
-
-
-
-<a id="services-proxy-suite-singbox-routetable"></a>
-## services\.proxy-suite\.singBox\.routeTable
-
-
-
-Policy-routing table number used for TProxy interception flow\.
-The module installs a local default route in this table and binds it
-to singBox\.fwmark\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-100
-```
-
-
-
-*Example:*
-
-```nix
-100
 ```
 
 *Declared by:*
@@ -3254,7 +2664,7 @@ null
 
 
 
-Whether to enable TProxy mode service (opt-in, transparent proxy via nftables)\.
+Whether to enable global sing-box TProxy mode service\.
 
 
 
@@ -3317,12 +2727,49 @@ true
 
 
 
+<a id="services-proxy-suite-singbox-tproxy-fwmark"></a>
+## services\.proxy-suite\.singBox\.tproxy\.fwmark
+
+
+
+Mark applied to intercepted packets in global TProxy mode\.
+A matching ` ip rule ` routes this mark to
+singBox\.tproxy\.routeTable, which points traffic to
+loopback for local proxy processing\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+1
+```
+
+
+
+*Example:*
+
+```nix
+1
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
 <a id="services-proxy-suite-singbox-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.singBox\.tproxy\.localSubnets
 
 
 
-Subnets whose traffic bypasses TProxy interception, except DNS (port 53)\.
+Subnets whose traffic bypasses global TProxy interception, except
+DNS (port 53)\.
 
 Typically this should include your LAN subnet(s)\. VM bridge networks
 should usually go here too, or use zapret\.cidrExemption for
@@ -3359,8 +2806,147 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-tproxyport"></a>
-## services\.proxy-suite\.singBox\.tproxyPort
+<a id="services-proxy-suite-singbox-tproxy-perapp-enable"></a>
+## services\.proxy-suite\.singBox\.tproxy\.perApp\.enable
+
+
+
+Whether to enable per-app-scoped sing-box TProxy backend for perAppRouting profiles\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tproxy-perapp-fwmark"></a>
+## services\.proxy-suite\.singBox\.tproxy\.perApp\.fwmark
+
+
+
+Packet mark used to steer wrapped app traffic into the per-app-scoped
+TProxy policy-routing table\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+17
+```
+
+
+
+*Example:*
+
+```nix
+17
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tproxy-perapp-localsubnets"></a>
+## services\.proxy-suite\.singBox\.tproxy\.perApp\.localSubnets
+
+
+
+Subnets whose traffic bypasses per-app-scoped TProxy interception,
+except DNS (port 53)\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[
+  "192.168.0.0/16"
+]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "192.168.0.0/16"
+  "10.0.0.0/8"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tproxy-perapp-routetable"></a>
+## services\.proxy-suite\.singBox\.tproxy\.perApp\.routeTable
+
+
+
+Policy-routing table used by the per-app-scoped TProxy backend\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+102
+```
+
+
+
+*Example:*
+
+```nix
+102
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tproxy-port"></a>
+## services\.proxy-suite\.singBox\.tproxy\.port
 
 
 
@@ -3394,12 +2980,82 @@ TCP/UDP traffic to this port\.
 
 
 
+<a id="services-proxy-suite-singbox-tproxy-proxymark"></a>
+## services\.proxy-suite\.singBox\.tproxy\.proxyMark
+
+
+
+Mark applied to sing-box egress packets in global TProxy mode so
+they bypass re-interception and do not loop back into the
+transparent proxy path\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+2
+```
+
+
+
+*Example:*
+
+```nix
+2
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tproxy-routetable"></a>
+## services\.proxy-suite\.singBox\.tproxy\.routeTable
+
+
+
+Policy-routing table number used for global TProxy interception flow\.
+The module installs a local default route in this table and binds it
+to singBox\.tproxy\.fwmark\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+100
+```
+
+
+
+*Example:*
+
+```nix
+100
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
 <a id="services-proxy-suite-singbox-tun-enable"></a>
 ## services\.proxy-suite\.singBox\.tun\.enable
 
 
 
-Whether to enable TUN mode service (opt-in, mutually exclusive with proxy-suite-tproxy)\.
+Whether to enable global sing-box TUN mode service\.
 
 
 
@@ -3432,7 +3088,7 @@ true
 
 
 
-Address assigned to the TUN interface in CIDR notation\.
+Address assigned to the global TUN interface in CIDR notation\.
 
 
 
@@ -3533,7 +3189,7 @@ string
 
 
 
-MTU for the TUN interface created by proxy-suite-tun\.
+MTU for the global TUN interface created by proxy-suite-tun\.
 
 
 
@@ -3554,6 +3210,246 @@ signed integer
 
 ```nix
 1400
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-enable"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.enable
+
+
+
+Whether to enable per-app-scoped sing-box TUN backend for perAppRouting profiles\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-address"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.address
+
+
+
+Address assigned to the dedicated per-app-routing TUN interface in CIDR
+notation\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"172.20.0.1/30"
+```
+
+
+
+*Example:*
+
+```nix
+"172.20.0.1/30"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-fwmark"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.fwmark
+
+
+
+Packet mark used to steer wrapped app traffic into the per-app-scoped
+TUN policy-routing table\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+16
+```
+
+
+
+*Example:*
+
+```nix
+16
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-interface"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.interface
+
+
+
+Name of the dedicated per-app-routing TUN interface used by
+proxy-suite-per-app-tun\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"psperapptun0"
+```
+
+
+
+*Example:*
+
+```nix
+"psperapptun0"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-localsubnets"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.localSubnets
+
+
+
+Destination subnets that should bypass the per-app-scoped TUN mark,
+so wrapped apps can still reach local LAN resources directly\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[
+  "192.168.0.0/16"
+]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "192.168.0.0/16"
+  "10.0.0.0/8"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-mtu"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.mtu
+
+
+
+MTU for the dedicated per-app-routing TUN interface\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+1400
+```
+
+
+
+*Example:*
+
+```nix
+1400
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-tun-perapp-routetable"></a>
+## services\.proxy-suite\.singBox\.tun\.perApp\.routeTable
+
+
+
+Policy-routing table used by the per-app-scoped TUN backend\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+101
+```
+
+
+
+*Example:*
+
+```nix
+101
 ```
 
 *Declared by:*
@@ -4098,6 +3994,8 @@ true
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
 
+
+
 Whether to enable zapret DPI bypass\.
 
 
@@ -4349,8 +4247,6 @@ true
 
 <a id="services-proxy-suite-zapret-hostlistrules-domains"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.domains
-
-
 
 Domains written into the generated custom zapret hostlist file\.
 Must be non-empty for every hostlistRules entry\.
@@ -4661,6 +4557,108 @@ list of string
 [
   "youtube.com"
 ]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-perapp-enable"></a>
+## services\.proxy-suite\.zapret\.perApp\.enable
+
+
+
+Whether to enable per-app-scoped zapret backend for perAppRouting profiles\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-perapp-filtermark"></a>
+## services\.proxy-suite\.zapret\.perApp\.filterMark
+
+
+
+Packet mark bit used to mark wrapped app traffic for the
+dedicated per-app-scoped zapret instance\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+268435456
+```
+
+
+
+*Example:*
+
+```nix
+268435456
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-perapp-qnum"></a>
+## services\.proxy-suite\.zapret\.perApp\.qnum
+
+
+
+NFQUEUE number used by the dedicated per-app-scoped zapret instance\.
+This backend runs as a second zapret daemon and should use a
+queue distinct from the global zapret instance\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+201
+```
+
+
+
+*Example:*
+
+```nix
+201
 ```
 
 *Declared by:*

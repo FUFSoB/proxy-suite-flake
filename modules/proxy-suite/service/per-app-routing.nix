@@ -4,13 +4,13 @@
   pkgs,
   cfg,
   singBoxCfg,
-  appRoutingCfg,
-  appRoutingTun,
-  appRoutingTproxy,
-  appRoutingZapret,
-  appTunChainFile,
-  appTproxyRulesFile,
-  appZapretRulesFile,
+  perAppRoutingCfg,
+  perAppRoutingTun,
+  perAppRoutingTproxy,
+  perAppZapretCfg,
+  perAppTunChainFile,
+  perAppTproxyRulesFile,
+  perAppZapretRulesFile,
   ip,
   nft,
   awk,
@@ -31,103 +31,104 @@
 }:
 
 let
-  appTunSliceName = "proxy-suite-app-tun.slice";
-  appTproxySliceName = "proxy-suite-app-tproxy.slice";
-  appZapretSliceName = "proxy-suite-app-zapret.slice";
+  perAppTunSliceName = "proxy-suite-per-app-tun.slice";
+  perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
+  perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
 
-  appRoutingProfileNames = map (profile: profile.name) appRoutingCfg.profiles;
-  defaultAppRoutingProfiles =
-    lib.optionals appRoutingCfg.createDefaultProfiles [
+  perAppRoutingProfileNames = map (profile: profile.name) perAppRoutingCfg.profiles;
+  defaultPerAppRoutingProfiles = lib.optionals perAppRoutingCfg.createDefaultProfiles (
+    [
       {
         name = "proxychains";
         route = "proxychains";
       }
     ]
-    ++ lib.optionals appRoutingTun.enable [
+    ++ lib.optionals perAppRoutingTun.enable [
       {
         name = "tun";
         route = "tun";
       }
     ]
-    ++ lib.optionals appRoutingTproxy.enable [
+    ++ lib.optionals perAppRoutingTproxy.enable [
       {
         name = "tproxy";
         route = "tproxy";
       }
     ]
-    ++ lib.optionals (appRoutingZapret.enable && cfg.zapret.enable) [
+    ++ lib.optionals (perAppZapretCfg.enable && cfg.zapret.enable) [
       {
         name = "zapret";
         route = "zapret";
       }
-    ];
-  effectiveAppRoutingProfiles =
-    appRoutingCfg.profiles
-    ++ builtins.filter (profile: !(builtins.elem profile.name appRoutingProfileNames)) defaultAppRoutingProfiles;
-  effectiveAppRoutingProfileNames = map (profile: profile.name) effectiveAppRoutingProfiles;
+    ]
+  );
+  effectivePerAppRoutingProfiles =
+    perAppRoutingCfg.profiles
+    ++ builtins.filter (profile: !(builtins.elem profile.name perAppRoutingProfileNames)) defaultPerAppRoutingProfiles;
+  effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
 
-  appRoutingProfilesFile = pkgs.writeText "proxy-suite-app-routing-profiles.json" (
-    builtins.toJSON effectiveAppRoutingProfiles
+  perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app-routing-profiles.json" (
+    builtins.toJSON effectivePerAppRoutingProfiles
   );
 
   proxychainsConfigFile = pkgs.writeText "proxy-suite-proxychains.conf" ''
     strict_chain
-    ${lib.optionalString appRoutingCfg.proxychains.quiet "quiet_mode"}
-    ${lib.optionalString appRoutingCfg.proxychains.proxyDns "proxy_dns"}
+    ${lib.optionalString perAppRoutingCfg.proxychains.quiet "quiet_mode"}
+    ${lib.optionalString perAppRoutingCfg.proxychains.proxyDns "proxy_dns"}
     tcp_read_time_out 15000
     tcp_connect_time_out 8000
 
     [ProxyList]
     socks5 ${singBoxCfg.listenAddress} ${toString singBoxCfg.port}
   '';
-  proxychainsQuietArg = lib.optionalString appRoutingCfg.proxychains.quiet "-q ";
+  proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 
-  hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectiveAppRoutingProfiles;
-  hasTunProfiles = builtins.any (profile: profile.route == "tun") effectiveAppRoutingProfiles;
-  hasTproxyProfiles = builtins.any (profile: profile.route == "tproxy") effectiveAppRoutingProfiles;
-  hasZapretProfiles = builtins.any (profile: profile.route == "zapret") effectiveAppRoutingProfiles;
+  hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectivePerAppRoutingProfiles;
+  hasTunProfiles = builtins.any (profile: profile.route == "tun") effectivePerAppRoutingProfiles;
+  hasTproxyProfiles = builtins.any (profile: profile.route == "tproxy") effectivePerAppRoutingProfiles;
+  hasZapretProfiles = builtins.any (profile: profile.route == "zapret") effectivePerAppRoutingProfiles;
 
-  appTunWaitForInterface = pkgs.writeShellScript "proxy-suite-app-tun-wait-for-interface" ''
+  perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app-tun-wait-for-interface" ''
     set -euo pipefail
     for _ in $(${seqBin} 1 50); do
-      if ${ip} link show dev ${lib.escapeShellArg appRoutingTun.interface} >/dev/null 2>&1; then
+      if ${ip} link show dev ${lib.escapeShellArg perAppRoutingTun.interface} >/dev/null 2>&1; then
         exit 0
       fi
       ${sleepBin} 0.1
     done
-    echo "proxy-suite: app TUN interface ${appRoutingTun.interface} did not appear in time" >&2
+    echo "proxy-suite: app TUN interface ${perAppRoutingTun.interface} did not appear in time" >&2
     exit 1
   '';
 
-  appTunUpScript = pkgs.writeShellScript "proxy-suite-app-tun-up" ''
+  perAppTunUpScript = pkgs.writeShellScript "proxy-suite-per-app-tun-up" ''
     set -euo pipefail
-    ${nft} delete table inet proxy_suite_app_tun 2>/dev/null || true
-    ${nft} -f ${appTunChainFile}
-    ${appTunWaitForInterface}
-    ${ip} route replace default dev ${lib.escapeShellArg appRoutingTun.interface} table ${toString appRoutingTun.routeTable}
-    ${ip} rule add fwmark ${toString appRoutingTun.fwmark} table ${toString appRoutingTun.routeTable} 2>/dev/null || true
+    ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
+    ${nft} -f ${perAppTunChainFile}
+    ${perAppTunWaitForInterface}
+    ${ip} route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+    ${ip} rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
   '';
 
-  appTunDownScript = pkgs.writeShellScript "proxy-suite-app-tun-down" ''
+  perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app-tun-down" ''
     set -euo pipefail
-    ${nft} delete table inet proxy_suite_app_tun 2>/dev/null || true
-    ${ip} route del default dev ${lib.escapeShellArg appRoutingTun.interface} table ${toString appRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} rule del fwmark ${toString appRoutingTun.fwmark} table ${toString appRoutingTun.routeTable} 2>/dev/null || true
+    ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
+    ${ip} route del default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
   '';
 
-  appTproxyUpScript = pkgs.writeShellScript "proxy-suite-app-tproxy-up" ''
+  perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-up" ''
     set -euo pipefail
-    ${nft} delete table ip proxy_suite_app_tproxy 2>/dev/null || true
-    ${nft} -f ${appTproxyRulesFile}
-    ${ip} route replace local default dev lo table ${toString appRoutingTproxy.routeTable}
-    ${ip} rule add fwmark ${toString appRoutingTproxy.fwmark} table ${toString appRoutingTproxy.routeTable} 2>/dev/null || true
+    ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
+    ${nft} -f ${perAppTproxyRulesFile}
+    ${ip} route replace local default dev lo table ${toString perAppRoutingTproxy.routeTable}
+    ${ip} rule add fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
   '';
 
-  appTproxyDownScript = pkgs.writeShellScript "proxy-suite-app-tproxy-down" ''
+  perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-down" ''
     set -euo pipefail
-    ${nft} delete table ip proxy_suite_app_tproxy 2>/dev/null || true
-    ${ip} route del local default dev lo table ${toString appRoutingTproxy.routeTable} 2>/dev/null || true
-    ${ip} rule del fwmark ${toString appRoutingTproxy.fwmark} table ${toString appRoutingTproxy.routeTable} 2>/dev/null || true
+    ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
+    ${ip} route del local default dev lo table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
+    ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
   '';
 
   # Generate a "start" script that adds a per-user cgroup nftables mark rule.
@@ -198,51 +199,51 @@ let
       fi
     '';
 
-  appTunUserRuleStart = mkUserRuleStart {
-    name = "app-tun";
+  perAppTunUserRuleStart = mkUserRuleStart {
+    name = "per-app-tun";
     nftFamily = "inet";
-    nftTable = "proxy_suite_app_tun";
+    nftTable = "proxy_suite_per_app_tun";
     nftChain = "output";
-    sliceName = appTunSliceName;
+    sliceName = perAppTunSliceName;
     sliceLabel = "app TUN";
-    markRule = "meta mark set ${toString appRoutingTun.fwmark} ct mark set ${toString appRoutingTun.fwmark}";
+    markRule = "meta mark set ${toString perAppRoutingTun.fwmark} ct mark set ${toString perAppRoutingTun.fwmark}";
   };
-  appTunUserRuleStop = mkUserRuleStop {
-    name = "app-tun";
+  perAppTunUserRuleStop = mkUserRuleStop {
+    name = "per-app-tun";
     nftFamily = "inet";
-    nftTable = "proxy_suite_app_tun";
+    nftTable = "proxy_suite_per_app_tun";
     nftChain = "output";
   };
 
-  appTproxyUserRuleStart = mkUserRuleStart {
-    name = "app-tproxy";
+  perAppTproxyUserRuleStart = mkUserRuleStart {
+    name = "per-app-tproxy";
     nftFamily = "ip";
-    nftTable = "proxy_suite_app_tproxy";
+    nftTable = "proxy_suite_per_app_tproxy";
     nftChain = "output";
-    sliceName = appTproxySliceName;
+    sliceName = perAppTproxySliceName;
     sliceLabel = "app TProxy";
-    markRule = "meta mark set ${toString appRoutingTproxy.fwmark} ct mark set ${toString appRoutingTproxy.fwmark}";
+    markRule = "meta mark set ${toString perAppRoutingTproxy.fwmark} ct mark set ${toString perAppRoutingTproxy.fwmark}";
   };
-  appTproxyUserRuleStop = mkUserRuleStop {
-    name = "app-tproxy";
+  perAppTproxyUserRuleStop = mkUserRuleStop {
+    name = "per-app-tproxy";
     nftFamily = "ip";
-    nftTable = "proxy_suite_app_tproxy";
+    nftTable = "proxy_suite_per_app_tproxy";
     nftChain = "output";
   };
 
-  appZapretUserRuleStart = mkUserRuleStart {
-    name = "app-zapret";
+  perAppZapretUserRuleStart = mkUserRuleStart {
+    name = "per-app-zapret";
     nftFamily = "inet";
-    nftTable = "proxy_suite_app_zapret_mark";
+    nftTable = "proxy_suite_per_app_zapret_mark";
     nftChain = "output";
-    sliceName = appZapretSliceName;
+    sliceName = perAppZapretSliceName;
     sliceLabel = "app zapret";
-    markRule = "meta mark set meta mark or ${toString appRoutingZapret.filterMark} ct mark set ct mark or ${toString appRoutingZapret.filterMark}";
+    markRule = "meta mark set meta mark or ${toString perAppZapretCfg.filterMark} ct mark set ct mark or ${toString perAppZapretCfg.filterMark}";
   };
-  appZapretUserRuleStop = mkUserRuleStop {
-    name = "app-zapret";
+  perAppZapretUserRuleStop = mkUserRuleStop {
+    name = "per-app-zapret";
     nftFamily = "inet";
-    nftTable = "proxy_suite_app_zapret_mark";
+    nftTable = "proxy_suite_per_app_zapret_mark";
     nftChain = "output";
   };
 
@@ -273,16 +274,16 @@ let
       CLASH_API="${clashApi}"
       SELECTION="${selection}"
       SUB_TAGS=(${subscriptionTagsList})
-      APP_ROUTING_ENABLED="${if appRoutingCfg.enable then "1" else "0"}"
-      APP_ROUTING_PROXYCHAINS_ENABLED="${if appRoutingCfg.proxychains.enable then "1" else "0"}"
-      APP_ROUTING_TUN_ENABLED="${if appRoutingTun.enable then "1" else "0"}"
-      APP_ROUTING_TPROXY_ENABLED="${if appRoutingTproxy.enable then "1" else "0"}"
-      APP_ROUTING_ZAPRET_ENABLED="${if (appRoutingZapret.enable && cfg.zapret.enable) then "1" else "0"}"
-      APP_ROUTING_PROFILES_FILE="${appRoutingProfilesFile}"
+      PER_APP_ROUTING_ENABLED="${if perAppRoutingCfg.enable then "1" else "0"}"
+      PER_APP_ROUTING_PROXYCHAINS_ENABLED="${if perAppRoutingCfg.proxychains.enable then "1" else "0"}"
+      PER_APP_ROUTING_TUN_ENABLED="${if perAppRoutingTun.enable then "1" else "0"}"
+      PER_APP_ROUTING_TPROXY_ENABLED="${if perAppRoutingTproxy.enable then "1" else "0"}"
+      PER_APP_ROUTING_ZAPRET_ENABLED="${if (perAppZapretCfg.enable && cfg.zapret.enable) then "1" else "0"}"
+      PER_APP_ROUTING_PROFILES_FILE="${perAppRoutingProfilesFile}"
       PROXYCHAINS_CONFIG="${proxychainsConfigFile}"
-      APP_TUN_SLICE_BASE="proxy-suite-app-tun"
-      APP_TPROXY_SLICE_BASE="proxy-suite-app-tproxy"
-      APP_ZAPRET_SLICE_BASE="proxy-suite-app-zapret"
+      PER_APP_TUN_SLICE_BASE="proxy-suite-per-app-tun"
+      PER_APP_TPROXY_SLICE_BASE="proxy-suite-per-app-tproxy"
+      PER_APP_ZAPRET_SLICE_BASE="proxy-suite-per-app-zapret"
 
       ALL_SERVICES=(
         proxy-suite-socks
@@ -307,7 +308,7 @@ let
         echo "  outbounds                 list outbounds and current selection"
         echo "  select <tag>              switch to a specific outbound  (selector mode)"
         echo "  apps                      list configured per-app routing profiles"
-        echo "  wrap <profile> -- <cmd>   run a command via an appRouting profile"
+        echo "  wrap <profile> -- <cmd>   run a command via an perAppRouting profile"
         echo "  subscription list         show subscriptions, cache age, and proxy count"
         echo "  subscription update       force-refresh all subscription caches and restart"
         exit 1
@@ -352,15 +353,15 @@ let
       }
 
       _ensure_app_routing() {
-        if [ "$APP_ROUTING_ENABLED" != "1" ]; then
-          echo "appRouting is not enabled in services.proxy-suite.appRouting."
+        if [ "$PER_APP_ROUTING_ENABLED" != "1" ]; then
+          echo "perAppRouting is not enabled in services.proxy-suite.perAppRouting."
           exit 1
         fi
       }
 
       _profile_route() {
         local profile="$1"
-        ${jq} -r --arg name "$profile" '.[] | select(.name == $name) | .route' "$APP_ROUTING_PROFILES_FILE"
+        ${jq} -r --arg name "$profile" '.[] | select(.name == $name) | .route' "$PER_APP_ROUTING_PROFILES_FILE"
       }
 
       _scope_running() {
@@ -523,12 +524,12 @@ let
 
         apps)
           _ensure_app_routing
-          if [ "$(${jq} 'length' "$APP_ROUTING_PROFILES_FILE")" -eq 0 ]; then
-            echo "No appRouting profiles configured."
+          if [ "$(${jq} 'length' "$PER_APP_ROUTING_PROFILES_FILE")" -eq 0 ]; then
+            echo "No perAppRouting profiles configured."
           else
             printf "  %-24s %s\n" "PROFILE" "ROUTE"
             ${jq} -r '.[] | "  " + (.name | tostring) + "\t" + (.route | tostring)' \
-              "$APP_ROUTING_PROFILES_FILE" \
+              "$PER_APP_ROUTING_PROFILES_FILE" \
               | while IFS=$'\t' read -r profile route; do
                   printf "%-26s %s\n" "$profile" "$route"
                 done
@@ -549,7 +550,7 @@ let
           _ensure_app_routing
           route="$(_profile_route "$profile")"
           if [ -z "$route" ] || [ "$route" = "null" ]; then
-            echo "Unknown appRouting profile: $profile"
+            echo "Unknown perAppRouting profile: $profile"
             exit 1
           fi
 
@@ -558,28 +559,28 @@ let
               exec "$@"
               ;;
             proxychains)
-              if [ "$APP_ROUTING_PROXYCHAINS_ENABLED" != "1" ]; then
-                echo "Profile '$profile' uses route=proxychains, but appRouting.proxychains.enable is false."
+              if [ "$PER_APP_ROUTING_PROXYCHAINS_ENABLED" != "1" ]; then
+                echo "Profile '$profile' uses route=proxychains, but perAppRouting.proxychains.enable is false."
                 exit 1
               fi
               exec ${proxychains4} ${proxychainsQuietArg}-f "$PROXYCHAINS_CONFIG" "$@"
               ;;
             tun)
-              _wrap_slice "$APP_TUN_SLICE_BASE" "$APP_ROUTING_TUN_ENABLED" \
-                "Profile '$profile' uses route=tun, but appRouting.backends.tun.enable is false." \
-                "proxy-suite-app-tun.service" "$@"
+              _wrap_slice "$PER_APP_TUN_SLICE_BASE" "$PER_APP_ROUTING_TUN_ENABLED" \
+                "Profile '$profile' uses route=tun, but singBox.tun.perApp.enable is false." \
+                "proxy-suite-per-app-tun.service" "$@"
               ;;
             tproxy)
               _check_no_global_proxy tproxy
-              _wrap_slice "$APP_TPROXY_SLICE_BASE" "$APP_ROUTING_TPROXY_ENABLED" \
-                "Profile '$profile' uses route=tproxy, but appRouting.backends.tproxy.enable is false." \
-                "proxy-suite-app-tproxy.service" "$@"
+              _wrap_slice "$PER_APP_TPROXY_SLICE_BASE" "$PER_APP_ROUTING_TPROXY_ENABLED" \
+                "Profile '$profile' uses route=tproxy, but singBox.tproxy.perApp.enable is false." \
+                "proxy-suite-per-app-tproxy.service" "$@"
               ;;
             zapret)
               _check_no_global_proxy zapret
-              _wrap_slice "$APP_ZAPRET_SLICE_BASE" "$APP_ROUTING_ZAPRET_ENABLED" \
-                "Profile '$profile' uses route=zapret, but the app-zapret backend or zapret service is not enabled." \
-                "proxy-suite-app-zapret.service" "$@"
+              _wrap_slice "$PER_APP_ZAPRET_SLICE_BASE" "$PER_APP_ROUTING_ZAPRET_ENABLED" \
+                "Profile '$profile' uses route=zapret, but zapret.perApp.enable or zapret.enable is false." \
+                "proxy-suite-per-app-zapret.service" "$@"
               ;;
             *)
               echo "Route backend '$route' is not implemented in this build."
@@ -629,23 +630,23 @@ let
 in
 {
   inherit
-    appTunSliceName
-    appTproxySliceName
-    appZapretSliceName
-    appTunUpScript
-    appTunDownScript
-    appTproxyUpScript
-    appTproxyDownScript
-    appTunUserRuleStart
-    appTunUserRuleStop
-    appTproxyUserRuleStart
-    appTproxyUserRuleStop
-    appZapretUserRuleStart
-    appZapretUserRuleStop
+    perAppTunSliceName
+    perAppTproxySliceName
+    perAppZapretSliceName
+    perAppTunUpScript
+    perAppTunDownScript
+    perAppTproxyUpScript
+    perAppTproxyDownScript
+    perAppTunUserRuleStart
+    perAppTunUserRuleStop
+    perAppTproxyUserRuleStart
+    perAppTproxyUserRuleStop
+    perAppZapretUserRuleStart
+    perAppZapretUserRuleStop
     mkAnchorService
-    effectiveAppRoutingProfiles
-    effectiveAppRoutingProfileNames
-    appRoutingProfilesFile
+    effectivePerAppRoutingProfiles
+    effectivePerAppRoutingProfileNames
+    perAppRoutingProfilesFile
     proxychainsConfigFile
     proxychainsQuietArg
     hasProxychainsProfiles

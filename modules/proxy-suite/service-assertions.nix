@@ -3,156 +3,204 @@
   cfg,
   singBoxCfg,
   tgWsProxyCfg,
-  appRoutingCfg,
-  appRoutingTun,
-  appRoutingTproxy,
-  appRoutingZapret,
+  perAppRoutingCfg,
+  perAppRoutingTun,
+  perAppRoutingTproxy,
+  perAppZapretCfg,
   builtinTags,
   outboundTags,
   invalidRoutingTargets,
-  effectiveAppRoutingProfileNames,
+  effectivePerAppRoutingProfileNames,
   hasProxychainsProfiles,
   hasTunProfiles,
   hasTproxyProfiles,
   hasZapretProfiles,
 }:
 
+let
+  globalTun = singBoxCfg.tun;
+  globalTproxy = singBoxCfg.tproxy;
+in
 [
   {
     assertion = !singBoxCfg.enable || (singBoxCfg.outbounds != [ ] || singBoxCfg.subscriptions != [ ]);
     message = "proxy-suite: at least one outbound or subscription is required when singBox.enable = true";
   }
   {
-    assertion = builtins.length outboundTags == builtins.length (lib.unique outboundTags);
+    assertion = !singBoxCfg.enable || builtins.length outboundTags == builtins.length (lib.unique outboundTags);
     message = "proxy-suite: outbound tags must be unique";
   }
   {
-    assertion = builtins.all (tag: !builtins.elem tag builtinTags) outboundTags;
+    assertion = !singBoxCfg.enable || builtins.all (tag: !builtins.elem tag builtinTags) outboundTags;
     message = "proxy-suite: outbound tags must not use reserved names: proxy, direct, block";
   }
   {
-    assertion = invalidRoutingTargets == [ ];
+    assertion = !singBoxCfg.enable || invalidRoutingTargets == [ ];
     message = "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}";
   }
   {
-    assertion = !(singBoxCfg.tproxy.enable && singBoxCfg.tproxy.autostart && singBoxCfg.tun.enable && singBoxCfg.tun.autostart);
-    message = "proxy-suite: singBox.tproxy.autostart and singBox.tun.autostart cannot both be enabled at the same time";
+    assertion = !globalTun.enable || singBoxCfg.enable;
+    message = "proxy-suite: singBox.tun.enable requires singBox.enable = true";
   }
   {
-    assertion = appRoutingCfg.enable || appRoutingCfg.profiles == [ ];
-    message = "proxy-suite: appRouting.profiles requires appRouting.enable = true";
+    assertion = !globalTproxy.enable || singBoxCfg.enable;
+    message = "proxy-suite: singBox.tproxy.enable requires singBox.enable = true";
   }
   {
-    assertion = !appRoutingCfg.proxychains.enable || appRoutingCfg.enable;
-    message = "proxy-suite: appRouting.proxychains.enable requires appRouting.enable = true";
+    assertion = !globalTun.autostart || globalTun.enable;
+    message = "proxy-suite: singBox.tun.autostart requires singBox.tun.enable = true";
   }
   {
-    assertion = builtins.length effectiveAppRoutingProfileNames == builtins.length (lib.unique effectiveAppRoutingProfileNames);
-    message = "proxy-suite: appRouting profile names must be unique";
+    assertion = !globalTproxy.autostart || globalTproxy.enable;
+    message = "proxy-suite: singBox.tproxy.autostart requires singBox.tproxy.enable = true";
   }
   {
-    assertion = !hasProxychainsProfiles || appRoutingCfg.proxychains.enable;
-    message = "proxy-suite: route=proxychains in appRouting.profiles requires appRouting.proxychains.enable = true";
+    assertion = !(globalTproxy.enable && globalTproxy.autostart && globalTun.enable && globalTun.autostart);
+    message =
+      "proxy-suite: singBox.tproxy.autostart and singBox.tun.autostart cannot both be enabled at the same time";
   }
   {
-    assertion = !appRoutingTun.enable || appRoutingCfg.enable;
-    message = "proxy-suite: appRouting.backends.tun.enable requires appRouting.enable = true";
+    assertion = perAppRoutingCfg.enable || perAppRoutingCfg.profiles == [ ];
+    message = "proxy-suite: perAppRouting.profiles requires perAppRouting.enable = true";
   }
   {
-    assertion = !(hasTunProfiles && !appRoutingTun.enable);
-    message = "proxy-suite: route=tun in appRouting profiles requires appRouting.backends.tun.enable = true";
+    assertion = !perAppRoutingCfg.proxychains.enable || perAppRoutingCfg.enable;
+    message = "proxy-suite: perAppRouting.proxychains.enable requires perAppRouting.enable = true";
   }
   {
-    assertion = !appRoutingTproxy.enable || appRoutingCfg.enable;
-    message = "proxy-suite: appRouting.backends.tproxy.enable requires appRouting.enable = true";
+    assertion = !perAppRoutingCfg.proxychains.enable || singBoxCfg.enable;
+    message = "proxy-suite: perAppRouting.proxychains.enable requires singBox.enable = true";
   }
   {
-    assertion = !(hasTproxyProfiles && !appRoutingTproxy.enable);
-    message = "proxy-suite: route=tproxy in appRouting profiles requires appRouting.backends.tproxy.enable = true";
+    assertion = builtins.length effectivePerAppRoutingProfileNames == builtins.length (lib.unique effectivePerAppRoutingProfileNames);
+    message = "proxy-suite: perAppRouting profile names must be unique";
   }
   {
-    assertion = !appRoutingZapret.enable || appRoutingCfg.enable;
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.enable requires appRouting.enable = true";
+    assertion = !hasProxychainsProfiles || perAppRoutingCfg.proxychains.enable;
+    message = "proxy-suite: route=proxychains in perAppRouting.profiles requires perAppRouting.proxychains.enable = true";
   }
   {
-    assertion = !appRoutingZapret.enable || cfg.zapret.enable;
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.enable requires zapretgWsProxyCfg.enable = true";
+    assertion = !hasProxychainsProfiles || singBoxCfg.enable;
+    message = "proxy-suite: route=proxychains in perAppRouting.profiles requires singBox.enable = true";
   }
   {
-    assertion = !(hasZapretProfiles && (!appRoutingZapret.enable || !cfg.zapret.enable));
-    message = "proxy-suite: route=zapret in appRouting profiles requires appRouting.backends.zapretgWsProxyCfg.enable = true and zapretgWsProxyCfg.enable = true";
+    assertion = !perAppRoutingTun.enable || perAppRoutingCfg.enable;
+    message = "proxy-suite: singBox.tun.perApp.enable requires perAppRouting.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && singBoxCfg.tproxy.enable && appRoutingTun.fwmark == singBoxCfg.fwmark);
-    message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.fwmark when singBox.tproxy.enable = true";
+    assertion = !perAppRoutingTun.enable || singBoxCfg.enable;
+    message = "proxy-suite: singBox.tun.perApp.enable requires singBox.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && singBoxCfg.tproxy.enable && appRoutingTun.fwmark == singBoxCfg.proxyMark);
-    message = "proxy-suite: appRouting.backends.tun.fwmark must differ from singBox.proxyMark when singBox.tproxy.enable = true";
+    assertion = !(hasTunProfiles && !perAppRoutingTun.enable);
+    message = "proxy-suite: route=tun in perAppRouting.profiles requires singBox.tun.perApp.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && singBoxCfg.tproxy.enable && appRoutingTun.routeTable == singBoxCfg.routeTable);
-    message = "proxy-suite: appRouting.backends.tun.routeTable must differ from singBox.routeTable when singBox.tproxy.enable = true";
+    assertion = !hasTunProfiles || singBoxCfg.enable;
+    message = "proxy-suite: route=tun in perAppRouting.profiles requires singBox.enable = true";
   }
   {
-    assertion = !(appRoutingTproxy.enable && appRoutingTproxy.fwmark == singBoxCfg.fwmark);
-    message = "proxy-suite: appRouting.backends.tproxy.fwmark must differ from singBox.fwmark";
+    assertion = !perAppRoutingTproxy.enable || perAppRoutingCfg.enable;
+    message = "proxy-suite: singBox.tproxy.perApp.enable requires perAppRouting.enable = true";
   }
   {
-    assertion = !(appRoutingTproxy.enable && appRoutingTproxy.fwmark == singBoxCfg.proxyMark);
-    message = "proxy-suite: appRouting.backends.tproxy.fwmark must differ from singBox.proxyMark";
+    assertion = !perAppRoutingTproxy.enable || singBoxCfg.enable;
+    message = "proxy-suite: singBox.tproxy.perApp.enable requires singBox.enable = true";
   }
   {
-    assertion = !(appRoutingTproxy.enable && appRoutingTproxy.routeTable == singBoxCfg.routeTable);
-    message = "proxy-suite: appRouting.backends.tproxy.routeTable must differ from singBox.routeTable";
+    assertion = !(hasTproxyProfiles && !perAppRoutingTproxy.enable);
+    message = "proxy-suite: route=tproxy in perAppRouting.profiles requires singBox.tproxy.perApp.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && appRoutingTproxy.enable && appRoutingTun.fwmark == appRoutingTproxy.fwmark);
-    message = "proxy-suite: appRouting.backends.tun.fwmark and appRouting.backends.tproxy.fwmark must differ";
+    assertion = !hasTproxyProfiles || singBoxCfg.enable;
+    message = "proxy-suite: route=tproxy in perAppRouting.profiles requires singBox.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && appRoutingTproxy.enable && appRoutingTun.routeTable == appRoutingTproxy.routeTable);
-    message = "proxy-suite: appRouting.backends.tun.routeTable and appRouting.backends.tproxy.routeTable must differ";
+    assertion = !perAppZapretCfg.enable || perAppRoutingCfg.enable;
+    message = "proxy-suite: zapret.perApp.enable requires perAppRouting.enable = true";
   }
   {
-    assertion = !(appRoutingZapret.enable && appRoutingZapret.filterMark == singBoxCfg.fwmark);
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.filterMark must differ from singBox.fwmark";
+    assertion = !perAppZapretCfg.enable || cfg.zapret.enable;
+    message = "proxy-suite: zapret.perApp.enable requires zapret.enable = true";
   }
   {
-    assertion = !(appRoutingZapret.enable && appRoutingZapret.filterMark == singBoxCfg.proxyMark);
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.filterMark must differ from singBox.proxyMark";
+    assertion = !(hasZapretProfiles && (!perAppZapretCfg.enable || !cfg.zapret.enable));
+    message = "proxy-suite: route=zapret in perAppRouting.profiles requires zapret.perApp.enable = true and zapret.enable = true";
   }
   {
-    assertion = !(appRoutingTun.enable && appRoutingZapret.enable && appRoutingTun.fwmark == appRoutingZapret.filterMark);
-    message = "proxy-suite: appRouting.backends.tun.fwmark and appRouting.backends.zapretgWsProxyCfg.filterMark must differ";
+    assertion = !(perAppRoutingTun.enable && globalTproxy.enable && perAppRoutingTun.fwmark == globalTproxy.fwmark);
+    message =
+      "proxy-suite: singBox.tun.perApp.fwmark must differ from singBox.tproxy.fwmark when global TProxy is enabled";
   }
   {
-    assertion = !(appRoutingTproxy.enable && appRoutingZapret.enable && appRoutingTproxy.fwmark == appRoutingZapret.filterMark);
-    message = "proxy-suite: appRouting.backends.tproxy.fwmark and appRouting.backends.zapretgWsProxyCfg.filterMark must differ";
+    assertion = !(perAppRoutingTun.enable && globalTproxy.enable && perAppRoutingTun.fwmark == globalTproxy.proxyMark);
+    message =
+      "proxy-suite: singBox.tun.perApp.fwmark must differ from singBox.tproxy.proxyMark when global TProxy is enabled";
   }
   {
-    assertion = !(appRoutingZapret.enable && builtins.elem appRoutingZapret.filterMark [ 536870912 1073741824 ]);
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.filterMark must not use zapret internal desync mark bits";
+    assertion = !(perAppRoutingTun.enable && globalTproxy.enable && perAppRoutingTun.routeTable == globalTproxy.routeTable);
+    message =
+      "proxy-suite: singBox.tun.perApp.routeTable must differ from singBox.tproxy.routeTable when global TProxy is enabled";
   }
   {
-    assertion = !(appRoutingZapret.enable && builtins.elem singBoxCfg.fwmark [ 67108864 134217728 ]);
-    message = "proxy-suite: singBox.fwmark must not use app-zapret internal desync mark bits";
+    assertion = !(perAppRoutingTproxy.enable && perAppRoutingTproxy.fwmark == globalTproxy.fwmark);
+    message = "proxy-suite: singBox.tproxy.perApp.fwmark must differ from singBox.tproxy.fwmark";
   }
   {
-    assertion = !(appRoutingZapret.enable && builtins.elem singBoxCfg.proxyMark [ 67108864 134217728 ]);
-    message = "proxy-suite: singBox.proxyMark must not use app-zapret internal desync mark bits";
+    assertion = !(perAppRoutingTproxy.enable && perAppRoutingTproxy.fwmark == globalTproxy.proxyMark);
+    message = "proxy-suite: singBox.tproxy.perApp.fwmark must differ from singBox.tproxy.proxyMark";
   }
   {
-    assertion = !(appRoutingTun.enable && appRoutingZapret.enable && builtins.elem appRoutingTun.fwmark [ 67108864 134217728 ]);
-    message = "proxy-suite: appRouting.backends.tun.fwmark must not use app-zapret internal desync mark bits";
+    assertion = !(perAppRoutingTproxy.enable && perAppRoutingTproxy.routeTable == globalTproxy.routeTable);
+    message = "proxy-suite: singBox.tproxy.perApp.routeTable must differ from singBox.tproxy.routeTable";
   }
   {
-    assertion = !(appRoutingTproxy.enable && appRoutingZapret.enable && builtins.elem appRoutingTproxy.fwmark [ 67108864 134217728 ]);
-    message = "proxy-suite: appRouting.backends.tproxy.fwmark must not use app-zapret internal desync mark bits";
+    assertion = !(perAppRoutingTun.enable && perAppRoutingTproxy.enable && perAppRoutingTun.fwmark == perAppRoutingTproxy.fwmark);
+    message = "proxy-suite: singBox.tun.perApp.fwmark and singBox.tproxy.perApp.fwmark must differ";
   }
   {
-    assertion = !(appRoutingZapret.enable && builtins.elem appRoutingZapret.filterMark [ 67108864 134217728 ]);
-    message = "proxy-suite: appRouting.backends.zapretgWsProxyCfg.filterMark must not use app-zapret internal desync mark bits";
+    assertion = !(perAppRoutingTun.enable && perAppRoutingTproxy.enable && perAppRoutingTun.routeTable == perAppRoutingTproxy.routeTable);
+    message = "proxy-suite: singBox.tun.perApp.routeTable and singBox.tproxy.perApp.routeTable must differ";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && perAppZapretCfg.filterMark == globalTproxy.fwmark);
+    message = "proxy-suite: zapret.perApp.filterMark must differ from singBox.tproxy.fwmark";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && perAppZapretCfg.filterMark == globalTproxy.proxyMark);
+    message = "proxy-suite: zapret.perApp.filterMark must differ from singBox.tproxy.proxyMark";
+  }
+  {
+    assertion = !(perAppRoutingTun.enable && perAppZapretCfg.enable && perAppRoutingTun.fwmark == perAppZapretCfg.filterMark);
+    message = "proxy-suite: singBox.tun.perApp.fwmark and zapret.perApp.filterMark must differ";
+  }
+  {
+    assertion = !(perAppRoutingTproxy.enable && perAppZapretCfg.enable && perAppRoutingTproxy.fwmark == perAppZapretCfg.filterMark);
+    message = "proxy-suite: singBox.tproxy.perApp.fwmark and zapret.perApp.filterMark must differ";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && builtins.elem perAppZapretCfg.filterMark [ 536870912 1073741824 ]);
+    message = "proxy-suite: zapret.perApp.filterMark must not use zapret internal desync mark bits";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && builtins.elem globalTproxy.fwmark [ 67108864 134217728 ]);
+    message = "proxy-suite: singBox.tproxy.fwmark must not use per-app-zapret internal desync mark bits";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && builtins.elem globalTproxy.proxyMark [ 67108864 134217728 ]);
+    message = "proxy-suite: singBox.tproxy.proxyMark must not use per-app-zapret internal desync mark bits";
+  }
+  {
+    assertion = !(perAppRoutingTun.enable && perAppZapretCfg.enable && builtins.elem perAppRoutingTun.fwmark [ 67108864 134217728 ]);
+    message = "proxy-suite: singBox.tun.perApp.fwmark must not use per-app-zapret internal desync mark bits";
+  }
+  {
+    assertion = !(perAppRoutingTproxy.enable && perAppZapretCfg.enable && builtins.elem perAppRoutingTproxy.fwmark [ 67108864 134217728 ]);
+    message = "proxy-suite: singBox.tproxy.perApp.fwmark must not use per-app-zapret internal desync mark bits";
+  }
+  {
+    assertion = !(perAppZapretCfg.enable && builtins.elem perAppZapretCfg.filterMark [ 67108864 134217728 ]);
+    message = "proxy-suite: zapret.perApp.filterMark must not use per-app-zapret internal desync mark bits";
   }
   {
     assertion =
@@ -170,25 +218,29 @@
 ++ lib.concatMap (ob: [
   {
     assertion =
-      builtins.length (
-        builtins.filter (x: x != null) [
-          ob.urlFile
-          ob.url
-          ob.json
-        ]
-      ) == 1;
+      !singBoxCfg.enable
+      ||
+        builtins.length (
+          builtins.filter (x: x != null) [
+            ob.urlFile
+            ob.url
+            ob.json
+          ]
+        ) == 1;
     message = "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, or json";
   }
 ]) singBoxCfg.outbounds
 ++ lib.concatMap (sub: [
   {
     assertion =
-      builtins.length (
-        builtins.filter (x: x != null) [
-          sub.urlFile
-          sub.url
-        ]
-      ) == 1;
+      !singBoxCfg.enable
+      ||
+        builtins.length (
+          builtins.filter (x: x != null) [
+            sub.urlFile
+            sub.url
+          ]
+        ) == 1;
     message = "proxy-suite: subscription '${sub.tag}': set exactly one of urlFile or url";
   }
 ]) singBoxCfg.subscriptions

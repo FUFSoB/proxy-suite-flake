@@ -7,9 +7,10 @@
 
 let
   singBoxCfg = cfg.singBox;
-  appRoutingTun = cfg.appRouting.backends.tun;
-  appRoutingTproxy = cfg.appRouting.backends.tproxy;
-  appRoutingZapret = cfg.appRouting.backends.zapret;
+  globalTproxy = singBoxCfg.tproxy;
+  perAppTun = singBoxCfg.tun.perApp;
+  perAppTproxy = singBoxCfg.tproxy.perApp;
+  zapretApp = cfg.zapret.perApp;
 
   # Shared across all three nftables rule files that do IPv4 routing.
   reservedIpBlock = ''
@@ -31,8 +32,8 @@ let
     ip daddr ${cidr} udp dport != 53 return
   '') subnets;
 
-  tproxyLocalSubnetLines = mkLocalSubnetLines singBoxCfg.tproxy.localSubnets;
-  appTproxyLocalSubnetLines = mkLocalSubnetLines appRoutingTproxy.localSubnets;
+  tproxyLocalSubnetLines = mkLocalSubnetLines globalTproxy.localSubnets;
+  perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
   nftablesRulesFile = pkgs.writeText "proxy-suite-tproxy.nft" ''
     ${reservedIpBlock}
@@ -44,70 +45,70 @@ let
               # be skipped just because the host has an RFC1918 source address.
               iifname != "lo" ip saddr $RESERVED_IP return
     ${tproxyLocalSubnetLines}
-              ip protocol tcp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort} meta mark set ${toString singBoxCfg.fwmark}
-              ip protocol udp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort} meta mark set ${toString singBoxCfg.fwmark}
+              ip protocol tcp tproxy to 127.0.0.1:${toString globalTproxy.port} meta mark set ${toString globalTproxy.fwmark}
+              ip protocol udp tproxy to 127.0.0.1:${toString globalTproxy.port} meta mark set ${toString globalTproxy.fwmark}
           }
           chain output {
               type route hook output priority mangle; policy accept;
               ip daddr $RESERVED_IP return
     ${tproxyLocalSubnetLines}
-              meta mark ${toString singBoxCfg.proxyMark} return
-${lib.optionalString appRoutingTun.enable "              meta mark ${toString appRoutingTun.fwmark} return\n"}${lib.optionalString appRoutingTproxy.enable "              meta mark ${toString appRoutingTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString singBoxCfg.fwmark}
-              ip protocol udp meta mark set ${toString singBoxCfg.fwmark}
+              meta mark ${toString globalTproxy.proxyMark} return
+${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString globalTproxy.fwmark}
+              ip protocol udp meta mark set ${toString globalTproxy.fwmark}
           }
       }
   '';
 
-  appTproxyRulesFile = pkgs.writeText "proxy-suite-app-tproxy.nft" ''
+  perAppTproxyRulesFile = pkgs.writeText "proxy-suite-per-app-tproxy.nft" ''
     ${reservedIpBlock}
-      table ip proxy_suite_app_tproxy {
+      table ip proxy_suite_per_app_tproxy {
           chain prerouting {
               type filter hook prerouting priority mangle; policy accept;
               ip daddr $RESERVED_IP return
               iifname != "lo" ip saddr $RESERVED_IP return
-    ${appTproxyLocalSubnetLines}
-              ct mark ${toString appRoutingTproxy.fwmark} meta mark set ${toString appRoutingTproxy.fwmark}
-              meta mark ${toString appRoutingTproxy.fwmark} ip protocol tcp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort}
-              meta mark ${toString appRoutingTproxy.fwmark} ip protocol udp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort}
+    ${perAppTproxyLocalSubnetLines}
+              ct mark ${toString perAppTproxy.fwmark} meta mark set ${toString perAppTproxy.fwmark}
+              meta mark ${toString perAppTproxy.fwmark} ip protocol tcp tproxy to 127.0.0.1:${toString globalTproxy.port}
+              meta mark ${toString perAppTproxy.fwmark} ip protocol udp tproxy to 127.0.0.1:${toString globalTproxy.port}
           }
 
           chain output {
               type route hook output priority mangle; policy accept;
               ip daddr $RESERVED_IP return
-    ${appTproxyLocalSubnetLines}
-              meta mark ${toString singBoxCfg.proxyMark} return
-${lib.optionalString appRoutingTun.enable "              meta mark ${toString appRoutingTun.fwmark} return\n"}              ct mark ${toString appRoutingTproxy.fwmark} meta mark set ${toString appRoutingTproxy.fwmark}
-              meta mark ${toString appRoutingTproxy.fwmark} return
+    ${perAppTproxyLocalSubnetLines}
+              meta mark ${toString globalTproxy.proxyMark} return
+${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}              ct mark ${toString perAppTproxy.fwmark} meta mark set ${toString perAppTproxy.fwmark}
+              meta mark ${toString perAppTproxy.fwmark} return
           }
       }
   '';
 
-  appZapretRulesFile = pkgs.writeText "proxy-suite-app-zapret.nft" ''
-      table inet proxy_suite_app_zapret_mark {
+  perAppZapretRulesFile = pkgs.writeText "proxy-suite-per-app-zapret.nft" ''
+      table inet proxy_suite_per_app_zapret_mark {
           chain prerouting {
               type filter hook prerouting priority -103; policy accept;
-              ct mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} meta mark set meta mark or ${toString appRoutingZapret.filterMark}
+              ct mark and ${toString zapretApp.filterMark} == ${toString zapretApp.filterMark} meta mark set meta mark or ${toString zapretApp.filterMark}
           }
 
           chain output {
               type route hook output priority -103; policy accept;
-              ct mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} meta mark set meta mark or ${toString appRoutingZapret.filterMark}
-              meta mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} return
+              ct mark and ${toString zapretApp.filterMark} == ${toString zapretApp.filterMark} meta mark set meta mark or ${toString zapretApp.filterMark}
+              meta mark and ${toString zapretApp.filterMark} == ${toString zapretApp.filterMark} return
           }
       }
   '';
 
-  appTunChainFile = pkgs.writeText "proxy-suite-app-tun-chain.nft" ''
+  perAppTunChainFile = pkgs.writeText "proxy-suite-per-app-tun-chain.nft" ''
     ${reservedIpBlock}
-      table inet proxy_suite_app_tun {
+      table inet proxy_suite_per_app_tun {
           chain output {
               type route hook output priority mangle; policy accept;
               ip daddr $RESERVED_IP return
 ${lib.concatMapStrings (cidr: ''
               ip daddr ${cidr} return
-  '') appRoutingTun.localSubnets}
-              ct mark ${toString appRoutingTun.fwmark} meta mark set ${toString appRoutingTun.fwmark}
-              meta mark ${toString appRoutingTun.fwmark} return
+  '') perAppTun.localSubnets}
+              ct mark ${toString perAppTun.fwmark} meta mark set ${toString perAppTun.fwmark}
+              meta mark ${toString perAppTun.fwmark} return
           }
       }
   '';
@@ -117,5 +118,5 @@ ${lib.concatMapStrings (cidr: ''
 
 in
 {
-  inherit nftablesRulesFile appTproxyRulesFile appZapretRulesFile appTunChainFile ip nft;
+  inherit nftablesRulesFile perAppTproxyRulesFile perAppZapretRulesFile perAppTunChainFile ip nft;
 }
