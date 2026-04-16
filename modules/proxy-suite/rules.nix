@@ -89,26 +89,11 @@ let
     geoips = lib.unique (r.direct.geoips ++ lib.optional r.enableRuDirect "ru");
   };
 
-  mkDomainRule =
-    tag: domains:
-    lib.optional (domains != [ ]) {
-      domain_suffix = domains;
-      outbound = tag;
-    };
-
-  mkIPRule =
-    tag: ips:
-    lib.optional (ips != [ ]) {
-      ip_cidr = ips;
-      outbound = tag;
-    };
-
-  mkRulesetRule =
-    tag: tags:
-    lib.optional (tags != [ ]) {
-      rule_set = tags;
-      outbound = tag;
-    };
+  mkRule = field: tag: items:
+    lib.optional (items != [ ]) { ${field} = items; outbound = tag; };
+  mkDomainRule  = mkRule "domain_suffix";
+  mkIPRule      = mkRule "ip_cidr";
+  mkRulesetRule = mkRule "rule_set";
 
   # In "first" mode the start script renames the first outbound to "proxy",
   # so any per-outbound routing tag that isn't direct/block/proxy must map

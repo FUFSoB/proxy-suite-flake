@@ -156,21 +156,16 @@ let
           fi
         }
 
-        ${lib.optionalString (listGeneralFile != null) ''
-          append_list_file list-general-user.txt ${listGeneralFile}
-        ''}
-
-        ${lib.optionalString (listExcludeFile != null) ''
-          append_list_file list-exclude-user.txt ${listExcludeFile}
-        ''}
-
-        ${lib.optionalString (ipsetAllFile != null) ''
-          append_list_file ipset-all.txt ${ipsetAllFile}
-        ''}
-
-        ${lib.optionalString (ipsetExcludeFile != null) ''
-          append_list_file ipset-exclude-user.txt ${ipsetExcludeFile}
-        ''}
+        ${lib.concatMapStrings
+          ({ name, file }: lib.optionalString (file != null) ''
+            append_list_file ${name} ${file}
+          '')
+          [
+            { name = "list-general-user.txt";  file = listGeneralFile; }
+            { name = "list-exclude-user.txt";  file = listExcludeFile; }
+            { name = "ipset-all.txt";          file = ipsetAllFile; }
+            { name = "ipset-exclude-user.txt"; file = ipsetExcludeFile; }
+          ]}
 
         rm -f "$out/opt/zapret/hostlists/.game_filter.enabled"
         ${lib.optionalString (gameFilter != "null") ''
@@ -194,23 +189,21 @@ let
         ${lib.optionalString forceDisableFilterMark ''
           set_config_var FILTER_MARK ""
         ''}
-        ${lib.optionalString (filterMark != null) ''
-          filter_mark_hex=$(printf '0x%x' ${toString filterMark})
-          set_config_var FILTER_MARK "$filter_mark_hex"
-        ''}
+        ${lib.concatMapStrings
+          ({ var, value }: lib.optionalString (value != null) ''
+            hex=$(printf '0x%x' ${toString value})
+            set_config_var ${var} "$hex"
+          '')
+          [
+            { var = "FILTER_MARK";         value = filterMark; }
+            { var = "DESYNC_MARK";         value = desyncMark; }
+            { var = "DESYNC_MARK_POSTNAT"; value = desyncMarkPostnat; }
+          ]}
         ${lib.optionalString (qnum != null) ''
           set_config_var QNUM ${toString qnum}
         ''}
         ${lib.optionalString (modeFilter != null) ''
           set_config_var MODE_FILTER ${modeFilter}
-        ''}
-        ${lib.optionalString (desyncMark != null) ''
-          desync_mark_hex=$(printf '0x%x' ${toString desyncMark})
-          set_config_var DESYNC_MARK "$desync_mark_hex"
-        ''}
-        ${lib.optionalString (desyncMarkPostnat != null) ''
-          desync_mark_postnat_hex=$(printf '0x%x' ${toString desyncMarkPostnat})
-          set_config_var DESYNC_MARK_POSTNAT "$desync_mark_postnat_hex"
         ''}
         ${lib.optionalString (nftTable != null) ''
           set_config_var ZAPRET_NFT_TABLE ${nftTable}
@@ -255,15 +248,12 @@ let
     fi
   '';
 
-  globalZapretEnv = [
-    "ZAPRET_BASE=${globalZapretPackage}/opt/zapret"
+  mkZapretEnv = package: [
+    "ZAPRET_BASE=${package}/opt/zapret"
     "PATH=${lib.makeBinPath runtimeDeps}"
   ];
-
-  appZapretEnv = [
-    "ZAPRET_BASE=${appZapretPackage}/opt/zapret"
-    "PATH=${lib.makeBinPath runtimeDeps}"
-  ];
+  globalZapretEnv = mkZapretEnv globalZapretPackage;
+  appZapretEnv    = mkZapretEnv appZapretPackage;
 
   appZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-app-zapret-mark-up" ''
     set -euo pipefail

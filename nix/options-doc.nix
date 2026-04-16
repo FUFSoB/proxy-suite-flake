@@ -73,7 +73,7 @@ pkgs.runCommand "proxy-suite-options.md" { } ''
   cat >"$preamble" <<'EOF'
   # proxy-suite options
 
-  This file is generated from the `services.proxy-suite` option descriptions in [`modules/proxy-suite/options.nix`](modules/proxy-suite/options.nix).
+  This file is generated from the `services.proxy-suite` option descriptions in [`modules/proxy-suite/options/default.nix`](/modules/proxy-suite/options/default.nix).
   Update module option docs there instead of editing this file by hand.
 
   ## Table of contents

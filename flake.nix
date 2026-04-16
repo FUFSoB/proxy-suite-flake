@@ -84,6 +84,7 @@
         update-options-doc = {
           type = "app";
           program = "${self.packages.${system}.update-options-doc}/bin/update-options-doc";
+          meta.description = "Update docs/options.md from the current NixOS module option declarations";
         };
       });
 
