@@ -6,10 +6,10 @@
 }:
 
 let
-  sb = cfg.singBox;
-  art = cfg.appRouting.backends.tun;
-  artp = cfg.appRouting.backends.tproxy;
-  arz = cfg.appRouting.backends.zapret;
+  singBoxCfg = cfg.singBox;
+  appRoutingTun = cfg.appRouting.backends.tun;
+  appRoutingTproxy = cfg.appRouting.backends.tproxy;
+  appRoutingZapret = cfg.appRouting.backends.zapret;
 
   # Shared across all three nftables rule files that do IPv4 routing.
   reservedIpBlock = ''
@@ -31,8 +31,8 @@ let
     ip daddr ${cidr} udp dport != 53 return
   '') subnets;
 
-  tproxyLocalSubnetLines = mkLocalSubnetLines sb.tproxy.localSubnets;
-  appTproxyLocalSubnetLines = mkLocalSubnetLines artp.localSubnets;
+  tproxyLocalSubnetLines = mkLocalSubnetLines singBoxCfg.tproxy.localSubnets;
+  appTproxyLocalSubnetLines = mkLocalSubnetLines appRoutingTproxy.localSubnets;
 
   nftablesRulesFile = pkgs.writeText "proxy-suite-tproxy.nft" ''
     ${reservedIpBlock}
@@ -44,16 +44,16 @@ let
               # be skipped just because the host has an RFC1918 source address.
               iifname != "lo" ip saddr $RESERVED_IP return
     ${tproxyLocalSubnetLines}
-              ip protocol tcp tproxy to 127.0.0.1:${toString sb.tproxyPort} meta mark set ${toString sb.fwmark}
-              ip protocol udp tproxy to 127.0.0.1:${toString sb.tproxyPort} meta mark set ${toString sb.fwmark}
+              ip protocol tcp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort} meta mark set ${toString singBoxCfg.fwmark}
+              ip protocol udp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort} meta mark set ${toString singBoxCfg.fwmark}
           }
           chain output {
               type route hook output priority mangle; policy accept;
               ip daddr $RESERVED_IP return
     ${tproxyLocalSubnetLines}
-              meta mark ${toString sb.proxyMark} return
-${lib.optionalString art.enable "              meta mark ${toString art.fwmark} return\n"}${lib.optionalString artp.enable "              meta mark ${toString artp.fwmark} return\n"}              ip protocol tcp meta mark set ${toString sb.fwmark}
-              ip protocol udp meta mark set ${toString sb.fwmark}
+              meta mark ${toString singBoxCfg.proxyMark} return
+${lib.optionalString appRoutingTun.enable "              meta mark ${toString appRoutingTun.fwmark} return\n"}${lib.optionalString appRoutingTproxy.enable "              meta mark ${toString appRoutingTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString singBoxCfg.fwmark}
+              ip protocol udp meta mark set ${toString singBoxCfg.fwmark}
           }
       }
   '';
@@ -66,18 +66,18 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
               ip daddr $RESERVED_IP return
               iifname != "lo" ip saddr $RESERVED_IP return
     ${appTproxyLocalSubnetLines}
-              ct mark ${toString artp.fwmark} meta mark set ${toString artp.fwmark}
-              meta mark ${toString artp.fwmark} ip protocol tcp tproxy to 127.0.0.1:${toString sb.tproxyPort}
-              meta mark ${toString artp.fwmark} ip protocol udp tproxy to 127.0.0.1:${toString sb.tproxyPort}
+              ct mark ${toString appRoutingTproxy.fwmark} meta mark set ${toString appRoutingTproxy.fwmark}
+              meta mark ${toString appRoutingTproxy.fwmark} ip protocol tcp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort}
+              meta mark ${toString appRoutingTproxy.fwmark} ip protocol udp tproxy to 127.0.0.1:${toString singBoxCfg.tproxyPort}
           }
 
           chain output {
               type route hook output priority mangle; policy accept;
               ip daddr $RESERVED_IP return
     ${appTproxyLocalSubnetLines}
-              meta mark ${toString sb.proxyMark} return
-${lib.optionalString art.enable "              meta mark ${toString art.fwmark} return\n"}              ct mark ${toString artp.fwmark} meta mark set ${toString artp.fwmark}
-              meta mark ${toString artp.fwmark} return
+              meta mark ${toString singBoxCfg.proxyMark} return
+${lib.optionalString appRoutingTun.enable "              meta mark ${toString appRoutingTun.fwmark} return\n"}              ct mark ${toString appRoutingTproxy.fwmark} meta mark set ${toString appRoutingTproxy.fwmark}
+              meta mark ${toString appRoutingTproxy.fwmark} return
           }
       }
   '';
@@ -86,13 +86,13 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
       table inet proxy_suite_app_zapret_mark {
           chain prerouting {
               type filter hook prerouting priority -103; policy accept;
-              ct mark and ${toString arz.filterMark} == ${toString arz.filterMark} meta mark set meta mark or ${toString arz.filterMark}
+              ct mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} meta mark set meta mark or ${toString appRoutingZapret.filterMark}
           }
 
           chain output {
               type route hook output priority -103; policy accept;
-              ct mark and ${toString arz.filterMark} == ${toString arz.filterMark} meta mark set meta mark or ${toString arz.filterMark}
-              meta mark and ${toString arz.filterMark} == ${toString arz.filterMark} return
+              ct mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} meta mark set meta mark or ${toString appRoutingZapret.filterMark}
+              meta mark and ${toString appRoutingZapret.filterMark} == ${toString appRoutingZapret.filterMark} return
           }
       }
   '';
@@ -105,9 +105,9 @@ ${lib.optionalString art.enable "              meta mark ${toString art.fwmark} 
               ip daddr $RESERVED_IP return
 ${lib.concatMapStrings (cidr: ''
               ip daddr ${cidr} return
-  '') art.localSubnets}
-              ct mark ${toString art.fwmark} meta mark set ${toString art.fwmark}
-              meta mark ${toString art.fwmark} return
+  '') appRoutingTun.localSubnets}
+              ct mark ${toString appRoutingTun.fwmark} meta mark set ${toString appRoutingTun.fwmark}
+              meta mark ${toString appRoutingTun.fwmark} return
           }
       }
   '';

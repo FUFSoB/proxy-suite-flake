@@ -8,8 +8,8 @@
 
 let
   r = cfg.singBox.routing;
-  sb = cfg.singBox;
-  z = cfg.zapret;
+  singBoxCfg = cfg.singBox;
+  zapretCfg = cfg.zapret;
 
   trim = lib.strings.trim;
   hasPrefix = lib.strings.hasPrefix;
@@ -27,16 +27,16 @@ let
 
   subtractItems = items: exclusions: builtins.filter (item: !(builtins.elem item exclusions)) items;
 
-  syncZapretDirectDomains = z.enable && z.syncDirectRouting;
-  syncZapretDirectUpstreamIps = z.enable && z.syncDirectRoutingUpstreamIps;
-  syncZapretDirectUserIps = z.enable && z.syncDirectRoutingUserIps;
+  syncZapretDirectDomains = zapretCfg.enable && zapretCfg.syncDirectRouting;
+  syncZapretDirectUpstreamIps = zapretCfg.enable && zapretCfg.syncDirectRoutingUpstreamIps;
+  syncZapretDirectUserIps = zapretCfg.enable && zapretCfg.syncDirectRoutingUserIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
   zapretDefaultDomainFiles = [
     "list-general.txt"
     "list-google.txt"
   ]
-  ++ lib.optionals z.includeExtraUpstreamLists [
+  ++ lib.optionals zapretCfg.includeExtraUpstreamLists [
     "list-instagram.txt"
     "list-soundcloud.txt"
     "list-twitter.txt"
@@ -51,10 +51,10 @@ let
       [ ];
   zapretDefaultIps =
     if syncZapretDirectUpstreamIps then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
-  zapretUserIps = if syncZapretDirectUserIps then z.ipsetAll else [ ];
+  zapretUserIps = if syncZapretDirectUserIps then zapretCfg.ipsetAll else [ ];
   zapretCustomDomains =
     if syncZapretDirectDomains then
-      lib.unique (lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) z.hostlistRules)
+      lib.unique (lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) zapretCfg.hostlistRules)
     else
       [ ];
   zapretExcludedDomains =
@@ -66,13 +66,13 @@ let
       else
         [ ]
     )
-    ++ (if syncZapretDirectUserIps then z.ipsetExclude else [ ])
+    ++ (if syncZapretDirectUserIps then zapretCfg.ipsetExclude else [ ])
   );
 
   zapretDirectDomains =
     if syncZapretDirectDomains then
-      subtractItems (lib.unique (zapretDefaultDomains ++ z.listGeneral ++ zapretCustomDomains)) (
-        lib.unique (zapretExcludedDomains ++ z.listExclude)
+      subtractItems (lib.unique (zapretDefaultDomains ++ zapretCfg.listGeneral ++ zapretCustomDomains)) (
+        lib.unique (zapretExcludedDomains ++ zapretCfg.listExclude)
       )
     else
       [ ];
@@ -119,7 +119,7 @@ let
     "block"
   ];
   resolveTag =
-    tag: if sb.selection == "first" && !builtins.elem tag builtinTags then "proxy" else tag;
+    tag: if singBoxCfg.selection == "first" && !builtins.elem tag builtinTags then "proxy" else tag;
 
   # Collect per-outbound routing attached directly to outbound definitions.
   perOutboundRules = lib.concatMap (
@@ -137,7 +137,7 @@ let
         geoips
         ;
     }
-  ) sb.outbounds;
+  ) singBoxCfg.outbounds;
 
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.
   customRules =

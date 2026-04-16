@@ -47,6 +47,22 @@ def _mk_transport(
     return None
 
 
+def _mk_tls(server_name: str, fp: "str | None" = None, alpn: "str | None" = None) -> dict:
+    tls: dict = {"enabled": True, "server_name": server_name}
+    if fp:
+        tls["utls"] = {"enabled": True, "fingerprint": fp}
+    if alpn:
+        tls["alpn"] = alpn.split(",")
+    return tls
+
+
+def _mk_auth(userinfo: str) -> "tuple[str | None, str | None]":
+    if userinfo and ":" in userinfo:
+        username, _, password = userinfo.partition(":")
+        return urllib.parse.unquote(username), urllib.parse.unquote(password)
+    return None, None
+
+
 def parse_vless(url: str, tag: str) -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = params.get("security", "none")
@@ -62,25 +78,14 @@ def parse_vless(url: str, tag: str) -> dict:
     }
 
     if security == "reality":
-        ob["tls"] = {
+        ob["tls"] = _mk_tls(params.get("sni", host), fp=params.get("fp", "chrome"))
+        ob["tls"]["reality"] = {
             "enabled": True,
-            "server_name": params.get("sni", host),
-            "utls": {"enabled": True, "fingerprint": params.get("fp", "chrome")},
-            "reality": {
-                "enabled": True,
-                "public_key": params["pbk"],
-                "short_id": params.get("sid", ""),
-            },
+            "public_key": params["pbk"],
+            "short_id": params.get("sid", ""),
         }
     elif security == "tls":
-        ob["tls"] = {
-            "enabled": True,
-            "server_name": params.get("sni", host),
-        }
-        if params.get("fp"):
-            ob["tls"]["utls"] = {"enabled": True, "fingerprint": params["fp"]}
-        if params.get("alpn"):
-            ob["tls"]["alpn"] = params["alpn"].split(",")
+        ob["tls"] = _mk_tls(params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn"))
 
     tr = _mk_transport(
         transport,
@@ -123,11 +128,11 @@ def parse_vmess(url: str, tag: str) -> dict:
     }
 
     if tls_field in ("tls", "reality"):
-        ob["tls"] = {"enabled": True, "server_name": sni}
-        if data.get("fp"):
-            ob["tls"]["utls"] = {"enabled": True, "fingerprint": str(data["fp"])}
-        if data.get("alpn"):
-            ob["tls"]["alpn"] = str(data["alpn"]).split(",")
+        ob["tls"] = _mk_tls(
+            sni,
+            fp=str(data["fp"]) if data.get("fp") else None,
+            alpn=str(data["alpn"]) if data.get("alpn") else None,
+        )
 
     path = str(data.get("path") or "/")
     h_host = str(data.get("host") or host)
@@ -154,16 +159,8 @@ def parse_trojan(url: str, tag: str) -> dict:
         "server": host,
         "server_port": int(port),
         "password": urllib.parse.unquote(userinfo),
-        "tls": {
-            "enabled": True,
-            "server_name": params.get("sni", host),
-        },
+        "tls": _mk_tls(params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")),
     }
-
-    if params.get("fp"):
-        ob["tls"]["utls"] = {"enabled": True, "fingerprint": params["fp"]}
-    if params.get("alpn"):
-        ob["tls"]["alpn"] = params["alpn"].split(",")
 
     tr = _mk_transport(
         transport,
@@ -256,10 +253,10 @@ def parse_socks(url: str, tag: str) -> dict:
     userinfo, host, port, _ = _parse_url_parts(url, scheme)
 
     ob: dict = {"type": "socks", "tag": tag, "version": version}
-    if userinfo and ":" in userinfo:
-        username, _, password = userinfo.partition(":")
-        ob["username"] = urllib.parse.unquote(username)
-        ob["password"] = urllib.parse.unquote(password)
+    username, password = _mk_auth(userinfo)
+    if username is not None:
+        ob["username"] = username
+        ob["password"] = password
     ob["server"] = host
     ob["server_port"] = int(port)
 
@@ -271,10 +268,10 @@ def parse_http_proxy(url: str, tag: str) -> dict:
     userinfo, host, port, _ = _parse_url_parts(url, scheme)
 
     ob: dict = {"type": "http", "tag": tag}
-    if userinfo and ":" in userinfo:
-        username, _, password = userinfo.partition(":")
-        ob["username"] = urllib.parse.unquote(username)
-        ob["password"] = urllib.parse.unquote(password)
+    username, password = _mk_auth(userinfo)
+    if username is not None:
+        ob["username"] = username
+        ob["password"] = password
     ob["server"] = host
     ob["server_port"] = int(port)
 

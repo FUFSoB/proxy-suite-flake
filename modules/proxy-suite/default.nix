@@ -39,7 +39,7 @@ in
               ;
           };
         in
-        import ./service.nix {
+        import ./service {
           inherit
             config
             lib

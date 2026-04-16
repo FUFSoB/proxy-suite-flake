@@ -12,38 +12,24 @@ BUILTIN_ACTIVATION_FALLBACKS = {
     "list-twitter.txt": "general",
 }
 
+def _hostlist_remove_pattern(stem: str) -> str:
+    escaped = re.escape(stem)
+    return rf'\s+--hostlist=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
+
+
+def _mk_family(match_stems: list[str], remove_stems: list[str]) -> dict:
+    return {
+        "match": [f"list-{s}.txt" for s in match_stems],
+        "remove": [_hostlist_remove_pattern(f"list-{s}") for s in remove_stems],
+    }
+
+
 FAMILY_PATTERNS = {
-    "general": {
-        "match": ["list-general.txt", "list-general-user.txt"],
-        "remove": [
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-general\.txt"|[^ ]*/hostlists/list-general\.txt)',
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-general-user\.txt"|[^ ]*/hostlists/list-general-user\.txt)',
-        ],
-    },
-    "google": {
-        "match": ["list-google.txt"],
-        "remove": [
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-google\.txt"|[^ ]*/hostlists/list-google\.txt)',
-        ],
-    },
-    "instagram": {
-        "match": ["list-instagram.txt"],
-        "remove": [
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-instagram\.txt"|[^ ]*/hostlists/list-instagram\.txt)',
-        ],
-    },
-    "soundcloud": {
-        "match": ["list-soundcloud.txt"],
-        "remove": [
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-soundcloud\.txt"|[^ ]*/hostlists/list-soundcloud\.txt)',
-        ],
-    },
-    "twitter": {
-        "match": ["list-twitter.txt"],
-        "remove": [
-            r'\s+--hostlist=(?:"[^"]*/hostlists/list-twitter\.txt"|[^ ]*/hostlists/list-twitter\.txt)',
-        ],
-    },
+    "general":    _mk_family(["general", "general-user"], ["general", "general-user"]),
+    "google":     _mk_family(["google"],     ["google"]),
+    "instagram":  _mk_family(["instagram"],  ["instagram"]),
+    "soundcloud": _mk_family(["soundcloud"], ["soundcloud"]),
+    "twitter":    _mk_family(["twitter"],    ["twitter"]),
 }
 
 
@@ -78,19 +64,32 @@ def add_standard_excludes(line: str, standard_excludes: list[str]) -> str:
     return line
 
 
+def _render_args(
+    line: str,
+    hostlist_path: str,
+    standard_excludes: list[str],
+    *,
+    preset_family: str | None = None,
+) -> str:
+    rendered = strip_trailing_new(line)
+    if preset_family is not None:
+        for pattern in FAMILY_PATTERNS[preset_family]["remove"]:
+            rendered = re.sub(pattern, "", rendered)
+    else:
+        rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
+    rendered = normalize_spaces(rendered)
+    rendered = f'{rendered} --hostlist="{hostlist_path}"'
+    rendered = add_standard_excludes(rendered, standard_excludes)
+    return f"{normalize_spaces(rendered)} --new"
+
+
 def render_preset_clone(
     line: str,
     family: str,
     hostlist_path: str,
     standard_excludes: list[str],
 ) -> str:
-    rendered = strip_trailing_new(line)
-    for pattern in FAMILY_PATTERNS[family]["remove"]:
-        rendered = re.sub(pattern, "", rendered)
-    rendered = normalize_spaces(rendered)
-    rendered = f'{rendered} --hostlist="{hostlist_path}"'
-    rendered = add_standard_excludes(rendered, standard_excludes)
-    return f"{normalize_spaces(rendered)} --new"
+    return _render_args(line, hostlist_path, standard_excludes, preset_family=family)
 
 
 def render_custom_args(
@@ -98,12 +97,7 @@ def render_custom_args(
     hostlist_path: str,
     standard_excludes: list[str],
 ) -> str:
-    rendered = strip_trailing_new(fragment)
-    rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
-    rendered = normalize_spaces(rendered)
-    rendered = f'{rendered} --hostlist="{hostlist_path}"'
-    rendered = add_standard_excludes(rendered, standard_excludes)
-    return f"{normalize_spaces(rendered)} --new"
+    return _render_args(fragment, hostlist_path, standard_excludes)
 
 
 def clone_family_lines(

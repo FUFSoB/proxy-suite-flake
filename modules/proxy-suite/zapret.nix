@@ -9,8 +9,8 @@
 }:
 
 let
-  z = cfg.zapret;
-  arz = cfg.appRouting.backends.zapret;
+  zapretCfg = cfg.zapret;
+  appRoutingZapret = cfg.appRouting.backends.zapret;
 
   iptables = "${pkgs.iptables}/bin/iptables";
 
@@ -33,7 +33,7 @@ let
       ;
   };
 
-  hostlistRuleNames = map (rule: rule.name) z.hostlistRules;
+  hostlistRuleNames = map (rule: rule.name) zapretCfg.hostlistRules;
 
   baseZapretPackage =
     let
@@ -47,25 +47,25 @@ let
     else
       null;
 
-  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" z.listGeneral;
-  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" z.listExclude;
-  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" z.ipsetAll;
-  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" z.ipsetExclude;
+  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.listGeneral;
+  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.listExclude;
+  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" zapretCfg.ipsetAll;
+  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" zapretCfg.ipsetExclude;
 
   hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
     builtins.toJSON {
-      includeExtraUpstreamLists = z.includeExtraUpstreamLists;
+      includeExtraUpstreamLists = zapretCfg.includeExtraUpstreamLists;
       entries = map (rule: {
         inherit (rule)
           name
           preset
           nfqwsArgs
           ;
-      }) z.hostlistRules;
+      }) zapretCfg.hostlistRules;
     }
   );
 
-  selectedConfigName = lib.strings.sanitizeDerivationName z.configName;
+  selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.configName;
   patchConfigScriptSrc = builtins.path {
     path = ../../scripts/patch-zapret-config.py;
     name = "patch-zapret-config.py";
@@ -87,8 +87,8 @@ let
     {
       packageName,
       pidDir,
-      configName ? z.configName,
-      gameFilter ? z.gameFilter,
+      configName ? zapretCfg.configName,
+      gameFilter ? zapretCfg.gameFilter,
       forceDisableFilterMark ? false,
       filterMark ? null,
       qnum ? null,
@@ -187,7 +187,7 @@ let
           ''
             cp ${domainsFile} "$out/opt/zapret/hostlists/list-${rule.name}.txt"
           ''
-        ) z.hostlistRules}
+        ) zapretCfg.hostlistRules}
 
         ${patchConfigScript} --config "$out/opt/zapret/config" --spec ${hostlistRuleSpec}
 
@@ -226,17 +226,17 @@ let
   globalZapretPackage = mkDerivedZapretPackage {
     packageName = "proxy-suite-zapret-${selectedConfigName}";
     pidDir = "/run/proxy-suite-zapret";
-    gameFilter = z.gameFilter;
+    gameFilter = zapretCfg.gameFilter;
     forceDisableFilterMark = true;
-    customScript = if arz.enable then mkGlobalBypassScript (toString arz.filterMark) else null;
+    customScript = if appRoutingZapret.enable then mkGlobalBypassScript (toString appRoutingZapret.filterMark) else null;
   };
 
   appZapretPackage = mkDerivedZapretPackage {
     packageName = "proxy-suite-app-zapret-${selectedConfigName}";
     pidDir = "/run/proxy-suite-app-zapret";
     gameFilter = "all";
-    filterMark = arz.filterMark;
-    qnum = arz.qnum;
+    filterMark = appRoutingZapret.filterMark;
+    qnum = appRoutingZapret.qnum;
     modeFilter = "none";
     desyncMark = 134217728;
     desyncMarkPostnat = 67108864;
@@ -279,12 +279,12 @@ let
   exemptStart = lib.concatMapStrings (cidr: ''
     ${iptables} -t mangle -I FORWARD     1 -d ${cidr} -j RETURN
     ${iptables} -t mangle -I POSTROUTING 1 -s ${cidr} -j RETURN
-  '') z.cidrExemption.cidrs;
+  '') zapretCfg.cidrExemption.cidrs;
 
   exemptStop = lib.concatMapStrings (cidr: ''
     ${iptables} -t mangle -D FORWARD     -d ${cidr} -j RETURN || true
     ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN || true
-  '') z.cidrExemption.cidrs;
+  '') zapretCfg.cidrExemption.cidrs;
 in
 {
   assertions = [
@@ -293,18 +293,18 @@ in
       message = "proxy-suite: zapret.hostlistRules names must be unique";
     }
     {
-      assertion = builtins.all (rule: rule.domains != [ ]) z.hostlistRules;
+      assertion = builtins.all (rule: rule.domains != [ ]) zapretCfg.hostlistRules;
       message = "proxy-suite: each zapret.hostlistRules entry must define at least one domain";
     }
     {
-      assertion = builtins.all (rule: rule.preset != null || rule.nfqwsArgs != [ ]) z.hostlistRules;
+      assertion = builtins.all (rule: rule.preset != null || rule.nfqwsArgs != [ ]) zapretCfg.hostlistRules;
       message = "proxy-suite: each zapret.hostlistRules entry must set preset, nfqwsArgs, or both";
     }
   ];
 
   environment.systemPackages =
     lib.mkBefore (
-      [ globalZapretPackage ] ++ lib.optionals arz.enable [ appZapretPackage ]
+      [ globalZapretPackage ] ++ lib.optionals appRoutingZapret.enable [ appZapretPackage ]
     );
 
   systemd.services.zapret-discord-youtube = {
@@ -323,7 +323,7 @@ in
     };
   };
 
-  systemd.services.proxy-suite-app-zapret = lib.mkIf arz.enable {
+  systemd.services.proxy-suite-app-zapret = lib.mkIf appRoutingZapret.enable {
     description = "proxy-suite app-routing zapret backend";
     after = [ "network.target" ];
     conflicts = [
@@ -343,7 +343,7 @@ in
     };
   };
 
-  systemd.services.proxy-suite-zapret-vm-exempt = lib.mkIf z.cidrExemption.enable {
+  systemd.services.proxy-suite-zapret-vm-exempt = lib.mkIf zapretCfg.cidrExemption.enable {
     description = "Exempt CIDRs from zapret NFQUEUE";
     after = [ "zapret-discord-youtube.service" ];
     wants = [ "zapret-discord-youtube.service" ];

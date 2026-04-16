@@ -8,8 +8,8 @@
 }:
 
 let
-  sb = cfg.singBox;
-  art = cfg.appRouting.backends.tun;
+  singBoxCfg = cfg.singBox;
+  appRoutingTun = cfg.appRouting.backends.tun;
   direct = rules.direct;
 
   mkDnsServer =
@@ -26,11 +26,11 @@ let
     { localDetour ? null }:
     {
       servers = [
-        (mkDnsServer "remote" sb.dns.remote "proxy")
-        (mkDnsServer "local" sb.dns.local localDetour)
+        (mkDnsServer "remote" singBoxCfg.dns.remote "proxy")
+        (mkDnsServer "local" singBoxCfg.dns.local localDetour)
       ];
       rules =
-        lib.optional (builtins.elem "google" sb.routing.proxy.geosites) {
+        lib.optional (builtins.elem "google" singBoxCfg.routing.proxy.geosites) {
           rule_set = [ "geosite-google" ];
           server = "remote";
         }
@@ -38,13 +38,13 @@ let
           rule_set = map (s: "geosite-${s}") direct.geosites;
           server = "local";
         };
-      final = if sb.proxyByDefault then "remote" else "local";
+      final = if singBoxCfg.proxyByDefault then "remote" else "local";
     };
 
-  clashApiBlock = lib.optionalAttrs (sb.selection != "first") {
+  clashApiBlock = lib.optionalAttrs (singBoxCfg.selection != "first") {
     experimental = {
       clash_api = {
-        external_controller = "127.0.0.1:${toString sb.clashApiPort}";
+        external_controller = "127.0.0.1:${toString singBoxCfg.clashApiPort}";
       };
     };
   };
@@ -54,9 +54,9 @@ let
       enableMixed ? false,
       enableTProxy ? false,
       enableTun ? false,
-      tunInterface ? sb.tun.interface,
-      tunAddress ? sb.tun.address,
-      tunMtu ? sb.tun.mtu,
+      tunInterface ? singBoxCfg.tun.interface,
+      tunAddress ? singBoxCfg.tun.address,
+      tunMtu ? singBoxCfg.tun.mtu,
       tunAutoRoute ? true,
       tunAutoRedirect ? true,
       tunStrictRoute ? true,
@@ -78,14 +78,14 @@ let
         lib.optional enableMixed {
           type = "mixed";
           tag = "mixed-in";
-          listen = sb.listenAddress;
-          listen_port = sb.port;
+          listen = singBoxCfg.listenAddress;
+          listen_port = singBoxCfg.port;
         }
         ++ lib.optional enableTProxy {
           type = "tproxy";
           tag = "tproxy-in";
           listen = "127.0.0.1";
-          listen_port = sb.tproxyPort;
+          listen_port = singBoxCfg.tproxyPort;
         }
         ++ lib.optional enableTun {
           type = "tun";
@@ -106,7 +106,7 @@ let
             type = "direct";
             tag = "direct";
           }
-          // lib.optionalAttrs useOutboundRoutingMark { routing_mark = sb.proxyMark; }
+          // lib.optionalAttrs useOutboundRoutingMark { routing_mark = singBoxCfg.proxyMark; }
         )
         {
           type = "block";
@@ -118,7 +118,7 @@ let
         default_domain_resolver = "local";
         rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
         rules = rules.routingRules;
-        final = if sb.proxyByDefault then "proxy" else "direct";
+        final = if singBoxCfg.proxyByDefault then "proxy" else "direct";
       }
       // lib.optionalAttrs (enableTun && tunAutoRoute) { auto_detect_interface = true; };
     }
@@ -133,9 +133,9 @@ let
 
   tunTemplate = mkConfig {
     enableTun = true;
-    tunInterface = sb.tun.interface;
-    tunAddress = sb.tun.address;
-    tunMtu = sb.tun.mtu;
+    tunInterface = singBoxCfg.tun.interface;
+    tunAddress = singBoxCfg.tun.address;
+    tunMtu = singBoxCfg.tun.mtu;
     tunAutoRoute = true;
     tunAutoRedirect = true;
     tunStrictRoute = true;
@@ -145,16 +145,16 @@ let
 
   appTunTemplate = mkConfig {
     enableTun = true;
-    tunInterface = art.interface;
-    tunAddress = art.address;
-    tunMtu = art.mtu;
+    tunInterface = appRoutingTun.interface;
+    tunAddress = appRoutingTun.address;
+    tunMtu = appRoutingTun.mtu;
     tunAutoRoute = false;
     tunAutoRedirect = false;
     tunStrictRoute = false;
     forceLocalDnsViaProxy = false;
     # App TUN can be used alongside TProxy; mark direct egress so TProxy output
     # rules do not re-intercept sing-box's own packets.
-    useOutboundRoutingMark = sb.tproxy.enable;
+    useOutboundRoutingMark = singBoxCfg.tproxy.enable;
     enableClashApi = false;
   };
 
