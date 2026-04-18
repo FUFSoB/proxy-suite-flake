@@ -2,47 +2,52 @@
   nixpkgs,
   pkgsFor,
   proxySuiteModule,
+  zapret,
 }:
 
 system:
 
 let
   pkgs = pkgsFor system;
-  lib = pkgs.lib;
+  packages = import ../pkgs/default.nix { inherit pkgs; };
+  fixture = import ./readme-doc-fixture.nix;
   eval = import "${nixpkgs}/nixos/lib/eval-config.nix" {
     inherit system;
     modules = [
       proxySuiteModule
-      {
-        system.stateVersion = lib.trivial.release;
-        services.proxy-suite = {
-          enable = true;
-          singBox.outbounds = [
-            {
-              tag = "primary";
-              url = "http://proxy.example.com:8080";
-            }
-          ];
-        };
-      }
+      fixture
     ];
   };
-  packageByPattern =
-    packages: pattern:
-    builtins.head (
-      builtins.filter (
-        pkg: builtins.match pattern (builtins.unsafeDiscardStringContext (toString pkg)) != null
-      ) packages
-    );
-  proxyCtl =
-    packageByPattern eval.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  cfg = eval.config.services.proxy-suite;
+  rules = import ../modules/proxy-suite/rules.nix {
+    lib = pkgs.lib;
+    inherit pkgs cfg zapret;
+  };
+  configs = import ../modules/proxy-suite/config.nix {
+    lib = pkgs.lib;
+    inherit pkgs cfg rules;
+  };
+  nftr = import ../modules/proxy-suite/nftables.nix {
+    lib = pkgs.lib;
+    inherit pkgs cfg;
+  };
+  context = import ../modules/proxy-suite/service/context.nix {
+    lib = pkgs.lib;
+    inherit
+      pkgs
+      packages
+      cfg
+      ;
+    inherit (configs) tproxyFile tunFile perAppTunFile;
+    inherit (nftr) perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile ip nft;
+  };
 in
 pkgs.runCommand "proxy-suite-README.md" { nativeBuildInputs = [ pkgs.python3 ]; } ''
   src=${../README.md}
   help_file="$TMPDIR/proxy-ctl-help.txt"
   export src help_file
 
-  ${proxyCtl}/bin/proxy-ctl help > "$help_file"
+  ${context.control.proxyCtl}/bin/proxy-ctl help > "$help_file"
 
   python <<'PY'
   from pathlib import Path

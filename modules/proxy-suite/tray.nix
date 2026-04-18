@@ -3,14 +3,14 @@
   config,
   lib,
   pkgs,
+  packages,
   cfg,
 }:
 
 let
   tray = cfg.tray;
 
-  proxyTray = import ../../pkgs/proxy-suite-tray.nix {
-    inherit pkgs;
+  proxyTray = packages.mkProxySuiteTray {
     pollInterval = tray.pollInterval;
   };
 

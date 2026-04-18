@@ -2,12 +2,13 @@
 {
   lib,
   pkgs,
+  packages,
   cfg,
 }:
 
 let
   t = cfg.tgWsProxy;
-  tgPkg = import ../../pkgs/tg-ws-proxy.nix { inherit pkgs; };
+  tgPkg = packages.tg-ws-proxy;
 
   dcArgs = lib.concatMapStrings (id: " --dc-ip=${id}:${t.dcIps.${id}}") (builtins.attrNames t.dcIps);
   startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''

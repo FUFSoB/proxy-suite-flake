@@ -1,7 +1,6 @@
 # Builds proxy-ctl from global proxy-suite state and per-app routing metadata.
 {
-  lib,
-  pkgs,
+  packages,
   singBoxCfg,
   perAppRoutingCfg,
   perAppRoutingTun,
@@ -13,14 +12,8 @@
   proxychainsConfigFile,
   proxychainsQuietArg,
 }:
-
-let
-  mkProxyCtl = import ../../../pkgs/proxy-ctl.nix {
-    inherit lib pkgs;
-  };
-in
 {
-  proxyCtl = mkProxyCtl {
+  proxyCtl = packages.mkProxyCtl {
     clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
     selection = singBoxCfg.selection;
     inherit

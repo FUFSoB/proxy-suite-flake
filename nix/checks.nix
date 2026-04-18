@@ -9,6 +9,10 @@
 
 let
   pkgs = import nixpkgs { inherit system; };
+  readmeDocSource = builtins.readFile ../nix/readme-doc.nix;
+  trayModuleSource = builtins.readFile ../modules/proxy-suite/tray.nix;
+  tgWsProxyModuleSource = builtins.readFile ../modules/proxy-suite/tg-ws-proxy.nix;
+  controlModuleSource = builtins.readFile ../modules/proxy-suite/service/control.nix;
   evalProxySuite =
     modules:
     import "${nixpkgs}/nixos/lib/eval-config.nix" {
@@ -2250,4 +2254,21 @@ in
     diff -u ${../README.md} ${generatedReadmeDoc}
     touch "$out"
   '';
+
+  readme-doc-source = builtins.seq
+    (
+      assert !(pkgs.lib.hasInfix "environment.systemPackages" readmeDocSource);
+      assert !(pkgs.lib.hasInfix "packageByPattern" readmeDocSource);
+      true
+    )
+    (pkgs.writeText "proxy-suite-readme-doc-source-check" "ok");
+
+  package-source = builtins.seq
+    (
+      assert !(pkgs.lib.hasInfix "../../pkgs/proxy-suite-tray.nix" trayModuleSource);
+      assert !(pkgs.lib.hasInfix "../../pkgs/tg-ws-proxy.nix" tgWsProxyModuleSource);
+      assert !(pkgs.lib.hasInfix "../../../pkgs/proxy-ctl.nix" controlModuleSource);
+      true
+    )
+    (pkgs.writeText "proxy-suite-package-source-check" "ok");
 }

@@ -11,6 +11,7 @@
 
 let
   cfg = config.services.proxy-suite;
+  packages = import ../../pkgs/default.nix { inherit pkgs; };
   nftr = import ./nftables.nix { inherit lib pkgs cfg; };
 in
 {
@@ -43,6 +44,7 @@ in
           config
           lib
           pkgs
+          packages
           cfg
           ;
         inherit (configs) tproxyFile tunFile perAppTunFile;
@@ -61,7 +63,11 @@ in
         }
       ))
 
-      (lib.mkIf cfg.tgWsProxy.enable (import ./tg-ws-proxy.nix { inherit lib pkgs cfg; }))
+      (lib.mkIf cfg.tgWsProxy.enable (
+        import ./tg-ws-proxy.nix {
+          inherit lib pkgs packages cfg;
+        }
+      ))
 
       (lib.mkIf cfg.tray.enable (
         import ./tray.nix {
@@ -69,6 +75,7 @@ in
             config
             lib
             pkgs
+            packages
             cfg
             ;
         }

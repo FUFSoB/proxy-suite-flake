@@ -27,7 +27,7 @@
         inherit nixpkgs pkgsFor proxySuiteModule;
       };
       mkReadmeDoc = import ./nix/readme-doc.nix {
-        inherit nixpkgs pkgsFor proxySuiteModule;
+        inherit nixpkgs pkgsFor proxySuiteModule zapret;
       };
     in
     {
@@ -39,6 +39,9 @@
 
       overlays.default = final: prev: {
         inherit (import ./pkgs/default.nix { pkgs = final; })
+          mkProxyCtl
+          mkProxySuiteTray
+          mkTgWsProxy
           tg-ws-proxy
           proxy-suite-tray
           ;
