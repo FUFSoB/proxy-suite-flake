@@ -1,10 +1,13 @@
 set -euo pipefail
 
 # Wrapped binary provides runtime config through env vars.
-SUB_TAGS_RAW="${SUB_TAGS_RAW:-}"
+SUB_TAGS_FILE="${SUB_TAGS_FILE:-}"
 PROXYCHAINS_QUIET_ARG="${PROXYCHAINS_QUIET_ARG:-}"
-# shellcheck disable=SC2206
-SUB_TAGS=(${SUB_TAGS_RAW})
+SUB_TAGS=()
+
+if [ -n "$SUB_TAGS_FILE" ] && [ -f "$SUB_TAGS_FILE" ]; then
+  mapfile -t SUB_TAGS < <(jq -r '.[]' "$SUB_TAGS_FILE")
+fi
 
 ALL_SERVICES=(
   proxy-suite-socks
@@ -22,7 +25,7 @@ _usage() {
   echo "Commands:"
   echo "  help                      show this help message"
   echo "  status [--tray]           show status of all proxy-suite services"
-  echo "  proxy on|off              enable/disable the core SOCKS proxy"
+  echo "  proxy on|off              enable/disable the sing-box proxy stack"
   echo "  tproxy on|off             enable/disable TProxy transparent mode"
   echo "  tun on|off                enable/disable TUN mode"
   echo "  zapret on|off             enable/disable zapret-discord-youtube"
@@ -33,7 +36,7 @@ _usage() {
   echo "  apps                      list configured per-app routing profiles"
   echo "  wrap <profile> -- <cmd>   run a command via a perAppRouting profile"
   echo "  subscription list         show subscriptions, cache age, and proxy count"
-  echo "  subscription update       force-refresh all subscription caches and restart"
+  echo "  subscription update       force-refresh all subscription caches and restart active sing-box services"
   exit "$status"
 }
 

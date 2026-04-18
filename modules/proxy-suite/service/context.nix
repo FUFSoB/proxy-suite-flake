@@ -26,6 +26,7 @@ let
 
   builtinTags = [ "proxy" "direct" "block" ];
   outboundTags = map (ob: ob.tag) singBoxCfg.outbounds;
+  subscriptionTags = map (sub: sub.tag) singBoxCfg.subscriptions;
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
       builtins.filter (rule: !builtins.elem rule.outbound (builtinTags ++ outboundTags)) singBoxCfg.routing.rules
@@ -69,7 +70,7 @@ let
   control = import ./control.nix {
     inherit packages singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy perAppZapretCfg;
     zapretEnabled = cfg.zapret.enable;
-    inherit (scripts) subscriptionTagsList;
+    inherit (scripts) subscriptionTagsFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile
       proxychainsConfigFile
@@ -89,6 +90,7 @@ in
     userControlCfg
     builtinTags
     outboundTags
+    subscriptionTags
     invalidRoutingTargets
     polkit
     scripts

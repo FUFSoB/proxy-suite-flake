@@ -6,7 +6,7 @@
 {
   clashApi,
   selection,
-  subscriptionTagsList,
+  subscriptionTagsFile,
   perAppRoutingEnabled,
   perAppRoutingProxychainsEnabled,
   perAppRoutingTunEnabled,
@@ -37,7 +37,7 @@ pkgs.symlinkJoin {
       ]}" \
       --set CLASH_API ${lib.escapeShellArg clashApi} \
       --set SELECTION ${lib.escapeShellArg selection} \
-      --set SUB_TAGS_RAW ${lib.escapeShellArg subscriptionTagsList} \
+      --set SUB_TAGS_FILE ${lib.escapeShellArg (toString subscriptionTagsFile)} \
       --set PER_APP_ROUTING_ENABLED ${lib.escapeShellArg perAppRoutingEnabled} \
       --set PER_APP_ROUTING_PROXYCHAINS_ENABLED ${lib.escapeShellArg perAppRoutingProxychainsEnabled} \
       --set PER_APP_ROUTING_TUN_ENABLED ${lib.escapeShellArg perAppRoutingTunEnabled} \

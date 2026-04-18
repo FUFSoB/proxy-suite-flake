@@ -641,6 +641,24 @@ let
       };
     }
   ];
+  subscriptionOnlyProxyCtl =
+    packageByPattern subscriptionOnlyFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  subscriptionOnlyWrapper =
+    builtins.readFile "${subscriptionOnlyProxyCtl}/bin/proxy-ctl";
+  subscriptionOnlyScript =
+    subscriptionOnlyWrapper
+    + "\n"
+    + builtins.readFile "${subscriptionOnlyProxyCtl}/bin/.proxy-ctl-wrapped";
+  subscriptionOnlyTags =
+    builtins.fromJSON (
+      builtins.readFile (
+        shellValueByPrefix subscriptionOnlyWrapper "export SUB_TAGS_FILE="
+      )
+    );
+  subscriptionOnlyStartScript =
+    builtins.readFile subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+  subscriptionOnlyUpdateScript =
+    builtins.readFile subscriptionOnlyFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart;
 
   subscriptionWithStaticFixture = evalProxySuite [
     {
@@ -666,6 +684,43 @@ let
       };
     }
   ];
+  duplicateSubscriptionTags = forceEval (
+    (evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = {
+          enable = true;
+          singBox.subscriptions = [
+            {
+              tag = "dup";
+              url = "https://example.com/sub/one";
+            }
+            {
+              tag = "dup";
+              url = "https://example.com/sub/two";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
+
+  unsafeSubscriptionTag = forceEval (
+    (evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = {
+          enable = true;
+          singBox.subscriptions = [
+            {
+              tag = "bad/tag";
+              url = "https://example.com/sub/token";
+            }
+          ];
+        };
+      }
+    ]).config.system.build.toplevel.drvPath
+  );
 
   # selection=first with subscriptions only – start script must rename first
   # subscription outbound to "proxy" so routing rules resolve at runtime.
@@ -686,6 +741,28 @@ let
       };
     }
   ];
+  subscriptionPerAppTunFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox = {
+          subscriptions = [
+            {
+              tag = "community";
+              url = "https://example.com/sub/token";
+            }
+          ];
+          tun.perApp.enable = true;
+        };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
+  subscriptionPerAppTunUpdateScript =
+    builtins.readFile (
+      subscriptionPerAppTunFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
+    );
 
   subscriptionUrlFileFixture = evalProxySuite [
     {
@@ -1697,6 +1774,14 @@ let
       true
     )
 
+    # -- subscription: wrapper exposes tags through a JSON file, not shell word splitting --
+    (
+      assert subscriptionOnlyTags == [ "community" ];
+      assert pkgs.lib.hasInfix "export SUB_TAGS_FILE=" subscriptionOnlyScript;
+      assert !(pkgs.lib.hasInfix "SUB_TAGS_RAW" subscriptionOnlyScript);
+      true
+    )
+
     # -- subscription: update service is created when subscriptions are configured --
     (
       assert subscriptionOnlyFixture.config.systemd.services ? "proxy-suite-subscription-update";
@@ -1722,6 +1807,18 @@ let
       assert
         subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
         == "6h";
+      true
+    )
+
+    # -- subscription: duplicate tags fail because they are cache keys and tag prefixes --
+    (
+      assert duplicateSubscriptionTags.success == false;
+      true
+    )
+
+    # -- subscription: tag must be a filesystem-safe identifier --
+    (
+      assert unsafeSubscriptionTag.success == false;
       true
     )
 
@@ -1755,6 +1852,32 @@ let
         scriptText = builtins.readFile updateScript;
       in
       assert builtins.match ".*PYTHONPATH=.*fetch-subscription\\.py.*" scriptText != null;
+      true
+    )
+
+    # -- subscription/runtime: generated cache paths use the raw validated tag, not shell-escaped quotes --
+    (
+      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/community.json"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''/var/lib/proxy-suite/subscriptions/community.json.tmp'' subscriptionOnlyUpdateScript;
+      assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyStartScript);
+      assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyUpdateScript);
+      true
+    )
+
+    # -- subscription/runtime: refresh only restarts sing-box units that were already active --
+    (
+      assert pkgs.lib.hasInfix ''SOCKS_WAS_ACTIVE=0'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''if [ "$SOCKS_WAS_ACTIVE" -eq 1 ]; then'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''if [ "$TUN_WAS_ACTIVE" -eq 1 ]; then'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''systemctl restart proxy-suite-socks'' subscriptionOnlyUpdateScript;
+      true
+    )
+
+    # -- subscription/runtime: refresh also handles the per-app TUN sing-box service when present --
+    (
+      assert pkgs.lib.hasInfix ''PER_APP_TUN_WAS_ACTIVE=0'' subscriptionPerAppTunUpdateScript;
+      assert pkgs.lib.hasInfix ''systemctl is-active --quiet proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
+      assert pkgs.lib.hasInfix ''systemctl restart proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
       true
     )
 
@@ -1839,6 +1962,8 @@ let
     (
       assert pkgs.lib.hasInfix "help)" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "show this help message" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "enable/disable the sing-box proxy stack" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "restart active sing-box services" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true

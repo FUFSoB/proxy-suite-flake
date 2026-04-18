@@ -9,6 +9,7 @@
   perAppZapretCfg,
   builtinTags,
   outboundTags,
+  subscriptionTags,
   invalidRoutingTargets,
   effectivePerAppRoutingProfileNames,
   hasProxychainsProfiles,
@@ -29,6 +30,10 @@ in
   {
     assertion = !singBoxCfg.enable || builtins.length outboundTags == builtins.length (lib.unique outboundTags);
     message = "proxy-suite: outbound tags must be unique";
+  }
+  {
+    assertion = !singBoxCfg.enable || builtins.length subscriptionTags == builtins.length (lib.unique subscriptionTags);
+    message = "proxy-suite: subscription tags must be unique because they are used as cache keys and outbound tag prefixes";
   }
   {
     assertion = !singBoxCfg.enable || builtins.all (tag: !builtins.elem tag builtinTags) outboundTags;

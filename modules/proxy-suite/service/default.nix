@@ -45,6 +45,7 @@ let
     userControlCfg
     builtinTags
     outboundTags
+    subscriptionTags
     invalidRoutingTargets
     polkit
     scripts
@@ -101,7 +102,7 @@ in
     inherit singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy;
     perAppZapretCfg = perAppZapretCfg;
     tgWsProxyCfg = cfg.tgWsProxy;
-    inherit builtinTags outboundTags invalidRoutingTargets;
+    inherit builtinTags outboundTags subscriptionTags invalidRoutingTargets;
     inherit (perAppRouting)
       effectivePerAppRoutingProfileNames
       hasProxychainsProfiles

@@ -76,11 +76,14 @@ let
   subscriptionType = types.submodule {
     options = {
       tag = mkOption {
-        type = types.str;
+        type = types.strMatching "^[A-Za-z0-9][A-Za-z0-9._-]*$";
         description = ''
           Unique identifier for this subscription.
           Used as a prefix for all outbound tags generated from its proxy list,
           e.g. "my-sub" -> tags like "my-sub-Server-DE".
+
+          This value is also used as the subscription cache filename stem under
+          /var/lib/proxy-suite/subscriptions/, so it must be a safe identifier.
         '';
         example = "community-list";
       };

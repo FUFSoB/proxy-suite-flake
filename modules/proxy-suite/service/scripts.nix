@@ -17,6 +17,9 @@
 
 let
   globalTproxy = singBoxCfg.tproxy;
+  subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions";
+
+  mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
 
   mkSubscriptionUrlSource =
     sub:
@@ -76,10 +79,13 @@ let
   # Fetches subscription into the cache on first run; subsequent starts use the cache.
   mkSubscriptionBlock =
     sub: routingMark:
+    let
+      cacheFile = mkSubscriptionCacheFile sub;
+    in
     ''
       # subscription: ${sub.tag}
-      CACHE_DIR="/var/lib/proxy-suite/subscriptions"
-      CACHE_FILE="$CACHE_DIR/${lib.escapeShellArg sub.tag}.json"
+      CACHE_DIR="${subscriptionCacheDir}"
+      CACHE_FILE="${cacheFile}"
       if [ ! -f "$CACHE_FILE" ]; then
         mkdir -p "$CACHE_DIR"
         if ${mkSubscriptionFetchCommand sub} > "$CACHE_FILE.tmp"; then
@@ -195,13 +201,15 @@ let
   # Shell code to fetch a single subscription into the cache (used in update service).
   mkSubscriptionFetchBlock =
     sub:
+    let
+      cacheFile = mkSubscriptionCacheFile sub;
+    in
     ''
-      if ${mkSubscriptionFetchCommand sub} > "$CACHE_DIR/${lib.escapeShellArg sub.tag}.json.tmp"; then
-        mv "$CACHE_DIR/${lib.escapeShellArg sub.tag}.json.tmp" \
-           "$CACHE_DIR/${lib.escapeShellArg sub.tag}.json"
+      if ${mkSubscriptionFetchCommand sub} > "${cacheFile}.tmp"; then
+        mv "${cacheFile}.tmp" "${cacheFile}"
         echo "Updated subscription: ${sub.tag}"
       else
-        rm -f "$CACHE_DIR/${lib.escapeShellArg sub.tag}.json.tmp"
+        rm -f "${cacheFile}.tmp"
         echo "proxy-suite: failed to update subscription '${sub.tag}'" >&2
         FAILED=1
       fi
@@ -209,23 +217,39 @@ let
 
   subscriptionUpdateScript = pkgs.writeShellScript "proxy-suite-subscription-update" ''
     set -euo pipefail
-    CACHE_DIR="/var/lib/proxy-suite/subscriptions"
+    CACHE_DIR="${subscriptionCacheDir}"
     mkdir -p "$CACHE_DIR"
     FAILED=0
+    SOCKS_WAS_ACTIVE=0
+    TUN_WAS_ACTIVE=0
+    PER_APP_TUN_WAS_ACTIVE=0
+
+    systemctl is-active --quiet proxy-suite-socks && SOCKS_WAS_ACTIVE=1 || true
+    systemctl is-active --quiet proxy-suite-tun && TUN_WAS_ACTIVE=1 || true
+    systemctl is-active --quiet proxy-suite-per-app-tun && PER_APP_TUN_WAS_ACTIVE=1 || true
 
     ${lib.concatMapStrings mkSubscriptionFetchBlock singBoxCfg.subscriptions}
 
     if [ "$FAILED" -eq 0 ]; then
-      systemctl restart proxy-suite-socks
-      systemctl is-active --quiet proxy-suite-tun && systemctl restart proxy-suite-tun || true
+      if [ "$SOCKS_WAS_ACTIVE" -eq 1 ]; then
+        systemctl restart proxy-suite-socks
+      fi
+      if [ "$TUN_WAS_ACTIVE" -eq 1 ]; then
+        systemctl restart proxy-suite-tun
+      fi
+      if [ "$PER_APP_TUN_WAS_ACTIVE" -eq 1 ]; then
+        systemctl restart proxy-suite-per-app-tun
+      fi
     fi
     exit "$FAILED"
   '';
 
   hasSubscriptions = singBoxCfg.subscriptions != [ ];
-  subscriptionTagsList = lib.concatStringsSep " " (map (sub: lib.escapeShellArg sub.tag) singBoxCfg.subscriptions);
+  subscriptionTagsFile = pkgs.writeText "proxy-suite-subscription-tags.json" (
+    builtins.toJSON (map (sub: sub.tag) singBoxCfg.subscriptions)
+  );
 in
 {
   inherit startSocks startTun startPerAppTun;
-  inherit subscriptionUpdateScript hasSubscriptions subscriptionTagsList;
+  inherit subscriptionUpdateScript hasSubscriptions subscriptionTagsFile;
 }

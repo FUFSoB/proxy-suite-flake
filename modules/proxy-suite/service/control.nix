@@ -7,7 +7,7 @@
   perAppRoutingTproxy,
   perAppZapretCfg,
   zapretEnabled,
-  subscriptionTagsList,
+  subscriptionTagsFile,
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
   proxychainsQuietArg,
@@ -17,7 +17,7 @@
     clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
     selection = singBoxCfg.selection;
     inherit
-      subscriptionTagsList
+      subscriptionTagsFile
       perAppRoutingProfilesFile
       proxychainsConfigFile
       proxychainsQuietArg

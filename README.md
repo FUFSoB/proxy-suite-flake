@@ -133,7 +133,7 @@ Usage: proxy-ctl <command> [args]
 Commands:
   help                      show this help message
   status [--tray]           show status of all proxy-suite services
-  proxy on|off              enable/disable the core SOCKS proxy
+  proxy on|off              enable/disable the sing-box proxy stack
   tproxy on|off             enable/disable TProxy transparent mode
   tun on|off                enable/disable TUN mode
   zapret on|off             enable/disable zapret-discord-youtube
@@ -144,6 +144,6 @@ Commands:
   apps                      list configured per-app routing profiles
   wrap <profile> -- <cmd>   run a command via a perAppRouting profile
   subscription list         show subscriptions, cache age, and proxy count
-  subscription update       force-refresh all subscription caches and restart
+  subscription update       force-refresh all subscription caches and restart active sing-box services
 ```
 <!-- proxy-ctl-help:end -->
