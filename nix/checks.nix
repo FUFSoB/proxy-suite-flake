@@ -3,6 +3,7 @@
   nixpkgs,
   proxySuiteModule,
   generatedOptionsDoc,
+  generatedReadmeDoc,
   zapret,
 }:
 
@@ -117,6 +118,17 @@ let
   quotedValueByPrefix =
     text: prefix:
     pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix prefix (lineByPrefix text prefix));
+  shellValueByPrefix =
+    text: prefix:
+    let
+      value = pkgs.lib.removePrefix prefix (lineByPrefix text prefix);
+    in
+    if pkgs.lib.hasPrefix "'" value && pkgs.lib.hasSuffix "'" value then
+      pkgs.lib.removeSuffix "'" (pkgs.lib.removePrefix "'" value)
+    else if pkgs.lib.hasPrefix "\"" value && pkgs.lib.hasSuffix "\"" value then
+      pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix "\"" value)
+    else
+      value;
 
   baseModule = {
     system.stateVersion = "26.05";
@@ -728,19 +740,22 @@ let
       };
     }
   ];
+  perAppRoutingProxychainsProxyCtl =
+    packageByPattern perAppRoutingProxychainsFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingProxychainsWrapper =
+    builtins.readFile "${perAppRoutingProxychainsProxyCtl}/bin/proxy-ctl";
   perAppRoutingProxychainsScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingProxychainsFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingProxychainsWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingProxychainsProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingProxychainsConfig =
     builtins.readFile (
-      quotedValueByPrefix perAppRoutingProxychainsScript "PROXYCHAINS_CONFIG=\""
+      shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG="
     );
   perAppRoutingProxychainsProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingProxychainsScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingProxychainsWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
 
@@ -754,15 +769,18 @@ let
       };
     }
   ];
+  perAppRoutingDefaultProfilesProxyCtl =
+    packageByPattern perAppRoutingDefaultProfilesFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingDefaultProfilesWrapper =
+    builtins.readFile "${perAppRoutingDefaultProfilesProxyCtl}/bin/proxy-ctl";
   perAppRoutingDefaultProfilesScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingDefaultProfilesFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingDefaultProfilesWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingDefaultProfilesProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingDefaultProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingDefaultProfilesScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingDefaultProfilesWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
 
@@ -786,15 +804,18 @@ let
       };
     }
   ];
+  perAppRoutingNoDefaultProfilesProxyCtl =
+    packageByPattern perAppRoutingNoDefaultProfilesFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingNoDefaultProfilesWrapper =
+    builtins.readFile "${perAppRoutingNoDefaultProfilesProxyCtl}/bin/proxy-ctl";
   perAppRoutingNoDefaultProfilesScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingNoDefaultProfilesFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingNoDefaultProfilesWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingNoDefaultProfilesProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingNoDefaultProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingNoDefaultProfilesScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingNoDefaultProfilesWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
 
@@ -822,15 +843,18 @@ let
       };
     }
   ];
+  perAppRoutingTunProxyCtl =
+    packageByPattern perAppRoutingTunFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingTunWrapper =
+    builtins.readFile "${perAppRoutingTunProxyCtl}/bin/proxy-ctl";
   perAppRoutingTunScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingTunFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingTunWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingTunProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingTunProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingTunScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingTunWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
   perAppRoutingTunStartScript =
@@ -893,15 +917,18 @@ let
       };
     }
   ];
+  perAppRoutingTproxyProxyCtl =
+    packageByPattern perAppRoutingTproxyFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingTproxyWrapper =
+    builtins.readFile "${perAppRoutingTproxyProxyCtl}/bin/proxy-ctl";
   perAppRoutingTproxyScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingTproxyFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingTproxyWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingTproxyProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingTproxyProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingTproxyScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingTproxyWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
   perAppRoutingTproxyStartScript =
@@ -1029,15 +1056,18 @@ let
       };
     }
   ];
+  perAppRoutingZapretProxyCtl =
+    packageByPattern perAppRoutingZapretFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  perAppRoutingZapretWrapper =
+    builtins.readFile "${perAppRoutingZapretProxyCtl}/bin/proxy-ctl";
   perAppRoutingZapretScript =
-    builtins.readFile (
-      "${packageByPattern perAppRoutingZapretFixture.config.environment.systemPackages
-          ".*/[^/]*proxy-ctl(-[0-9.]+)?$"}/bin/proxy-ctl"
-    );
+    perAppRoutingZapretWrapper
+    + "\n"
+    + builtins.readFile "${perAppRoutingZapretProxyCtl}/bin/.proxy-ctl-wrapped";
   perAppRoutingZapretProfiles =
     builtins.fromJSON (
       builtins.readFile (
-        quotedValueByPrefix perAppRoutingZapretScript "PER_APP_ROUTING_PROFILES_FILE=\""
+        shellValueByPrefix perAppRoutingZapretWrapper "export PER_APP_ROUTING_PROFILES_FILE="
       )
     );
   perAppRoutingZapretStartScript =
@@ -1803,6 +1833,8 @@ let
 
     # -- perAppRouting: proxy-ctl script embeds wrap/apps commands --
     (
+      assert pkgs.lib.hasInfix "help)" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "show this help message" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true
@@ -1818,7 +1850,8 @@ let
 
     # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
     (
-      assert pkgs.lib.hasInfix "proxychains4 -q -f \"$PROXYCHAINS_CONFIG\" \"$@\"" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG='-q'" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "exec proxychains4 $PROXYCHAINS_QUIET_ARG -f \"$PROXYCHAINS_CONFIG\" \"$@\"" perAppRoutingProxychainsScript;
       true
     )
 
@@ -1826,7 +1859,7 @@ let
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix ''PER_APP_TUN_SLICE_BASE="proxy-suite-per-app-tun"'' perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED"'' perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
       true
     )
@@ -1834,7 +1867,7 @@ let
     # -- perAppRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
-      assert pkgs.lib.hasInfix ''PER_APP_TPROXY_SLICE_BASE="proxy-suite-per-app-tproxy"'' perAppRoutingTproxyScript;
+      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED"'' perAppRoutingTproxyScript;
       assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingTproxyScript;
       true
     )
@@ -1842,7 +1875,7 @@ let
     # -- perAppRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
-      assert pkgs.lib.hasInfix ''PER_APP_ZAPRET_SLICE_BASE="proxy-suite-per-app-zapret"'' perAppRoutingZapretScript;
+      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED"'' perAppRoutingZapretScript;
       assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingZapretScript;
       true
     )
@@ -2210,6 +2243,11 @@ in
 
   options-doc = pkgs.runCommand "proxy-suite-options-doc-check" { nativeBuildInputs = [ pkgs.diffutils ]; } ''
     diff -u ${../docs/options.md} ${generatedOptionsDoc}
+    touch "$out"
+  '';
+
+  readme-doc = pkgs.runCommand "proxy-suite-readme-doc-check" { nativeBuildInputs = [ pkgs.diffutils ]; } ''
+    diff -u ${../README.md} ${generatedReadmeDoc}
     touch "$out"
   '';
 }

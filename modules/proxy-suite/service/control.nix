@@ -1,0 +1,38 @@
+# Builds proxy-ctl from global proxy-suite state and per-app routing metadata.
+{
+  lib,
+  pkgs,
+  singBoxCfg,
+  perAppRoutingCfg,
+  perAppRoutingTun,
+  perAppRoutingTproxy,
+  perAppZapretCfg,
+  zapretEnabled,
+  subscriptionTagsList,
+  perAppRoutingProfilesFile,
+  proxychainsConfigFile,
+  proxychainsQuietArg,
+}:
+
+let
+  mkProxyCtl = import ../../../pkgs/proxy-ctl.nix {
+    inherit lib pkgs;
+  };
+in
+{
+  proxyCtl = mkProxyCtl {
+    clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
+    selection = singBoxCfg.selection;
+    inherit
+      subscriptionTagsList
+      perAppRoutingProfilesFile
+      proxychainsConfigFile
+      proxychainsQuietArg
+      ;
+    perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";
+    perAppRoutingProxychainsEnabled = if perAppRoutingCfg.proxychains.enable then "1" else "0";
+    perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";
+    perAppRoutingTproxyEnabled = if perAppRoutingTproxy.enable then "1" else "0";
+    perAppRoutingZapretEnabled = if (perAppZapretCfg.enable && zapretEnabled) then "1" else "0";
+  };
+}

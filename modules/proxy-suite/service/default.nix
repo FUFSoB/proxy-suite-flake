@@ -37,11 +37,6 @@ let
   jq = "${pkgs.jq}/bin/jq";
   python3 = "${pkgs.python3}/bin/python3";
   singBox = "${pkgs.sing-box}/bin/sing-box";
-  proxychains4 = "${pkgs.proxychains-ng}/bin/proxychains4";
-  systemdRun = "${pkgs.systemd}/bin/systemd-run";
-  systemctl = "${pkgs.systemd}/bin/systemctl";
-  journalctl = "${pkgs.systemd}/bin/journalctl";
-  idBin = "${pkgs.coreutils}/bin/id";
   grepBin = "${pkgs.gnugrep}/bin/grep";
   awk = "${pkgs.gawk}/bin/awk";
   sleepBin = "${pkgs.coreutils}/bin/sleep";
@@ -70,14 +65,21 @@ let
     inherit perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile;
     inherit ip nft;
     inherit awk grepBin findBin headBin seqBin sleepBin;
-    inherit jq proxychains4 systemdRun systemctl journalctl idBin;
-    clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
-    selection = singBoxCfg.selection;
+  };
+
+  control = import ./control.nix {
+    inherit lib pkgs singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy perAppZapretCfg;
+    zapretEnabled = cfg.zapret.enable;
     inherit (scripts) subscriptionTagsList;
+    inherit (perAppRouting)
+      perAppRoutingProfilesFile
+      proxychainsConfigFile
+      proxychainsQuietArg
+      ;
   };
 in
 {
-  environment.systemPackages = [ perAppRouting.proxyCtl ];
+  environment.systemPackages = [ control.proxyCtl ];
 
   # nftables must be on for TProxy to work.
   networking.nftables.enable = lib.mkIf (

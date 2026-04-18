@@ -26,6 +26,9 @@
       mkOptionsDoc = import ./nix/options-doc.nix {
         inherit nixpkgs pkgsFor proxySuiteModule;
       };
+      mkReadmeDoc = import ./nix/readme-doc.nix {
+        inherit nixpkgs pkgsFor proxySuiteModule;
+      };
     in
     {
       # Main module – bakes in the zapret flake so consumers don't need it as a separate input.
@@ -46,15 +49,8 @@
         let
           pkgs = pkgsFor system;
           suitePkgs = import ./pkgs/default.nix { inherit pkgs; };
-        in
-        {
-          inherit (suitePkgs)
-            tg-ws-proxy
-            proxy-suite-tray
-            ;
-          optionsDoc = mkOptionsDoc system;
-          update-options-doc = pkgs.writeShellApplication {
-            name = "update-options-doc";
+          updateDocs = pkgs.writeShellApplication {
+            name = "update-docs";
             runtimeInputs = [
               pkgs.coreutils
               pkgs.git
@@ -70,21 +66,45 @@
                 exit 1
               fi
 
-              output_path="$(nix build --no-link --print-out-paths "''${repo_root}#optionsDoc")"
-              target_path="''${repo_root}/docs/options.md"
+              options_output_path="$(nix build --no-link --print-out-paths "''${repo_root}#optionsDoc")"
+              readme_output_path="$(nix build --no-link --print-out-paths "''${repo_root}#readmeDoc")"
 
-              install -Dm644 "''${output_path}" "''${target_path}"
-              echo "updated ''${target_path}"
+              install -Dm644 "''${options_output_path}" "''${repo_root}/docs/options.md"
+              install -Dm644 "''${readme_output_path}" "''${repo_root}/README.md"
+
+              echo "updated ''${repo_root}/docs/options.md"
+              echo "updated ''${repo_root}/README.md"
+            '';
+          };
+        in
+        {
+          inherit (suitePkgs)
+            tg-ws-proxy
+            proxy-suite-tray
+            ;
+          optionsDoc = mkOptionsDoc system;
+          readmeDoc = mkReadmeDoc system;
+          update-docs = updateDocs;
+          update-options-doc = pkgs.writeShellApplication {
+            name = "update-options-doc";
+            runtimeInputs = [ updateDocs ];
+            text = ''
+              exec ${updateDocs}/bin/update-docs "$@"
             '';
           };
         }
       );
 
       apps = forAll (system: {
+        update-docs = {
+          type = "app";
+          program = "${self.packages.${system}.update-docs}/bin/update-docs";
+          meta.description = "Update generated docs and README help from current NixOS module outputs";
+        };
         update-options-doc = {
           type = "app";
           program = "${self.packages.${system}.update-options-doc}/bin/update-options-doc";
-          meta.description = "Update docs/options.md from the current NixOS module option declarations";
+          meta.description = "Compatibility alias for update-docs";
         };
       });
 
@@ -98,6 +118,7 @@
             zapret
             ;
           generatedOptionsDoc = mkOptionsDoc system;
+          generatedReadmeDoc = mkReadmeDoc system;
         }
       );
     };
