@@ -260,7 +260,7 @@ services.proxy-suite = {
     dcIps = { };
     enable = false;
     host = "127.0.0.1";
-    port = 1076;
+    port = 1443;
     secret = null;
     secretFile = null;
   };
@@ -3693,7 +3693,7 @@ WebSocket proxy\.
 *Default:*
 
 ```nix
-1076
+1443
 ```
 
 

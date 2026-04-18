@@ -20,29 +20,25 @@ in
         example = "proxy-suite";
       };
 
-      global.enable =
-        (mkEnableOption "passwordless proxy-ctl control over global proxy-suite units")
-        // {
-          default = true;
-          description = ''
-            Whether members of userControl.group may manage global
-            proxy-suite units without password prompts via commands like
-            `proxy-ctl tun on|off`, `proxy-ctl tproxy on|off`,
-            `proxy-ctl restart`, or `proxy-ctl subscription update`.
-          '';
-        };
+      global.enable = (mkEnableOption "passwordless proxy-ctl control over global proxy-suite units") // {
+        default = true;
+        description = ''
+          Whether members of userControl.group may manage global
+          proxy-suite units without password prompts via commands like
+          `proxy-ctl tun on|off`, `proxy-ctl tproxy on|off`,
+          `proxy-ctl restart`, or `proxy-ctl subscription update`.
+        '';
+      };
 
-      perApp.enable =
-        (mkEnableOption "passwordless proxy-ctl control over per-app routing helpers")
-        // {
-          default = true;
-          description = ''
-            Whether members of userControl.group may start and stop the
-            app-scoped backend units used by `proxy-ctl wrap ...` for
-            route = "tun", route = "tproxy", or route = "zapret" profiles
-            without password prompts.
-          '';
-        };
+      perApp.enable = (mkEnableOption "passwordless proxy-ctl control over per-app routing helpers") // {
+        default = true;
+        description = ''
+          Whether members of userControl.group may start and stop the
+          app-scoped backend units used by `proxy-ctl wrap ...` for
+          route = "tun", route = "tproxy", or route = "zapret" profiles
+          without password prompts.
+        '';
+      };
     };
 
     tray = {
@@ -75,7 +71,7 @@ in
 
       port = mkOption {
         type = types.port;
-        default = 1076;
+        default = 1443;
         description = ''
           TCP listen port for tg-ws-proxy.
           Telegram clients connect to this endpoint when using the local MTProto
