@@ -22,6 +22,9 @@
 }:
 
 let
+  builders = import ./builders.nix { inherit lib pkgs; };
+  inherit (builders) mkAnchorService;
+
   perAppTunSliceName = "proxy-suite-per-app-tun.slice";
   perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
   perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
@@ -238,16 +241,6 @@ let
     nftChain = "output";
   };
 
-  mkAnchorService = sliceName: desc: {
-    description = desc;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      Slice = sliceName;
-      ExecStart = "${pkgs.coreutils}/bin/true";
-      ExecStop = "${pkgs.coreutils}/bin/true";
-    };
-  };
 in
 {
   inherit

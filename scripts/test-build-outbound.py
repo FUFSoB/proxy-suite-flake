@@ -2,32 +2,13 @@
 
 import base64
 import json
-import os
-import subprocess
-import sys
 import unittest
-from pathlib import Path
+
+from proxy_parsing import build_outbound
 
 
-SCRIPT = Path(os.environ.get("BUILD_OUTBOUND_SCRIPT", Path(__file__).with_name("build-outbound.py")))
-
-
-def run_parser(url: str, *, expect_ok: bool = True):
-    env = dict(os.environ)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--tag", "test-outbound"],
-        input=url,
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
-    if expect_ok:
-        if proc.returncode != 0:
-            raise AssertionError(proc.stderr)
-        return json.loads(proc.stdout)
-    return proc
+def run_parser(url: str):
+    return build_outbound(url, "test-outbound")
 
 
 class BuildOutboundTests(unittest.TestCase):
@@ -97,9 +78,8 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["tls"]["server_name"], "proxy.example.com")
 
     def test_invalid_scheme_fails(self):
-        proc = run_parser("wireguard://example.com", expect_ok=False)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("unsupported scheme", proc.stderr)
+        with self.assertRaisesRegex(ValueError, "unsupported scheme"):
+            run_parser("wireguard://example.com")
 
 
 if __name__ == "__main__":

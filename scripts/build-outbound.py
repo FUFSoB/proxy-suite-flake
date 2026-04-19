@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""
-Read a proxy URL from stdin, emit a sing-box outbound JSON object to stdout.
-
-Usage:
-    echo "vless://..." | build-outbound.py --tag my-server [--routing-mark 2]
-
-Supported schemes: vless, vmess, trojan, ss, hysteria2, hy2, tuic,
-    socks5, socks5h, socks4, socks4a, http, https
-"""
+"""Read a proxy URL from stdin and emit a sing-box outbound JSON object."""
 
 import argparse
 import json
 import sys
-from proxy_url_parsers import PARSERS
+
+from proxy_parsing import build_outbound
 
 
 def main() -> None:
@@ -24,22 +17,17 @@ def main() -> None:
     args = ap.parse_args()
 
     url = sys.stdin.read().strip()
-    scheme = url.split("://")[0].lower()
-
-    if scheme not in PARSERS:
-        print(f"error: unsupported scheme '{scheme}'", file=sys.stderr)
-        sys.exit(1)
-
     try:
-        ob = PARSERS[scheme](url, args.tag)
-    except Exception as e:
-        print(f"error: failed to parse {scheme} URL: {e}", file=sys.stderr)
+        outbound = build_outbound(url, args.tag, args.routing_mark)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        scheme = url.split("://", 1)[0].lower()
+        print(f"error: failed to parse {scheme} URL: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.routing_mark is not None:
-        ob["routing_mark"] = args.routing_mark
-
-    print(json.dumps(ob))
+    print(json.dumps(outbound))
 
 
 if __name__ == "__main__":

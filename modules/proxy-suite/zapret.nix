@@ -9,6 +9,9 @@
 }:
 
 let
+  builders = import ./service/builders.nix { inherit lib pkgs; };
+  inherit (builders) mkOneshotService;
+
   zapretCfg = cfg.zapret;
   perAppZapretCfg = zapretCfg.perApp;
 
@@ -297,52 +300,46 @@ in
       [ globalZapretPackage ] ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
     );
 
-  systemd.services.zapret-discord-youtube = {
+  systemd.services.zapret-discord-youtube = mkOneshotService {
     description = "zapret DPI bypass";
     after = [ "network.target" ];
     wantedBy = [ "multi-user.target" ];
     preStart = zapretCommonPreStart globalZapretPackage;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      RuntimeDirectory = "proxy-suite-zapret";
-      ExecStart = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-      ExecStop = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+    runtimeDirectory = "proxy-suite-zapret";
+    execStart = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+    execStop = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+    extraServiceConfig = {
       ExecReload = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret restart";
       Environment = globalZapretEnv;
     };
   };
 
-  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable {
-    description = "proxy-suite per-app-routing zapret backend";
-    after = [ "network.target" ];
-    conflicts = [
-      "proxy-suite-tproxy.service"
-      "proxy-suite-tun.service"
-    ];
-    preStart = zapretCommonPreStart perAppZapretPackage;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      RuntimeDirectory = "proxy-suite-per-app-zapret";
-      ExecStartPre = "${perAppZapretMarkUpScript}";
-      ExecStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-      ExecStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-      ExecStopPost = "${perAppZapretMarkDownScript}";
-      Environment = perAppZapretEnv;
-    };
-  };
+  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (
+    mkOneshotService {
+      description = "proxy-suite per-app-routing zapret backend";
+      after = [ "network.target" ];
+      conflicts = [
+        "proxy-suite-tproxy.service"
+        "proxy-suite-tun.service"
+      ];
+      preStart = zapretCommonPreStart perAppZapretPackage;
+      runtimeDirectory = "proxy-suite-per-app-zapret";
+      execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+      execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+      execStartPre = "${perAppZapretMarkUpScript}";
+      execStopPost = "${perAppZapretMarkDownScript}";
+      extraServiceConfig.Environment = perAppZapretEnv;
+    }
+  );
 
-  systemd.services.proxy-suite-zapret-vm-exempt = lib.mkIf zapretCfg.cidrExemption.enable {
-    description = "Exempt CIDRs from zapret NFQUEUE";
-    after = [ "zapret-discord-youtube.service" ];
-    wants = [ "zapret-discord-youtube.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
-      ExecStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;
-    };
-  };
+  systemd.services.proxy-suite-zapret-vm-exempt = lib.mkIf zapretCfg.cidrExemption.enable (
+    mkOneshotService {
+      description = "Exempt CIDRs from zapret NFQUEUE";
+      after = [ "zapret-discord-youtube.service" ];
+      wants = [ "zapret-discord-youtube.service" ];
+      wantedBy = [ "multi-user.target" ];
+      execStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
+      execStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;
+    }
+  );
 }

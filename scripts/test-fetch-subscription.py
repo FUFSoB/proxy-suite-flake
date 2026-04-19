@@ -1,51 +1,8 @@
 #!/usr/bin/env python3
 
 import base64
-import json
-import os
-import subprocess
-import sys
-import threading
-import time
 import unittest
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-
-
-SCRIPT = Path(os.environ.get("FETCH_SUBSCRIPTION_SCRIPT", Path(__file__).with_name("fetch-subscription.py")))
-
-
-# ---------------------------------------------------------------------------
-# Tiny embedded HTTP server for test fixtures
-# ---------------------------------------------------------------------------
-
-class _FixtureHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = self.server.response_data
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass  # silence access log during tests
-
-
-def _start_server(data: bytes):
-    """Start an ephemeral HTTP server on a random port. Returns (server, port)."""
-    srv = HTTPServer(("127.0.0.1", 0), _FixtureHandler)
-    srv.response_data = data
-    thread = threading.Thread(target=srv.serve_forever, daemon=True)
-    thread.start()
-    # Give the server a moment to enter its accept loop.
-    time.sleep(0.05)
-    return srv, srv.server_address[1]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from proxy_parsing import decode_subscription, parse_subscription
 
 VLESS_URI = "vless://uuid@example.com:443?security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com&sid=abcd"
 SS_URI = "ss://{}@ss.example.com:8388".format(
@@ -60,26 +17,9 @@ def _make_b64_payload(*uris: str) -> bytes:
     return base64.b64encode(text.encode())
 
 
-def run_fetcher(server_data: bytes, tag_prefix: str = "test", *, expect_ok: bool = True, extra_args: list = None):
-    srv, port = _start_server(server_data)
-    url = f"http://127.0.0.1:{port}/sub"
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    cmd = [sys.executable, str(SCRIPT), "--tag-prefix", tag_prefix] + (extra_args or [])
-    proc = subprocess.run(
-        cmd,
-        input=url,
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
-    srv.shutdown()
-    srv.server_close()
-    if expect_ok:
-        if proc.returncode != 0:
-            raise AssertionError(f"Expected success, got:\n{proc.stderr}")
-        return json.loads(proc.stdout)
-    return proc
+def run_fetcher(server_data: bytes, tag_prefix: str = "test", *, routing_mark: int | None = None):
+    lines = decode_subscription(server_data)
+    return parse_subscription(lines, tag_prefix, routing_mark)
 
 
 # ---------------------------------------------------------------------------
@@ -145,15 +85,13 @@ class FetchSubscriptionTests(unittest.TestCase):
 
     def test_routing_mark_applied(self):
         payload = _make_b64_payload(VLESS_URI, SS_URI)
-        obs = run_fetcher(payload, extra_args=["--routing-mark", "2"])
+        obs = run_fetcher(payload, routing_mark=2)
         for ob in obs:
             self.assertEqual(ob["routing_mark"], 2)
 
     def test_all_invalid_fails(self):
         payload = _make_b64_payload(INVALID_URI, "not-a-uri-at-all")
-        proc = run_fetcher(payload, expect_ok=False)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("no parseable proxy URIs", proc.stderr)
+        self.assertEqual(run_fetcher(payload), [])
 
     def test_index_tag_fallback_when_no_remark(self):
         # URIs without a remark should get index-based tags

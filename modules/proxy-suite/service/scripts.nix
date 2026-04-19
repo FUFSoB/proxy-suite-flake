@@ -4,6 +4,9 @@
   pkgs,
   singBoxCfg,
   perAppRoutingTun,
+  selectionMode,
+  collapseNamedOutbounds,
+  hasSubscriptions,
   jq,
   python3,
   singBox,
@@ -108,7 +111,7 @@ let
     routingMark:
     let
       outboundBlocks =
-        if singBoxCfg.selection == "first" && singBoxCfg.outbounds != [ ] then
+        if collapseNamedOutbounds && singBoxCfg.outbounds != [ ] then
           # Only the first static outbound, tagged "proxy" so sing-box routes to it.
           mkOutboundBlock (builtins.head singBoxCfg.outbounds) routingMark "proxy"
         else
@@ -118,7 +121,7 @@ let
         lib.concatMapStrings (sub: mkSubscriptionBlock sub routingMark) singBoxCfg.subscriptions;
 
       wrapperBlock =
-        if singBoxCfg.selection == "first" then
+        if collapseNamedOutbounds then
           # When there are no static outbounds, subscription outbounds keep their
           # real tags. Rename the first one to "proxy" so routing rules resolve.
           lib.optionalString (singBoxCfg.outbounds == [ ] && singBoxCfg.subscriptions != [ ]) ''
@@ -128,7 +131,7 @@ let
                 'map(if .tag == $t then .tag = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
             fi
           ''
-        else if singBoxCfg.selection == "selector" then
+        else if selectionMode == "selector" then
           ''
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
             FIRST=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
@@ -244,7 +247,6 @@ let
     exit "$FAILED"
   '';
 
-  hasSubscriptions = singBoxCfg.subscriptions != [ ];
   subscriptionTagsFile = pkgs.writeText "proxy-suite-subscription-tags.json" (
     builtins.toJSON (map (sub: sub.tag) singBoxCfg.subscriptions)
   );

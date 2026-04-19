@@ -15,23 +15,24 @@
 }:
 
 let
-  singBoxCfg = cfg.singBox;
-  perAppRoutingCfg = cfg.perAppRouting;
-  globalTun = singBoxCfg.tun;
-  globalTproxy = singBoxCfg.tproxy;
-  perAppRoutingTun = singBoxCfg.tun.perApp;
-  perAppRoutingTproxy = singBoxCfg.tproxy.perApp;
-  perAppZapretCfg = cfg.zapret.perApp;
-  userControlCfg = cfg.userControl;
-
-  builtinTags = [ "proxy" "direct" "block" ];
-  outboundTags = map (ob: ob.tag) singBoxCfg.outbounds;
-  subscriptionTags = map (sub: sub.tag) singBoxCfg.subscriptions;
-  invalidRoutingTargets = lib.unique (
-    map (rule: rule.outbound) (
-      builtins.filter (rule: !builtins.elem rule.outbound (builtinTags ++ outboundTags)) singBoxCfg.routing.rules
-    )
-  );
+  derived = import ../derived.nix { inherit lib cfg; };
+  inherit (derived)
+    singBoxCfg
+    perAppRoutingCfg
+    globalTun
+    globalTproxy
+    perAppRoutingTun
+    perAppRoutingTproxy
+    perAppZapretCfg
+    userControlCfg
+    selectionMode
+    builtinTags
+    outboundTags
+    subscriptionTags
+    invalidRoutingTargets
+    collapseNamedOutbounds
+    hasSubscriptions
+    ;
 
   # Tool paths – defined once here and passed into sub-modules as needed.
   jq = "${pkgs.jq}/bin/jq";
@@ -54,7 +55,7 @@ let
   };
 
   scripts = import ./scripts.nix {
-    inherit lib pkgs singBoxCfg perAppRoutingTun;
+    inherit lib pkgs singBoxCfg perAppRoutingTun selectionMode collapseNamedOutbounds hasSubscriptions;
     inherit jq python3 singBox parserScriptsPythonPath buildOutboundPy fetchSubscriptionPy;
     inherit tproxyFile tunFile perAppTunFile;
   };
@@ -68,7 +69,15 @@ let
   };
 
   control = import ./control.nix {
-    inherit packages singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy perAppZapretCfg;
+    inherit
+      packages
+      singBoxCfg
+      perAppRoutingCfg
+      perAppRoutingTun
+      perAppRoutingTproxy
+      perAppZapretCfg
+      selectionMode
+      ;
     zapretEnabled = cfg.zapret.enable;
     inherit (scripts) subscriptionTagsFile;
     inherit (perAppRouting)
@@ -80,6 +89,7 @@ let
 in
 {
   inherit
+    derived
     singBoxCfg
     perAppRoutingCfg
     globalTun

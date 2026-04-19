@@ -8,10 +8,9 @@
 }:
 
 let
-  singBoxCfg = cfg.singBox;
-  globalTun = singBoxCfg.tun;
-  globalTproxy = singBoxCfg.tproxy;
-  perAppTun = singBoxCfg.tun.perApp;
+  derived = import ./derived.nix { inherit lib cfg; };
+  inherit (derived) singBoxCfg globalTun globalTproxy clashApiEnabled;
+  perAppTun = derived.perAppRoutingTun;
   direct = rules.direct;
 
   mkDnsServer =
@@ -43,7 +42,7 @@ let
       final = if singBoxCfg.proxyByDefault then "remote" else "local";
     };
 
-  clashApiBlock = lib.optionalAttrs (singBoxCfg.selection != "first") {
+  clashApiBlock = lib.optionalAttrs clashApiEnabled {
     experimental = {
       clash_api = {
         external_controller = "127.0.0.1:${toString singBoxCfg.clashApiPort}";
@@ -64,7 +63,7 @@ let
       tunStrictRoute ? true,
       forceLocalDnsViaProxy ? false,
       useOutboundRoutingMark ? false,
-      enableClashApi ? true,
+      enableClashApi ? clashApiEnabled,
     }:
     {
       log.level = "warn";
@@ -130,7 +129,6 @@ let
     enableMixed = true;
     enableTProxy = true;
     useOutboundRoutingMark = true;
-    enableClashApi = true;
   };
 
   tunTemplate = mkConfig {

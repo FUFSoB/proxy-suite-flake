@@ -6,6 +6,7 @@
   perAppRoutingTun,
   perAppRoutingTproxy,
   perAppZapretCfg,
+  selectionMode,
   zapretEnabled,
   subscriptionTagsFile,
   perAppRoutingProfilesFile,
@@ -15,7 +16,7 @@
 {
   proxyCtl = packages.mkProxyCtl {
     clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
-    selection = singBoxCfg.selection;
+    selection = selectionMode;
     inherit
       subscriptionTagsFile
       perAppRoutingProfilesFile

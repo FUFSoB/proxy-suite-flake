@@ -7,8 +7,9 @@
 }:
 
 let
+  derived = import ./derived.nix { inherit lib cfg; };
   r = cfg.singBox.routing;
-  singBoxCfg = cfg.singBox;
+  singBoxCfg = derived.singBoxCfg;
   zapretCfg = cfg.zapret;
 
   trim = lib.strings.trim;
@@ -98,13 +99,8 @@ let
   # In "first" mode the start script renames the first outbound to "proxy",
   # so any per-outbound routing tag that isn't direct/block/proxy must map
   # to "proxy" instead of the original tag (which won't exist in sing-box).
-  builtinTags = [
-    "proxy"
-    "direct"
-    "block"
-  ];
   resolveTag =
-    tag: if singBoxCfg.selection == "first" && !builtins.elem tag builtinTags then "proxy" else tag;
+    tag: if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then "proxy" else tag;
 
   # Collect per-outbound routing attached directly to outbound definitions.
   perOutboundRules = lib.concatMap (

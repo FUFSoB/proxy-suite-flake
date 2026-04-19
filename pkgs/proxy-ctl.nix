@@ -18,7 +18,11 @@
 }:
 
 let
-  unwrapped = pkgs.writeShellScriptBin "proxy-ctl" (builtins.readFile ./proxy-ctl.sh);
+  unwrapped = pkgs.writeShellScriptBin "proxy-ctl" (
+    builtins.readFile ./proxy-ctl-lib.sh
+    + "\n"
+    + builtins.readFile ./proxy-ctl.sh
+  );
 in
 pkgs.symlinkJoin {
   name = "proxy-ctl";
