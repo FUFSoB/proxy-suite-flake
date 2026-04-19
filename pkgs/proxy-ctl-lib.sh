@@ -161,7 +161,9 @@ cmd_proxy() {
 }
 
 cmd_mode_toggle() {
-  local name="$1" default_action="${2:-on}" display="${4:-${name#proxy-suite-}}"
+  local name="$1"
+  local default_action="${2:-on}"
+  local display="${4:-${name#proxy-suite-}}"
   case "${3:-$default_action}" in
     on)
       systemctl start "$name"
