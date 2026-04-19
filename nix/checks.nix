@@ -165,6 +165,23 @@ let
       services.proxy-suite = proxySuiteConfig;
     }
   ];
+  # Fixture that must fail validation; uses baseModule as the base.
+  mkBadFixture = modules:
+    forceEval ((evalProxySuite ([ baseModule ] ++ modules)).config.system.build.toplevel.drvPath);
+  # Same but without baseModule (for fixtures that need custom base config).
+  mkBadFixtureRaw = modules:
+    forceEval ((evalProxySuite modules).config.system.build.toplevel.drvPath);
+  # Extract the proxy-ctl package and derived script/profile values from a fixture.
+  mkProxyCtlDerived = fixture:
+    let
+      proxyCtl = packageByPattern fixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+      wrapper = builtins.readFile "${proxyCtl}/bin/proxy-ctl";
+    in
+    {
+      inherit proxyCtl wrapper;
+      script = wrapper + "\n" + builtins.readFile "${proxyCtl}/bin/.proxy-ctl-wrapped";
+      profiles = builtins.fromJSON (builtins.readFile (shellValueByPrefix wrapper "export PER_APP_ROUTING_PROFILES_FILE="));
+    };
 
   minimal = evalProxySuite [ baseModule ];
 
@@ -183,14 +200,8 @@ let
     (mkFixture {
       enable = true;
       singBox.outbounds = [
-        {
-          tag = "dup";
-          url = "http://one.example.com:8080";
-        }
-        {
-          tag = "dup";
-          url = "http://two.example.com:8080";
-        }
+        { tag = "dup"; url = "http://one.example.com:8080"; }
+        { tag = "dup"; url = "http://two.example.com:8080"; }
       ];
     }).config.system.build.toplevel.drvPath
   );
@@ -198,12 +209,7 @@ let
   reservedTag = forceEval (
     (mkFixture {
       enable = true;
-      singBox.outbounds = [
-        {
-          tag = "proxy";
-          url = "http://proxy.example.com:8080";
-        }
-      ];
+      singBox.outbounds = [ { tag = "proxy"; url = "http://proxy.example.com:8080"; } ];
     }).config.system.build.toplevel.drvPath
   );
 
@@ -211,18 +217,8 @@ let
     (mkFixture {
       enable = true;
       singBox = {
-        outbounds = [
-          {
-            tag = "primary";
-            url = "http://proxy.example.com:8080";
-          }
-        ];
-        routing.rules = [
-          {
-            outbound = "missing";
-            domains = [ "example.com" ];
-          }
-        ];
+        outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        routing.rules = [ { outbound = "missing"; domains = [ "example.com" ]; } ];
       };
     }).config.system.build.toplevel.drvPath
   );
@@ -280,47 +276,22 @@ let
     }
   ];
 
-  conflictingAutostartModes = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.singBox = {
-          tproxy = {
-            enable = true;
-            autostart = true;
-          };
-          tun = {
-            enable = true;
-            autostart = true;
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  conflictingAutostartModes = mkBadFixture [
+    {
+      services.proxy-suite.singBox = {
+        tproxy = { enable = true; autostart = true; };
+        tun    = { enable = true; autostart = true; };
+      };
+    }
+  ];
 
-  globalTunWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.singBox = {
-          enable = false;
-          tun.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  globalTunWithoutSingBox = mkBadFixture [
+    { services.proxy-suite.singBox = { enable = false; tun.enable = true; }; }
+  ];
 
-  globalTproxyWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.singBox = {
-          enable = false;
-          tproxy.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  globalTproxyWithoutSingBox = mkBadFixture [
+    { services.proxy-suite.singBox = { enable = false; tproxy.enable = true; }; }
+  ];
 
   routingOrFixture = evalProxySuite [
     {
@@ -553,63 +524,37 @@ let
   zapretHostlistRules = mkRoutingRules zapretHostlistRulesFixture;
   zapretHostlistBase = mkZapretBase zapretHostlistRulesFixture;
 
-  duplicateZapretHostlistNames = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.zapret = {
-          enable = true;
-          hostlistRules = [
-            {
-              name = "dup";
-              domains = [ "one.example" ];
-              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
-            }
-            {
-              name = "dup";
-              domains = [ "two.example" ];
-              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  duplicateZapretHostlistNames = mkBadFixture [
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [
+          { name = "dup"; domains = [ "one.example" ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
+          { name = "dup"; domains = [ "two.example" ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
+        ];
+      };
+    }
+  ];
 
-  emptyZapretHostlistDomains = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.zapret = {
-          enable = true;
-          hostlistRules = [
-            {
-              name = "empty";
-              domains = [ ];
-              nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  emptyZapretHostlistDomains = mkBadFixture [
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [
+          { name = "empty"; domains = [ ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
+        ];
+      };
+    }
+  ];
 
-  missingZapretHostlistAction = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.zapret = {
-          enable = true;
-          hostlistRules = [
-            {
-              name = "missing";
-              domains = [ "missing.example" ];
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  missingZapretHostlistAction = mkBadFixture [
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [ { name = "missing"; domains = [ "missing.example" ]; } ];
+      };
+    }
+  ];
 
   proxyDirectFixture = evalProxySuite [
     baseModule
@@ -697,43 +642,28 @@ let
       };
     }
   ];
-  duplicateSubscriptionTags = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.subscriptions = [
-            {
-              tag = "dup";
-              url = "https://example.com/sub/one";
-            }
-            {
-              tag = "dup";
-              url = "https://example.com/sub/two";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  duplicateSubscriptionTags = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox.subscriptions = [
+          { tag = "dup"; url = "https://example.com/sub/one"; }
+          { tag = "dup"; url = "https://example.com/sub/two"; }
+        ];
+      };
+    }
+  ];
 
-  unsafeSubscriptionTag = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.subscriptions = [
-            {
-              tag = "bad/tag";
-              url = "https://example.com/sub/token";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  unsafeSubscriptionTag = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox.subscriptions = [ { tag = "bad/tag"; url = "https://example.com/sub/token"; } ];
+      };
+    }
+  ];
 
   # selection=first with subscriptions only – start script must rename first
   # subscription outbound to "proxy" so routing rules resolve at runtime.
@@ -834,24 +764,13 @@ let
       };
     }
   ];
-  perAppRoutingProxychainsProxyCtl =
-    packageByPattern perAppRoutingProxychainsFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingProxychainsWrapper =
-    builtins.readFile "${perAppRoutingProxychainsProxyCtl}/bin/proxy-ctl";
-  perAppRoutingProxychainsScript =
-    perAppRoutingProxychainsWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingProxychainsProxyCtl}/bin/.proxy-ctl-wrapped";
+  _perAppRoutingProxychains = mkProxyCtlDerived perAppRoutingProxychainsFixture;
+  perAppRoutingProxychainsProxyCtl = _perAppRoutingProxychains.proxyCtl;
+  perAppRoutingProxychainsWrapper = _perAppRoutingProxychains.wrapper;
+  perAppRoutingProxychainsScript = _perAppRoutingProxychains.script;
+  perAppRoutingProxychainsProfiles = _perAppRoutingProxychains.profiles;
   perAppRoutingProxychainsConfig =
-    builtins.readFile (
-      shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG="
-    );
-  perAppRoutingProxychainsProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingProxychainsWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+    builtins.readFile (shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG=");
 
   perAppRoutingDefaultProfilesFixture = evalProxySuite [
     baseModule
@@ -863,20 +782,11 @@ let
       };
     }
   ];
-  perAppRoutingDefaultProfilesProxyCtl =
-    packageByPattern perAppRoutingDefaultProfilesFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingDefaultProfilesWrapper =
-    builtins.readFile "${perAppRoutingDefaultProfilesProxyCtl}/bin/proxy-ctl";
-  perAppRoutingDefaultProfilesScript =
-    perAppRoutingDefaultProfilesWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingDefaultProfilesProxyCtl}/bin/.proxy-ctl-wrapped";
-  perAppRoutingDefaultProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingDefaultProfilesWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+  _perAppRoutingDefaultProfiles = mkProxyCtlDerived perAppRoutingDefaultProfilesFixture;
+  perAppRoutingDefaultProfilesProxyCtl = _perAppRoutingDefaultProfiles.proxyCtl;
+  perAppRoutingDefaultProfilesWrapper = _perAppRoutingDefaultProfiles.wrapper;
+  perAppRoutingDefaultProfilesScript = _perAppRoutingDefaultProfiles.script;
+  perAppRoutingDefaultProfiles = _perAppRoutingDefaultProfiles.profiles;
 
   perAppRoutingNoDefaultProfilesFixture = evalProxySuite [
     baseModule
@@ -898,32 +808,15 @@ let
       };
     }
   ];
-  perAppRoutingNoDefaultProfilesProxyCtl =
-    packageByPattern perAppRoutingNoDefaultProfilesFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingNoDefaultProfilesWrapper =
-    builtins.readFile "${perAppRoutingNoDefaultProfilesProxyCtl}/bin/proxy-ctl";
-  perAppRoutingNoDefaultProfilesScript =
-    perAppRoutingNoDefaultProfilesWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingNoDefaultProfilesProxyCtl}/bin/.proxy-ctl-wrapped";
-  perAppRoutingNoDefaultProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingNoDefaultProfilesWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+  _perAppRoutingNoDefaultProfiles = mkProxyCtlDerived perAppRoutingNoDefaultProfilesFixture;
+  perAppRoutingNoDefaultProfilesProxyCtl = _perAppRoutingNoDefaultProfiles.proxyCtl;
+  perAppRoutingNoDefaultProfilesWrapper = _perAppRoutingNoDefaultProfiles.wrapper;
+  perAppRoutingNoDefaultProfilesScript = _perAppRoutingNoDefaultProfiles.script;
+  perAppRoutingNoDefaultProfiles = _perAppRoutingNoDefaultProfiles.profiles;
 
-  perAppRoutingDefaultProfilesWithoutProxychainsEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          createDefaultProfiles = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingDefaultProfilesWithoutProxychainsEnable = mkBadFixture [
+    { services.proxy-suite.perAppRouting = { enable = true; createDefaultProfiles = true; }; }
+  ];
 
   perAppRoutingTunFixture = evalProxySuite [
     baseModule
@@ -937,20 +830,11 @@ let
       };
     }
   ];
-  perAppRoutingTunProxyCtl =
-    packageByPattern perAppRoutingTunFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingTunWrapper =
-    builtins.readFile "${perAppRoutingTunProxyCtl}/bin/proxy-ctl";
-  perAppRoutingTunScript =
-    perAppRoutingTunWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingTunProxyCtl}/bin/.proxy-ctl-wrapped";
-  perAppRoutingTunProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingTunWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+  _perAppRoutingTun = mkProxyCtlDerived perAppRoutingTunFixture;
+  perAppRoutingTunProxyCtl = _perAppRoutingTun.proxyCtl;
+  perAppRoutingTunWrapper = _perAppRoutingTun.wrapper;
+  perAppRoutingTunScript = _perAppRoutingTun.script;
+  perAppRoutingTunProfiles = _perAppRoutingTun.profiles;
   perAppRoutingTunStartScript =
     builtins.readFile perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
   perAppRoutingTunConfig = mkPerAppTunConfig perAppRoutingTunFixture;
@@ -982,22 +866,14 @@ let
   perAppRoutingTunWithTproxyDirectOutbound =
     builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunWithTproxyConfig.outbounds);
 
-  perAppRoutingTunWithoutEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          profiles = [
-            {
-              name = "game";
-              route = "tun";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTunWithoutEnable = mkBadFixture [
+    {
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        profiles = [ { name = "game"; route = "tun"; } ];
+      };
+    }
+  ];
 
   perAppRoutingTproxyFixture = evalProxySuite [
     baseModule
@@ -1011,20 +887,11 @@ let
       };
     }
   ];
-  perAppRoutingTproxyProxyCtl =
-    packageByPattern perAppRoutingTproxyFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingTproxyWrapper =
-    builtins.readFile "${perAppRoutingTproxyProxyCtl}/bin/proxy-ctl";
-  perAppRoutingTproxyScript =
-    perAppRoutingTproxyWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingTproxyProxyCtl}/bin/.proxy-ctl-wrapped";
-  perAppRoutingTproxyProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingTproxyWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+  _perAppRoutingTproxy = mkProxyCtlDerived perAppRoutingTproxyFixture;
+  perAppRoutingTproxyProxyCtl = _perAppRoutingTproxy.proxyCtl;
+  perAppRoutingTproxyWrapper = _perAppRoutingTproxy.wrapper;
+  perAppRoutingTproxyScript = _perAppRoutingTproxy.script;
+  perAppRoutingTproxyProfiles = _perAppRoutingTproxy.profiles;
   perAppRoutingTproxyStartScript =
     builtins.readFile perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig.ExecStart;
   perAppRoutingTproxyUserStartExec =
@@ -1032,107 +899,59 @@ let
   perAppRoutingTproxyUserStartScript =
     builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingTproxyUserStartExec));
 
-  perAppRoutingTproxyWithoutEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          profiles = [
-            {
-              name = "browser";
-              route = "tproxy";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTproxyWithoutEnable = mkBadFixture [
+    {
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        profiles = [ { name = "browser"; route = "tproxy"; } ];
+      };
+    }
+  ];
 
-  perAppRoutingProxychainsWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox.enable = false;
-          perAppRouting = {
-            enable = true;
-            proxychains.enable = true;
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingProxychainsWithoutSingBox = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox.enable = false;
+        perAppRouting = { enable = true; proxychains.enable = true; };
+      };
+    }
+  ];
 
-  perAppRoutingTunBackendWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox = {
-            enable = false;
-            tun.perApp.enable = true;
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTunBackendWithoutSingBox = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox = { enable = false; tun.perApp.enable = true; };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTproxyBackendWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox = {
-            enable = false;
-            tproxy.perApp.enable = true;
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTproxyBackendWithoutSingBox = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox = { enable = false; tproxy.perApp.enable = true; };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTunProfileWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox.enable = false;
-          perAppRouting = {
-            enable = true;
-            profiles = [
-              {
-                name = "game";
-                route = "tun";
-              }
-            ];
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTunProfileWithoutSingBox = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox.enable = false;
+        perAppRouting = { enable = true; profiles = [ { name = "game"; route = "tun"; } ]; };
+      };
+    }
+  ];
 
-  perAppRoutingTproxyProfileWithoutSingBox = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox.enable = false;
-          perAppRouting = {
-            enable = true;
-            profiles = [
-              {
-                name = "browser";
-                route = "tproxy";
-              }
-            ];
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTproxyProfileWithoutSingBox = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox.enable = false;
+        perAppRouting = { enable = true; profiles = [ { name = "browser"; route = "tproxy"; } ]; };
+      };
+    }
+  ];
 
   perAppRoutingZapretFixture = evalProxySuite [
     baseModule
@@ -1150,20 +969,11 @@ let
       };
     }
   ];
-  perAppRoutingZapretProxyCtl =
-    packageByPattern perAppRoutingZapretFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  perAppRoutingZapretWrapper =
-    builtins.readFile "${perAppRoutingZapretProxyCtl}/bin/proxy-ctl";
-  perAppRoutingZapretScript =
-    perAppRoutingZapretWrapper
-    + "\n"
-    + builtins.readFile "${perAppRoutingZapretProxyCtl}/bin/.proxy-ctl-wrapped";
-  perAppRoutingZapretProfiles =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix perAppRoutingZapretWrapper "export PER_APP_ROUTING_PROFILES_FILE="
-      )
-    );
+  _perAppRoutingZapret = mkProxyCtlDerived perAppRoutingZapretFixture;
+  perAppRoutingZapretProxyCtl = _perAppRoutingZapret.proxyCtl;
+  perAppRoutingZapretWrapper = _perAppRoutingZapret.wrapper;
+  perAppRoutingZapretScript = _perAppRoutingZapret.script;
+  perAppRoutingZapretProfiles = _perAppRoutingZapret.profiles;
   perAppRoutingZapretStartScript =
     readExecScripts perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret".serviceConfig.ExecStartPre;
   perAppRoutingZapretUserStartExec =
@@ -1217,250 +1027,134 @@ let
     }
   ];
 
-  perAppRoutingZapretWithoutEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          zapret.enable = true;
-          perAppRouting = {
-            enable = true;
-            profiles = [
-              {
-                name = "yt";
-                route = "zapret";
-              }
-            ];
-          };
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingZapretWithoutEnable = mkBadFixture [
+    {
+      services.proxy-suite = {
+        zapret.enable = true;
+        perAppRouting = { enable = true; profiles = [ { name = "yt"; route = "zapret"; } ]; };
+      };
+    }
+  ];
 
-  perAppRoutingZapretWithoutZapretService = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          zapret = {
-            enable = false;
-            perApp.enable = true;
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingZapretWithoutZapretService = mkBadFixture [
+    {
+      services.proxy-suite = {
+        zapret = { enable = false; perApp.enable = true; };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  duplicatePerAppRoutingProfiles = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          profiles = [
-            { name = "dup"; }
-            { name = "dup"; }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  duplicatePerAppRoutingProfiles = mkBadFixture [
+    {
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        profiles = [ { name = "dup"; } { name = "dup"; } ];
+      };
+    }
+  ];
 
-  perAppRoutingProfilesWithoutEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting.profiles = [ { name = "oops"; } ];
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingProfilesWithoutEnable = mkBadFixture [
+    { services.proxy-suite.perAppRouting.profiles = [ { name = "oops"; } ]; }
+  ];
 
-  perAppRoutingProxychainsWithoutEnable = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          profiles = [
-            {
-              name = "steam-browser";
-              route = "proxychains";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingProxychainsWithoutEnable = mkBadFixture [
+    {
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        profiles = [ { name = "steam-browser"; route = "proxychains"; } ];
+      };
+    }
+  ];
 
-  perAppRoutingTunFwmarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox = {
-            tproxy = {
-              enable = true;
-              proxyMark = 16;
-            };
-            tun.perApp = {
-              enable = true;
-              fwmark = 16;
-            };
-          };
-          perAppRouting.enable = true;
+  perAppRoutingTunFwmarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox = {
+          tproxy = { enable = true; proxyMark = 16; };
+          tun.perApp = { enable = true; fwmark = 16; };
         };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTproxyFwmarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox.tproxy = {
-            proxyMark = 17;
-            perApp = {
-              enable = true;
-              fwmark = 17;
-            };
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTproxyFwmarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox.tproxy = { proxyMark = 17; perApp = { enable = true; fwmark = 17; }; };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTunTproxyFwmarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox = {
-            tun.perApp = {
-              enable = true;
-              fwmark = 23;
-            };
-            tproxy.perApp = {
-              enable = true;
-              fwmark = 23;
-            };
-          };
-          perAppRouting.enable = true;
+  perAppRoutingTunTproxyFwmarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox = {
+          tun.perApp   = { enable = true; fwmark = 23; };
+          tproxy.perApp = { enable = true; fwmark = 23; };
         };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTunTproxyRouteTableCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          singBox = {
-            tun.perApp = {
-              enable = true;
-              routeTable = 123;
-            };
-            tproxy.perApp = {
-              enable = true;
-              routeTable = 123;
-            };
-          };
-          perAppRouting.enable = true;
+  perAppRoutingTunTproxyRouteTableCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox = {
+          tun.perApp   = { enable = true; routeTable = 123; };
+          tproxy.perApp = { enable = true; routeTable = 123; };
         };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingZapretFilterMarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          zapret = {
-            enable = true;
-            perApp = {
-              enable = true;
-              filterMark = 268435456;
-            };
-          };
-          singBox.tproxy.proxyMark = 268435456;
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingZapretFilterMarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        zapret = { enable = true; perApp = { enable = true; filterMark = 268435456; }; };
+        singBox.tproxy.proxyMark = 268435456;
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
-  perAppRoutingTproxyZapretMarkCollision = forceEval (
-    (evalProxySuite [
-      baseModule
-      {
-        services.proxy-suite = {
-          zapret = {
-            enable = true;
-            perApp = {
-              enable = true;
-              filterMark = 23;
-            };
-          };
-          singBox.tproxy.perApp = {
-            enable = true;
-            fwmark = 23;
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  perAppRoutingTproxyZapretMarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        zapret = { enable = true; perApp = { enable = true; filterMark = 23; }; };
+        singBox.tproxy.perApp = { enable = true; fwmark = 23; };
+        perAppRouting.enable = true;
+      };
+    }
+  ];
 
   # Validation failures
-  subscriptionBothSources = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.subscriptions = [
-            {
-              tag = "bad";
-              url = "https://example.com/sub/token";
-              urlFile = "/run/secrets/sub-url";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  subscriptionBothSources = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        singBox.subscriptions = [
+          { tag = "bad"; url = "https://example.com/sub/token"; urlFile = "/run/secrets/sub-url"; }
+        ];
+      };
+    }
+  ];
 
-  subscriptionNoSources = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          singBox.subscriptions = [
-            {
-              tag = "bad";
-            }
-          ];
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  subscriptionNoSources = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = { enable = true; singBox.subscriptions = [ { tag = "bad"; } ]; };
+    }
+  ];
 
-  noOutboundsNoSubscriptions = forceEval (
-    (evalProxySuite [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          # neither outbounds nor subscriptions set
-        };
-      }
-    ]).config.system.build.toplevel.drvPath
-  );
+  noOutboundsNoSubscriptions = mkBadFixtureRaw [
+    { system.stateVersion = "26.05"; services.proxy-suite.enable = true; }
+  ];
 
   blockGeoFixture = evalProxySuite [
     baseModule

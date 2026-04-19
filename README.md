@@ -103,7 +103,6 @@ services.proxy-suite = {
 
   tgWsProxy = {
     enable = true;
-    host = "127.0.0.1";
     port = 1443;
     # Inline secret is convenient for testing, but ends up in the Nix store.
     # For real use, prefer secretFile with a secret file.

@@ -983,7 +983,7 @@ Only used when selection is “selector” or “urltest”\. Ignored in
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1030,7 +1030,7 @@ submodule
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1055,7 +1055,7 @@ string matching the pattern \.+
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1088,7 +1088,7 @@ Destination port for this DNS upstream\.
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1121,7 +1121,7 @@ one of “udp”, “tcp”, “tls”
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1165,7 +1165,7 @@ submodule
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1190,7 +1190,7 @@ string matching the pattern \.+
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1223,7 +1223,7 @@ Destination port for this DNS upstream\.
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1256,7 +1256,7 @@ one of “udp”, “tcp”, “tls”
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-dns\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-dns.nix)
 
 
 
@@ -1339,7 +1339,7 @@ list of (submodule)
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1383,7 +1383,7 @@ null
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1420,7 +1420,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1457,7 +1457,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1494,7 +1494,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1530,7 +1530,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1560,7 +1560,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1597,7 +1597,7 @@ null
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1634,7 +1634,7 @@ null
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -1741,7 +1741,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1776,7 +1776,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1811,7 +1811,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1846,7 +1846,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1881,7 +1881,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1918,7 +1918,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1954,7 +1954,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -1990,7 +1990,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2027,7 +2027,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2064,7 +2064,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2101,7 +2101,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2138,7 +2138,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2174,7 +2174,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2237,7 +2237,7 @@ list of (submodule)
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2274,7 +2274,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2311,7 +2311,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2348,7 +2348,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2384,7 +2384,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2415,7 +2415,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-routing\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-routing.nix)
 
 
 
@@ -2463,7 +2463,7 @@ one of “first”, “selector”, “urltest”
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2501,7 +2501,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2553,7 +2553,7 @@ list of (submodule)
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2583,7 +2583,7 @@ string matching the pattern ^\[A-Za-z0-9]\[A-Za-z0-9\._-]\*$
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2621,7 +2621,7 @@ null
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2658,7 +2658,7 @@ null
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -2691,7 +2691,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2726,7 +2726,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2762,7 +2762,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2805,7 +2805,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2838,7 +2838,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2872,7 +2872,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2911,7 +2911,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2944,7 +2944,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -2979,7 +2979,7 @@ TCP/UDP traffic to this port\.
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -3014,7 +3014,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -3049,7 +3049,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tproxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tproxy.nix)
 
 
 
@@ -3082,7 +3082,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3115,7 +3115,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3150,7 +3150,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3183,7 +3183,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3216,7 +3216,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3249,7 +3249,7 @@ true
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3283,7 +3283,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3317,7 +3317,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3351,7 +3351,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3390,7 +3390,7 @@ list of string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3423,7 +3423,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3456,7 +3456,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-tun\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-tun.nix)
 
 
 
@@ -3491,7 +3491,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -3527,7 +3527,7 @@ signed integer
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 
@@ -3566,7 +3566,7 @@ string
 ```
 
 *Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
 
 
 

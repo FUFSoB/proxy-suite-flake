@@ -8,16 +8,16 @@ import sys
 from proxy_parsing import decode_subscription, fetch_raw, parse_subscription
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Fetch a proxy subscription URL from stdin and emit a sing-box outbound JSON array."
     )
-    ap.add_argument("--tag-prefix", required=True, dest="tag_prefix",
-                    help="Prefix for outbound tags, e.g. 'my-sub'.")
+    ap.add_argument(
+        "--tag-prefix",
+        required=True,
+        dest="tag_prefix",
+        help="Prefix for outbound tags, e.g. 'my-sub'.",
+    )
     ap.add_argument("--routing-mark", type=int, default=None, dest="routing_mark")
     args = ap.parse_args()
 

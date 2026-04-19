@@ -17,14 +17,12 @@ def _make_b64_payload(*uris: str) -> bytes:
     return base64.b64encode(text.encode())
 
 
-def run_fetcher(server_data: bytes, tag_prefix: str = "test", *, routing_mark: int | None = None):
+def run_fetcher(
+    server_data: bytes, tag_prefix: str = "test", *, routing_mark: int | None = None
+):
     lines = decode_subscription(server_data)
     return parse_subscription(lines, tag_prefix, routing_mark)
 
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 class FetchSubscriptionTests(unittest.TestCase):
 
@@ -59,6 +57,7 @@ class FetchSubscriptionTests(unittest.TestCase):
         tag = obs[0]["tag"]
         # Tag must contain only safe characters
         import re
+
         self.assertRegex(tag, r"^[a-zA-Z0-9_/\-]+$")
 
     def test_tag_deduplication(self):

@@ -161,7 +161,7 @@ cmd_proxy() {
 }
 
 cmd_mode_toggle() {
-  local name="$1" default_action="${2:-on}"
+  local name="$1" default_action="${2:-on}" display="${4:-${name#proxy-suite-}}"
   case "${3:-$default_action}" in
     on)
       systemctl start "$name"
@@ -170,38 +170,27 @@ cmd_mode_toggle() {
       systemctl stop "$name"
       ;;
     *)
-      echo "Usage: proxy-ctl ${name#proxy-suite-} on|off"
+      echo "Usage: proxy-ctl $display on|off"
       exit 1
       ;;
   esac
 }
 
-cmd_zapret() {
-  case "${1:-on}" in
-    on)
-      systemctl start zapret-discord-youtube
-      ;;
-    off)
-      systemctl stop zapret-discord-youtube
-      ;;
-    *)
-      echo "Usage: proxy-ctl zapret on|off"
-      exit 1
-      ;;
-  esac
-}
+cmd_zapret() { cmd_mode_toggle "zapret-discord-youtube" on "${1:-on}" "zapret"; }
+
+RESTART_SERVICES=(
+  proxy-suite-tproxy
+  proxy-suite-tun
+  zapret-discord-youtube
+)
 
 cmd_restart() {
   systemctl restart proxy-suite-socks
-  if systemctl is-active --quiet proxy-suite-tproxy; then
-    systemctl restart proxy-suite-tproxy
-  fi
-  if systemctl is-active --quiet proxy-suite-tun; then
-    systemctl restart proxy-suite-tun
-  fi
-  if systemctl is-active --quiet zapret-discord-youtube; then
-    systemctl restart zapret-discord-youtube
-  fi
+  for svc in "${RESTART_SERVICES[@]}"; do
+    if systemctl is-active --quiet "$svc"; then
+      systemctl restart "$svc"
+    fi
+  done
 }
 
 cmd_outbounds() {

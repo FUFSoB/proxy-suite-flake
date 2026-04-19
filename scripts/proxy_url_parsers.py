@@ -175,12 +175,7 @@ def parse_trojan(url: str, tag: str) -> dict:
 
 
 def parse_shadowsocks(url: str, tag: str) -> dict:
-    rest = url[len("ss://"):]
-    rest, _, _ = rest.partition("#")
-
-    userinfo, _, rest = rest.partition("@")
-    hostpart, _, _ = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
+    userinfo, host, port, _ = _parse_url_parts(url, "ss")
 
     pad = "=" * (-len(userinfo) % 4)
     try:
