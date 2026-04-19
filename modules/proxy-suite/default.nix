@@ -48,7 +48,14 @@ in
           cfg
           ;
         inherit (configs) tproxyFile tunFile perAppTunFile;
-        inherit (nftr) nftablesRulesFile perAppTproxyRulesFile perAppZapretRulesFile perAppTunChainFile ip nft;
+        inherit (nftr)
+          nftablesRulesFile
+          perAppTproxyRulesFile
+          perAppZapretRulesFile
+          perAppTunChainFile
+          ip
+          nft
+          ;
       })
 
       (lib.mkIf cfg.zapret.enable (
@@ -65,7 +72,12 @@ in
 
       (lib.mkIf cfg.tgWsProxy.enable (
         import ./tg-ws-proxy.nix {
-          inherit lib pkgs packages cfg;
+          inherit
+            lib
+            pkgs
+            packages
+            cfg
+            ;
         }
       ))
 

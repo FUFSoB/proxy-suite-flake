@@ -46,7 +46,11 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["tls"]["server_name"], "tls.example.com")
 
     def test_shadowsocks(self):
-        credentials = base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:passw0rd").decode().rstrip("=")
+        credentials = (
+            base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:passw0rd")
+            .decode()
+            .rstrip("=")
+        )
         ob = run_parser(f"ss://{credentials}@ss.example.com:8388")
         self.assertEqual(ob["type"], "shadowsocks")
         self.assertEqual(ob["method"], "chacha20-ietf-poly1305")

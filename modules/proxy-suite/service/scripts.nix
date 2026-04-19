@@ -100,9 +100,11 @@ let
       fi
       if [ -f "$CACHE_FILE" ]; then
         SUB_JSON=$(cat "$CACHE_FILE")
-        ${lib.optionalString (routingMark != null) ''
-        SUB_JSON=$(${jq} --argjson m ${toString routingMark} 'map(. + {routing_mark: $m})' <<< "$SUB_JSON")
-        ''}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+        ${
+          lib.optionalString (routingMark != null) ''
+            SUB_JSON=$(${jq} --argjson m ${toString routingMark} 'map(. + {routing_mark: $m})' <<< "$SUB_JSON")
+          ''
+        }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
       fi
     '';
 
@@ -117,8 +119,9 @@ let
         else
           lib.concatMapStrings (ob: mkOutboundBlock ob routingMark ob.tag) singBoxCfg.outbounds;
 
-      subscriptionBlocks =
-        lib.concatMapStrings (sub: mkSubscriptionBlock sub routingMark) singBoxCfg.subscriptions;
+      subscriptionBlocks = lib.concatMapStrings (
+        sub: mkSubscriptionBlock sub routingMark
+      ) singBoxCfg.subscriptions;
 
       wrapperBlock =
         if collapseNamedOutbounds then

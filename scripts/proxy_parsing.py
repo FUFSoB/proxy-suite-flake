@@ -62,7 +62,9 @@ def make_tag(prefix: str, remark: str, index: int) -> str:
     return f"{prefix}-{index}"
 
 
-def parse_subscription(lines: list[str], tag_prefix: str, routing_mark: int | None) -> list[dict]:
+def parse_subscription(
+    lines: list[str], tag_prefix: str, routing_mark: int | None
+) -> list[dict]:
     outbounds = []
     seen_tags: set[str] = set()
 

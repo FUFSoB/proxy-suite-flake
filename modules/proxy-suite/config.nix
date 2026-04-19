@@ -9,7 +9,12 @@
 
 let
   derived = import ./derived.nix { inherit lib cfg; };
-  inherit (derived) singBoxCfg globalTun globalTproxy clashApiEnabled;
+  inherit (derived)
+    singBoxCfg
+    globalTun
+    globalTproxy
+    clashApiEnabled
+    ;
   perAppTun = derived.perAppRoutingTun;
   direct = rules.direct;
 
@@ -24,7 +29,9 @@ let
     // lib.optionalAttrs (detour != null) { inherit detour; };
 
   mkDnsConfig =
-    { localDetour ? null }:
+    {
+      localDetour ? null,
+    }:
     {
       servers = [
         (mkDnsServer "remote" singBoxCfg.dns.remote "proxy")
@@ -160,7 +167,9 @@ let
 
   tproxyFile = pkgs.writeText "proxy-suite-tproxy-template.json" (builtins.toJSON tproxyTemplate);
   tunFile = pkgs.writeText "proxy-suite-tun-template.json" (builtins.toJSON tunTemplate);
-  perAppTunFile = pkgs.writeText "proxy-suite-per-app-tun-template.json" (builtins.toJSON perAppTunTemplate);
+  perAppTunFile = pkgs.writeText "proxy-suite-per-app-tun-template.json" (
+    builtins.toJSON perAppTunTemplate
+  );
 
 in
 {

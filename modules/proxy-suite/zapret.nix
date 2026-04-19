@@ -45,10 +45,7 @@ let
     if upstreamPackages ? zapret then upstreamPackages.zapret else upstreamPackages.default;
   mkOptionalHostlistFile =
     fileName: entries:
-    if entries != [ ] then
-      pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n")
-    else
-      null;
+    if entries != [ ] then pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n") else null;
 
   listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.listGeneral;
   listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.listExclude;
@@ -160,15 +157,31 @@ let
         }
 
         ${lib.concatMapStrings
-          ({ name, file }: lib.optionalString (file != null) ''
-            append_list_file ${name} ${file}
-          '')
+          (
+            { name, file }:
+            lib.optionalString (file != null) ''
+              append_list_file ${name} ${file}
+            ''
+          )
           [
-            { name = "list-general-user.txt";  file = listGeneralFile; }
-            { name = "list-exclude-user.txt";  file = listExcludeFile; }
-            { name = "ipset-all.txt";          file = ipsetAllFile; }
-            { name = "ipset-exclude-user.txt"; file = ipsetExcludeFile; }
-          ]}
+            {
+              name = "list-general-user.txt";
+              file = listGeneralFile;
+            }
+            {
+              name = "list-exclude-user.txt";
+              file = listExcludeFile;
+            }
+            {
+              name = "ipset-all.txt";
+              file = ipsetAllFile;
+            }
+            {
+              name = "ipset-exclude-user.txt";
+              file = ipsetExcludeFile;
+            }
+          ]
+        }
 
         rm -f "$out/opt/zapret/hostlists/.game_filter.enabled"
         ${lib.optionalString (gameFilter != "null") ''
@@ -193,15 +206,28 @@ let
           set_config_var FILTER_MARK ""
         ''}
         ${lib.concatMapStrings
-          ({ var, value }: lib.optionalString (value != null) ''
-            hex=$(printf '0x%x' ${toString value})
-            set_config_var ${var} "$hex"
-          '')
+          (
+            { var, value }:
+            lib.optionalString (value != null) ''
+              hex=$(printf '0x%x' ${toString value})
+              set_config_var ${var} "$hex"
+            ''
+          )
           [
-            { var = "FILTER_MARK";         value = filterMark; }
-            { var = "DESYNC_MARK";         value = desyncMark; }
-            { var = "DESYNC_MARK_POSTNAT"; value = desyncMarkPostnat; }
-          ]}
+            {
+              var = "FILTER_MARK";
+              value = filterMark;
+            }
+            {
+              var = "DESYNC_MARK";
+              value = desyncMark;
+            }
+            {
+              var = "DESYNC_MARK_POSTNAT";
+              value = desyncMarkPostnat;
+            }
+          ]
+        }
         ${lib.optionalString (qnum != null) ''
           set_config_var QNUM ${toString qnum}
         ''}
@@ -224,7 +250,8 @@ let
     pidDir = "/run/proxy-suite-zapret";
     gameFilter = zapretCfg.gameFilter;
     forceDisableFilterMark = true;
-    customScript = if perAppZapretCfg.enable then mkGlobalBypassScript (toString perAppZapretCfg.filterMark) else null;
+    customScript =
+      if perAppZapretCfg.enable then mkGlobalBypassScript (toString perAppZapretCfg.filterMark) else null;
   };
 
   perAppZapretPackage = mkDerivedZapretPackage {
@@ -256,7 +283,7 @@ let
     "PATH=${lib.makeBinPath runtimeDeps}"
   ];
   globalZapretEnv = mkZapretEnv globalZapretPackage;
-  perAppZapretEnv    = mkZapretEnv perAppZapretPackage;
+  perAppZapretEnv = mkZapretEnv perAppZapretPackage;
 
   perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-up" ''
     set -euo pipefail
@@ -290,15 +317,16 @@ in
       message = "proxy-suite: each zapret.hostlistRules entry must define at least one domain";
     }
     {
-      assertion = builtins.all (rule: rule.preset != null || rule.nfqwsArgs != [ ]) zapretCfg.hostlistRules;
+      assertion = builtins.all (
+        rule: rule.preset != null || rule.nfqwsArgs != [ ]
+      ) zapretCfg.hostlistRules;
       message = "proxy-suite: each zapret.hostlistRules entry must set preset, nfqwsArgs, or both";
     }
   ];
 
-  environment.systemPackages =
-    lib.mkBefore (
-      [ globalZapretPackage ] ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
-    );
+  environment.systemPackages = lib.mkBefore (
+    [ globalZapretPackage ] ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
+  );
 
   systemd.services.zapret-discord-youtube = mkOneshotService {
     description = "zapret DPI bypass";
@@ -314,32 +342,30 @@ in
     };
   };
 
-  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (
-    mkOneshotService {
-      description = "proxy-suite per-app-routing zapret backend";
-      after = [ "network.target" ];
-      conflicts = [
-        "proxy-suite-tproxy.service"
-        "proxy-suite-tun.service"
-      ];
-      preStart = zapretCommonPreStart perAppZapretPackage;
-      runtimeDirectory = "proxy-suite-per-app-zapret";
-      execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-      execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-      execStartPre = "${perAppZapretMarkUpScript}";
-      execStopPost = "${perAppZapretMarkDownScript}";
-      extraServiceConfig.Environment = perAppZapretEnv;
-    }
-  );
+  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (mkOneshotService {
+    description = "proxy-suite per-app-routing zapret backend";
+    after = [ "network.target" ];
+    conflicts = [
+      "proxy-suite-tproxy.service"
+      "proxy-suite-tun.service"
+    ];
+    preStart = zapretCommonPreStart perAppZapretPackage;
+    runtimeDirectory = "proxy-suite-per-app-zapret";
+    execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+    execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+    execStartPre = "${perAppZapretMarkUpScript}";
+    execStopPost = "${perAppZapretMarkDownScript}";
+    extraServiceConfig.Environment = perAppZapretEnv;
+  });
 
-  systemd.services.proxy-suite-zapret-vm-exempt = lib.mkIf zapretCfg.cidrExemption.enable (
-    mkOneshotService {
-      description = "Exempt CIDRs from zapret NFQUEUE";
-      after = [ "zapret-discord-youtube.service" ];
-      wants = [ "zapret-discord-youtube.service" ];
-      wantedBy = [ "multi-user.target" ];
-      execStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
-      execStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;
-    }
-  );
+  systemd.services.proxy-suite-zapret-vm-exempt =
+    lib.mkIf zapretCfg.cidrExemption.enable
+      (mkOneshotService {
+        description = "Exempt CIDRs from zapret NFQUEUE";
+        after = [ "zapret-discord-youtube.service" ];
+        wants = [ "zapret-discord-youtube.service" ];
+        wantedBy = [ "multi-user.target" ];
+        execStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
+        execStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;
+      });
 }

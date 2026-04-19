@@ -19,9 +19,7 @@
 
 let
   unwrapped = pkgs.writeShellScriptBin "proxy-ctl" (
-    builtins.readFile ./proxy-ctl-lib.sh
-    + "\n"
-    + builtins.readFile ./proxy-ctl.sh
+    builtins.readFile ./proxy-ctl-lib.sh + "\n" + builtins.readFile ./proxy-ctl.sh
   );
 in
 pkgs.symlinkJoin {
@@ -30,15 +28,17 @@ pkgs.symlinkJoin {
   nativeBuildInputs = [ pkgs.makeWrapper ];
   postBuild = ''
     wrapProgram "$out/bin/proxy-ctl" \
-      --prefix PATH : "${lib.makeBinPath [
-        pkgs.coreutils
-        pkgs.curl
-        pkgs.gawk
-        pkgs.gnugrep
-        pkgs.jq
-        pkgs.proxychains-ng
-        pkgs.systemd
-      ]}" \
+      --prefix PATH : "${
+        lib.makeBinPath [
+          pkgs.coreutils
+          pkgs.curl
+          pkgs.gawk
+          pkgs.gnugrep
+          pkgs.jq
+          pkgs.proxychains-ng
+          pkgs.systemd
+        ]
+      }" \
       --set CLASH_API ${lib.escapeShellArg clashApi} \
       --set SELECTION ${lib.escapeShellArg selection} \
       --set SUB_TAGS_FILE ${lib.escapeShellArg (toString subscriptionTagsFile)} \

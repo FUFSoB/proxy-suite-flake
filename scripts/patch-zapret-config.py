@@ -12,6 +12,7 @@ BUILTIN_ACTIVATION_FALLBACKS = {
     "list-twitter.txt": "general",
 }
 
+
 def _hostlist_remove_pattern(stem: str) -> str:
     escaped = re.escape(stem)
     return rf'\s+--hostlist=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
@@ -25,11 +26,11 @@ def _mk_family(match_stems: list[str], remove_stems: list[str]) -> dict:
 
 
 FAMILY_PATTERNS = {
-    "general":    _mk_family(["general", "general-user"], ["general", "general-user"]),
-    "google":     _mk_family(["google"],     ["google"]),
-    "instagram":  _mk_family(["instagram"],  ["instagram"]),
+    "general": _mk_family(["general", "general-user"], ["general", "general-user"]),
+    "google": _mk_family(["google"], ["google"]),
+    "instagram": _mk_family(["instagram"], ["instagram"]),
     "soundcloud": _mk_family(["soundcloud"], ["soundcloud"]),
-    "twitter":    _mk_family(["twitter"],    ["twitter"]),
+    "twitter": _mk_family(["twitter"], ["twitter"]),
 }
 
 
@@ -112,8 +113,13 @@ def clone_family_lines(
         if any(marker in line for marker in FAMILY_PATTERNS[family]["match"])
     ]
     if not matches:
-        raise ValueError(f"Preset family '{family}' is not present in the selected zapret config")
-    return [render_preset_clone(line, family, hostlist_path, standard_excludes) for line in matches]
+        raise ValueError(
+            f"Preset family '{family}' is not present in the selected zapret config"
+        )
+    return [
+        render_preset_clone(line, family, hostlist_path, standard_excludes)
+        for line in matches
+    ]
 
 
 def activate_builtin_hostlists(
@@ -139,8 +145,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Append proxy-suite custom hostlist rules to a zapret config."
     )
-    parser.add_argument("--config", required=True, help="Path to the selected zapret config file")
-    parser.add_argument("--spec", required=True, help="JSON file describing custom hostlist rules")
+    parser.add_argument(
+        "--config", required=True, help="Path to the selected zapret config file"
+    )
+    parser.add_argument(
+        "--spec", required=True, help="JSON file describing custom hostlist rules"
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -171,10 +181,14 @@ def main() -> int:
         preset = entry.get("preset")
         if preset:
             generated_lines.extend(
-                clone_family_lines(nfqws_lines, preset, hostlist_path, standard_excludes)
+                clone_family_lines(
+                    nfqws_lines, preset, hostlist_path, standard_excludes
+                )
             )
         for fragment in entry.get("nfqwsArgs", []):
-            generated_lines.append(render_custom_args(fragment, hostlist_path, standard_excludes))
+            generated_lines.append(
+                render_custom_args(fragment, hostlist_path, standard_excludes)
+            )
 
     updated_lines = lines[:end] + generated_lines + lines[end:]
     config_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")

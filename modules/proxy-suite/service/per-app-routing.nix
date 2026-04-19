@@ -58,7 +58,9 @@ let
   );
   effectivePerAppRoutingProfiles =
     perAppRoutingCfg.profiles
-    ++ builtins.filter (profile: !(builtins.elem profile.name perAppRoutingProfileNames)) defaultPerAppRoutingProfiles;
+    ++ builtins.filter (
+      profile: !(builtins.elem profile.name perAppRoutingProfileNames)
+    ) defaultPerAppRoutingProfiles;
   effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
 
   perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app-routing-profiles.json" (
@@ -77,10 +79,16 @@ let
   '';
   proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 
-  hasProxychainsProfiles = builtins.any (profile: profile.route == "proxychains") effectivePerAppRoutingProfiles;
+  hasProxychainsProfiles = builtins.any (
+    profile: profile.route == "proxychains"
+  ) effectivePerAppRoutingProfiles;
   hasTunProfiles = builtins.any (profile: profile.route == "tun") effectivePerAppRoutingProfiles;
-  hasTproxyProfiles = builtins.any (profile: profile.route == "tproxy") effectivePerAppRoutingProfiles;
-  hasZapretProfiles = builtins.any (profile: profile.route == "zapret") effectivePerAppRoutingProfiles;
+  hasTproxyProfiles = builtins.any (
+    profile: profile.route == "tproxy"
+  ) effectivePerAppRoutingProfiles;
+  hasZapretProfiles = builtins.any (
+    profile: profile.route == "zapret"
+  ) effectivePerAppRoutingProfiles;
 
   perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app-tun-wait-for-interface" ''
     set -euo pipefail

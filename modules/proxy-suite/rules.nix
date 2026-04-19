@@ -55,7 +55,9 @@ let
   zapretUserIps = if syncZapretDirectUserIps then zapretCfg.ipsetAll else [ ];
   zapretCustomDomains =
     if syncZapretDirectDomains then
-      lib.unique (lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) zapretCfg.hostlistRules)
+      lib.unique (
+        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) zapretCfg.hostlistRules
+      )
     else
       [ ];
   zapretExcludedDomains =
@@ -90,17 +92,22 @@ let
     geoips = lib.unique (r.direct.geoips ++ lib.optional r.enableRuDirect "ru");
   };
 
-  mkRule = field: tag: items:
-    lib.optional (items != [ ]) { ${field} = items; outbound = tag; };
-  mkDomainRule  = mkRule "domain_suffix";
-  mkIPRule      = mkRule "ip_cidr";
+  mkRule =
+    field: tag: items:
+    lib.optional (items != [ ]) {
+      ${field} = items;
+      outbound = tag;
+    };
+  mkDomainRule = mkRule "domain_suffix";
+  mkIPRule = mkRule "ip_cidr";
   mkRulesetRule = mkRule "rule_set";
 
   # In "first" mode the start script renames the first outbound to "proxy",
   # so any per-outbound routing tag that isn't direct/block/proxy must map
   # to "proxy" instead of the original tag (which won't exist in sing-box).
   resolveTag =
-    tag: if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then "proxy" else tag;
+    tag:
+    if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then "proxy" else tag;
 
   # Collect per-outbound routing attached directly to outbound definitions.
   perOutboundRules = lib.concatMap (

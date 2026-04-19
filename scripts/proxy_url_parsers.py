@@ -10,7 +10,7 @@ def _qs(query: str) -> dict:
 
 
 def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
-    rest = url[len(f"{scheme}://"):]
+    rest = url[len(f"{scheme}://") :]
     rest, _, _ = rest.partition("#")
     if "@" in rest:
         userinfo, _, rest = rest.partition("@")
@@ -47,7 +47,9 @@ def _mk_transport(
     return None
 
 
-def _mk_tls(server_name: str, fp: "str | None" = None, alpn: "str | None" = None) -> dict:
+def _mk_tls(
+    server_name: str, fp: "str | None" = None, alpn: "str | None" = None
+) -> dict:
     tls: dict = {"enabled": True, "server_name": server_name}
     if fp:
         tls["utls"] = {"enabled": True, "fingerprint": fp}
@@ -85,7 +87,9 @@ def parse_vless(url: str, tag: str) -> dict:
             "short_id": params.get("sid", ""),
         }
     elif security == "tls":
-        ob["tls"] = _mk_tls(params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn"))
+        ob["tls"] = _mk_tls(
+            params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
+        )
 
     tr = _mk_transport(
         transport,
@@ -104,7 +108,7 @@ def parse_vless(url: str, tag: str) -> dict:
 
 
 def parse_vmess(url: str, tag: str) -> dict:
-    b64 = url[len("vmess://"):]
+    b64 = url[len("vmess://") :]
     pad = "=" * (-len(b64) % 4)
     try:
         data = json.loads(base64.b64decode(b64 + pad))
@@ -159,7 +163,9 @@ def parse_trojan(url: str, tag: str) -> dict:
         "server": host,
         "server_port": int(port),
         "password": urllib.parse.unquote(userinfo),
-        "tls": _mk_tls(params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")),
+        "tls": _mk_tls(
+            params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
+        ),
     }
 
     tr = _mk_transport(

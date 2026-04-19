@@ -15,7 +15,14 @@ let
       preStart ? null,
     }:
     {
-      inherit description after wantedBy wants requires conflicts;
+      inherit
+        description
+        after
+        wantedBy
+        wants
+        requires
+        conflicts
+        ;
     }
     // lib.optionalAttrs (preStart != null) { inherit preStart; };
 in
@@ -23,7 +30,9 @@ rec {
   mkNamedUnits =
     entries:
     lib.listToAttrs (
-      map (entry: lib.nameValuePair entry.name entry.value) (builtins.filter (entry: entry.enable) entries)
+      map (entry: lib.nameValuePair entry.name entry.value) (
+        builtins.filter (entry: entry.enable) entries
+      )
     );
 
   mkRestartingService =
@@ -54,17 +63,16 @@ rec {
         ;
     })
     // {
-      serviceConfig =
-        {
-          ExecStart = execStart;
-          Restart = "on-failure";
-          RestartSec = 5;
-          RuntimeDirectory = runtimeDirectory;
-        }
-        // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
-        // lib.optionalAttrs (execStartPost != null) { ExecStartPost = execStartPost; }
-        // lib.optionalAttrs (execStopPost != null) { ExecStopPost = execStopPost; }
-        // extraServiceConfig;
+      serviceConfig = {
+        ExecStart = execStart;
+        Restart = "on-failure";
+        RestartSec = 5;
+        RuntimeDirectory = runtimeDirectory;
+      }
+      // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
+      // lib.optionalAttrs (execStartPost != null) { ExecStartPost = execStartPost; }
+      // lib.optionalAttrs (execStopPost != null) { ExecStopPost = execStopPost; }
+      // extraServiceConfig;
     };
 
   mkOneshotService =
@@ -97,19 +105,18 @@ rec {
         ;
     })
     // {
-      serviceConfig =
-        {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          ExecStart = execStart;
-        }
-        // lib.optionalAttrs (execStop != null) { ExecStop = execStop; }
-        // lib.optionalAttrs (execStartPre != null) { ExecStartPre = execStartPre; }
-        // lib.optionalAttrs (execStartPost != null) { ExecStartPost = execStartPost; }
-        // lib.optionalAttrs (execStopPost != null) { ExecStopPost = execStopPost; }
-        // lib.optionalAttrs (runtimeDirectory != null) { RuntimeDirectory = runtimeDirectory; }
-        // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
-        // extraServiceConfig;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = execStart;
+      }
+      // lib.optionalAttrs (execStop != null) { ExecStop = execStop; }
+      // lib.optionalAttrs (execStartPre != null) { ExecStartPre = execStartPre; }
+      // lib.optionalAttrs (execStartPost != null) { ExecStartPost = execStartPost; }
+      // lib.optionalAttrs (execStopPost != null) { ExecStopPost = execStopPost; }
+      // lib.optionalAttrs (runtimeDirectory != null) { RuntimeDirectory = runtimeDirectory; }
+      // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
+      // extraServiceConfig;
     };
 
   mkUserRuleService =

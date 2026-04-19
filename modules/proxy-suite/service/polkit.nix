@@ -1,5 +1,9 @@
 # Polkit rules granting proxy-suite group members passwordless control over services.
-{ lib, cfg, userControlCfg }:
+{
+  lib,
+  cfg,
+  userControlCfg,
+}:
 
 let
   userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
@@ -18,4 +22,6 @@ let
       }
     '';
 in
-{ inherit userControlEnabled userControlPolkitRules; }
+{
+  inherit userControlEnabled userControlPolkitRules;
+}

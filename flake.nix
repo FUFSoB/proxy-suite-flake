@@ -27,7 +27,12 @@
         inherit nixpkgs pkgsFor proxySuiteModule;
       };
       mkReadmeDoc = import ./nix/readme-doc.nix {
-        inherit nixpkgs pkgsFor proxySuiteModule zapret;
+        inherit
+          nixpkgs
+          pkgsFor
+          proxySuiteModule
+          zapret
+          ;
       };
     in
     {

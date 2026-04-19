@@ -217,20 +217,17 @@ let
     {
       enable = perAppRoutingTun.enable;
       name = "${serviceNames.perAppTun}-anchor";
-      value =
-        mkAnchorService perAppRouting.perAppTunSliceName "Anchor service for proxy-suite app TUN slice";
+      value = mkAnchorService perAppRouting.perAppTunSliceName "Anchor service for proxy-suite app TUN slice";
     }
     {
       enable = perAppRoutingTproxy.enable;
       name = "${serviceNames.perAppTproxy}-anchor";
-      value =
-        mkAnchorService perAppRouting.perAppTproxySliceName "Anchor service for proxy-suite app TProxy slice";
+      value = mkAnchorService perAppRouting.perAppTproxySliceName "Anchor service for proxy-suite app TProxy slice";
     }
     {
       enable = perAppZapretEnabled;
       name = "${serviceNames.perAppZapret}-anchor";
-      value =
-        mkAnchorService perAppRouting.perAppZapretSliceName "Anchor service for proxy-suite app zapret slice";
+      value = mkAnchorService perAppRouting.perAppZapretSliceName "Anchor service for proxy-suite app zapret slice";
     }
   ];
 
@@ -262,29 +259,36 @@ in
   };
 
   security.polkit.enable = lib.mkIf (cfg.enable && userControlEnabled) true;
-  security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (lib.mkAfter ''
-    polkit.addRule(function(action, subject) {
-      if (!subject.isInGroup("${userControlCfg.group}")) {
+  security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (
+    lib.mkAfter ''
+      polkit.addRule(function(action, subject) {
+        if (!subject.isInGroup("${userControlCfg.group}")) {
+          return null;
+        }
+
+        if (action.id !== "org.freedesktop.systemd1.manage-units") {
+          return null;
+        }
+
+        var unit = action.lookup("unit");
+        ${polkit.userControlPolkitRules}
+
         return null;
-      }
-
-      if (action.id !== "org.freedesktop.systemd1.manage-units") {
-        return null;
-      }
-
-      var unit = action.lookup("unit");
-      ${polkit.userControlPolkitRules}
-
-      return null;
-    });
-  '');
+      });
+    ''
+  );
 
   systemd.user.services = mkNamedUnits userServiceEntries;
 
   assertions = import ../service-assertions.nix {
     inherit lib cfg derived;
     tgWsProxyCfg = cfg.tgWsProxy;
-    inherit builtinTags outboundTags subscriptionTags invalidRoutingTargets;
+    inherit
+      builtinTags
+      outboundTags
+      subscriptionTags
+      invalidRoutingTargets
+      ;
     inherit (perAppRouting)
       effectivePerAppRoutingProfileNames
       hasProxychainsProfiles

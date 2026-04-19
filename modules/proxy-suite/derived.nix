@@ -14,7 +14,11 @@ let
   userControlCfg = cfg.userControl;
 
   selectionMode = singBoxCfg.selection;
-  builtinTags = [ "proxy" "direct" "block" ];
+  builtinTags = [
+    "proxy"
+    "direct"
+    "block"
+  ];
   outboundTags = map (ob: ob.tag) singBoxCfg.outbounds;
   subscriptionTags = map (sub: sub.tag) singBoxCfg.subscriptions;
 
@@ -27,7 +31,9 @@ let
 
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
-      builtins.filter (rule: !builtins.elem rule.outbound (builtinTags ++ outboundTags)) singBoxCfg.routing.rules
+      builtins.filter (
+        rule: !builtins.elem rule.outbound (builtinTags ++ outboundTags)
+      ) singBoxCfg.routing.rules
     )
   );
 in

@@ -55,17 +55,47 @@ let
   };
 
   scripts = import ./scripts.nix {
-    inherit lib pkgs singBoxCfg perAppRoutingTun selectionMode collapseNamedOutbounds hasSubscriptions;
-    inherit jq python3 singBox parserScriptsPythonPath buildOutboundPy fetchSubscriptionPy;
+    inherit
+      lib
+      pkgs
+      singBoxCfg
+      perAppRoutingTun
+      selectionMode
+      collapseNamedOutbounds
+      hasSubscriptions
+      ;
+    inherit
+      jq
+      python3
+      singBox
+      parserScriptsPythonPath
+      buildOutboundPy
+      fetchSubscriptionPy
+      ;
     inherit tproxyFile tunFile perAppTunFile;
   };
 
   perAppRouting = import ./per-app-routing.nix {
-    inherit lib pkgs cfg singBoxCfg perAppRoutingCfg perAppRoutingTun perAppRoutingTproxy;
+    inherit
+      lib
+      pkgs
+      cfg
+      singBoxCfg
+      perAppRoutingCfg
+      perAppRoutingTun
+      perAppRoutingTproxy
+      ;
     perAppZapretCfg = perAppZapretCfg;
     inherit perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile;
     inherit ip nft;
-    inherit awk grepBin findBin headBin seqBin sleepBin;
+    inherit
+      awk
+      grepBin
+      findBin
+      headBin
+      seqBin
+      sleepBin
+      ;
   };
 
   control = import ./control.nix {
