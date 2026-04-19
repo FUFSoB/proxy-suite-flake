@@ -314,7 +314,7 @@ static const char *indicator_label_text(const ServiceState *state)
 static void update_status(void)
 {
     ServiceState state = get_service_state();
-    /* Gold: TUN/TProxy active (highest priority) */
+    /* Purple: TUN/TProxy active (highest priority) */
     static const char *const tunnel_icons[] = {
         "proxy-suite-tunnel",
         "proxy-suite-tunnel-symbolic",
