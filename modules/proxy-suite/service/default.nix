@@ -79,6 +79,10 @@ let
     subscriptionUpdate = "proxy-suite-subscription-update";
   };
 
+  localProxyAuthEnabled =
+    singBoxCfg.auth.username != null
+    && (singBoxCfg.auth.password != null || singBoxCfg.auth.passwordFile != null);
+
   tproxyUpScript = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
     ${nft} delete table ip singbox 2>/dev/null || true
     ${nft} -f ${nftablesRulesFile}
@@ -254,7 +258,7 @@ in
     globalTproxy.enable || perAppRoutingTun.enable || perAppRoutingTproxy.enable || perAppZapretEnabled
   ) (lib.mkDefault true);
 
-  users.groups = lib.mkIf (cfg.enable && userControlEnabled) {
+  users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {
     "${userControlCfg.group}" = { };
   };
 

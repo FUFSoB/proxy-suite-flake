@@ -3,6 +3,8 @@
   lib,
   pkgs,
   singBoxCfg,
+  perAppRoutingCfg,
+  userControlCfg,
   perAppRoutingTun,
   selectionMode,
   collapseNamedOutbounds,
@@ -20,7 +22,19 @@
 
 let
   globalTproxy = singBoxCfg.tproxy;
+  localProxyAuth = singBoxCfg.auth;
+  localProxyAuthEnabled =
+    localProxyAuth.username != null
+    && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
+  localProxyAuthPasswordSource =
+    if localProxyAuth.passwordFile != null then
+      localProxyAuth.passwordFile
+    else if localProxyAuth.password != null then
+      pkgs.writeText "proxy-suite-local-proxy-password" localProxyAuth.password
+    else
+      null;
   subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions";
+  runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
 
   mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
 
@@ -159,24 +173,64 @@ let
     in
     outboundBlocks + subscriptionBlocks + wrapperBlock;
 
+  writeProxychainsConfigBlock = ''
+    {
+      printf '%s\n' 'strict_chain'
+      ${lib.optionalString perAppRoutingCfg.proxychains.quiet "printf '%s\\n' 'quiet_mode'"}
+      ${lib.optionalString perAppRoutingCfg.proxychains.proxyDns "printf '%s\\n' 'proxy_dns'"}
+      printf '%s\n' 'tcp_read_time_out 15000'
+      printf '%s\n' 'tcp_connect_time_out 8000'
+      printf '\n%s\n' '[ProxyList]'
+      printf 'socks5 %s %s %s %s\n' \
+        ${lib.escapeShellArg singBoxCfg.listenAddress} \
+        ${lib.escapeShellArg (toString singBoxCfg.port)} \
+        ${lib.escapeShellArg localProxyAuth.username} \
+        "$LOCAL_PROXY_PASSWORD"
+    } > "${runtimeProxychainsConfig}"
+    ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${runtimeProxychainsConfig}"
+    chmod 640 "${runtimeProxychainsConfig}"
+  '';
+
   mkStartScript =
     {
       name,
       runtimeDir,
       configFile,
       routingMark ? null,
+      enableLocalProxyAuth ? false,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
       RUNTIME_DIR="${runtimeDir}"
       mkdir -p "$RUNTIME_DIR"
       OUTBOUNDS_JSON='[]'
+      ${lib.optionalString enableLocalProxyAuth ''
+        umask 077
+        LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
+        ${writeProxychainsConfigBlock}
+      ''}
 
       ${mkOutboundScript routingMark}
 
-      ${jq} --argjson obs "$OUTBOUNDS_JSON" \
-        '.outbounds = $obs + .outbounds' \
-        "${configFile}" > "$RUNTIME_DIR/config.json"
+      ${
+        if enableLocalProxyAuth then
+          ''
+            ${jq} \
+              --argjson obs "$OUTBOUNDS_JSON" \
+              --arg user ${lib.escapeShellArg localProxyAuth.username} \
+              --arg password "$LOCAL_PROXY_PASSWORD" \
+              '.outbounds = $obs + .outbounds
+                | (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]' \
+              "${configFile}" > "$RUNTIME_DIR/config.json"
+            chmod 600 "$RUNTIME_DIR/config.json"
+          ''
+        else
+          ''
+            ${jq} --argjson obs "$OUTBOUNDS_JSON" \
+              '.outbounds = $obs + .outbounds' \
+              "${configFile}" > "$RUNTIME_DIR/config.json"
+          ''
+      }
 
       exec ${singBox} run -c "$RUNTIME_DIR/config.json"
     '';
@@ -186,6 +240,7 @@ let
     runtimeDir = "/run/proxy-suite-socks";
     configFile = tproxyFile;
     routingMark = globalTproxy.proxyMark;
+    enableLocalProxyAuth = localProxyAuthEnabled;
   };
 
   startTun = mkStartScript {
@@ -256,5 +311,10 @@ let
 in
 {
   inherit startSocks startTun startPerAppTun;
-  inherit subscriptionUpdateScript hasSubscriptions subscriptionTagsFile;
+  inherit
+    subscriptionUpdateScript
+    hasSubscriptions
+    subscriptionTagsFile
+    runtimeProxychainsConfig
+    ;
 }

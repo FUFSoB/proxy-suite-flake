@@ -39,6 +39,49 @@ in
       example = 1080;
     };
 
+    auth = {
+      username = mkOption {
+        type = types.nullOr (types.strMatching "[^[:space:]]+");
+        default = null;
+        description = ''
+          Optional username for the local SOCKS5/HTTP mixed inbound.
+
+          Set this together with exactly one of auth.password or
+          auth.passwordFile to require clients to authenticate before using the
+          local proxy. Leave unset to keep the local proxy unauthenticated.
+        '';
+        example = "proxy-user";
+      };
+
+      password = mkOption {
+        type = types.nullOr (types.strMatching "[^[:space:]]+");
+        default = null;
+        description = ''
+          Optional inline password for the local SOCKS5/HTTP mixed inbound.
+          Convenient for testing, but the password ends up in the Nix store.
+
+          Prefer auth.passwordFile for real deployments.
+        '';
+        example = "change-me";
+      };
+
+      passwordFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Runtime path to a file containing the local proxy password.
+          Intended for use with secret managers so the password stays out of
+          the Nix store. The file is read when proxy-suite-socks starts.
+
+          If perAppRouting.proxychains.enable is also used, keep this password
+          as a single non-whitespace token so it can be written to the
+          proxychains-ng config format. The generated proxychains config is
+          readable by members of userControl.group.
+        '';
+        example = "/run/secrets/proxy-suite-local-proxy-password";
+      };
+    };
+
     proxyByDefault = mkOption {
       type = types.bool;
       default = true;

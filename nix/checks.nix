@@ -772,6 +772,42 @@ let
   perAppRoutingProxychainsConfig =
     builtins.readFile (shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG=");
 
+  localProxyAuthFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.auth = {
+        username = "local-user";
+        password = "local-pass";
+      };
+    }
+  ];
+  localProxyAuthStartScript = builtins.readFile (
+    localProxyAuthFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+
+  localProxyAuthPasswordFileFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox.auth = {
+          username = "local-user";
+          passwordFile = "/run/secrets/local-proxy-password";
+        };
+        perAppRouting = {
+          enable = true;
+          proxychains.enable = true;
+          profiles = [ { name = "steam-browser"; route = "proxychains"; } ];
+        };
+      };
+    }
+  ];
+  _localProxyAuthPasswordFile = mkProxyCtlDerived localProxyAuthPasswordFileFixture;
+  localProxyAuthPasswordFileWrapper = _localProxyAuthPasswordFile.wrapper;
+  localProxyAuthPasswordFileScript = _localProxyAuthPasswordFile.script;
+  localProxyAuthPasswordFileStartScript = builtins.readFile (
+    localProxyAuthPasswordFileFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+
   perAppRoutingDefaultProfilesFixture = evalProxySuite [
     baseModule
     {
@@ -1152,6 +1188,24 @@ let
     }
   ];
 
+  localProxyAuthNoPassword = mkBadFixture [
+    { services.proxy-suite.singBox.auth.username = "local-user"; }
+  ];
+
+  localProxyAuthNoUsername = mkBadFixture [
+    { services.proxy-suite.singBox.auth.password = "local-pass"; }
+  ];
+
+  localProxyAuthBothPasswordSources = mkBadFixture [
+    {
+      services.proxy-suite.singBox.auth = {
+        username = "local-user";
+        password = "local-pass";
+        passwordFile = "/run/secrets/local-proxy-password";
+      };
+    }
+  ];
+
   noOutboundsNoSubscriptions = mkBadFixtureRaw [
     { system.stateVersion = "26.05"; services.proxy-suite.enable = true; }
   ];
@@ -1180,6 +1234,44 @@ let
   validated = builtins.all (x: x) [
     (
       assert minimal.config.services.proxy-suite.singBox.listenAddress == "127.0.0.1";
+      true
+    )
+    # -- singBox.auth: default mixed inbound stays unauthenticated --
+    (
+      let
+        mixedInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "mixed-in") ruDefaultConfig.inbounds
+        );
+      in
+      assert !(mixedInbound ? users);
+      true
+    )
+    # -- singBox.auth: authenticated mixed inbound is injected at runtime --
+    (
+      assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat "'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''--arg user local-user'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''--arg password "$LOCAL_PROXY_PASSWORD"'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''select(.type == "mixed" and .tag == "mixed-in") | .users'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''chmod 600 "$RUNTIME_DIR/config.json"'' localProxyAuthStartScript;
+      true
+    )
+    # -- singBox.auth: passwordFile is read from runtime path and proxychains uses runtime config --
+    (
+      assert pkgs.lib.hasInfix ''/run/secrets/local-proxy-password'' localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix ''/run/proxy-suite-socks/proxychains.conf'' localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix "printf 'socks5 %s %s %s %s\\n'" localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix ''chgrp proxy-suite "/run/proxy-suite-socks/proxychains.conf"'' localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix ''chmod 640 "/run/proxy-suite-socks/proxychains.conf"'' localProxyAuthPasswordFileStartScript;
+      assert builtins.hasAttr "proxy-suite" localProxyAuthPasswordFileFixture.config.users.groups;
+      assert shellValueByPrefix localProxyAuthPasswordFileWrapper "export PROXYCHAINS_CONFIG=" == "/run/proxy-suite-socks/proxychains.conf";
+      assert pkgs.lib.hasInfix "Proxychains config is not readable" localProxyAuthPasswordFileScript;
+      true
+    )
+    # -- singBox.auth: incomplete or conflicting auth config fails --
+    (
+      assert localProxyAuthNoPassword.success == false;
+      assert localProxyAuthNoUsername.success == false;
+      assert localProxyAuthBothPasswordSources.success == false;
       true
     )
     (

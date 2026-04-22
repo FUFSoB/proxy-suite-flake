@@ -23,6 +23,10 @@ Update module option docs there instead of editing this file by hand.
       - [quiet](#services-proxy-suite-perapprouting-proxychains-quiet)
   - singBox
     - [enable](#services-proxy-suite-singbox-enable)
+    - auth
+      - [password](#services-proxy-suite-singbox-auth-password)
+      - [passwordFile](#services-proxy-suite-singbox-auth-passwordfile)
+      - [username](#services-proxy-suite-singbox-auth-username)
     - [clashApiPort](#services-proxy-suite-singbox-clashapiport)
     - dns
       - [local](#services-proxy-suite-singbox-dns-local)
@@ -170,6 +174,11 @@ services.proxy-suite = {
     };
   };
   singBox = {
+    auth = {
+      password = null;
+      passwordFile = null;
+      username = null;
+    };
     clashApiPort = 9090;
     dns = {
       local = {
@@ -332,6 +341,11 @@ services.proxy-suite = {
     };
   };
   singBox = {
+    auth = {
+      password = "change-me";
+      passwordFile = "/run/secrets/proxy-suite-local-proxy-password";
+      username = "proxy-user";
+    };
     clashApiPort = 9090;
     dns = {
       local = {
@@ -945,6 +959,119 @@ boolean
 
 ```nix
 true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-auth-password"></a>
+## services\.proxy-suite\.singBox\.auth\.password
+
+
+
+Optional inline password for the local SOCKS5/HTTP mixed inbound\.
+Convenient for testing, but the password ends up in the Nix store\.
+
+Prefer auth\.passwordFile for real deployments\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"change-me"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-auth-passwordfile"></a>
+## services\.proxy-suite\.singBox\.auth\.passwordFile
+
+
+
+Runtime path to a file containing the local proxy password\.
+Intended for use with secret managers so the password stays out of
+the Nix store\. The file is read when proxy-suite-socks starts\.
+
+If perAppRouting\.proxychains\.enable is also used, keep this password
+as a single non-whitespace token so it can be written to the
+proxychains-ng config format\. The generated proxychains config is
+readable by members of userControl\.group\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-suite-local-proxy-password"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-auth-username"></a>
+## services\.proxy-suite\.singBox\.auth\.username
+
+
+
+Optional username for the local SOCKS5/HTTP mixed inbound\.
+
+Set this together with exactly one of auth\.password or
+auth\.passwordFile to require clients to authenticate before using the
+local proxy\. Leave unset to keep the local proxy unauthenticated\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"proxy-user"
 ```
 
 *Declared by:*
@@ -3997,8 +4124,6 @@ true
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
 
-
-
 Whether to enable zapret DPI bypass\.
 
 
@@ -4250,6 +4375,8 @@ true
 
 <a id="services-proxy-suite-zapret-hostlistrules-domains"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.domains
+
+
 
 Domains written into the generated custom zapret hostlist file\.
 Must be non-empty for every hostlistRules entry\.

@@ -62,21 +62,29 @@ let
       profile: !(builtins.elem profile.name perAppRoutingProfileNames)
     ) defaultPerAppRoutingProfiles;
   effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
+  localProxyAuth = singBoxCfg.auth;
+  localProxyAuthEnabled =
+    localProxyAuth.username != null
+    && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
 
   perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app-routing-profiles.json" (
     builtins.toJSON effectivePerAppRoutingProfiles
   );
 
-  proxychainsConfigFile = pkgs.writeText "proxy-suite-proxychains.conf" ''
-    strict_chain
-    ${lib.optionalString perAppRoutingCfg.proxychains.quiet "quiet_mode"}
-    ${lib.optionalString perAppRoutingCfg.proxychains.proxyDns "proxy_dns"}
-    tcp_read_time_out 15000
-    tcp_connect_time_out 8000
+  proxychainsConfigFile =
+    if localProxyAuthEnabled then
+      "/run/proxy-suite-socks/proxychains.conf"
+    else
+      pkgs.writeText "proxy-suite-proxychains.conf" ''
+        strict_chain
+        ${lib.optionalString perAppRoutingCfg.proxychains.quiet "quiet_mode"}
+        ${lib.optionalString perAppRoutingCfg.proxychains.proxyDns "proxy_dns"}
+        tcp_read_time_out 15000
+        tcp_connect_time_out 8000
 
-    [ProxyList]
-    socks5 ${singBoxCfg.listenAddress} ${toString singBoxCfg.port}
-  '';
+        [ProxyList]
+        socks5 ${singBoxCfg.listenAddress} ${toString singBoxCfg.port}
+      '';
   proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 
   hasProxychainsProfiles = builtins.any (

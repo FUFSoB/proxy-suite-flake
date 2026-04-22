@@ -277,6 +277,11 @@ cmd_wrap() {
         echo "Profile '$profile' uses route=proxychains, but perAppRouting.proxychains.enable is false."
         exit 1
       fi
+      if [ ! -r "$PROXYCHAINS_CONFIG" ]; then
+        echo "Proxychains config is not readable: $PROXYCHAINS_CONFIG"
+        echo "Make sure proxy-suite-socks.service is running."
+        exit 1
+      fi
       exec proxychains4 $PROXYCHAINS_QUIET_ARG -f "$PROXYCHAINS_CONFIG" "$@"
       ;;
     tun)

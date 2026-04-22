@@ -59,6 +59,8 @@ let
       lib
       pkgs
       singBoxCfg
+      perAppRoutingCfg
+      userControlCfg
       perAppRoutingTun
       selectionMode
       collapseNamedOutbounds

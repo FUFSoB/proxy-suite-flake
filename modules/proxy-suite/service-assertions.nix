@@ -202,6 +202,21 @@ let
     134217728
   ];
 
+  localProxyAuthCfg = singBoxCfg.auth;
+  localProxyAuthUsed =
+    localProxyAuthCfg.username != null
+    || localProxyAuthCfg.password != null
+    || localProxyAuthCfg.passwordFile != null;
+  localProxyAuthAssertions = [
+    (mkAssertion (
+      !singBoxCfg.enable || !localProxyAuthUsed || localProxyAuthCfg.username != null
+    ) "proxy-suite: singBox.auth requires username when password or passwordFile is set")
+    (exactlyOneOf (singBoxCfg.enable && localProxyAuthUsed) [
+      localProxyAuthCfg.password
+      localProxyAuthCfg.passwordFile
+    ] "proxy-suite: singBox.auth requires exactly one of password or passwordFile")
+  ];
+
   forbiddenValueAssertions =
     map (item: forbiddenValues item.condition item.value item.disallowed item.message)
       [
@@ -271,6 +286,7 @@ in
 featureAssertions
 ++ perAppRoutingAssertions
 ++ collisionAssertions
+++ localProxyAuthAssertions
 ++ forbiddenValueAssertions
 ++ secretAssertions
 ++ outboundAssertions
