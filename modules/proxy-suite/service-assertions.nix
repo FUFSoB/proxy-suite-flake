@@ -197,6 +197,11 @@ let
     }
   ];
 
+  perAppZapretDesyncMarks = [
+    67108864
+    134217728
+  ];
+
   forbiddenValueAssertions =
     map (item: forbiddenValues item.condition item.value item.disallowed item.message)
       [
@@ -212,46 +217,31 @@ let
         {
           condition = perAppZapretCfg.enable;
           value = globalTproxy.fwmark;
-          disallowed = [
-            67108864
-            134217728
-          ];
+          disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: singBox.tproxy.fwmark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppZapretCfg.enable;
           value = globalTproxy.proxyMark;
-          disallowed = [
-            67108864
-            134217728
-          ];
+          disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: singBox.tproxy.proxyMark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppRoutingTun.enable && perAppZapretCfg.enable;
           value = perAppRoutingTun.fwmark;
-          disallowed = [
-            67108864
-            134217728
-          ];
+          disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: singBox.tun.perApp.fwmark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppRoutingTproxy.enable && perAppZapretCfg.enable;
           value = perAppRoutingTproxy.fwmark;
-          disallowed = [
-            67108864
-            134217728
-          ];
+          disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: singBox.tproxy.perApp.fwmark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppZapretCfg.enable;
           value = perAppZapretCfg.filterMark;
-          disallowed = [
-            67108864
-            134217728
-          ];
+          disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: zapret.perApp.filterMark must not use per-app-zapret internal desync mark bits";
         }
       ];

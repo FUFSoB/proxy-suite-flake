@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import base64
+import binascii
 import json
 import urllib.parse
 
@@ -18,6 +19,8 @@ def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
         userinfo = ""
     hostpart, _, query = rest.partition("?")
     host, _, port = hostpart.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
     return userinfo, host, port, _qs(query)
 
 
@@ -112,7 +115,7 @@ def parse_vmess(url: str, tag: str) -> dict:
     pad = "=" * (-len(b64) % 4)
     try:
         data = json.loads(base64.b64decode(b64 + pad))
-    except Exception:
+    except (binascii.Error, ValueError):
         data = json.loads(base64.urlsafe_b64decode(b64 + pad))
 
     host = str(data["add"])
@@ -189,7 +192,7 @@ def parse_shadowsocks(url: str, tag: str) -> dict:
         if ":" not in decoded:
             raise ValueError
         method, password = decoded.split(":", 1)
-    except Exception:
+    except (binascii.Error, UnicodeDecodeError, ValueError):
         plain = urllib.parse.unquote(userinfo)
         method, password = plain.split(":", 1)
 

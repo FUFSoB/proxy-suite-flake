@@ -154,19 +154,15 @@ let
     r.proxy.geoips ++ direct.geoips ++ r.block.geoips ++ lib.concatMap (rule: rule.geoips) customRules
   );
 
-  geositeRuleSets = map (name: {
-    tag = "geosite-${name}";
+  mkRuleSet = kind: pkg: name: {
+    tag = "${kind}-${name}";
     type = "local";
     format = "binary";
-    path = "${pkgs.sing-geosite}/share/sing-box/rule-set/geosite-${name}.srs";
-  }) allGeositeNames;
+    path = "${pkg}/share/sing-box/rule-set/${kind}-${name}.srs";
+  };
 
-  geoIPRuleSets = map (name: {
-    tag = "geoip-${name}";
-    type = "local";
-    format = "binary";
-    path = "${pkgs.sing-geoip}/share/sing-box/rule-set/geoip-${name}.srs";
-  }) allGeoIPNames;
+  geositeRuleSets = map (mkRuleSet "geosite" pkgs.sing-geosite) allGeositeNames;
+  geoIPRuleSets = map (mkRuleSet "geoip" pkgs.sing-geoip) allGeoIPNames;
 
   routingRules = lib.flatten [
     {

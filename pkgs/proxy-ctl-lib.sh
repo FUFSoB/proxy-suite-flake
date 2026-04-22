@@ -56,14 +56,17 @@ _svc_active() {
 }
 
 _status_tray() {
-  printf 'socks_available=%s\n' "$(_bool _svc_exists proxy-suite-socks)"
-  printf 'socks_active=%s\n' "$(_bool _svc_active proxy-suite-socks)"
-  printf 'tproxy_available=%s\n' "$(_bool _svc_exists proxy-suite-tproxy)"
-  printf 'tproxy_active=%s\n' "$(_bool _svc_active proxy-suite-tproxy)"
-  printf 'tun_available=%s\n' "$(_bool _svc_exists proxy-suite-tun)"
-  printf 'tun_active=%s\n' "$(_bool _svc_active proxy-suite-tun)"
-  printf 'zapret_available=%s\n' "$(_bool _svc_exists zapret-discord-youtube)"
-  printf 'zapret_active=%s\n' "$(_bool _svc_active zapret-discord-youtube)"
+  local pair key svc
+  for pair in \
+    socks:proxy-suite-socks \
+    tproxy:proxy-suite-tproxy \
+    tun:proxy-suite-tun \
+    zapret:zapret-discord-youtube; do
+    key="${pair%%:*}"
+    svc="${pair##*:}"
+    printf '%s_available=%s\n' "$key" "$(_bool _svc_exists "$svc")"
+    printf '%s_active=%s\n' "$key" "$(_bool _svc_active "$svc")"
+  done
   printf 'subscription_update_available=%s\n' "$(_bool _svc_exists proxy-suite-subscription-update)"
 }
 
@@ -248,7 +251,7 @@ cmd_apps() {
 
 cmd_wrap() {
   local route
-  profile="${1:?Usage: proxy-ctl wrap <profile> -- <command> [args...]}"
+  local profile="${1:?Usage: proxy-ctl wrap <profile> -- <command> [args...]}"
   shift || true
   if [ "${1:-}" = "--" ]; then
     shift
