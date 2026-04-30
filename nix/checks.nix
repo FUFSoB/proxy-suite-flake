@@ -10,6 +10,7 @@
 let
   pkgs = import nixpkgs { inherit system; };
   parserChecks = import ./checks/parsers.nix { inherit pkgs; };
+  suitePkgs = import ../pkgs/default.nix { inherit pkgs; };
   readmeDocSource = builtins.readFile ../nix/readme-doc.nix;
   trayModuleSource = builtins.readFile ../modules/proxy-suite/tray.nix;
   tgWsProxyModuleSource = builtins.readFile ../modules/proxy-suite/tg-ws-proxy.nix;
@@ -44,6 +45,7 @@ let
       inherit pkgs cfg zapret;
     };
   mkRoutingRules = fixture: (mkRouting fixture).routingRules;
+  mkRouteModeRules = fixture: (mkRouting fixture).routeModeRules;
   mkTProxyConfig =
     fixture:
     let
@@ -184,6 +186,41 @@ let
     };
 
   minimal = evalProxySuite [ baseModule ];
+  _minimalProxyCtl = mkProxyCtlDerived minimal;
+  minimalProxyCtlWrapper = _minimalProxyCtl.wrapper;
+  minimalProxyCtlScript = _minimalProxyCtl.script;
+
+  routeModeFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.routing = {
+        proxy = {
+          domains = [ "proxy.example" ];
+          geosites = [ "google" ];
+        };
+        direct.domains = [ "direct.example" ];
+        block.domains = [ "block.example" ];
+        rules = [
+          {
+            outbound = "direct";
+            domains = [ "custom-direct.example" ];
+          }
+          {
+            outbound = "primary";
+            domains = [ "custom-proxy.example" ];
+          }
+          {
+            outbound = "block";
+            domains = [ "custom-block.example" ];
+          }
+        ];
+      };
+    }
+  ];
+  routeModeStartScript = builtins.readFile (
+    routeModeFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  routeModeRules = mkRouteModeRules routeModeFixture;
 
   tgSecretFile = evalProxySuite [
     baseModule
@@ -1696,6 +1733,55 @@ let
       true
     )
 
+    # -- runtime route mode: proxy-ctl wrapper exports the volatile state file and baseline default --
+    (
+      assert shellValueByPrefix minimalProxyCtlWrapper "export ROUTE_MODE_STATE_FILE=" == "/run/proxy-suite/route-mode";
+      assert shellValueByPrefix minimalProxyCtlWrapper "export DEFAULT_ROUTE_MODE=" == "blacklist";
+      true
+    )
+
+    # -- runtime route mode: proxy-ctl help/status script exposes default + four explicit modes --
+    (
+      assert pkgs.lib.hasInfix "route-mode default|whitelist|blacklist|all-proxy|all-bypass|status" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''printf 'route_mode=%s\n' "$(_route_mode_current)"'' minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''printf 'default_route_mode=%s\n' "$(_route_mode_default)"'' minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''systemctl start "proxy-suite-route-mode@''${action}.service"'' minimalProxyCtlScript;
+      true
+    )
+
+    # -- runtime route mode: socks start script includes all override branches and uses volatile state --
+    (
+      assert pkgs.lib.hasInfix ''ROUTE_MODE_STATE_FILE="/run/proxy-suite/route-mode"'' routeModeStartScript;
+      assert pkgs.lib.hasInfix ''all-proxy)'' routeModeStartScript;
+      assert pkgs.lib.hasInfix ''all-bypass)'' routeModeStartScript;
+      assert pkgs.lib.hasInfix ''.route.rules = $route_rules'' routeModeStartScript;
+      assert pkgs.lib.hasInfix ''.dns.rules = []'' routeModeStartScript;
+      true
+    )
+
+    # -- runtime route mode: grouped routing metadata preserves custom rule categories and order --
+    (
+      assert builtins.length routeModeRules.custom == 3;
+      assert (builtins.elemAt routeModeRules.custom 0).category == "direct";
+      assert (builtins.elemAt routeModeRules.custom 1).category == "proxy";
+      assert (builtins.elemAt routeModeRules.custom 2).category == "block";
+      true
+    )
+
+    # -- runtime route mode: setter unit is present and writes into /run --
+    (
+      let
+        setterSvc = routeModeFixture.config.systemd.services."proxy-suite-route-mode@";
+        setterScript = builtins.readFile (builtins.head (pkgs.lib.splitString " " setterSvc.serviceConfig.ExecStart));
+      in
+      assert !(setterSvc.serviceConfig ? RuntimeDirectory);
+      assert pkgs.lib.hasInfix "/run/proxy-suite/route-mode" setterScript;
+      assert pkgs.lib.hasInfix ''default)'' setterScript;
+      assert pkgs.lib.hasInfix ''all-proxy)'' setterScript;
+      assert pkgs.lib.hasInfix ''all-bypass)'' setterScript;
+      true
+    )
+
     # -- subscription: both url + urlFile fails --
     (
       assert subscriptionBothSources.success == false;
@@ -2112,6 +2198,7 @@ let
 in
 {
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
+  proxy-suite-tray-build = suitePkgs.proxy-suite-tray;
 
   zapret-hostlist-rules = pkgs.runCommand "proxy-suite-zapret-hostlist-rules-check" { } ''
     grep -F -- '--hostlist="${zapretSyncExtraListsBase}/hostlists/list-twitter.txt"' "${zapretSyncExtraListsBase}/config"

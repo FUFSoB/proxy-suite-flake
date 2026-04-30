@@ -170,8 +170,11 @@ let
   perAppTunFile = pkgs.writeText "proxy-suite-per-app-tun-template.json" (
     builtins.toJSON perAppTunTemplate
   );
+  routeModeRulesFile = pkgs.writeText "proxy-suite-route-mode-rules.json" (
+    builtins.toJSON rules.routeModeRules
+  );
 
 in
 {
-  inherit tproxyFile tunFile perAppTunFile;
+  inherit tproxyFile tunFile perAppTunFile routeModeRulesFile;
 }

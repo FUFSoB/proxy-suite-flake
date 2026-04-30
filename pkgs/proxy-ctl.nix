@@ -15,6 +15,8 @@
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
   proxychainsQuietArg,
+  routeModeStateFile,
+  defaultRouteMode,
 }:
 
 let
@@ -49,6 +51,8 @@ pkgs.symlinkJoin {
       --set PER_APP_ROUTING_ZAPRET_ENABLED ${lib.escapeShellArg perAppRoutingZapretEnabled} \
       --set PER_APP_ROUTING_PROFILES_FILE ${lib.escapeShellArg (toString perAppRoutingProfilesFile)} \
       --set PROXYCHAINS_CONFIG ${lib.escapeShellArg (toString proxychainsConfigFile)} \
-      --set PROXYCHAINS_QUIET_ARG ${lib.escapeShellArg (lib.removeSuffix " " proxychainsQuietArg)}
+      --set PROXYCHAINS_QUIET_ARG ${lib.escapeShellArg (lib.removeSuffix " " proxychainsQuietArg)} \
+      --set ROUTE_MODE_STATE_FILE ${lib.escapeShellArg routeModeStateFile} \
+      --set DEFAULT_ROUTE_MODE ${lib.escapeShellArg defaultRouteMode}
   '';
 }

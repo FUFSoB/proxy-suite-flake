@@ -135,6 +135,8 @@ Commands:
   proxy on|off              enable/disable the sing-box proxy stack
   tproxy on|off             enable/disable TProxy transparent mode
   tun on|off                enable/disable TUN mode
+  route-mode default|whitelist|blacklist|all-proxy|all-bypass|status
+                            set temporary routing override
   zapret on|off             enable/disable zapret-discord-youtube
   restart                   restart active global proxy-suite services
   logs [service]            follow service logs  (default: proxy-suite-socks)

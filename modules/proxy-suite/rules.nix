@@ -101,6 +101,14 @@ let
   mkDomainRule = mkRule "domain_suffix";
   mkIPRule = mkRule "ip_cidr";
   mkRulesetRule = mkRule "rule_set";
+  customRuleCategory =
+    outbound:
+    if outbound == "direct" then
+      "direct"
+    else if outbound == "block" then
+      "block"
+    else
+      "proxy";
 
   # In "first" mode the start script renames the first outbound to "proxy",
   # so any per-outbound routing tag that isn't direct/block/proxy must map
@@ -164,7 +172,7 @@ let
   geositeRuleSets = map (mkRuleSet "geosite" pkgs.sing-geosite) allGeositeNames;
   geoIPRuleSets = map (mkRuleSet "geoip" pkgs.sing-geoip) allGeoIPNames;
 
-  routingRules = lib.flatten [
+  commonRules = [
     {
       network = [
         "tcp"
@@ -174,35 +182,64 @@ let
       action = "hijack-dns";
     }
     { action = "sniff"; }
+  ];
 
-    # Per-outbound and explicit rules come first – they take priority.
-    (lib.concatMap mkCustomRuleEntries customRules)
+  customRouteRules = map (
+    rule: {
+      category = customRuleCategory rule.outbound;
+      entries = mkCustomRuleEntries rule;
+    }
+  ) customRules;
 
-    # Global proxy lists
+  proxyPrimaryRules = lib.flatten [
     (mkDomainRule "proxy" r.proxy.domains)
     (mkIPRule "proxy" r.proxy.ips)
+  ];
 
-    # Global direct lists
+  directRules = lib.flatten [
     (mkDomainRule "direct" direct.domains)
     (mkIPRule "direct" direct.ips)
     (mkRulesetRule "direct" (map (s: "geosite-${s}") direct.geosites))
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
+  ];
 
+  safetyDirectRules = [
     {
       ip_is_private = true;
       outbound = "direct";
     }
+  ];
 
-    # Block (before proxy geosets so block can override them)
+  blockRules = lib.flatten [
     (mkDomainRule "block" r.block.domains)
     (mkIPRule "block" r.block.ips)
     (mkRulesetRule "block" (map (s: "geosite-${s}") r.block.geosites))
     (mkRulesetRule "block" (map (s: "geoip-${s}") r.block.geoips))
+  ];
 
-    # Global proxy geo lists
+  proxyGeoRules = lib.flatten [
     (mkRulesetRule "proxy" (map (s: "geosite-${s}") r.proxy.geosites))
     (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
   ];
+
+  routingRules =
+    commonRules
+    ++ lib.concatMap (item: item.entries) customRouteRules
+    ++ proxyPrimaryRules
+    ++ directRules
+    ++ safetyDirectRules
+    ++ blockRules
+    ++ proxyGeoRules;
+
+  routeModeRules = {
+    common = commonRules;
+    custom = customRouteRules;
+    proxyPrimary = proxyPrimaryRules;
+    direct = directRules;
+    safetyDirect = safetyDirectRules;
+    block = blockRules;
+    proxyGeo = proxyGeoRules;
+  };
 
 in
 {
@@ -210,6 +247,7 @@ in
     direct
     geositeRuleSets
     geoIPRuleSets
+    routeModeRules
     routingRules
     ;
 }

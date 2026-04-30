@@ -16,6 +16,12 @@ static AppIndicator *indicator;
 static GtkWidget *menu;
 static GtkWidget *status_item;
 static GtkWidget *proxy_item;
+static GtkWidget *route_mode_item;
+static GtkWidget *route_mode_default_item;
+static GtkWidget *route_mode_whitelist_item;
+static GtkWidget *route_mode_blacklist_item;
+static GtkWidget *route_mode_all_proxy_item;
+static GtkWidget *route_mode_all_bypass_item;
 static GtkWidget *tproxy_item;
 static GtkWidget *tun_item;
 static GtkWidget *zapret_item;
@@ -23,12 +29,25 @@ static GtkWidget *open_controls_item;
 static GtkWidget *controls_window;
 static GtkWidget *controls_summary_label;
 static GtkWidget *controls_core_status_label;
+static GtkWidget *controls_route_mode_status_label;
+static GtkWidget *controls_route_mode_combo;
 static GtkWidget *controls_traffic_status_label;
 static GtkWidget *controls_zapret_status_label;
 static GtkWidget *controls_proxy_button;
 static GtkWidget *controls_tproxy_button;
 static GtkWidget *controls_tun_button;
 static GtkWidget *controls_zapret_button;
+static gboolean updating_route_mode_widgets = FALSE;
+
+typedef enum
+{
+    ROUTE_MODE_UNKNOWN = 0,
+    ROUTE_MODE_DEFAULT,
+    ROUTE_MODE_WHITELIST,
+    ROUTE_MODE_BLACKLIST,
+    ROUTE_MODE_ALL_PROXY,
+    ROUTE_MODE_ALL_BYPASS
+} RouteMode;
 
 typedef struct
 {
@@ -38,10 +57,13 @@ typedef struct
     gboolean tun_available;
     gboolean zapret_available;
     gboolean subscription_update_available;
+    gboolean route_mode_available;
     gboolean socks;
     gboolean tproxy;
     gboolean tun;
     gboolean zapret;
+    RouteMode route_mode;
+    RouteMode default_route_mode;
 } ServiceState;
 
 static ServiceState initial_state;
@@ -173,6 +195,35 @@ static gboolean parse_proxy_ctl_bool(const char *value)
     return value && strcmp(value, "true") == 0;
 }
 
+static RouteMode parse_route_mode(const char *value)
+{
+    if (!value)
+    {
+        return ROUTE_MODE_UNKNOWN;
+    }
+    if (strcmp(value, "default") == 0)
+    {
+        return ROUTE_MODE_DEFAULT;
+    }
+    if (strcmp(value, "whitelist") == 0)
+    {
+        return ROUTE_MODE_WHITELIST;
+    }
+    if (strcmp(value, "blacklist") == 0)
+    {
+        return ROUTE_MODE_BLACKLIST;
+    }
+    if (strcmp(value, "all-proxy") == 0)
+    {
+        return ROUTE_MODE_ALL_PROXY;
+    }
+    if (strcmp(value, "all-bypass") == 0)
+    {
+        return ROUTE_MODE_ALL_BYPASS;
+    }
+    return ROUTE_MODE_UNKNOWN;
+}
+
 static const char *pick_icon_name(
     const char *const *candidates,
     gsize candidates_len,
@@ -263,6 +314,18 @@ static ServiceState get_service_state(void)
         {
             state.subscription_update_available = parse_proxy_ctl_bool(parts[1]);
         }
+        else if (strcmp(parts[0], "route_mode_available") == 0)
+        {
+            state.route_mode_available = parse_proxy_ctl_bool(parts[1]);
+        }
+        else if (strcmp(parts[0], "route_mode") == 0)
+        {
+            state.route_mode = parse_route_mode(parts[1]);
+        }
+        else if (strcmp(parts[0], "default_route_mode") == 0)
+        {
+            state.default_route_mode = parse_route_mode(parts[1]);
+        }
 
         g_strfreev(parts);
     }
@@ -284,6 +347,84 @@ static const char *traffic_mode_label(const ServiceState *state)
         return "TProxy interception enabled";
     }
     return "System-wide routing disabled";
+}
+
+static const char *route_mode_label(const ServiceState *state)
+{
+    switch (state->route_mode)
+    {
+    case ROUTE_MODE_DEFAULT:
+        switch (state->default_route_mode)
+        {
+        case ROUTE_MODE_WHITELIST:
+            return "Default (Whitelist baseline)";
+        case ROUTE_MODE_BLACKLIST:
+            return "Default (Blacklist baseline)";
+        default:
+            return "Default";
+        }
+    case ROUTE_MODE_WHITELIST:
+        return "Whitelist (direct by default)";
+    case ROUTE_MODE_BLACKLIST:
+        return "Blacklist (proxy by default)";
+    case ROUTE_MODE_ALL_PROXY:
+        return "All Proxy (override)";
+    case ROUTE_MODE_ALL_BYPASS:
+        return "All Bypass (override)";
+    default:
+        return "Unknown";
+    }
+}
+
+static gint route_mode_combo_index(RouteMode mode)
+{
+    switch (mode)
+    {
+    case ROUTE_MODE_DEFAULT:
+        return 0;
+    case ROUTE_MODE_WHITELIST:
+        return 1;
+    case ROUTE_MODE_BLACKLIST:
+        return 2;
+    case ROUTE_MODE_ALL_PROXY:
+        return 3;
+    case ROUTE_MODE_ALL_BYPASS:
+        return 4;
+    default:
+        return -1;
+    }
+}
+
+static void sync_route_mode_widgets(RouteMode mode)
+{
+    updating_route_mode_widgets = TRUE;
+
+    if (route_mode_default_item)
+    {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_default_item), mode == ROUTE_MODE_DEFAULT);
+    }
+    if (route_mode_whitelist_item)
+    {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_whitelist_item), mode == ROUTE_MODE_WHITELIST);
+    }
+    if (route_mode_blacklist_item)
+    {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_blacklist_item), mode == ROUTE_MODE_BLACKLIST);
+    }
+    if (route_mode_all_proxy_item)
+    {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_all_proxy_item), mode == ROUTE_MODE_ALL_PROXY);
+    }
+    if (route_mode_all_bypass_item)
+    {
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_all_bypass_item), mode == ROUTE_MODE_ALL_BYPASS);
+    }
+    if (controls_route_mode_combo)
+    {
+        gtk_combo_box_set_active(GTK_COMBO_BOX(controls_route_mode_combo), route_mode_combo_index(mode));
+    }
+
+    updating_route_mode_widgets = FALSE;
 }
 
 static const char *indicator_label_text(const ServiceState *state)
@@ -378,6 +519,10 @@ static void update_status(void)
         {
             gtk_label_set_text(GTK_LABEL(controls_traffic_status_label), "[Traffic] Mode: Unknown");
         }
+        if (controls_route_mode_status_label)
+        {
+            gtk_label_set_text(GTK_LABEL(controls_route_mode_status_label), "[Routing] Mode: Unknown");
+        }
         if (controls_zapret_status_label)
         {
             gtk_label_set_text(GTK_LABEL(controls_zapret_status_label), "[Zapret] zapret-discord-youtube: Unknown");
@@ -386,16 +531,19 @@ static void update_status(void)
     }
 
     const char *traffic = traffic_mode_label(&state);
+    const char *route_mode = route_mode_label(&state);
     const char *summary = indicator_label_text(&state);
     const char *zapret = state.zapret ? "Active" : "Stopped";
     gchar *summary_text = g_strdup_printf(
-        "[Status] %s | Traffic: %s | Zapret: %s",
+        "[Status] %s | Traffic: %s | Routing: %s | Zapret: %s",
         state.socks ? "Proxy ready" : "Proxy down",
         traffic,
+        route_mode,
         zapret);
     gchar *core_text = g_strdup_printf(
         "[Core] SOCKS proxy: %s",
         state.socks ? "Running" : "Stopped");
+    gchar *route_mode_text = g_strdup_printf("[Routing] Mode: %s", route_mode);
     gchar *traffic_text = g_strdup_printf("[Traffic] Mode: %s", traffic);
     gchar *zapret_text = g_strdup_printf(
         "[Zapret] zapret-discord-youtube: %s",
@@ -445,6 +593,10 @@ static void update_status(void)
     {
         gtk_label_set_text(GTK_LABEL(controls_core_status_label), core_text);
     }
+    if (controls_route_mode_status_label)
+    {
+        gtk_label_set_text(GTK_LABEL(controls_route_mode_status_label), route_mode_text);
+    }
     if (controls_traffic_status_label)
     {
         gtk_label_set_text(GTK_LABEL(controls_traffic_status_label), traffic_text);
@@ -462,6 +614,13 @@ static void update_status(void)
     {
         gtk_button_set_label(GTK_BUTTON(controls_proxy_button),
                              state.socks ? "Stop SOCKS Proxy" : "Start SOCKS Proxy");
+    }
+    if (route_mode_item)
+    {
+        gchar *menu_route_mode_text = g_strdup_printf("[Routing] Mode: %s", route_mode);
+        gtk_menu_item_set_label(GTK_MENU_ITEM(route_mode_item), menu_route_mode_text);
+        g_free(menu_route_mode_text);
+        sync_route_mode_widgets(state.route_mode);
     }
 
     if (tproxy_item)
@@ -499,6 +658,7 @@ static void update_status(void)
 
     g_free(summary_text);
     g_free(core_text);
+    g_free(route_mode_text);
     g_free(traffic_text);
     g_free(zapret_text);
 }
@@ -532,6 +692,46 @@ static void on_tproxy_toggle(GtkWidget *item, gpointer data)
     {
         run_proxy_ctl2("tproxy", "on");
     }
+    update_status();
+}
+
+static void on_route_mode_menu_toggled(GtkCheckMenuItem *item, gpointer data)
+{
+    const char *mode;
+    if (updating_route_mode_widgets || !gtk_check_menu_item_get_active(item))
+    {
+        return;
+    }
+    mode = (const char *)data;
+    if (!mode)
+    {
+        return;
+    }
+    run_proxy_ctl2("route-mode", mode);
+    update_status();
+}
+
+static void on_route_mode_combo_changed(GtkComboBox *combo, gpointer data)
+{
+    (void)data;
+    const char *mode;
+    const gchar *active_id;
+    if (updating_route_mode_widgets)
+    {
+        return;
+    }
+    active_id = gtk_combo_box_get_active_id(combo);
+    if (!active_id)
+    {
+        return;
+    }
+    mode = active_id;
+    ServiceState state = get_service_state();
+    if (!state.route_mode_available)
+    {
+        return;
+    }
+    run_proxy_ctl2("route-mode", mode);
     update_status();
 }
 
@@ -638,6 +838,28 @@ static void build_controls_window(void)
     g_signal_connect(controls_proxy_button, "clicked", G_CALLBACK(on_proxy_toggle), NULL);
     gtk_box_pack_start(GTK_BOX(core_box), controls_proxy_button, FALSE, FALSE, 0);
 
+    if (initial_state.route_mode_available)
+    {
+        GtkWidget *routing_frame = gtk_frame_new("[Routing] Mode");
+        GtkWidget *routing_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+        gtk_container_set_border_width(GTK_CONTAINER(routing_box), 6);
+        gtk_container_add(GTK_CONTAINER(routing_frame), routing_box);
+        gtk_box_pack_start(GTK_BOX(box), routing_frame, FALSE, FALSE, 0);
+
+        controls_route_mode_status_label = gtk_label_new("[Routing] Mode: Unknown");
+        gtk_label_set_xalign(GTK_LABEL(controls_route_mode_status_label), 0.0f);
+        gtk_box_pack_start(GTK_BOX(routing_box), controls_route_mode_status_label, FALSE, FALSE, 0);
+
+        controls_route_mode_combo = gtk_combo_box_text_new();
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "default", "Default (stop overriding)");
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "whitelist", "Whitelist (direct by default)");
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "blacklist", "Blacklist (proxy by default)");
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "all-proxy", "All Proxy (override)");
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "all-bypass", "All Bypass (override)");
+        g_signal_connect(controls_route_mode_combo, "changed", G_CALLBACK(on_route_mode_combo_changed), NULL);
+        gtk_box_pack_start(GTK_BOX(routing_box), controls_route_mode_combo, FALSE, FALSE, 0);
+    }
+
     GtkWidget *traffic_frame = gtk_frame_new("[Traffic] System-wide traffic mode");
     GtkWidget *traffic_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(traffic_box), 6);
@@ -721,6 +943,39 @@ static void build_menu(void)
     proxy_item = gtk_menu_item_new_with_label("[Core] Start SOCKS Proxy");
     g_signal_connect(proxy_item, "activate", G_CALLBACK(on_proxy_toggle), NULL);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), proxy_item);
+
+    if (initial_state.route_mode_available)
+    {
+        route_mode_item = gtk_menu_item_new_with_label("[Routing] Mode: Unknown");
+        GtkWidget *route_mode_menu = gtk_menu_new();
+
+        route_mode_default_item = gtk_radio_menu_item_new_with_label(NULL, "Default (stop overriding)");
+        g_signal_connect(route_mode_default_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "default");
+        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_default_item);
+
+        GSList *route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_default_item));
+        route_mode_whitelist_item = gtk_radio_menu_item_new_with_label(route_group, "Whitelist (direct by default)");
+        g_signal_connect(route_mode_whitelist_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "whitelist");
+        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_whitelist_item);
+
+        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_whitelist_item));
+        route_mode_blacklist_item = gtk_radio_menu_item_new_with_label(route_group, "Blacklist (proxy by default)");
+        g_signal_connect(route_mode_blacklist_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "blacklist");
+        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_blacklist_item);
+
+        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_blacklist_item));
+        route_mode_all_proxy_item = gtk_radio_menu_item_new_with_label(route_group, "All Proxy (override)");
+        g_signal_connect(route_mode_all_proxy_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "all-proxy");
+        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_all_proxy_item);
+
+        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_all_proxy_item));
+        route_mode_all_bypass_item = gtk_radio_menu_item_new_with_label(route_group, "All Bypass (override)");
+        g_signal_connect(route_mode_all_bypass_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "all-bypass");
+        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_all_bypass_item);
+
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(route_mode_item), route_mode_menu);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), route_mode_item);
+    }
 
     open_controls_item = gtk_menu_item_new_with_label("Open Controls");
     g_signal_connect(open_controls_item, "activate", G_CALLBACK(on_open_controls), NULL);

@@ -17,6 +17,8 @@ _usage() {
   echo "  proxy on|off              enable/disable the sing-box proxy stack"
   echo "  tproxy on|off             enable/disable TProxy transparent mode"
   echo "  tun on|off                enable/disable TUN mode"
+  echo "  route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
+  echo "                            set temporary routing override"
   echo "  zapret on|off             enable/disable zapret-discord-youtube"
   echo "  restart                   restart active global proxy-suite services"
   echo "  logs [service]            follow service logs  (default: proxy-suite-socks)"
@@ -55,6 +57,57 @@ _svc_active() {
   systemctl is-active --quiet "$1"
 }
 
+_route_mode_default() {
+  printf '%s' "${DEFAULT_ROUTE_MODE:-blacklist}"
+}
+
+_route_mode_effective() {
+  local mode=""
+  if [ -n "${ROUTE_MODE_STATE_FILE:-}" ] && [ -r "${ROUTE_MODE_STATE_FILE}" ]; then
+    mode=$(tr -d '\r\n[:space:]' < "${ROUTE_MODE_STATE_FILE}" 2>/dev/null || true)
+  fi
+
+  case "$mode" in
+    whitelist|blacklist|all-proxy|all-bypass)
+      printf '%s' "$mode"
+      ;;
+    *)
+      _route_mode_default
+      ;;
+  esac
+}
+
+_route_mode_current() {
+  if [ -n "${ROUTE_MODE_STATE_FILE:-}" ] && [ -r "${ROUTE_MODE_STATE_FILE}" ]; then
+    _route_mode_effective
+  else
+    printf 'default'
+  fi
+}
+
+_route_mode_label() {
+  case "$1" in
+    default)
+      printf 'Default (%s)' "$(_route_mode_label "$(_route_mode_default)")"
+      ;;
+    whitelist)
+      printf 'Whitelist (direct by default)'
+      ;;
+    blacklist)
+      printf 'Blacklist (proxy by default)'
+      ;;
+    all-proxy)
+      printf 'All Proxy (override)'
+      ;;
+    all-bypass)
+      printf 'All Bypass (override)'
+      ;;
+    *)
+      printf 'Unknown'
+      ;;
+  esac
+}
+
 _status_tray() {
   local pair key svc
   for pair in \
@@ -68,6 +121,9 @@ _status_tray() {
     printf '%s_active=%s\n' "$key" "$(_bool _svc_active "$svc")"
   done
   printf 'subscription_update_available=%s\n' "$(_bool _svc_exists proxy-suite-subscription-update)"
+  printf 'route_mode_available=%s\n' "$(_bool _svc_exists proxy-suite-socks)"
+  printf 'route_mode=%s\n' "$(_route_mode_current)"
+  printf 'default_route_mode=%s\n' "$(_route_mode_default)"
 }
 
 _ensure_app_routing() {
@@ -144,6 +200,11 @@ cmd_status() {
   for svc in "${ALL_SERVICES[@]}"; do
     _svc_status "$svc"
   done
+  if _svc_exists proxy-suite-socks; then
+    echo ""
+    echo "routing:"
+    echo "  active mode                                 $(_route_mode_label "$(_route_mode_current)")"
+  fi
 }
 
 cmd_proxy() {
@@ -182,6 +243,31 @@ cmd_mode_toggle() {
 }
 
 cmd_zapret() { cmd_mode_toggle "zapret-discord-youtube" on "${1:-on}" "zapret"; }
+
+cmd_route_mode() {
+  local action
+
+  if ! _svc_exists proxy-suite-socks; then
+    echo "Route mode is unavailable because sing-box services are not enabled."
+    exit 1
+  fi
+
+  action="${1:-status}"
+
+  case "$action" in
+    status)
+      echo "$(_route_mode_current)"
+      ;;
+    default|whitelist|blacklist|all-proxy|all-bypass)
+      systemctl start "proxy-suite-route-mode@${action}.service"
+      echo "Switched to: $(_route_mode_label "$action")"
+      ;;
+    *)
+      echo "Usage: proxy-ctl route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
+      exit 1
+      ;;
+  esac
+}
 
 RESTART_SERVICES=(
   proxy-suite-tproxy

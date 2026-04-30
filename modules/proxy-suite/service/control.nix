@@ -12,6 +12,7 @@
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
   proxychainsQuietArg,
+  routeModeStateFile,
 }:
 {
   proxyCtl = packages.mkProxyCtl {
@@ -22,7 +23,9 @@
       perAppRoutingProfilesFile
       proxychainsConfigFile
       proxychainsQuietArg
+      routeModeStateFile
       ;
+    defaultRouteMode = if singBoxCfg.proxyByDefault then "blacklist" else "whitelist";
     perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";
     perAppRoutingProxychainsEnabled = if perAppRoutingCfg.proxychains.enable then "1" else "0";
     perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";

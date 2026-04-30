@@ -21,7 +21,7 @@ pkgs.stdenv.mkDerivation {
       -DSYSTEMCTL_BIN='"${pkgs.systemd}/bin/systemctl"' \
       -DPKEXEC_BIN='"/run/wrappers/bin/pkexec"' \
       -DPOLL_INTERVAL=${toString pollInterval} \
-      -O2 -Wall
+      -O2 -Wall -Werror=discarded-qualifiers
   '';
 
   installPhase = ''

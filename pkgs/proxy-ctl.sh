@@ -33,6 +33,10 @@ case "$cmd" in
     cmd_mode_toggle proxy-suite-tun on "${1:-}"
     ;;
 
+  route-mode)
+    cmd_route_mode "$@"
+    ;;
+
   zapret)
     cmd_zapret "$@"
     ;;

@@ -18,6 +18,7 @@
   tproxyFile,
   tunFile,
   perAppTunFile,
+  routeModeRulesFile,
 }:
 
 let
@@ -34,6 +35,7 @@ let
     else
       null;
   subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions";
+  routeModeStateFile = "/run/proxy-suite/route-mode";
   runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
 
   mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
@@ -191,6 +193,8 @@ let
     chmod 640 "${runtimeProxychainsConfig}"
   '';
 
+  modeBaseline = if singBoxCfg.proxyByDefault then "blacklist" else "whitelist";
+
   mkStartScript =
     {
       name,
@@ -202,33 +206,158 @@ let
     pkgs.writeShellScript name ''
       set -euo pipefail
       RUNTIME_DIR="${runtimeDir}"
+      ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
       mkdir -p "$RUNTIME_DIR"
       OUTBOUNDS_JSON='[]'
+      ROUTE_MODE=""
+      ROUTE_FINAL=""
+      DNS_FINAL=""
+      ROUTE_RULES_JSON=""
+      CLEAR_DNS_RULES=0
       ${lib.optionalString enableLocalProxyAuth ''
         umask 077
         LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
         ${writeProxychainsConfigBlock}
       ''}
 
+      if [ -r "$ROUTE_MODE_STATE_FILE" ]; then
+        ROUTE_MODE="$(tr -d '\r\n[:space:]' < "$ROUTE_MODE_STATE_FILE" 2>/dev/null || true)"
+      fi
+      case "$ROUTE_MODE" in
+        blacklist)
+          ROUTE_FINAL="proxy"
+          DNS_FINAL="remote"
+          ROUTE_RULES_JSON=$(${jq} -c '
+            .common
+            + (.custom | map(.entries) | add // [])
+            + .proxyPrimary
+            + .direct
+            + .safetyDirect
+            + .block
+            + .proxyGeo
+          ' "${routeModeRulesFile}")
+          ;;
+        whitelist)
+          ROUTE_FINAL="direct"
+          DNS_FINAL="local"
+          ROUTE_RULES_JSON=$(${jq} -c '
+            .common
+            + (.custom | map(.entries) | add // [])
+            + .proxyPrimary
+            + .direct
+            + .safetyDirect
+            + .block
+            + .proxyGeo
+          ' "${routeModeRulesFile}")
+          ;;
+        all-proxy)
+          ROUTE_FINAL="proxy"
+          DNS_FINAL="remote"
+          CLEAR_DNS_RULES=1
+          ROUTE_RULES_JSON=$(${jq} -c '
+            .common
+            + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
+            + .proxyPrimary
+            + .safetyDirect
+            + .block
+            + .proxyGeo
+          ' "${routeModeRulesFile}")
+          ;;
+        all-bypass)
+          ROUTE_FINAL="direct"
+          DNS_FINAL="local"
+          CLEAR_DNS_RULES=1
+          ROUTE_RULES_JSON=$(${jq} -c '
+            .common
+            + (.custom | map(select(.category == "block") | .entries) | add // [])
+            + .safetyDirect
+            + .block
+          ' "${routeModeRulesFile}")
+          ;;
+        *)
+          ROUTE_MODE=""
+          ;;
+      esac
+
       ${mkOutboundScript routingMark}
 
       ${
         if enableLocalProxyAuth then
           ''
-            ${jq} \
-              --argjson obs "$OUTBOUNDS_JSON" \
-              --arg user ${lib.escapeShellArg localProxyAuth.username} \
-              --arg password "$LOCAL_PROXY_PASSWORD" \
-              '.outbounds = $obs + .outbounds
-                | (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]' \
-              "${configFile}" > "$RUNTIME_DIR/config.json"
+            if [ -n "$ROUTE_MODE" ]; then
+              if [ "$CLEAR_DNS_RULES" -eq 1 ]; then
+                ${jq} \
+                  --argjson obs "$OUTBOUNDS_JSON" \
+                  --arg user ${lib.escapeShellArg localProxyAuth.username} \
+                  --arg password "$LOCAL_PROXY_PASSWORD" \
+                  --argjson route_rules "$ROUTE_RULES_JSON" \
+                  --arg route_final "$ROUTE_FINAL" \
+                  --arg dns_final "$DNS_FINAL" \
+                  '.outbounds = $obs + .outbounds
+                    | (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
+                    | .route.rules = $route_rules
+                    | .route.final = $route_final
+                    | .dns.rules = []
+                    | .dns.final = $dns_final' \
+                  "${configFile}" > "$RUNTIME_DIR/config.json"
+              else
+                ${jq} \
+                  --argjson obs "$OUTBOUNDS_JSON" \
+                  --arg user ${lib.escapeShellArg localProxyAuth.username} \
+                  --arg password "$LOCAL_PROXY_PASSWORD" \
+                  --argjson route_rules "$ROUTE_RULES_JSON" \
+                  --arg route_final "$ROUTE_FINAL" \
+                  --arg dns_final "$DNS_FINAL" \
+                  '.outbounds = $obs + .outbounds
+                    | (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
+                    | .route.rules = $route_rules
+                    | .route.final = $route_final
+                    | .dns.final = $dns_final' \
+                  "${configFile}" > "$RUNTIME_DIR/config.json"
+              fi
+            else
+              ${jq} \
+                --argjson obs "$OUTBOUNDS_JSON" \
+                --arg user ${lib.escapeShellArg localProxyAuth.username} \
+                --arg password "$LOCAL_PROXY_PASSWORD" \
+                '.outbounds = $obs + .outbounds
+                  | (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]' \
+                "${configFile}" > "$RUNTIME_DIR/config.json"
+            fi
             chmod 600 "$RUNTIME_DIR/config.json"
           ''
         else
           ''
-            ${jq} --argjson obs "$OUTBOUNDS_JSON" \
-              '.outbounds = $obs + .outbounds' \
-              "${configFile}" > "$RUNTIME_DIR/config.json"
+            if [ -n "$ROUTE_MODE" ]; then
+              if [ "$CLEAR_DNS_RULES" -eq 1 ]; then
+                ${jq} \
+                  --argjson obs "$OUTBOUNDS_JSON" \
+                  --argjson route_rules "$ROUTE_RULES_JSON" \
+                  --arg route_final "$ROUTE_FINAL" \
+                  --arg dns_final "$DNS_FINAL" \
+                  '.outbounds = $obs + .outbounds
+                    | .route.rules = $route_rules
+                    | .route.final = $route_final
+                    | .dns.rules = []
+                    | .dns.final = $dns_final' \
+                  "${configFile}" > "$RUNTIME_DIR/config.json"
+              else
+                ${jq} \
+                  --argjson obs "$OUTBOUNDS_JSON" \
+                  --argjson route_rules "$ROUTE_RULES_JSON" \
+                  --arg route_final "$ROUTE_FINAL" \
+                  --arg dns_final "$DNS_FINAL" \
+                  '.outbounds = $obs + .outbounds
+                    | .route.rules = $route_rules
+                    | .route.final = $route_final
+                    | .dns.final = $dns_final' \
+                  "${configFile}" > "$RUNTIME_DIR/config.json"
+              fi
+            else
+              ${jq} --argjson obs "$OUTBOUNDS_JSON" \
+                '.outbounds = $obs + .outbounds' \
+                "${configFile}" > "$RUNTIME_DIR/config.json"
+            fi
           ''
       }
 
@@ -305,6 +434,53 @@ let
     exit "$FAILED"
   '';
 
+  setRouteModeScript = pkgs.writeShellScript "proxy-suite-set-route-mode" ''
+    set -euo pipefail
+    mode="''${1:-}"
+
+    case "$mode" in
+      default)
+        ;;
+      whitelist)
+        ;;
+      blacklist)
+        ;;
+      all-proxy)
+        ;;
+      all-bypass)
+        ;;
+      *)
+        echo "proxy-suite: route mode must be default, whitelist, blacklist, all-proxy, or all-bypass" >&2
+        exit 1
+        ;;
+    esac
+
+    mkdir -p "$(dirname "${routeModeStateFile}")"
+    if [ "$mode" = "default" ]; then
+      rm -f "${routeModeStateFile}"
+    else
+      printf '%s\n' "$mode" > "${routeModeStateFile}"
+    fi
+
+    SOCKS_WAS_ACTIVE=0
+    TUN_WAS_ACTIVE=0
+    PER_APP_TUN_WAS_ACTIVE=0
+
+    systemctl is-active --quiet proxy-suite-socks && SOCKS_WAS_ACTIVE=1 || true
+    systemctl is-active --quiet proxy-suite-tun && TUN_WAS_ACTIVE=1 || true
+    systemctl is-active --quiet proxy-suite-per-app-tun && PER_APP_TUN_WAS_ACTIVE=1 || true
+
+    if [ "$SOCKS_WAS_ACTIVE" -eq 1 ]; then
+      systemctl restart proxy-suite-socks
+    fi
+    if [ "$TUN_WAS_ACTIVE" -eq 1 ]; then
+      systemctl restart proxy-suite-tun
+    fi
+    if [ "$PER_APP_TUN_WAS_ACTIVE" -eq 1 ]; then
+      systemctl restart proxy-suite-per-app-tun
+    fi
+  '';
+
   subscriptionTagsFile = pkgs.writeText "proxy-suite-subscription-tags.json" (
     builtins.toJSON (map (sub: sub.tag) singBoxCfg.subscriptions)
   );
@@ -312,6 +488,8 @@ in
 {
   inherit startSocks startTun startPerAppTun;
   inherit
+    routeModeStateFile
+    setRouteModeScript
     subscriptionUpdateScript
     hasSubscriptions
     subscriptionTagsFile

@@ -7,6 +7,7 @@
   tproxyFile,
   tunFile,
   perAppTunFile,
+  routeModeRulesFile,
   perAppTunChainFile,
   perAppTproxyRulesFile,
   perAppZapretRulesFile,
@@ -74,7 +75,7 @@ let
       buildOutboundPy
       fetchSubscriptionPy
       ;
-    inherit tproxyFile tunFile perAppTunFile;
+    inherit tproxyFile tunFile perAppTunFile routeModeRulesFile;
   };
 
   perAppRouting = import ./per-app-routing.nix {
@@ -112,6 +113,7 @@ let
       ;
     zapretEnabled = cfg.zapret.enable;
     inherit (scripts) subscriptionTagsFile;
+    inherit (scripts) routeModeStateFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile
       proxychainsConfigFile

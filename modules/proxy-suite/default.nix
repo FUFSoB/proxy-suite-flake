@@ -47,7 +47,7 @@ in
           packages
           cfg
           ;
-        inherit (configs) tproxyFile tunFile perAppTunFile;
+        inherit (configs) tproxyFile tunFile perAppTunFile routeModeRulesFile;
         inherit (nftr)
           nftablesRulesFile
           perAppTproxyRulesFile

@@ -38,7 +38,7 @@ let
       packages
       cfg
       ;
-    inherit (configs) tproxyFile tunFile perAppTunFile;
+    inherit (configs) tproxyFile tunFile perAppTunFile routeModeRulesFile;
     inherit (nftr) perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile ip nft;
   };
 in

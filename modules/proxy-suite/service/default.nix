@@ -8,6 +8,7 @@
   tproxyFile,
   tunFile,
   perAppTunFile,
+  routeModeRulesFile,
   nftablesRulesFile,
   perAppTproxyRulesFile,
   perAppZapretRulesFile,
@@ -26,6 +27,7 @@ let
       tproxyFile
       tunFile
       perAppTunFile
+      routeModeRulesFile
       perAppTunChainFile
       perAppTproxyRulesFile
       perAppZapretRulesFile
@@ -213,6 +215,15 @@ let
         wants = [ "network-online.target" ];
         execStart = scripts.subscriptionUpdateScript;
         stateDirectory = "proxy-suite";
+      };
+    }
+    {
+      enable = singBoxCfg.enable;
+      name = "proxy-suite-route-mode@";
+      value = mkOneshotService {
+        description = "Set proxy-suite route mode to %i";
+        execStart = "${scripts.setRouteModeScript} %i";
+        extraServiceConfig.RemainAfterExit = false;
       };
     }
   ];
