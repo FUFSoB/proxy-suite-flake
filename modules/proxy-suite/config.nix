@@ -138,7 +138,12 @@ let
         rules = rules.routingRules;
         final = if singBoxCfg.proxyByDefault then "proxy" else "direct";
       }
-      // lib.optionalAttrs (enableTun && tunAutoRoute) { auto_detect_interface = true; };
+      // lib.optionalAttrs (enableTun && tunAutoRoute) {
+        # sing-box recommends this with auto_route to keep its own outbound
+        # connections pinned to the host's default NIC instead of looping back
+        # into the TUN interface.
+        auto_detect_interface = true;
+      };
     }
     // lib.optionalAttrs enableClashApi clashApiBlock;
 
@@ -156,7 +161,11 @@ let
     tunAutoRoute = true;
     tunAutoRedirect = true;
     tunStrictRoute = true;
-    forceLocalDnsViaProxy = true;
+    # Keep the bootstrap resolver on the direct path. Sending the "local" DNS
+    # transport through outbound tag "proxy" causes a resolver loop in global
+    # TUN mode because outbound hostname resolution and urltest probe lookups
+    # recurse back into the same proxy path.
+    forceLocalDnsViaProxy = false;
     enableClashApi = false;
   };
 

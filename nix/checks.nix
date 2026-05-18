@@ -1459,6 +1459,7 @@ let
       in
       assert inbound.iproute2_table_index == 2022;
       assert inbound.iproute2_rule_index == 9000;
+      assert tunDefaultConfig.route.auto_detect_interface == true;
       true
     )
     (
@@ -1470,7 +1471,8 @@ let
       assert pkgs.lib.hasInfix ''delete table inet sing-box'' tunCleanupScript;
       assert pkgs.lib.hasInfix ''rule del table 2022'' tunCleanupScript;
       assert pkgs.lib.hasInfix ''route flush table 2022'' tunCleanupScript;
-      assert pkgs.lib.hasInfix "link del dev 'singtun0'" tunCleanupScript;
+      assert pkgs.lib.hasInfix "link del dev" tunCleanupScript;
+      assert pkgs.lib.hasInfix "singtun0" tunCleanupScript;
       true
     )
     (
@@ -1571,7 +1573,7 @@ let
       let
         localDns = dnsServerByTag tunDefaultConfig "local";
       in
-      assert localDns.detour == "proxy";
+      assert !(localDns ? detour);
       true
     )
     (
@@ -2068,7 +2070,8 @@ let
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun-user@";
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
       assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
-      assert pkgs.lib.hasInfix "link del dev 'psperapptun0'" perAppRoutingTunCleanupScript;
+      assert pkgs.lib.hasInfix "link del dev" perAppRoutingTunCleanupScript;
+      assert pkgs.lib.hasInfix "psperapptun0" perAppRoutingTunCleanupScript;
       assert pkgs.lib.hasInfix "rule del fwmark 16 table 101" perAppRoutingTunCleanupScript;
       true
     )
