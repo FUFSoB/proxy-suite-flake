@@ -11,6 +11,11 @@ let
   perAppTun = singBoxCfg.tun.perApp;
   perAppTproxy = singBoxCfg.tproxy.perApp;
   zapretApp = cfg.zapret.perApp;
+  tgWsProxyCfg = cfg.tgWsProxy;
+  tgWsProxyBypassEnabled = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
+  tgWsProxyBypassMarkLine = lib.optionalString tgWsProxyBypassEnabled ''
+                  meta mark ${toString tgWsProxyCfg.routingMark} return
+  '';
 
   # Shared across all three nftables rule files that do IPv4 routing.
   reservedIpBlock = ''
@@ -55,7 +60,7 @@ let
                   ip daddr $RESERVED_IP return
         ${tproxyLocalSubnetLines}
                   meta mark ${toString globalTproxy.proxyMark} return
-    ${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString globalTproxy.fwmark}
+    ${tgWsProxyBypassMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString globalTproxy.fwmark}
                   ip protocol udp meta mark set ${toString globalTproxy.fwmark}
               }
           }

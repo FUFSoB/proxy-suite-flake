@@ -79,6 +79,16 @@ let
       };
     in
     builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile configs.perAppTunFile));
+  mkTProxyNftRules =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+      nftr = import ../modules/proxy-suite/nftables.nix {
+        lib = pkgs.lib;
+        inherit pkgs cfg;
+      };
+    in
+    builtins.readFile nftr.nftablesRulesFile;
   hasDirectDomain =
     rules: domain:
     builtins.any (
@@ -229,6 +239,51 @@ let
         enable = true;
         host = "127.0.0.1";
         secretFile = "/run/secrets/tg-ws-proxy";
+      };
+    }
+  ];
+
+  tgWithGlobalTun = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox.tun.enable = true;
+        tgWsProxy = {
+          enable = true;
+          secretFile = "/run/secrets/tg-ws-proxy";
+          dcIps."2" = "149.154.167.220";
+        };
+      };
+    }
+  ];
+  tgWithGlobalTunServiceConfig = tgWithGlobalTun.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig;
+  tgWithGlobalTunBypassUp = builtins.readFile tgWithGlobalTunServiceConfig.ExecStartPre;
+  tgWithGlobalTunBypassDown = builtins.readFile tgWithGlobalTunServiceConfig.ExecStopPost;
+  tgWithGlobalTunRules = mkRoutingRules tgWithGlobalTun;
+
+  tgWithGlobalTproxy = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        singBox.tproxy.enable = true;
+        tgWsProxy = {
+          enable = true;
+          secretFile = "/run/secrets/tg-ws-proxy";
+        };
+      };
+    }
+  ];
+  tgWithGlobalTproxyNft = mkTProxyNftRules tgWithGlobalTproxy;
+
+  tgRoutingMarkCollision = mkBadFixture [
+    {
+      services.proxy-suite = {
+        singBox.tproxy.enable = true;
+        tgWsProxy = {
+          enable = true;
+          secretFile = "/run/secrets/tg-ws-proxy";
+          routingMark = 1;
+        };
       };
     }
   ];
@@ -1336,6 +1391,16 @@ let
         == [ "tg_ws_proxy_secret:/run/secrets/tg-ws-proxy" ];
       true
     )
+    # -- tg-ws-proxy: global TUN/TProxy bypass mark keeps relay traffic out of transparent capture --
+    (
+      assert tgWithGlobalTunServiceConfig.SocketMark == "4";
+      assert pkgs.lib.hasInfix "rule add pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassUp;
+      assert pkgs.lib.hasInfix "rule del pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassDown;
+      assert hasDirectIP tgWithGlobalTunRules "149.154.167.220";
+      assert pkgs.lib.hasInfix "meta mark 4 return" tgWithGlobalTproxyNft;
+      assert tgRoutingMarkCollision.success == false;
+      true
+    )
     (
       assert duplicateTags.success == false;
       true
@@ -1735,6 +1800,15 @@ let
       true
     )
 
+    # -- subscription/runtime: invalid cache files are ignored and refreshed --
+    (
+      assert pkgs.lib.hasInfix "_proxy_suite_valid_subscription_cache()" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_drop_invalid_subscription_cache" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "removed invalid subscription cache" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "produced an invalid cache" subscriptionOnlyUpdateScript;
+      true
+    )
+
     # -- subscription/runtime: refresh only restarts sing-box units that are active --
     (
       assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-socks'' subscriptionOnlyUpdateScript;
@@ -1916,8 +1990,11 @@ let
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "_check_no_global_proxy tun" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED"'' perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "cleanup_slice()" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "trap cleanup_slice EXIT" perAppRoutingTunScript;
       true
     )
 

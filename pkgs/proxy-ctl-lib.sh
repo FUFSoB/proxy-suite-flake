@@ -200,6 +200,11 @@ _wrap_slice() {
   local user_svc="$slice_base-user@$uid.service"
   local status=0
 
+  cleanup_slice() {
+    _cleanup_slice_if_idle "$slice_base" "$anchor_unit" "$user_svc" "$backend_svc"
+  }
+  trap cleanup_slice EXIT
+
   systemctl --user start "$anchor_unit" || status=$?
   if [ "$status" -eq 0 ]; then
     systemctl start "$backend_svc" || status=$?
@@ -212,7 +217,6 @@ _wrap_slice() {
       --slice="$slice_base" --unit="$scope_unit" "$@" || status=$?
   fi
 
-  _cleanup_slice_if_idle "$slice_base" "$anchor_unit" "$user_svc" "$backend_svc"
   exit "$status"
 }
 
@@ -404,6 +408,7 @@ cmd_wrap() {
       exec proxychains4 $PROXYCHAINS_QUIET_ARG -f "$PROXYCHAINS_CONFIG" "$@"
       ;;
     tun)
+      _check_no_global_proxy tun
       _wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED" \
         "Profile '$profile' uses route=tun, but singBox.tun.perApp.enable is false." \
         "proxy-suite-per-app-tun.service" "$@"

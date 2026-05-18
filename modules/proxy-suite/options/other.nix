@@ -130,6 +130,33 @@ in
           "203" = "149.154.167.220";
         };
       };
+
+      bypassTransparentProxy = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether to keep tg-ws-proxy's own relay connections out of proxy-suite
+          transparent routing backends.
+
+          When enabled and global TUN or TProxy mode is configured, the
+          tg-ws-proxy systemd service receives a packet mark and an earlier
+          policy-routing rule back to the main table. This prevents global TUN
+          from routing the local Telegram MTProto relay through sing-box again,
+          which can otherwise break tg-ws-proxy after enabling TUN mode.
+        '';
+        example = true;
+      };
+
+      routingMark = mkOption {
+        type = types.int;
+        default = 4;
+        description = ''
+          Packet mark used by tgWsProxy.bypassTransparentProxy to bypass
+          proxy-suite transparent routing. Override this only if it collides
+          with another local policy-routing mark on your host.
+        '';
+        example = 4;
+      };
     };
   };
 }

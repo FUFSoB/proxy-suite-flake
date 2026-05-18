@@ -58,6 +58,31 @@ let
         | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} --tag-prefix ${lib.escapeShellArg sub.tag}
     '';
 
+  subscriptionCacheHelpersBlock = lib.optionalString hasSubscriptions ''
+    _proxy_suite_valid_subscription_cache() {
+      [ -s "$1" ] && ${jq} -e 'type == "array"' "$1" >/dev/null 2>&1
+    }
+
+    _proxy_suite_commit_subscription_cache() {
+      local tmp="$1" target="$2" tag="$3"
+      if _proxy_suite_valid_subscription_cache "$tmp"; then
+        mv "$tmp" "$target"
+        return 0
+      fi
+      rm -f "$tmp"
+      echo "proxy-suite: warning: subscription '$tag' produced an invalid cache; ignoring it" >&2
+      return 1
+    }
+
+    _proxy_suite_drop_invalid_subscription_cache() {
+      local target="$1" tag="$2"
+      if [ -f "$target" ] && ! _proxy_suite_valid_subscription_cache "$target"; then
+        rm -f "$target"
+        echo "proxy-suite: warning: removed invalid subscription cache for '$tag'" >&2
+      fi
+    }
+  '';
+
   # Build the shell code block for a single outbound entry.
   # tag overrides ob.tag (used in "first" mode to force tag = "proxy").
   # routingMark is null or an int; added to outbound JSON if set.
@@ -106,10 +131,11 @@ let
       # subscription: ${sub.tag}
       CACHE_DIR="${subscriptionCacheDir}"
       CACHE_FILE="${cacheFile}"
+      _proxy_suite_drop_invalid_subscription_cache "$CACHE_FILE" ${lib.escapeShellArg sub.tag}
       if [ ! -f "$CACHE_FILE" ]; then
         mkdir -p "$CACHE_DIR"
         if ${mkSubscriptionFetchCommand sub} > "$CACHE_FILE.tmp"; then
-          mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+          _proxy_suite_commit_subscription_cache "$CACHE_FILE.tmp" "$CACHE_FILE" ${lib.escapeShellArg sub.tag} || true
         else
           rm -f "$CACHE_FILE.tmp"
           echo "proxy-suite: warning: could not fetch subscription '${sub.tag}'" >&2
@@ -233,6 +259,7 @@ let
       ROUTE_RULES_JSON='[]'
       ROUTE_MODE_ACTIVE=false
       CLEAR_DNS_RULES=false
+      ${subscriptionCacheHelpersBlock}
       ${lib.optionalString enableLocalProxyAuth ''
         umask 077
         LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
@@ -364,8 +391,11 @@ let
     in
     ''
       if ${mkSubscriptionFetchCommand sub} > "${cacheFile}.tmp"; then
-        mv "${cacheFile}.tmp" "${cacheFile}"
-        echo "Updated subscription: ${sub.tag}"
+        if _proxy_suite_commit_subscription_cache "${cacheFile}.tmp" "${cacheFile}" ${lib.escapeShellArg sub.tag}; then
+          echo "Updated subscription: ${sub.tag}"
+        else
+          FAILED=1
+        fi
       else
         rm -f "${cacheFile}.tmp"
         echo "proxy-suite: failed to update subscription '${sub.tag}'" >&2
@@ -378,6 +408,7 @@ let
     CACHE_DIR="${subscriptionCacheDir}"
     mkdir -p "$CACHE_DIR"
     FAILED=0
+    ${subscriptionCacheHelpersBlock}
     ${lib.concatMapStrings mkSubscriptionFetchBlock singBoxCfg.subscriptions}
 
     if [ "$FAILED" -eq 0 ]; then

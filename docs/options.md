@@ -115,9 +115,11 @@ Update module option docs there instead of editing this file by hand.
       - [url](#services-proxy-suite-singbox-urltest-url)
   - tgWsProxy
     - [enable](#services-proxy-suite-tgwsproxy-enable)
+    - [bypassTransparentProxy](#services-proxy-suite-tgwsproxy-bypasstransparentproxy)
     - [dcIps](#services-proxy-suite-tgwsproxy-dcips)
     - [host](#services-proxy-suite-tgwsproxy-host)
     - [port](#services-proxy-suite-tgwsproxy-port)
+    - [routingMark](#services-proxy-suite-tgwsproxy-routingmark)
     - [secret](#services-proxy-suite-tgwsproxy-secret)
     - [secretFile](#services-proxy-suite-tgwsproxy-secretfile)
   - tray
@@ -266,10 +268,12 @@ services.proxy-suite = {
     };
   };
   tgWsProxy = {
+    bypassTransparentProxy = true;
     dcIps = { };
     enable = false;
     host = "127.0.0.1";
     port = 1443;
+    routingMark = 4;
     secret = null;
     secretFile = null;
   };
@@ -503,6 +507,7 @@ services.proxy-suite = {
     };
   };
   tgWsProxy = {
+    bypassTransparentProxy = true;
     dcIps = {
       "2" = "149.154.167.220";
       "203" = "149.154.167.220";
@@ -511,6 +516,7 @@ services.proxy-suite = {
     enable = true;
     host = "127.0.0.1";
     port = 1076;
+    routingMark = 4;
     secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     secretFile = "/run/secrets/tg-ws-proxy-secret";
   };
@@ -3730,6 +3736,46 @@ true
 
 
 
+<a id="services-proxy-suite-tgwsproxy-bypasstransparentproxy"></a>
+## services\.proxy-suite\.tgWsProxy\.bypassTransparentProxy
+
+
+
+Whether to keep tg-ws-proxy’s own relay connections out of proxy-suite
+transparent routing backends\.
+
+When enabled and global TUN or TProxy mode is configured, the
+tg-ws-proxy systemd service receives a packet mark and an earlier
+policy-routing rule back to the main table\. This prevents global TUN
+from routing the local Telegram MTProto relay through sing-box again,
+which can otherwise break tg-ws-proxy after enabling TUN mode\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
 <a id="services-proxy-suite-tgwsproxy-dcips"></a>
 ## services\.proxy-suite\.tgWsProxy\.dcIps
 
@@ -3832,6 +3878,41 @@ WebSocket proxy\.
 
 ```nix
 1076
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-routingmark"></a>
+## services\.proxy-suite\.tgWsProxy\.routingMark
+
+
+
+Packet mark used by tgWsProxy\.bypassTransparentProxy to bypass
+proxy-suite transparent routing\. Override this only if it collides
+with another local policy-routing mark on your host\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+4
+```
+
+
+
+*Example:*
+
+```nix
+4
 ```
 
 *Declared by:*
@@ -4124,6 +4205,8 @@ true
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
 
+
+
 Whether to enable zapret DPI bypass\.
 
 
@@ -4154,8 +4237,6 @@ true
 
 <a id="services-proxy-suite-zapret-cidrexemption-enable"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.enable
-
-
 
 Whether to enable CIDR exemption from zapret NFQUEUE\.
 

@@ -7,7 +7,7 @@ import urllib.parse
 
 
 def _qs(query: str) -> dict:
-    return dict(urllib.parse.parse_qsl(query))
+    return dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
 
 
 def _split_host_port(hostpart: str) -> tuple[str, str]:
@@ -23,7 +23,7 @@ def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     rest = url[len(f"{scheme}://") :]
     rest, _, _ = rest.partition("#")
     if "@" in rest:
-        userinfo, _, rest = rest.partition("@")
+        userinfo, _, rest = rest.rpartition("@")
     else:
         userinfo = ""
     hostpart, _, query = rest.partition("?")
@@ -119,6 +119,9 @@ def parse_vless(url: str, tag: str) -> dict:
 
 def parse_vmess(url: str, tag: str) -> dict:
     b64 = url[len("vmess://") :]
+    b64, _, _ = b64.partition("#")
+    b64, _, _ = b64.partition("?")
+    b64 = urllib.parse.unquote(b64)
     pad = "=" * (-len(b64) % 4)
     try:
         data = json.loads(base64.b64decode(b64 + pad))

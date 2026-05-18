@@ -11,6 +11,7 @@ let
   r = cfg.singBox.routing;
   singBoxCfg = derived.singBoxCfg;
   zapretCfg = cfg.zapret;
+  tgWsProxyCfg = cfg.tgWsProxy;
 
   trim = lib.strings.trim;
   hasPrefix = lib.strings.hasPrefix;
@@ -203,12 +204,19 @@ let
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
   ];
 
+  tgWsProxyRelayDirectRules = lib.optional (
+    tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { }
+  ) {
+    ip_cidr = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps);
+    outbound = "direct";
+  };
+
   safetyDirectRules = [
     {
       ip_is_private = true;
       outbound = "direct";
     }
-  ];
+  ] ++ tgWsProxyRelayDirectRules;
 
   blockRules = lib.flatten [
     (mkDomainRule "block" r.block.domains)

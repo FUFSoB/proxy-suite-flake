@@ -39,6 +39,19 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["transport"]["type"], "ws")
         self.assertEqual(ob["tls"]["server_name"], "cdn.example.com")
 
+    def test_vmess_with_external_remark(self):
+        payload = {
+            "add": "vmess.example.com",
+            "port": "443",
+            "id": "00000000-0000-0000-0000-000000000000",
+            "aid": "0",
+            "scy": "auto",
+        }
+        encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        ob = run_parser(f"vmess://{encoded}#Subscription Remark")
+        self.assertEqual(ob["type"], "vmess")
+        self.assertEqual(ob["server"], "vmess.example.com")
+
     def test_trojan(self):
         ob = run_parser("trojan://secret@example.com:443?sni=tls.example.com&fp=chrome")
         self.assertEqual(ob["type"], "trojan")
@@ -108,6 +121,12 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["type"], "socks")
         self.assertEqual(ob["version"], "5")
         self.assertEqual(ob["username"], "user")
+
+    def test_proxy_userinfo_allows_at_in_password(self):
+        ob = run_parser("socks5://user:p@ss@example.com:1080")
+        self.assertEqual(ob["username"], "user")
+        self.assertEqual(ob["password"], "p@ss")
+        self.assertEqual(ob["server"], "example.com")
 
     def test_https_proxy(self):
         ob = run_parser("https://proxy.example.com:8443")

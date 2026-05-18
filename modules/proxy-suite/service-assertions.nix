@@ -215,6 +215,36 @@ let
       right = perAppZapretCfg.filterMark;
       message = "proxy-suite: singBox.tproxy.perApp.fwmark and zapret.perApp.filterMark must differ";
     }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
+      left = tgWsProxyCfg.routingMark;
+      right = globalTproxy.fwmark;
+      message = "proxy-suite: tgWsProxy.routingMark must differ from singBox.tproxy.fwmark";
+    }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
+      left = tgWsProxyCfg.routingMark;
+      right = globalTproxy.proxyMark;
+      message = "proxy-suite: tgWsProxy.routingMark must differ from singBox.tproxy.proxyMark";
+    }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTun.enable;
+      left = tgWsProxyCfg.routingMark;
+      right = perAppRoutingTun.fwmark;
+      message = "proxy-suite: tgWsProxy.routingMark must differ from singBox.tun.perApp.fwmark";
+    }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTproxy.enable;
+      left = tgWsProxyCfg.routingMark;
+      right = perAppRoutingTproxy.fwmark;
+      message = "proxy-suite: tgWsProxy.routingMark must differ from singBox.tproxy.perApp.fwmark";
+    }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
+      left = tgWsProxyCfg.routingMark;
+      right = perAppZapretCfg.filterMark;
+      message = "proxy-suite: tgWsProxy.routingMark must differ from zapret.perApp.filterMark";
+    }
   ];
 
   perAppZapretDesyncMarks = [
@@ -278,6 +308,11 @@ let
       value = perAppZapretCfg.qnum;
       message = "proxy-suite: zapret.perApp.qnum must be greater than zero";
     }
+    {
+      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
+      value = tgWsProxyCfg.routingMark;
+      message = "proxy-suite: tgWsProxy.routingMark must be greater than zero";
+    }
   ];
 
   localProxyAuthCfg = singBoxCfg.auth;
@@ -336,6 +371,12 @@ let
           value = perAppZapretCfg.filterMark;
           disallowed = perAppZapretDesyncMarks;
           message = "proxy-suite: zapret.perApp.filterMark must not use per-app-zapret internal desync mark bits";
+        }
+        {
+          condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
+          value = tgWsProxyCfg.routingMark;
+          disallowed = perAppZapretDesyncMarks;
+          message = "proxy-suite: tgWsProxy.routingMark must not use per-app-zapret internal desync mark bits";
         }
       ];
 
