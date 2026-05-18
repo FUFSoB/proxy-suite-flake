@@ -66,6 +66,8 @@ let
       tunAddress ? globalTun.address,
       tunMtu ? globalTun.mtu,
       tunAutoRoute ? true,
+      tunAutoRouteTableIndex ? 2022,
+      tunAutoRouteRuleIndex ? 9000,
       tunAutoRedirect ? true,
       tunStrictRoute ? true,
       forceLocalDnsViaProxy ? false,
@@ -95,17 +97,25 @@ let
           listen = "127.0.0.1";
           listen_port = globalTproxy.port;
         }
-        ++ lib.optional enableTun {
-          type = "tun";
-          tag = "tun-in";
-          interface_name = tunInterface;
-          address = [ tunAddress ];
-          mtu = tunMtu;
-          auto_route = tunAutoRoute;
-          auto_redirect = tunAutoRedirect;
-          strict_route = tunStrictRoute;
-          stack = "mixed";
-        };
+        ++ lib.optional enableTun (
+          {
+            type = "tun";
+            tag = "tun-in";
+            interface_name = tunInterface;
+            address = [ tunAddress ];
+            mtu = tunMtu;
+            auto_route = tunAutoRoute;
+            auto_redirect = tunAutoRedirect;
+            strict_route = tunStrictRoute;
+            stack = "mixed";
+          }
+          // lib.optionalAttrs tunAutoRoute {
+            # Keep sing-box auto_route indexes explicit so service cleanup can
+            # reliably remove stale policy-routing state after unclean stops.
+            iproute2_table_index = tunAutoRouteTableIndex;
+            iproute2_rule_index = tunAutoRouteRuleIndex;
+          }
+        );
 
       # proxy outbound(s) are prepended at runtime by the start script
       outbounds = [

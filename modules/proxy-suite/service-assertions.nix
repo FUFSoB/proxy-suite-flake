@@ -36,6 +36,8 @@ let
     perAppZapretCfg
     ;
 
+  globalTunAutoRouteTable = 2022;
+
   featureAssertions = [
     (requireAvailable singBoxCfg.enable (
       singBoxCfg.outbounds != [ ] || singBoxCfg.subscriptions != [ ]
@@ -124,6 +126,24 @@ let
 
   collisionAssertions = map (item: notEqualWhen item.condition item.left item.right item.message) [
     {
+      condition = globalTun.enable && perAppRoutingTun.enable;
+      left = globalTun.interface;
+      right = perAppRoutingTun.interface;
+      message = "proxy-suite: singBox.tun.interface and singBox.tun.perApp.interface must differ";
+    }
+    {
+      condition = globalTun.enable && perAppRoutingTun.enable;
+      left = globalTun.address;
+      right = perAppRoutingTun.address;
+      message = "proxy-suite: singBox.tun.address and singBox.tun.perApp.address must differ";
+    }
+    {
+      condition = globalTun.enable && perAppRoutingTun.enable;
+      left = perAppRoutingTun.routeTable;
+      right = globalTunAutoRouteTable;
+      message = "proxy-suite: singBox.tun.perApp.routeTable must differ from the global TUN auto-route table 2022";
+    }
+    {
       condition = perAppRoutingTun.enable && globalTproxy.enable;
       left = perAppRoutingTun.fwmark;
       right = globalTproxy.fwmark;
@@ -200,6 +220,64 @@ let
   perAppZapretDesyncMarks = [
     67108864
     134217728
+  ];
+
+  positiveNumberAssertions = map (item: mkAssertion (!item.condition || item.value > 0) item.message) [
+    {
+      condition = globalTun.enable;
+      value = globalTun.mtu;
+      message = "proxy-suite: singBox.tun.mtu must be greater than zero";
+    }
+    {
+      condition = perAppRoutingTun.enable;
+      value = perAppRoutingTun.mtu;
+      message = "proxy-suite: singBox.tun.perApp.mtu must be greater than zero";
+    }
+    {
+      condition = globalTproxy.enable;
+      value = globalTproxy.fwmark;
+      message = "proxy-suite: singBox.tproxy.fwmark must be greater than zero";
+    }
+    {
+      condition = globalTproxy.enable;
+      value = globalTproxy.proxyMark;
+      message = "proxy-suite: singBox.tproxy.proxyMark must be greater than zero";
+    }
+    {
+      condition = globalTproxy.enable;
+      value = globalTproxy.routeTable;
+      message = "proxy-suite: singBox.tproxy.routeTable must be greater than zero";
+    }
+    {
+      condition = perAppRoutingTun.enable;
+      value = perAppRoutingTun.fwmark;
+      message = "proxy-suite: singBox.tun.perApp.fwmark must be greater than zero";
+    }
+    {
+      condition = perAppRoutingTun.enable;
+      value = perAppRoutingTun.routeTable;
+      message = "proxy-suite: singBox.tun.perApp.routeTable must be greater than zero";
+    }
+    {
+      condition = perAppRoutingTproxy.enable;
+      value = perAppRoutingTproxy.fwmark;
+      message = "proxy-suite: singBox.tproxy.perApp.fwmark must be greater than zero";
+    }
+    {
+      condition = perAppRoutingTproxy.enable;
+      value = perAppRoutingTproxy.routeTable;
+      message = "proxy-suite: singBox.tproxy.perApp.routeTable must be greater than zero";
+    }
+    {
+      condition = perAppZapretCfg.enable;
+      value = perAppZapretCfg.filterMark;
+      message = "proxy-suite: zapret.perApp.filterMark must be greater than zero";
+    }
+    {
+      condition = perAppZapretCfg.enable;
+      value = perAppZapretCfg.qnum;
+      message = "proxy-suite: zapret.perApp.qnum must be greater than zero";
+    }
   ];
 
   localProxyAuthCfg = singBoxCfg.auth;
@@ -286,6 +364,7 @@ in
 featureAssertions
 ++ perAppRoutingAssertions
 ++ collisionAssertions
+++ positiveNumberAssertions
 ++ localProxyAuthAssertions
 ++ forbiddenValueAssertions
 ++ secretAssertions

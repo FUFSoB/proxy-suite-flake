@@ -46,6 +46,7 @@ rec {
       wants ? [ ],
       requires ? [ ],
       conflicts ? [ ],
+      execStartPre ? null,
       execStartPost ? null,
       execStopPost ? null,
       extraServiceConfig ? { },
@@ -70,6 +71,7 @@ rec {
         RuntimeDirectory = runtimeDirectory;
       }
       // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
+      // lib.optionalAttrs (execStartPre != null) { ExecStartPre = execStartPre; }
       // lib.optionalAttrs (execStartPost != null) { ExecStartPost = execStartPost; }
       // lib.optionalAttrs (execStopPost != null) { ExecStopPost = execStopPost; }
       // extraServiceConfig;

@@ -120,25 +120,33 @@ let
   '';
 
   perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app-tun-down" ''
-    set -euo pipefail
+    set +e
+
+    # Best-effort cleanup for graceful stops and for unclean previous exits.
     ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
     ${ip} route del default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} link del dev ${lib.escapeShellArg perAppRoutingTun.interface} 2>/dev/null || true
   '';
 
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-up" ''
     set -euo pipefail
+
     ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null; do :; done
+    ${ip} route del local default dev lo table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
+
     ${nft} -f ${perAppTproxyRulesFile}
     ${ip} route replace local default dev lo table ${toString perAppRoutingTproxy.routeTable}
-    ${ip} rule add fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
+    ${ip} rule add fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable}
   '';
 
   perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-down" ''
-    set -euo pipefail
+    set +e
+
     ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null; do :; done
     ${ip} route del local default dev lo table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
-    ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
   '';
 
   # Generate a "start" script that adds a per-user cgroup nftables mark rule.

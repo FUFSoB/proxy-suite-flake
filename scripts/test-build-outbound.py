@@ -55,6 +55,39 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["type"], "shadowsocks")
         self.assertEqual(ob["method"], "chacha20-ietf-poly1305")
 
+
+    def test_shadowsocks_legacy_full_base64(self):
+        legacy = (
+            base64.urlsafe_b64encode(
+                b"chacha20-ietf-poly1305:passw0rd@legacy.example.com:8388"
+            )
+            .decode()
+            .rstrip("=")
+        )
+        ob = run_parser(f"ss://{legacy}#Legacy Server")
+        self.assertEqual(ob["type"], "shadowsocks")
+        self.assertEqual(ob["server"], "legacy.example.com")
+        self.assertEqual(ob["server_port"], 8388)
+        self.assertEqual(ob["method"], "chacha20-ietf-poly1305")
+        self.assertEqual(ob["password"], "passw0rd")
+
+
+    def test_shadowsocks_plain_userinfo(self):
+        ob = run_parser("ss://none:plain%20pass@plain.example.com:8388")
+        self.assertEqual(ob["type"], "shadowsocks")
+        self.assertEqual(ob["method"], "none")
+        self.assertEqual(ob["password"], "plain pass")
+
+    def test_shadowsocks_legacy_ipv6_strips_brackets(self):
+        legacy = (
+            base64.urlsafe_b64encode(b"none:pass@[2001:db8::1]:8388")
+            .decode()
+            .rstrip("=")
+        )
+        ob = run_parser(f"ss://{legacy}#Legacy IPv6")
+        self.assertEqual(ob["server"], "2001:db8::1")
+        self.assertEqual(ob["server_port"], 8388)
+
     def test_hysteria2(self):
         ob = run_parser(
             "hy2://secret@example.com:443?sni=hy.example.com&insecure=1&obfs=salamander&obfs-password=mask"

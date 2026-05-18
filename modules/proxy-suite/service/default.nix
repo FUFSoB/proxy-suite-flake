@@ -85,17 +85,47 @@ let
     singBoxCfg.auth.username != null
     && (singBoxCfg.auth.password != null || singBoxCfg.auth.passwordFile != null);
 
+  # Must match the explicit iproute2_* indexes written to the global TUN
+  # sing-box template in config.nix.
+  tunAutoRouteTableIndex = 2022;
+
   tproxyUpScript = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
+    set -euo pipefail
+
+    # Start from a clean policy-routing state.  `ip rule add` permits duplicate
+    # rules on some iproute2 versions, and a stale rule can keep packets routed
+    # into a dead local table after a failed restart.
     ${nft} delete table ip singbox 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null; do :; done
+    ${ip} route del local default dev lo table ${toString globalTproxy.routeTable} 2>/dev/null || true
+
     ${nft} -f ${nftablesRulesFile}
-    ${ip} route add local default dev lo table ${toString globalTproxy.routeTable}
+    ${ip} route replace local default dev lo table ${toString globalTproxy.routeTable}
     ${ip} rule add fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable}
   '';
 
   tproxyDownScript = pkgs.writeShellScript "proxy-suite-tproxy-down" ''
+    set +e
+
     ${nft} delete table ip singbox 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null; do :; done
     ${ip} route del local default dev lo table ${toString globalTproxy.routeTable} 2>/dev/null || true
-    ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null || true
+  '';
+
+  tunCleanupScript = pkgs.writeShellScript "proxy-suite-tun-cleanup" ''
+    set +e
+
+    # sing-box normally removes these on graceful shutdown, but stale
+    # auto_route/auto_redirect state leaves the host routing through a dead TUN
+    # interface after `proxy-ctl tun off` or an unclean service stop.
+    ${nft} delete table inet sing-box 2>/dev/null || true
+
+    while ${ip} -4 rule del table ${toString tunAutoRouteTableIndex} 2>/dev/null; do :; done
+    while ${ip} -6 rule del table ${toString tunAutoRouteTableIndex} 2>/dev/null; do :; done
+    ${ip} -4 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
+    ${ip} -6 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
+
+    ${ip} link del dev ${lib.escapeShellArg globalTun.interface} 2>/dev/null || true
   '';
 
   systemServiceEntries = [
@@ -139,7 +169,9 @@ let
         wants = [ "network-online.target" ];
         wantedBy = lib.optionals globalTun.autostart [ "multi-user.target" ];
         conflicts = [ "${serviceNames.tproxy}.service" ];
+        execStartPre = tunCleanupScript;
         execStart = scripts.startTun;
+        execStopPost = tunCleanupScript;
         runtimeDirectory = serviceNames.tun;
         stateDirectory = "proxy-suite";
       };
@@ -151,6 +183,7 @@ let
         description = "sing-box per-app-routing TUN backend";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
+        execStartPre = perAppRouting.perAppTunDownScript;
         execStart = scripts.startPerAppTun;
         execStartPost = perAppRouting.perAppTunUpScript;
         execStopPost = perAppRouting.perAppTunDownScript;
@@ -264,9 +297,14 @@ in
 {
   environment.systemPackages = [ control.proxyCtl ];
 
-  # nftables must be on for TProxy to work.
+  # nftables must be on for transparent routing backends. Global TUN uses
+  # sing-box auto_redirect, which programs an `inet sing-box` nftables table.
   networking.nftables.enable = lib.mkIf (
-    globalTproxy.enable || perAppRoutingTun.enable || perAppRoutingTproxy.enable || perAppZapretEnabled
+    globalTun.enable
+    || globalTproxy.enable
+    || perAppRoutingTun.enable
+    || perAppRoutingTproxy.enable
+    || perAppZapretEnabled
   ) (lib.mkDefault true);
 
   users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {

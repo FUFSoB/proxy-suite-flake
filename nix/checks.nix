@@ -285,6 +285,9 @@ let
       services.proxy-suite.singBox.tproxy.enable = true;
     }
   ];
+  tproxyManualServiceConfig = tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
+  tproxyManualStartScript = builtins.readFile tproxyManualServiceConfig.ExecStart;
+  tproxyManualStopScript = builtins.readFile tproxyManualServiceConfig.ExecStop;
 
   tproxyAutostartFixture = evalProxySuite [
     baseModule
@@ -401,6 +404,8 @@ let
   ];
   dnsRemoteOverrideConfig = mkTProxyConfig dnsRemoteOverrideFixture;
   tunDefaultConfig = mkTunConfig tunManualFixture;
+  tunServiceConfig = tunManualFixture.config.systemd.services."proxy-suite-tun".serviceConfig;
+  tunCleanupScript = builtins.readFile tunServiceConfig.ExecStopPost;
 
   zapretSyncFixture = evalProxySuite [
     baseModule
@@ -908,8 +913,9 @@ let
   perAppRoutingTunWrapper = _perAppRoutingTun.wrapper;
   perAppRoutingTunScript = _perAppRoutingTun.script;
   perAppRoutingTunProfiles = _perAppRoutingTun.profiles;
-  perAppRoutingTunStartScript =
-    builtins.readFile perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
+  perAppRoutingTunServiceConfig = perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig;
+  perAppRoutingTunStartScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStart;
+  perAppRoutingTunCleanupScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStopPost;
   perAppRoutingTunConfig = mkPerAppTunConfig perAppRoutingTunFixture;
   perAppRoutingTunDirectOutbound =
     builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunConfig.outbounds);
@@ -965,8 +971,9 @@ let
   perAppRoutingTproxyWrapper = _perAppRoutingTproxy.wrapper;
   perAppRoutingTproxyScript = _perAppRoutingTproxy.script;
   perAppRoutingTproxyProfiles = _perAppRoutingTproxy.profiles;
-  perAppRoutingTproxyStartScript =
-    builtins.readFile perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig.ExecStart;
+  perAppRoutingTproxyServiceConfig = perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig;
+  perAppRoutingTproxyStartScript = builtins.readFile perAppRoutingTproxyServiceConfig.ExecStart;
+  perAppRoutingTproxyStopScript = builtins.readFile perAppRoutingTproxyServiceConfig.ExecStop;
   perAppRoutingTproxyUserStartExec =
     perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".serviceConfig.ExecStart;
   perAppRoutingTproxyUserStartScript =
@@ -1369,8 +1376,36 @@ let
       true
     )
     (
+      assert pkgs.lib.hasInfix "set -euo pipefail" tproxyManualStartScript;
+      assert pkgs.lib.hasInfix "rule del fwmark 1 table 100" tproxyManualStartScript;
+      assert pkgs.lib.hasInfix "route replace local default dev lo table 100" tproxyManualStartScript;
+      assert pkgs.lib.hasInfix "set +e" tproxyManualStopScript;
+      assert pkgs.lib.hasInfix "rule del fwmark 1 table 100" tproxyManualStopScript;
+      true
+    )
+    (
       assert tunManualFixture.config.services.proxy-suite.singBox.tun.autostart == false;
       assert tunManualFixture.config.systemd.services."proxy-suite-tun".wantedBy == [ ];
+      true
+    )
+    (
+      let
+        inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") tunDefaultConfig.inbounds);
+      in
+      assert inbound.iproute2_table_index == 2022;
+      assert inbound.iproute2_rule_index == 9000;
+      true
+    )
+    (
+      assert tunManualFixture.config.networking.nftables.enable;
+      true
+    )
+    (
+      assert tunServiceConfig.ExecStartPre == tunServiceConfig.ExecStopPost;
+      assert pkgs.lib.hasInfix ''delete table inet sing-box'' tunCleanupScript;
+      assert pkgs.lib.hasInfix ''rule del table 2022'' tunCleanupScript;
+      assert pkgs.lib.hasInfix ''route flush table 2022'' tunCleanupScript;
+      assert pkgs.lib.hasInfix "link del dev 'singtun0'" tunCleanupScript;
       true
     )
     (
@@ -1700,20 +1735,20 @@ let
       true
     )
 
-    # -- subscription/runtime: refresh only restarts sing-box units that were already active --
+    # -- subscription/runtime: refresh only restarts sing-box units that are active --
     (
-      assert pkgs.lib.hasInfix ''SOCKS_WAS_ACTIVE=0'' subscriptionOnlyUpdateScript;
-      assert pkgs.lib.hasInfix ''if [ "$SOCKS_WAS_ACTIVE" -eq 1 ]; then'' subscriptionOnlyUpdateScript;
-      assert pkgs.lib.hasInfix ''if [ "$TUN_WAS_ACTIVE" -eq 1 ]; then'' subscriptionOnlyUpdateScript;
-      assert pkgs.lib.hasInfix ''systemctl restart proxy-suite-socks'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-socks'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''restart proxy-suite-socks'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-tun'' subscriptionOnlyUpdateScript;
+      assert !(pkgs.lib.hasInfix ''SOCKS_WAS_ACTIVE'' subscriptionOnlyUpdateScript);
       true
     )
 
     # -- subscription/runtime: refresh also handles the per-app TUN sing-box service when present --
     (
-      assert pkgs.lib.hasInfix ''PER_APP_TUN_WAS_ACTIVE=0'' subscriptionPerAppTunUpdateScript;
-      assert pkgs.lib.hasInfix ''systemctl is-active --quiet proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
-      assert pkgs.lib.hasInfix ''systemctl restart proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
+      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
+      assert pkgs.lib.hasInfix ''restart proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
+      assert !(pkgs.lib.hasInfix ''PER_APP_TUN_WAS_ACTIVE'' subscriptionPerAppTunUpdateScript);
       true
     )
 
@@ -1862,6 +1897,14 @@ let
       true
     )
 
+    # -- proxy-ctl: restart skips services that are not present in zapret-only or tg-only builds --
+    (
+      assert pkgs.lib.hasInfix "if _svc_exists proxy-suite-socks; then" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "_svc_exists \"$svc\" && _svc_active \"$svc\"" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "proxy-suite-tg-ws-proxy" minimalProxyCtlScript;
+      true
+    )
+
     # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
     (
       assert pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG='-q'" perAppRoutingProxychainsScript;
@@ -1911,6 +1954,8 @@ let
       assert inbound.auto_route == false;
       assert inbound.auto_redirect == false;
       assert inbound.strict_route == false;
+      assert !(inbound ? iproute2_table_index);
+      assert !(inbound ? iproute2_rule_index);
       true
     )
 
@@ -1945,6 +1990,9 @@ let
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun";
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun-user@";
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
+      assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
+      assert pkgs.lib.hasInfix "link del dev 'psperapptun0'" perAppRoutingTunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del fwmark 16 table 101" perAppRoutingTunCleanupScript;
       true
     )
 
@@ -2019,8 +2067,11 @@ let
     # -- perAppRouting: app TProxy startup installs nftables and loopback policy route --
     (
       assert pkgs.lib.hasInfix "proxy_suite_per_app_tproxy" perAppRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "rule del fwmark 17 table 102" perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "route replace local default dev lo table 102" perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" perAppRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "set +e" perAppRoutingTproxyStopScript;
+      assert pkgs.lib.hasInfix "rule del fwmark 17 table 102" perAppRoutingTproxyStopScript;
       true
     )
 

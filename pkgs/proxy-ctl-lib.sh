@@ -57,6 +57,21 @@ _svc_active() {
   systemctl is-active --quiet "$1"
 }
 
+_require_service() {
+  local svc="$1" message="$2"
+  if ! _svc_exists "$svc"; then
+    echo "$message"
+    exit 1
+  fi
+}
+
+_stop_if_exists() {
+  local svc="$1"
+  if _svc_exists "$svc"; then
+    systemctl stop "$svc" || true
+  fi
+}
+
 _route_mode_default() {
   printf '%s' "${DEFAULT_ROUTE_MODE:-blacklist}"
 }
@@ -159,6 +174,18 @@ _check_no_global_proxy() {
   fi
 }
 
+_cleanup_slice_if_idle() {
+  local slice_base="$1" anchor_unit="$2" user_svc="$3" backend_svc="$4"
+
+  if ! _scope_running "$slice_base"; then
+    systemctl stop "$user_svc" || true
+    systemctl --user stop "$anchor_unit" || true
+    if ! _any_user_active "$slice_base-user@"; then
+      systemctl stop "$backend_svc" || true
+    fi
+  fi
+}
+
 # _wrap_slice <slice_base> <enabled_var> <disabled_msg> <backend_svc> [cmd...]
 _wrap_slice() {
   local slice_base="$1" enabled="$2" disabled_msg="$3" backend_svc="$4"
@@ -171,22 +198,21 @@ _wrap_slice() {
   local scope_unit="$slice_base-${profile}-$$"
   local anchor_unit="$slice_base-anchor.service"
   local user_svc="$slice_base-user@$uid.service"
-
-  systemctl --user start "$anchor_unit"
-  systemctl start "$backend_svc"
-  systemctl start "$user_svc"
-
   local status=0
-  systemd-run --user --scope --quiet --collect --same-dir \
-    --slice="$slice_base" --unit="$scope_unit" "$@" || status=$?
 
-  if ! _scope_running "$slice_base"; then
-    systemctl stop "$user_svc" || true
-    systemctl --user stop "$anchor_unit" || true
-    if ! _any_user_active "$slice_base-user@"; then
-      systemctl stop "$backend_svc" || true
-    fi
+  systemctl --user start "$anchor_unit" || status=$?
+  if [ "$status" -eq 0 ]; then
+    systemctl start "$backend_svc" || status=$?
   fi
+  if [ "$status" -eq 0 ]; then
+    systemctl start "$user_svc" || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then
+    systemd-run --user --scope --quiet --collect --same-dir \
+      --slice="$slice_base" --unit="$scope_unit" "$@" || status=$?
+  fi
+
+  _cleanup_slice_if_idle "$slice_base" "$anchor_unit" "$user_svc" "$backend_svc"
   exit "$status"
 }
 
@@ -210,11 +236,13 @@ cmd_status() {
 cmd_proxy() {
   case "${1:-on}" in
     on)
+      _require_service proxy-suite-socks "SOCKS proxy service is not available because singBox is not enabled."
       systemctl start proxy-suite-socks
       ;;
     off)
-      systemctl stop proxy-suite-tproxy || true
-      systemctl stop proxy-suite-tun || true
+      _require_service proxy-suite-socks "SOCKS proxy service is not available because singBox is not enabled."
+      _stop_if_exists proxy-suite-tproxy
+      _stop_if_exists proxy-suite-tun
       systemctl stop proxy-suite-socks
       ;;
     *)
@@ -228,6 +256,7 @@ cmd_mode_toggle() {
   local name="$1"
   local default_action="${2:-on}"
   local display="${4:-${name#proxy-suite-}}"
+  _require_service "$name" "Service '$name' is not available in this proxy-suite configuration."
   case "${3:-$default_action}" in
     on)
       systemctl start "$name"
@@ -272,13 +301,17 @@ cmd_route_mode() {
 RESTART_SERVICES=(
   proxy-suite-tproxy
   proxy-suite-tun
+  proxy-suite-tg-ws-proxy
   zapret-discord-youtube
 )
 
 cmd_restart() {
-  systemctl restart proxy-suite-socks
+  if _svc_exists proxy-suite-socks; then
+    systemctl restart proxy-suite-socks
+  fi
+
   for svc in "${RESTART_SERVICES[@]}"; do
-    if systemctl is-active --quiet "$svc"; then
+    if _svc_exists "$svc" && _svc_active "$svc"; then
       systemctl restart "$svc"
     fi
   done
@@ -421,6 +454,7 @@ cmd_subscription() {
       done
       ;;
     update)
+      _require_service proxy-suite-subscription-update "Subscription updates are unavailable because no subscriptions are configured."
       systemctl start proxy-suite-subscription-update
       echo "Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update"
       ;;

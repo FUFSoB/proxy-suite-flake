@@ -10,6 +10,15 @@ def _qs(query: str) -> dict:
     return dict(urllib.parse.parse_qsl(query))
 
 
+def _split_host_port(hostpart: str) -> tuple[str, str]:
+    host, separator, port = hostpart.rpartition(":")
+    if not separator or not host or not port:
+        raise ValueError("URL must include host and port")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    return host, port
+
+
 def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     rest = url[len(f"{scheme}://") :]
     rest, _, _ = rest.partition("#")
@@ -18,9 +27,7 @@ def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     else:
         userinfo = ""
     hostpart, _, query = rest.partition("?")
-    host, _, port = hostpart.rpartition(":")
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
+    host, port = _split_host_port(hostpart)
     return userinfo, host, port, _qs(query)
 
 
@@ -183,18 +190,44 @@ def parse_trojan(url: str, tag: str) -> dict:
     return ob
 
 
-def parse_shadowsocks(url: str, tag: str) -> dict:
-    userinfo, host, port, _ = _parse_url_parts(url, "ss")
+def _decode_ss_userinfo(userinfo: str) -> tuple[str, str]:
+    plain = urllib.parse.unquote(userinfo)
+    if ":" in plain:
+        return tuple(plain.split(":", 1))
 
     pad = "=" * (-len(userinfo) % 4)
     try:
         decoded = base64.urlsafe_b64decode(userinfo + pad).decode()
         if ":" not in decoded:
             raise ValueError
-        method, password = decoded.split(":", 1)
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        plain = urllib.parse.unquote(userinfo)
-        method, password = plain.split(":", 1)
+        return tuple(decoded.split(":", 1))
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("invalid shadowsocks userinfo") from exc
+
+
+def parse_shadowsocks(url: str, tag: str) -> dict:
+    # Support both SIP002 form:
+    #   ss://base64(method:password)@host:port#name
+    # and legacy subscriptions that base64-encode the whole endpoint:
+    #   ss://base64(method:password@host:port)#name
+    rest = url[len("ss://") :]
+    rest, _, _ = rest.partition("#")
+    endpoint, _, _ = rest.partition("?")
+
+    if "@" in endpoint:
+        userinfo, host, port, _ = _parse_url_parts(url, "ss")
+    else:
+        pad = "=" * (-len(endpoint) % 4)
+        try:
+            decoded = base64.urlsafe_b64decode(endpoint + pad).decode()
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise ValueError("invalid shadowsocks URL") from exc
+        userinfo, separator, hostpart = decoded.rpartition("@")
+        if not separator:
+            raise ValueError("invalid legacy shadowsocks URL")
+        host, port = _split_host_port(hostpart)
+
+    method, password = _decode_ss_userinfo(userinfo)
 
     return {
         "type": "shadowsocks",

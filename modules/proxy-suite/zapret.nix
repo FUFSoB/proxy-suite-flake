@@ -296,14 +296,22 @@ let
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
   '';
 
-  exemptStart = lib.concatMapStrings (cidr: ''
-    ${iptables} -t mangle -I FORWARD     1 -d ${cidr} -j RETURN
+  exemptStart = ''
+    set -euo pipefail
+  ''
+  + lib.concatMapStrings (cidr: ''
+    while ${iptables} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
+    while ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
+    ${iptables} -t mangle -I FORWARD 1 -d ${cidr} -j RETURN
     ${iptables} -t mangle -I POSTROUTING 1 -s ${cidr} -j RETURN
   '') zapretCfg.cidrExemption.cidrs;
 
-  exemptStop = lib.concatMapStrings (cidr: ''
-    ${iptables} -t mangle -D FORWARD     -d ${cidr} -j RETURN || true
-    ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN || true
+  exemptStop = ''
+    set +e
+  ''
+  + lib.concatMapStrings (cidr: ''
+    while ${iptables} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
+    while ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
   '') zapretCfg.cidrExemption.cidrs;
 in
 {
