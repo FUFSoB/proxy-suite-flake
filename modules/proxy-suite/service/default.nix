@@ -134,7 +134,8 @@ let
       name = serviceNames.socks;
       value = mkRestartingService {
         description = "sing-box proxy client (SOCKS + TProxy-ready)";
-        after = [ "network.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;

@@ -199,6 +199,7 @@ let
   _minimalProxyCtl = mkProxyCtlDerived minimal;
   minimalProxyCtlWrapper = _minimalProxyCtl.wrapper;
   minimalProxyCtlScript = _minimalProxyCtl.script;
+  minimalSocksService = minimal.config.systemd.services."proxy-suite-socks";
 
   routeModeFixture = evalProxySuite [
     baseModule
@@ -242,6 +243,7 @@ let
       };
     }
   ];
+  tgSecretFileService = tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy";
 
   tgWithGlobalTun = evalProxySuite [
     baseModule
@@ -468,6 +470,7 @@ let
       services.proxy-suite.zapret.enable = true;
     }
   ];
+  zapretSyncService = zapretSyncFixture.config.systemd.services."zapret-discord-youtube";
   zapretSyncRules = mkRoutingRules zapretSyncFixture;
   zapretSyncBase = mkZapretBase zapretSyncFixture;
 
@@ -1115,6 +1118,7 @@ let
     perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".serviceConfig.ExecStart;
   perAppRoutingZapretUserStartScript =
     builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingZapretUserStartExec));
+  perAppRoutingZapretService = perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret";
   perAppRoutingZapretBase = mkZapretBase perAppRoutingZapretFixture;
   perAppRoutingZapretConfig = builtins.readFile "${perAppRoutingZapretBase}/config";
   perAppRoutingPerAppZapretBase = mkZapretBaseFor perAppRoutingZapretFixture "proxy-suite-per-app-zapret";
@@ -1399,6 +1403,16 @@ let
       assert hasDirectIP tgWithGlobalTunRules "149.154.167.220";
       assert pkgs.lib.hasInfix "meta mark 4 return" tgWithGlobalTproxyNft;
       assert tgRoutingMarkCollision.success == false;
+      true
+    )
+    # -- boot ordering: network-sensitive global services wait for network-online --
+    (
+      assert builtins.elem "network-online.target" minimalSocksService.after;
+      assert builtins.elem "network-online.target" minimalSocksService.wants;
+      assert builtins.elem "network-online.target" tgSecretFileService.after;
+      assert builtins.elem "network-online.target" tgSecretFileService.wants;
+      assert builtins.elem "network-online.target" zapretSyncService.after;
+      assert builtins.elem "network-online.target" zapretSyncService.wants;
       true
     )
     (
@@ -2089,6 +2103,8 @@ let
       assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
       assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret-user@";
       assert perAppRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
+      assert builtins.elem "network-online.target" perAppRoutingZapretService.after;
+      assert builtins.elem "network-online.target" perAppRoutingZapretService.wants;
       true
     )
 
@@ -2096,6 +2112,8 @@ let
     (
       assert perAppRoutingTunFixture.config.networking.nftables.enable;
       assert perAppRoutingTunFixture.config.users.groups ? "proxy-suite";
+      assert builtins.elem "network-online.target" tunManualFixture.config.systemd.services."proxy-suite-tun".after;
+      assert builtins.elem "network-online.target" tunManualFixture.config.systemd.services."proxy-suite-tun".wants;
       true
     )
 

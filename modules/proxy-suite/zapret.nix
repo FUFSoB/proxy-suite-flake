@@ -338,7 +338,8 @@ in
 
   systemd.services.zapret-discord-youtube = mkOneshotService {
     description = "zapret DPI bypass";
-    after = [ "network.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     preStart = zapretCommonPreStart globalZapretPackage;
     runtimeDirectory = "proxy-suite-zapret";
@@ -352,7 +353,8 @@ in
 
   systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (mkOneshotService {
     description = "proxy-suite per-app-routing zapret backend";
-    after = [ "network.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
     conflicts = [
       "proxy-suite-tproxy.service"
       "proxy-suite-tun.service"

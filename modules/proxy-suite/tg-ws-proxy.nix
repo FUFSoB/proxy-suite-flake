@@ -55,7 +55,8 @@ in
 {
   systemd.services.proxy-suite-tg-ws-proxy = {
     description = "Telegram MTProto WebSocket proxy";
-    after = [ "network.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       ExecStart = "${startScript}";
