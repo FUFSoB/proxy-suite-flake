@@ -19,6 +19,22 @@ let
     ];
   };
   filterGeneratedOptions = lib.filterAttrs (name: _: name != "_module");
+  docPackagePlaceholder = "__proxy_suite_doc_pkg_sing_box__";
+  sanitizeConfigForDocs =
+    config:
+    config
+    // {
+      singBox =
+        (config.singBox or { })
+        // lib.optionalAttrs ((config.singBox or { }) ? package) {
+          package = docPackagePlaceholder;
+        };
+    };
+  renderConfigText =
+    config:
+    lib.replaceStrings [ "\"${docPackagePlaceholder}\"" ] [ "pkgs.sing-box" ] (
+      lib.generators.toPretty { } (sanitizeConfigForDocs config)
+    );
   mkGeneratedExampleValue =
     option:
     if (option ? _type) && option._type == "option" then
@@ -32,8 +48,8 @@ let
         throw "Cannot generate example value for option ${lib.showOption option.loc}"
     else
       lib.mapAttrs (_: mkGeneratedExampleValue) (filterGeneratedOptions option);
-  defaultConfigText = lib.generators.toPretty { } eval.config.services.proxy-suite;
-  exampleConfigText = lib.generators.toPretty { } (
+  defaultConfigText = renderConfigText eval.config.services.proxy-suite;
+  exampleConfigText = renderConfigText (
     lib.mapAttrs (_: mkGeneratedExampleValue) (filterGeneratedOptions eval.options.services.proxy-suite)
   );
   repoRoot = toString ../.;

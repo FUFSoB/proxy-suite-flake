@@ -23,6 +23,7 @@ Update module option docs there instead of editing this file by hand.
       - [quiet](#services-proxy-suite-perapprouting-proxychains-quiet)
   - singBox
     - [enable](#services-proxy-suite-singbox-enable)
+    - [package](#services-proxy-suite-singbox-package)
     - auth
       - [password](#services-proxy-suite-singbox-auth-password)
       - [passwordFile](#services-proxy-suite-singbox-auth-passwordfile)
@@ -197,6 +198,7 @@ services.proxy-suite = {
     enable = true;
     listenAddress = "127.0.0.1";
     outbounds = [ ];
+    package = pkgs.sing-box;
     port = 1080;
     proxyByDefault = true;
     routing = {
@@ -375,6 +377,7 @@ services.proxy-suite = {
         url = "hy2://password@example.com:443?sni=example.com";
       }
     ];
+    package = pkgs.sing-box;
     port = 1080;
     proxyByDefault = true;
     routing = {
@@ -965,6 +968,42 @@ boolean
 
 ```nix
 true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-singbox-package"></a>
+## services\.proxy-suite\.singBox\.package
+
+
+
+sing-box package used by proxy-suite systemd services\.
+
+Override this to pin or test a specific sing-box build when upstream
+protocol behavior changes\.
+
+
+
+*Type:*
+package
+
+
+
+*Default:*
+
+```nix
+pkgs.sing-box
+```
+
+
+
+*Example:*
+
+```nix
+pkgs.sing-box
 ```
 
 *Declared by:*
@@ -4238,6 +4277,8 @@ true
 <a id="services-proxy-suite-zapret-cidrexemption-enable"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.enable
 
+
+
 Whether to enable CIDR exemption from zapret NFQUEUE\.
 
 
@@ -4268,8 +4309,6 @@ true
 
 <a id="services-proxy-suite-zapret-cidrexemption-cidrs"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.cidrs
-
-
 
 Subnets to exempt from zapret’s NFQUEUE mangle rules\.
 Useful when a VM (libvirt, etc\.) is behind NAT and zapret

@@ -1,8 +1,8 @@
 # Core sing-box options. Feature-area options live in sing-box-{outbounds,dns,tun,tproxy,routing}.nix.
-{ lib, ... }:
+{ lib, pkgs, ... }:
 
 let
-  inherit (lib) mkOption mkEnableOption types;
+  inherit (lib) literalExpression mkOption mkEnableOption types;
 in
 {
   options.services.proxy-suite.singBox = {
@@ -13,6 +13,19 @@ in
         Whether to configure and run sing-box services for proxy-suite.
         When disabled, sing-box services and generated sing-box configs are
         skipped even if proxy-suite itself is enabled.
+      '';
+    };
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.sing-box;
+      defaultText = literalExpression "pkgs.sing-box";
+      example = literalExpression "pkgs.sing-box";
+      description = ''
+        sing-box package used by proxy-suite systemd services.
+
+        Override this to pin or test a specific sing-box build when upstream
+        protocol behavior changes.
       '';
     };
 

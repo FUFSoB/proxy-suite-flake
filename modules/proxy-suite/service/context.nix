@@ -38,7 +38,7 @@ let
   # Tool paths – defined once here and passed into sub-modules as needed.
   jq = "${pkgs.jq}/bin/jq";
   python3 = "${pkgs.python3}/bin/python3";
-  singBox = "${pkgs.sing-box}/bin/sing-box";
+  singBox = "${singBoxCfg.package}/bin/sing-box";
   grepBin = "${pkgs.gnugrep}/bin/grep";
   awk = "${pkgs.gawk}/bin/awk";
   sleepBin = "${pkgs.coreutils}/bin/sleep";

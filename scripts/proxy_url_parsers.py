@@ -5,6 +5,17 @@ import binascii
 import json
 import urllib.parse
 
+SUPPORTED_VLESS_TRANSPORTS = {
+    "",
+    "tcp",
+    "ws",
+    "grpc",
+    "h2",
+    "http",
+    "httpupgrade",
+    "quic",
+}
+
 
 def _qs(query: str) -> dict:
     return dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
@@ -37,22 +48,36 @@ def _mk_transport(
     host_header: str = "",
     service_name: str = "",
 ) -> "dict | None":
-    if transport_type == "ws":
+    normalized = transport_type.lower()
+
+    if normalized in ("", "tcp"):
+        return None
+    if normalized == "ws":
         return {
             "type": "ws",
             "path": urllib.parse.unquote(path),
             "headers": {"Host": host_header},
         }
-    if transport_type == "grpc":
+    if normalized == "grpc":
         return {
             "type": "grpc",
             "service_name": urllib.parse.unquote(service_name),
         }
-    if transport_type == "h2":
+    if normalized in ("h2", "http"):
         return {
             "type": "http",
             "host": [host_header],
             "path": urllib.parse.unquote(path),
+        }
+    if normalized == "httpupgrade":
+        return {
+            "type": "httpupgrade",
+            "host": host_header,
+            "path": urllib.parse.unquote(path),
+        }
+    if normalized == "quic":
+        return {
+            "type": "quic",
         }
     return None
 
@@ -79,6 +104,19 @@ def parse_vless(url: str, tag: str) -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = params.get("security", "none")
     transport = params.get("type", "tcp")
+    normalized_transport = transport.lower()
+
+    if "ech" in params:
+        raise ValueError(
+            "unsupported VLESS parameter 'ech': proxy-suite does not translate "
+            "share-link ECH blobs into sing-box TLS config"
+        )
+
+    if normalized_transport not in SUPPORTED_VLESS_TRANSPORTS:
+        raise ValueError(
+            f"unsupported VLESS transport '{transport}': proxy-suite only maps "
+            "sing-box-documented transports; use raw JSON or another client/core"
+        )
 
     ob: dict = {
         "type": "vless",
@@ -102,7 +140,7 @@ def parse_vless(url: str, tag: str) -> dict:
         )
 
     tr = _mk_transport(
-        transport,
+        normalized_transport,
         path=params.get("path", "/"),
         host_header=params.get("host", host),
         service_name=params.get("serviceName", ""),

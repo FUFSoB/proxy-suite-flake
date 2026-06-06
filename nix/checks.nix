@@ -200,6 +200,19 @@ let
   minimalProxyCtlWrapper = _minimalProxyCtl.wrapper;
   minimalProxyCtlScript = _minimalProxyCtl.script;
   minimalSocksService = minimal.config.systemd.services."proxy-suite-socks";
+  customSingBoxPackage = pkgs.writeShellScriptBin "sing-box" ''
+    exit 0
+  '';
+  customSingBoxPackageFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.singBox.package = customSingBoxPackage;
+    }
+  ];
+  customSingBoxPackageBin = "${builtins.unsafeDiscardStringContext (toString customSingBoxPackage)}/bin/sing-box";
+  customSingBoxPackageStartScript = builtins.readFile (
+    customSingBoxPackageFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
 
   routeModeFixture = evalProxySuite [
     baseModule
@@ -1413,6 +1426,11 @@ let
       assert builtins.elem "network-online.target" tgSecretFileService.wants;
       assert builtins.elem "network-online.target" zapretSyncService.after;
       assert builtins.elem "network-online.target" zapretSyncService.wants;
+      true
+    )
+    # -- sing-box package override propagates into generated service scripts --
+    (
+      assert pkgs.lib.hasInfix customSingBoxPackageBin customSingBoxPackageStartScript;
       true
     )
     (

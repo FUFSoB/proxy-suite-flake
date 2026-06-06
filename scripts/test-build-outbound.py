@@ -20,6 +20,42 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["server"], "example.com")
         self.assertEqual(ob["tls"]["reality"]["public_key"], "pubkey")
 
+    def test_vless_reality_germany_main_shape(self):
+        ob = run_parser(
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
+        )
+        self.assertEqual(ob["type"], "vless")
+        self.assertEqual(ob["server_port"], 443)
+        self.assertEqual(ob["flow"], "xtls-rprx-vision")
+        self.assertEqual(ob["tls"]["server_name"], "last.fm")
+        self.assertEqual(ob["tls"]["utls"]["fingerprint"], "qq")
+        self.assertEqual(ob["tls"]["reality"]["short_id"], "8a54")
+        self.assertNotIn("transport", ob)
+
+    def test_vless_httpupgrade_transport(self):
+        ob = run_parser(
+            "vless://uuid@example.com:443?type=httpupgrade&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fupgrade"
+        )
+        self.assertEqual(ob["transport"]["type"], "httpupgrade")
+        self.assertEqual(ob["transport"]["host"], "cdn.example.com")
+        self.assertEqual(ob["transport"]["path"], "/upgrade")
+
+    def test_vless_quic_transport(self):
+        ob = run_parser("vless://uuid@example.com:443?type=quic&security=tls&sni=cdn.example.com")
+        self.assertEqual(ob["transport"]["type"], "quic")
+
+    def test_vless_xhttp_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, "unsupported VLESS transport 'xhttp'"):
+            run_parser(
+                "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com"
+            )
+
+    def test_vless_ech_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, "unsupported VLESS parameter 'ech'"):
+            run_parser(
+                "vless://uuid@example.com:443?type=tcp&security=tls&sni=cdn.example.com&ech=blob"
+            )
+
     def test_vmess(self):
         payload = {
             "add": "vmess.example.com",
@@ -68,7 +104,6 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["type"], "shadowsocks")
         self.assertEqual(ob["method"], "chacha20-ietf-poly1305")
 
-
     def test_shadowsocks_legacy_full_base64(self):
         legacy = (
             base64.urlsafe_b64encode(
@@ -83,7 +118,6 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["server_port"], 8388)
         self.assertEqual(ob["method"], "chacha20-ietf-poly1305")
         self.assertEqual(ob["password"], "passw0rd")
-
 
     def test_shadowsocks_plain_userinfo(self):
         ob = run_parser("ss://none:plain%20pass@plain.example.com:8388")
