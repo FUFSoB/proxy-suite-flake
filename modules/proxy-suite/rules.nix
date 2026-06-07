@@ -262,40 +262,47 @@ let
       { outboundTag = tag; };
 
   mkXrayRule =
-    fields: tag:
-    ({ type = "field"; } // fields // (xrayTarget tag));
+    ruleTag: fields: tag:
+    ({
+      type = "field";
+      inherit ruleTag;
+    }
+    // fields
+    // (xrayTarget tag));
 
   xrayDomainRules =
-    tag: domains:
-    lib.optional (domains != [ ]) (mkXrayRule {
+    ruleTag: tag: domains:
+    lib.optional (domains != [ ]) (mkXrayRule ruleTag {
       domain = map (domain: "domain:${domain}") domains;
     } tag);
 
   xrayIPRules =
-    tag: ips:
-    lib.optional (ips != [ ]) (mkXrayRule {
+    ruleTag: tag: ips:
+    lib.optional (ips != [ ]) (mkXrayRule ruleTag {
       ip = ips;
     } tag);
 
   xrayGeositeRules =
-    tag: geosites:
-    lib.optional (geosites != [ ]) (mkXrayRule {
+    ruleTag: tag: geosites:
+    lib.optional (geosites != [ ]) (mkXrayRule ruleTag {
       domain = map (name: "geosite:${name}") geosites;
     } tag);
 
   xrayGeoIPRules =
-    tag: geoips:
-    lib.optional (geoips != [ ]) (mkXrayRule {
+    ruleTag: tag: geoips:
+    lib.optional (geoips != [ ]) (mkXrayRule ruleTag {
       ip = map (name: "geoip:${name}") geoips;
     } tag);
+
+  xrayCustomRuleTag = category: kind: "custom-${category}-${kind}";
 
   mkXrayCustomRuleEntries =
     rule:
     lib.flatten [
-      (xrayDomainRules rule.outbound rule.domains)
-      (xrayIPRules rule.outbound rule.ips)
-      (xrayGeositeRules rule.outbound rule.geosites)
-      (xrayGeoIPRules rule.outbound rule.geoips)
+      (xrayDomainRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "domain") rule.outbound rule.domains)
+      (xrayIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "ip") rule.outbound rule.ips)
+      (xrayGeositeRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geosite") rule.outbound rule.geosites)
+      (xrayGeoIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geoip") rule.outbound rule.geoips)
     ];
 
   xrayCustomRouteRules = map (
@@ -306,33 +313,33 @@ let
   ) customRules;
 
   xrayProxyPrimaryRules = lib.flatten [
-    (xrayDomainRules "proxy" r.proxy.domains)
-    (xrayIPRules "proxy" r.proxy.ips)
+    (xrayDomainRules "proxy-domain" "proxy" r.proxy.domains)
+    (xrayIPRules "proxy-ip" "proxy" r.proxy.ips)
   ];
 
   xrayDirectRules = lib.flatten [
-    (xrayDomainRules "direct" direct.domains)
-    (xrayIPRules "direct" direct.ips)
-    (xrayGeositeRules "direct" direct.geosites)
-    (xrayGeoIPRules "direct" direct.geoips)
+    (xrayDomainRules "direct-domain" "direct" direct.domains)
+    (xrayIPRules "direct-ip" "direct" direct.ips)
+    (xrayGeositeRules "direct-geosite" "direct" direct.geosites)
+    (xrayGeoIPRules "direct-geoip" "direct" direct.geoips)
   ];
 
   xraySafetyDirectRules = [
-    (mkXrayRule { ip = [ "geoip:private" ]; } "direct")
+    (mkXrayRule "direct-private" { ip = [ "geoip:private" ]; } "direct")
   ] ++ lib.optional (
     tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { }
-  ) (mkXrayRule { ip = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps); } "direct");
+  ) (mkXrayRule "direct-tg-relay" { ip = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps); } "direct");
 
   xrayBlockRules = lib.flatten [
-    (xrayDomainRules "block" r.block.domains)
-    (xrayIPRules "block" r.block.ips)
-    (xrayGeositeRules "block" r.block.geosites)
-    (xrayGeoIPRules "block" r.block.geoips)
+    (xrayDomainRules "block-domain" "block" r.block.domains)
+    (xrayIPRules "block-ip" "block" r.block.ips)
+    (xrayGeositeRules "block-geosite" "block" r.block.geosites)
+    (xrayGeoIPRules "block-geoip" "block" r.block.geoips)
   ];
 
   xrayProxyGeoRules = lib.flatten [
-    (xrayGeositeRules "proxy" r.proxy.geosites)
-    (xrayGeoIPRules "proxy" r.proxy.geoips)
+    (xrayGeositeRules "proxy-geosite" "proxy" r.proxy.geosites)
+    (xrayGeoIPRules "proxy-geoip" "proxy" r.proxy.geoips)
   ];
 
   xrayRoutingRules =
@@ -340,8 +347,8 @@ let
     ++ xrayProxyPrimaryRules
     ++ xrayDirectRules
     ++ xraySafetyDirectRules
-    ++ xrayBlockRules
-    ++ xrayProxyGeoRules;
+    ++ xrayProxyGeoRules
+    ++ xrayBlockRules;
 
   xrayRouteModeRules = {
     common = [ ];

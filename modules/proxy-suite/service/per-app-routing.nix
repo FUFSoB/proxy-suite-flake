@@ -113,9 +113,43 @@ let
 
   perAppTunUpScript = pkgs.writeShellScript "proxy-suite-per-app-tun-up" ''
     set -euo pipefail
+
+    tun_cidr=${lib.escapeShellArg perAppRoutingTun.address}
+    tun_addr=""
+    tun_route_prefix=""
+
+    cidr_network() {
+      local cidr="$1"
+      local addr="''${cidr%/*}"
+      local prefix="''${cidr#*/}"
+      local o1 o2 o3 o4 ip mask net
+
+      IFS=. read -r o1 o2 o3 o4 <<<"$addr"
+      ip=$(((o1 << 24) | (o2 << 16) | (o3 << 8) | o4))
+      if [ "$prefix" -eq 0 ]; then
+        mask=0
+      else
+        mask=$(((0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF))
+      fi
+      net=$((ip & mask))
+
+      printf '%d.%d.%d.%d/%s' \
+        $(((net >> 24) & 255)) \
+        $(((net >> 16) & 255)) \
+        $(((net >> 8) & 255)) \
+        $((net & 255)) \
+        "$prefix"
+    }
+
     ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
+    while ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
+    ${ip} route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
+    tun_addr="''${tun_cidr%%/*}"
+    tun_route_prefix="$(cidr_network "$tun_cidr")"
+    ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
+    ${ip} route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
     ${ip} route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
     ${ip} rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
   '';
@@ -126,7 +160,7 @@ let
     # Best-effort cleanup for graceful stops and for unclean previous exits.
     ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
     while ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    ${ip} route del default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
     ${ip} link del dev ${lib.escapeShellArg perAppRoutingTun.interface} 2>/dev/null || true
   '';
 

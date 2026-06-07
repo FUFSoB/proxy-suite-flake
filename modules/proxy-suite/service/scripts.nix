@@ -46,6 +46,7 @@ let
       null;
   subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/${backend}";
   routeModeStateFile = "/run/proxy-suite/route-mode";
+  xrayLoglevelFile = "/run/proxy-suite/xray-loglevel";
   runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
 
   mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
@@ -187,6 +188,9 @@ let
 
   xrayUrltestTagFilter = ''
     OUTBOUNDS_JSON=$(${jq} 'map(.tag = ("proxy-suite-ob-" + .tag))' <<< "$OUTBOUNDS_JSON")
+    if [ "$(${jq} 'length' <<< "$OUTBOUNDS_JSON")" -eq 1 ]; then
+      XRAY_SINGLE_PROXY_TAG="$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")"
+    fi
   '';
 
   mkOutboundScript =
@@ -272,6 +276,18 @@ let
     "proxy-suite-per-app-tun"
   ];
 
+  routeModeBlacklistTail =
+    if xrayEnabled then
+      ''
+        + .proxyGeo
+        + .block
+      ''
+    else
+      ''
+        + .block
+        + .proxyGeo
+      '';
+
   routeModeCaseBlock = ''
     if [ -r "$ROUTE_MODE_STATE_FILE" ]; then
       ROUTE_MODE="$(tr -d '\r\n[:space:]' < "$ROUTE_MODE_STATE_FILE" 2>/dev/null || true)"
@@ -287,8 +303,7 @@ let
           + .proxyPrimary
           + .direct
           + .safetyDirect
-          + .block
-          + .proxyGeo
+          ${routeModeBlacklistTail}
         ' "${routeModeRulesFile}")
         ;;
       whitelist)
@@ -301,8 +316,7 @@ let
           + .proxyPrimary
           + .direct
           + .safetyDirect
-          + .block
-          + .proxyGeo
+          ${routeModeBlacklistTail}
         ' "${routeModeRulesFile}")
         ;;
       all-proxy)
@@ -315,8 +329,7 @@ let
           + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
           + .proxyPrimary
           + .safetyDirect
-          + .block
-          + .proxyGeo
+          ${routeModeBlacklistTail}
         ' "${routeModeRulesFile}")
         ;;
       all-bypass)
@@ -340,20 +353,52 @@ let
   mkBackendJqFilter =
     if xrayEnabled then
       ''
-        def xray_final_rule($tag):
-          if $tag == "proxy" and "${selectionMode}" == "urltest" then
-            {type:"field",network:"tcp,udp",balancerTag:"proxy"}
+        def xray_bind_outbound($interface):
+          if $interface == "" or .protocol == "blackhole" then
+            .
           else
-            {type:"field",network:"tcp,udp",outboundTag:$tag}
+            .streamSettings = (.streamSettings // {})
+            | .streamSettings.sockopt = (.streamSettings.sockopt // {})
+            | if (.streamSettings.sockopt.interface? // "") == "" then
+                .streamSettings.sockopt.interface = $interface
+              else
+                .
+              end
           end;
-        .outbounds = $obs + .outbounds
+        def xray_proxy_rule_target($single_tag):
+          if $single_tag != "" then
+            {outboundTag:$single_tag}
+          else
+            {balancerTag:"proxy"}
+          end;
+        def xray_rewrite_proxy_rule($single_tag):
+          if $single_tag != "" and (.balancerTag? // "") == "proxy" then
+            .outboundTag = $single_tag | del(.balancerTag)
+          else
+            .
+          end;
+        def xray_final_rule($tag; $single_tag):
+          if $tag == "proxy" and "${selectionMode}" == "urltest" then
+            {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)
+          else
+            {type:"field",network:"tcp,udp",ruleTag:"final-default",outboundTag:$tag}
+          end;
+        .outbounds = (($obs + .outbounds) | map(xray_bind_outbound($xray_bind_interface)))
+          | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
           | if $auth_enabled then
               (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
               | (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.users) = [{user:$user,pass:$password}]
             else . end
           | if $route_enabled then
-              .routing.rules = ($route_rules + [xray_final_rule($route_final)])
+              .routing.rules = ($route_rules + [xray_final_rule($route_final; $xray_single_proxy_tag)])
             else . end
+          | if $xray_single_proxy_tag == "" then
+              .
+            else
+              .routing.rules |= map(xray_rewrite_proxy_rule($xray_single_proxy_tag))
+              | del(.routing.balancers)
+              | del(.observatory)
+            end
       ''
     else
       ''
@@ -376,11 +421,15 @@ let
       configFile,
       routingMark ? null,
       enableLocalProxyAuth ? false,
+      xrayTunEgressBinding ? false,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
       RUNTIME_DIR="${runtimeDir}"
       ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
+      XRAY_LOGLEVEL=""
+      XRAY_TUN_BIND_INTERFACE=""
+      XRAY_SINGLE_PROXY_TAG=""
       mkdir -p "$RUNTIME_DIR"
       OUTBOUNDS_JSON='[]'
       ROUTE_MODE=""
@@ -394,6 +443,27 @@ let
         umask 077
         LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
         ${writeProxychainsConfigBlock}
+      ''}
+      ${lib.optionalString xrayEnabled ''
+        if [ -r "${xrayLoglevelFile}" ]; then
+          XRAY_LOGLEVEL="$(tr -d '\r\n[:space:]' < "${xrayLoglevelFile}" 2>/dev/null || true)"
+        fi
+      ''}
+      ${lib.optionalString xrayTunEgressBinding ''
+        XRAY_TUN_BIND_INTERFACE="$(${pkgs.iproute2}/bin/ip -4 route get 1.1.1.1 2>/dev/null | ${pkgs.gawk}/bin/awk '
+          /dev/ {
+            for (i = 1; i <= NF; i++) {
+              if ($i == "dev" && i + 1 <= NF) {
+                print $(i + 1)
+                exit
+              }
+            }
+          }
+        ')"
+        if [ -z "$XRAY_TUN_BIND_INTERFACE" ]; then
+          echo "proxy-suite: could not determine the default uplink interface for XRay TUN" >&2
+          exit 1
+        fi
       ''}
 
       ${routeModeCaseBlock}
@@ -410,6 +480,9 @@ let
         --arg route_final "$ROUTE_FINAL" \
         --arg dns_final "$DNS_FINAL" \
         --argjson clear_dns_rules "$CLEAR_DNS_RULES" \
+        --arg xray_loglevel "$XRAY_LOGLEVEL" \
+        --arg xray_bind_interface "$XRAY_TUN_BIND_INTERFACE" \
+        --arg xray_single_proxy_tag "$XRAY_SINGLE_PROXY_TAG" \
         '${mkBackendJqFilter}' \
         "${configFile}" > "$RUNTIME_DIR/config.json"
       ${lib.optionalString enableLocalProxyAuth ''
@@ -432,6 +505,7 @@ let
     runtimeDir = "/run/proxy-suite-tun";
     configFile = tunFile;
     routingMark = if xrayEnabled then globalTproxy.proxyMark else null;
+    xrayTunEgressBinding = xrayEnabled;
   };
 
   startPerAppTun = mkStartScript {
@@ -439,6 +513,7 @@ let
     runtimeDir = "/run/proxy-suite-per-app-tun";
     configFile = perAppTunFile;
     routingMark = if globalTproxy.enable then globalTproxy.proxyMark else null;
+    xrayTunEgressBinding = xrayEnabled;
   };
 
   mkSubscriptionFetchBlock =

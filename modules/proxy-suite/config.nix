@@ -165,7 +165,11 @@ let
 
   xrayFinalRule =
     tag:
-    { type = "field"; network = "tcp,udp"; }
+    {
+      type = "field";
+      network = "tcp,udp";
+      ruleTag = "final-default";
+    }
     // (
       if tag == "proxy" && proxyCfg.selection == "urltest" then
         { balancerTag = "proxy"; }
@@ -197,6 +201,7 @@ let
       tunMtu ? globalTun.mtu,
       useOutboundRoutingMark ? false,
       enableUrlTest ? proxyCfg.selection == "urltest",
+      domainStrategy ? "IPIfNonMatch",
     }:
     {
       log.loglevel = "warning";
@@ -251,7 +256,7 @@ let
         }
       ];
       routing = {
-        domainStrategy = "IPIfNonMatch";
+        domainStrategy = domainStrategy;
         domainMatcher = "hybrid";
         rules = xrayRouteRules;
       }
@@ -315,6 +320,8 @@ let
     tunInterface = globalTun.interface;
     tunAddress = globalTun.address;
     tunMtu = globalTun.mtu;
+    useOutboundRoutingMark = true;
+    domainStrategy = "AsIs";
   };
 
   xrayPerAppTunTemplate = mkXrayConfig {
@@ -323,6 +330,7 @@ let
     tunAddress = perAppTun.address;
     tunMtu = perAppTun.mtu;
     useOutboundRoutingMark = globalTproxy.enable;
+    domainStrategy = "AsIs";
   };
 
   tproxyTemplate = if xrayEnabled then xrayTproxyTemplate else singBoxTproxyTemplate;

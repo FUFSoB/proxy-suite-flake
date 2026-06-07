@@ -242,6 +242,7 @@ let
           block.domains = [ "block.example" ];
         };
         tproxy.enable = true;
+        tproxy.perApp.enable = true;
         tun = {
           enable = true;
           perApp.enable = true;
@@ -259,6 +260,21 @@ let
   xrayPerAppTunConfig = mkPerAppTunConfig xrayFixture;
   xrayStartScript = builtins.readFile (
     xrayFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  xrayTunStartScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStart
+  );
+  xrayTunUpScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost
+  );
+  xrayPerAppTunStartScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart
+  );
+  xrayPerAppTunUpScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStartPost
+  );
+  xrayPerAppTunCleanupScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStopPost
   );
   xraySubscriptionFixture = evalProxySuite [
     {
@@ -1682,6 +1698,7 @@ let
       assert tproxyInbound.settings.followRedirect == true;
       assert tproxyInbound.streamSettings.sockopt.tproxy == "tproxy";
       assert specificRule.outboundTag == "proxy-suite-ob-primary";
+      assert specificRule.ruleTag == "custom-proxy-domain";
       assert balancer.tag == "proxy";
       assert balancer.selector == [ "proxy-suite-ob-" ];
       assert balancer.strategy.type == "leastPing";
@@ -1697,13 +1714,47 @@ let
         perAppTunInbound = builtins.head (
           builtins.filter (inbound: inbound.tag == "tun-in") xrayPerAppTunConfig.inbounds
         );
+        tunDirectOutbound = builtins.head (
+          builtins.filter (outbound: outbound.tag == "direct") xrayTunConfig.outbounds
+        );
+        tunHasFinalRuleTag = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "final-default") xrayTunConfig.routing.rules;
+        tunHasDirectGeositeRule = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "direct-geosite") xrayTunConfig.routing.rules;
       in
       assert tunInbound.protocol == "tun";
       assert tunInbound.settings.name == "singtun0";
       assert tunInbound.settings.gateway == [ "172.19.0.1/30" ];
       assert tunInbound.settings.autoOutboundsInterface == "auto";
+      assert !(tunInbound.sniffing ? routeOnly);
+      assert xrayTunConfig.routing.domainStrategy == "AsIs";
+      assert tunHasFinalRuleTag;
+      assert tunHasDirectGeositeRule;
+      assert tunDirectOutbound.streamSettings.sockopt.mark == 2;
+      assert pkgs.lib.hasInfix "xray-loglevel" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayTunStartScript;
+      assert pkgs.lib.hasInfix ".streamSettings.sockopt.interface = $interface" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "del(.routing.balancers)" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "del(.observatory)" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "xray_rewrite_proxy_rule" xrayTunStartScript;
+      assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayTunUpScript;
+      assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
+      assert pkgs.lib.hasInfix ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table 2022'' xrayTunUpScript;
+      assert pkgs.lib.hasInfix "rule add pref 8996 fwmark 17 table 102" xrayTunUpScript;
+      assert pkgs.lib.hasInfix "rule add pref 8997 fwmark 16 table 101" xrayTunUpScript;
+      assert pkgs.lib.hasInfix "rule add pref 9000 not fwmark 2 table 2022" xrayTunUpScript;
       assert perAppTunInbound.settings.name == "psperapptun0";
       assert perAppTunInbound.settings.gateway == [ "172.20.0.1/30" ];
+      assert !(perAppTunInbound.sniffing ? routeOnly);
+      assert xrayPerAppTunConfig.routing.domainStrategy == "AsIs";
+      assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix ".streamSettings.sockopt.interface = $interface" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "del(.routing.balancers)" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "del(.observatory)" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix ''route replace "$tun_route_prefix" dev psperapptun0 src "$tun_addr" table 101'' xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix ''route flush table 101'' xrayPerAppTunCleanupScript;
       true
     )
     (
@@ -1789,6 +1840,8 @@ let
       assert tunServiceConfig.ExecStartPre == tunServiceConfig.ExecStopPost;
       assert pkgs.lib.hasInfix ''delete table inet sing-box'' tunCleanupScript;
       assert pkgs.lib.hasInfix ''rule del table 2022'' tunCleanupScript;
+      assert pkgs.lib.hasInfix ''rule del pref 8996'' tunCleanupScript;
+      assert pkgs.lib.hasInfix ''rule del pref 8997'' tunCleanupScript;
       assert pkgs.lib.hasInfix ''route flush table 2022'' tunCleanupScript;
       assert pkgs.lib.hasInfix "link del dev" tunCleanupScript;
       assert pkgs.lib.hasInfix "singtun0" tunCleanupScript;
