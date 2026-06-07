@@ -13,8 +13,8 @@ let
 
   transparentBypassEnabled =
     t.bypassTransparentProxy
-    && cfg.singBox.enable
-    && (cfg.singBox.tun.enable || cfg.singBox.tproxy.enable);
+    && cfg.proxy.enable
+    && (cfg.proxy.tun.enable || cfg.proxy.tproxy.enable);
   bypassRulePriority = 8999;
 
   dcArgs = lib.concatMapStrings

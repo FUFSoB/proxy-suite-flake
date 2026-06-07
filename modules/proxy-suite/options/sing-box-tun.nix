@@ -36,8 +36,8 @@ let
     };
 in
 {
-  options.services.proxy-suite.singBox.tun = {
-    enable = mkEnableOption "global sing-box TUN mode service";
+  options.services.proxy-suite.proxy.tun = {
+    enable = mkEnableOption "global proxy TUN mode service";
 
     autostart = mkOption {
       type = types.bool;
@@ -45,13 +45,13 @@ in
       description = ''
         Whether to start proxy-suite-tun automatically during boot by
         attaching it to multi-user.target.
-        Cannot be enabled together with singBox.tproxy.autostart.
+        Cannot be enabled together with proxy.tproxy.autostart.
       '';
       example = true;
     };
 
     perApp = {
-      enable = mkEnableOption "per-app-scoped sing-box TUN backend for perAppRouting profiles";
+      enable = mkEnableOption "per-app-scoped proxy TUN backend for perAppRouting profiles";
 
       fwmark = mkOption {
         type = types.int;

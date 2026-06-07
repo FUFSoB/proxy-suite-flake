@@ -16,6 +16,11 @@ SUPPORTED_VLESS_TRANSPORTS = {
     "quic",
 }
 
+SUPPORTED_XRAY_TRANSPORTS = SUPPORTED_VLESS_TRANSPORTS | {
+    "xhttp",
+    "splithttp",
+}
+
 
 def _qs(query: str) -> dict:
     return dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
@@ -79,6 +84,12 @@ def _mk_transport(
         return {
             "type": "quic",
         }
+    if normalized in ("xhttp", "splithttp"):
+        return {
+            "type": "xhttp",
+            "host": host_header,
+            "path": urllib.parse.unquote(path),
+        }
     return None
 
 
@@ -100,22 +111,25 @@ def _mk_auth(userinfo: str) -> "tuple[str | None, str | None]":
     return None, None
 
 
-def parse_vless(url: str, tag: str) -> dict:
+def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = params.get("security", "none")
     transport = params.get("type", "tcp")
     normalized_transport = transport.lower()
 
-    if "ech" in params:
+    if "ech" in params and backend != "xray":
         raise ValueError(
             "unsupported VLESS parameter 'ech': proxy-suite does not translate "
             "share-link ECH blobs into sing-box TLS config"
         )
 
-    if normalized_transport not in SUPPORTED_VLESS_TRANSPORTS:
+    supported_transports = (
+        SUPPORTED_XRAY_TRANSPORTS if backend == "xray" else SUPPORTED_VLESS_TRANSPORTS
+    )
+    if normalized_transport not in supported_transports:
         raise ValueError(
             f"unsupported VLESS transport '{transport}': proxy-suite only maps "
-            "sing-box-documented transports; use raw JSON or another client/core"
+            f"{backend}-documented transports; use raw JSON or another client/core"
         )
 
     ob: dict = {
@@ -138,6 +152,8 @@ def parse_vless(url: str, tag: str) -> dict:
         ob["tls"] = _mk_tls(
             params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
         )
+        if backend == "xray" and "ech" in params:
+            ob["tls"]["ech_config_list"] = urllib.parse.unquote(params["ech"])
 
     tr = _mk_transport(
         normalized_transport,

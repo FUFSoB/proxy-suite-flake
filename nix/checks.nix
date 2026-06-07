@@ -163,12 +163,16 @@ let
     system.stateVersion = "26.05";
     services.proxy-suite = {
       enable = true;
-      singBox.outbounds = [
-        {
-          tag = "primary";
-          url = "http://proxy.example.com:8080";
-        }
-      ];
+      proxy = {
+        enable = true;
+        singBox.enable = true;
+        outbounds = [
+          {
+            tag = "primary";
+            url = "http://proxy.example.com:8080";
+          }
+        ];
+      };
     };
   };
   mkFixture = proxySuiteConfig: evalProxySuite [
@@ -206,7 +210,7 @@ let
   customSingBoxPackageFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.package = customSingBoxPackage;
+      services.proxy-suite.proxy.singBox.package = customSingBoxPackage;
     }
   ];
   customSingBoxPackageBin = "${builtins.unsafeDiscardStringContext (toString customSingBoxPackage)}/bin/sing-box";
@@ -214,10 +218,145 @@ let
     customSingBoxPackageFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
 
+  xrayModule = {
+    system.stateVersion = "26.05";
+    services.proxy-suite = {
+      enable = true;
+      proxy = {
+        enable = true;
+        xray.enable = true;
+        selection = "urltest";
+        outbounds = [
+          {
+            tag = "primary";
+            url = "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fx";
+            routing.domains = [ "specific.example" ];
+          }
+        ];
+        routing = {
+          proxy.domains = [ "proxy.example" ];
+          direct = {
+            domains = [ "direct.example" ];
+            geosites = [ "category-ru" ];
+          };
+          block.domains = [ "block.example" ];
+        };
+        tproxy.enable = true;
+        tun = {
+          enable = true;
+          perApp.enable = true;
+        };
+      };
+      perAppRouting = {
+        enable = true;
+        createDefaultProfiles = true;
+      };
+    };
+  };
+  xrayFixture = evalProxySuite [ xrayModule ];
+  xrayTproxyConfig = mkTProxyConfig xrayFixture;
+  xrayTunConfig = mkTunConfig xrayFixture;
+  xrayPerAppTunConfig = mkPerAppTunConfig xrayFixture;
+  xrayStartScript = builtins.readFile (
+    xrayFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  xraySubscriptionFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          subscriptions = [ { tag = "xray-sub"; url = "https://example.com/xray-sub"; } ];
+        };
+      };
+    }
+  ];
+  xraySubscriptionStartScript = builtins.readFile (
+    xraySubscriptionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  xrayBothBackends = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          xray.enable = true;
+          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        };
+      };
+    }
+  ];
+  proxyEnabledNoBackend = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        };
+      };
+    }
+  ];
+  xraySelectorUnavailable = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          selection = "selector";
+          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        };
+      };
+    }
+  ];
+  xraySingBoxJsonUnavailable = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          outbounds = [
+            {
+              tag = "raw";
+              singBoxJson = { type = "direct"; };
+            }
+          ];
+        };
+      };
+    }
+  ];
+  singBoxXrayJsonUnavailable = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          outbounds = [
+            {
+              tag = "raw";
+              xrayJson = { protocol = "freedom"; settings = { }; };
+            }
+          ];
+        };
+      };
+    }
+  ];
+
   routeModeFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.routing = {
+      services.proxy-suite.proxy.routing = {
         proxy = {
           domains = [ "proxy.example" ];
           geosites = [ "google" ];
@@ -262,7 +401,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.tun.enable = true;
+        proxy.tun.enable = true;
         tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
@@ -280,7 +419,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.tproxy.enable = true;
+        proxy.tproxy.enable = true;
         tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
@@ -293,7 +432,7 @@ let
   tgRoutingMarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox.tproxy.enable = true;
+        proxy.tproxy.enable = true;
         tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
@@ -306,24 +445,34 @@ let
   duplicateTags = forceEval (
     (mkFixture {
       enable = true;
-      singBox.outbounds = [
-        { tag = "dup"; url = "http://one.example.com:8080"; }
-        { tag = "dup"; url = "http://two.example.com:8080"; }
-      ];
+      proxy = {
+        enable = true;
+        singBox.enable = true;
+        outbounds = [
+          { tag = "dup"; url = "http://one.example.com:8080"; }
+          { tag = "dup"; url = "http://two.example.com:8080"; }
+        ];
+      };
     }).config.system.build.toplevel.drvPath
   );
 
   reservedTag = forceEval (
     (mkFixture {
       enable = true;
-      singBox.outbounds = [ { tag = "proxy"; url = "http://proxy.example.com:8080"; } ];
+      proxy = {
+        enable = true;
+        singBox.enable = true;
+        outbounds = [ { tag = "proxy"; url = "http://proxy.example.com:8080"; } ];
+      };
     }).config.system.build.toplevel.drvPath
   );
 
   unknownRoutingTarget = forceEval (
     (mkFixture {
       enable = true;
-      singBox = {
+      proxy = {
+        enable = true;
+        singBox.enable = true;
         outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
         routing.rules = [ { outbound = "missing"; domains = [ "example.com" ]; } ];
       };
@@ -336,7 +485,9 @@ let
       networking.firewall.enable = true;
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           tproxy.enable = true;
           outbounds = [
             {
@@ -352,7 +503,7 @@ let
   tproxyManualFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.tproxy.enable = true;
+      services.proxy-suite.proxy.tproxy.enable = true;
     }
   ];
   tproxyManualServiceConfig = tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
@@ -362,7 +513,7 @@ let
   tproxyAutostartFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.tproxy = {
+      services.proxy-suite.proxy.tproxy = {
         enable = true;
         autostart = true;
       };
@@ -372,14 +523,14 @@ let
   tunManualFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.tun.enable = true;
+      services.proxy-suite.proxy.tun.enable = true;
     }
   ];
 
   tunAutostartFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.tun = {
+      services.proxy-suite.proxy.tun = {
         enable = true;
         autostart = true;
       };
@@ -388,19 +539,19 @@ let
 
   conflictingAutostartModes = mkBadFixture [
     {
-      services.proxy-suite.singBox = {
+      services.proxy-suite.proxy = {
         tproxy = { enable = true; autostart = true; };
         tun    = { enable = true; autostart = true; };
       };
     }
   ];
 
-  globalTunWithoutSingBox = mkBadFixture [
-    { services.proxy-suite.singBox = { enable = false; tun.enable = true; }; }
+  globalTunWithoutProxy = mkBadFixture [
+    { services.proxy-suite.proxy = { enable = false; tun.enable = true; }; }
   ];
 
-  globalTproxyWithoutSingBox = mkBadFixture [
-    { services.proxy-suite.singBox = { enable = false; tproxy.enable = true; }; }
+  globalTproxyWithoutProxy = mkBadFixture [
+    { services.proxy-suite.proxy = { enable = false; tproxy.enable = true; }; }
   ];
 
   routingOrFixture = evalProxySuite [
@@ -408,7 +559,9 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           outbounds = [
             {
               tag = "primary";
@@ -433,7 +586,7 @@ let
   ruDisabledFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.routing.enableRuDirect = false;
+      services.proxy-suite.proxy.routing.enableRuDirect = false;
     }
   ];
   ruDisabledRules = mkRoutingRules ruDisabledFixture;
@@ -442,7 +595,7 @@ let
   ruExplicitFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.routing = {
+      services.proxy-suite.proxy.routing = {
         enableRuDirect = false;
         direct.geosites = [ "category-ru" ];
       };
@@ -453,7 +606,7 @@ let
   dnsLocalOverrideFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.dns.local = {
+      services.proxy-suite.proxy.dns.local = {
         type = "tcp";
         address = "9.9.9.9";
         port = 5353;
@@ -465,7 +618,7 @@ let
   dnsRemoteOverrideFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.dns.remote = {
+      services.proxy-suite.proxy.dns.remote = {
         type = "tls";
         address = "1.0.0.1";
         port = 853;
@@ -672,7 +825,7 @@ let
   proxyDirectFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.proxyByDefault = false;
+      services.proxy-suite.proxy.proxyByDefault = false;
     }
   ];
   proxyDirectConfig = mkTProxyConfig proxyDirectFixture;
@@ -703,12 +856,16 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox.subscriptions = [
-          {
-            tag = "community";
-            url = "https://example.com/sub/token";
-          }
-        ];
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [
+            {
+              tag = "community";
+              url = "https://example.com/sub/token";
+            }
+          ];
+        };
       };
     }
   ];
@@ -736,7 +893,9 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           outbounds = [
             {
               tag = "own-vps";
@@ -760,10 +919,14 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox.subscriptions = [
-          { tag = "dup"; url = "https://example.com/sub/one"; }
-          { tag = "dup"; url = "https://example.com/sub/two"; }
-        ];
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [
+            { tag = "dup"; url = "https://example.com/sub/one"; }
+            { tag = "dup"; url = "https://example.com/sub/two"; }
+          ];
+        };
       };
     }
   ];
@@ -773,7 +936,11 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox.subscriptions = [ { tag = "bad/tag"; url = "https://example.com/sub/token"; } ];
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [ { tag = "bad/tag"; url = "https://example.com/sub/token"; } ];
+        };
       };
     }
   ];
@@ -785,7 +952,9 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           subscriptions = [
             {
               tag = "community";
@@ -802,7 +971,9 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           subscriptions = [
             {
               tag = "community";
@@ -825,12 +996,16 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox.subscriptions = [
-          {
-            tag = "private";
-            urlFile = "/run/secrets/sub-url";
-          }
-        ];
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [
+            {
+              tag = "private";
+              urlFile = "/run/secrets/sub-url";
+            }
+          ];
+        };
       };
     }
   ];
@@ -840,7 +1015,9 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox = {
+        proxy = {
+          enable = true;
+          singBox.enable = true;
           outbounds = [
             {
               tag = "test-proxy";
@@ -851,8 +1028,8 @@ let
           urlTest = {
             url = "https://telegram.org";
             interval = "1m";
-            tolerance = 100;
           };
+          singBox.urlTest.tolerance = 100;
         };
       };
     }
@@ -888,7 +1065,7 @@ let
   localProxyAuthFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.auth = {
+      services.proxy-suite.proxy.auth = {
         username = "local-user";
         password = "local-pass";
       };
@@ -902,7 +1079,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.auth = {
+        proxy.auth = {
           username = "local-user";
           passwordFile = "/run/secrets/local-proxy-password";
         };
@@ -941,7 +1118,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox = {
+        proxy = {
           tun.perApp.enable = true;
           tproxy.perApp.enable = true;
         };
@@ -971,7 +1148,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.tun.perApp.enable = true;
+        proxy.tun.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
@@ -999,7 +1176,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox = {
+        proxy = {
           tproxy.enable = true;
           tun.perApp.enable = true;
         };
@@ -1029,7 +1206,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.tproxy.perApp.enable = true;
+        proxy.tproxy.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
@@ -1059,46 +1236,46 @@ let
     }
   ];
 
-  perAppRoutingProxychainsWithoutSingBox = mkBadFixture [
+  perAppRoutingProxychainsWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox.enable = false;
+        proxy.enable = false;
         perAppRouting = { enable = true; proxychains.enable = true; };
       };
     }
   ];
 
-  perAppRoutingTunBackendWithoutSingBox = mkBadFixture [
+  perAppRoutingTunBackendWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox = { enable = false; tun.perApp.enable = true; };
+        proxy = { enable = false; tun.perApp.enable = true; };
         perAppRouting.enable = true;
       };
     }
   ];
 
-  perAppRoutingTproxyBackendWithoutSingBox = mkBadFixture [
+  perAppRoutingTproxyBackendWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox = { enable = false; tproxy.perApp.enable = true; };
+        proxy = { enable = false; tproxy.perApp.enable = true; };
         perAppRouting.enable = true;
       };
     }
   ];
 
-  perAppRoutingTunProfileWithoutSingBox = mkBadFixture [
+  perAppRoutingTunProfileWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox.enable = false;
+        proxy.enable = false;
         perAppRouting = { enable = true; profiles = [ { name = "game"; route = "tun"; } ]; };
       };
     }
   ];
 
-  perAppRoutingTproxyProfileWithoutSingBox = mkBadFixture [
+  perAppRoutingTproxyProfileWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox.enable = false;
+        proxy.enable = false;
         perAppRouting = { enable = true; profiles = [ { name = "browser"; route = "tproxy"; } ]; };
       };
     }
@@ -1179,7 +1356,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        singBox.tun.perApp.enable = true;
+        proxy.tun.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
@@ -1237,7 +1414,7 @@ let
   perAppRoutingTunFwmarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox = {
+        proxy = {
           tproxy = { enable = true; proxyMark = 16; };
           tun.perApp = { enable = true; fwmark = 16; };
         };
@@ -1249,7 +1426,7 @@ let
   perAppRoutingTproxyFwmarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox.tproxy = { proxyMark = 17; perApp = { enable = true; fwmark = 17; }; };
+        proxy.tproxy = { proxyMark = 17; perApp = { enable = true; fwmark = 17; }; };
         perAppRouting.enable = true;
       };
     }
@@ -1258,7 +1435,7 @@ let
   perAppRoutingTunTproxyFwmarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox = {
+        proxy = {
           tun.perApp   = { enable = true; fwmark = 23; };
           tproxy.perApp = { enable = true; fwmark = 23; };
         };
@@ -1270,7 +1447,7 @@ let
   perAppRoutingTunTproxyRouteTableCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        singBox = {
+        proxy = {
           tun.perApp   = { enable = true; routeTable = 123; };
           tproxy.perApp = { enable = true; routeTable = 123; };
         };
@@ -1283,7 +1460,7 @@ let
     {
       services.proxy-suite = {
         zapret = { enable = true; perApp = { enable = true; filterMark = 268435456; }; };
-        singBox.tproxy.proxyMark = 268435456;
+        proxy.tproxy.proxyMark = 268435456;
         perAppRouting.enable = true;
       };
     }
@@ -1293,7 +1470,7 @@ let
     {
       services.proxy-suite = {
         zapret = { enable = true; perApp = { enable = true; filterMark = 23; }; };
-        singBox.tproxy.perApp = { enable = true; fwmark = 23; };
+        proxy.tproxy.perApp = { enable = true; fwmark = 23; };
         perAppRouting.enable = true;
       };
     }
@@ -1305,9 +1482,13 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        singBox.subscriptions = [
-          { tag = "bad"; url = "https://example.com/sub/token"; urlFile = "/run/secrets/sub-url"; }
-        ];
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [
+            { tag = "bad"; url = "https://example.com/sub/token"; urlFile = "/run/secrets/sub-url"; }
+          ];
+        };
       };
     }
   ];
@@ -1315,21 +1496,28 @@ let
   subscriptionNoSources = mkBadFixtureRaw [
     {
       system.stateVersion = "26.05";
-      services.proxy-suite = { enable = true; singBox.subscriptions = [ { tag = "bad"; } ]; };
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          subscriptions = [ { tag = "bad"; } ];
+        };
+      };
     }
   ];
 
   localProxyAuthNoPassword = mkBadFixture [
-    { services.proxy-suite.singBox.auth.username = "local-user"; }
+    { services.proxy-suite.proxy.auth.username = "local-user"; }
   ];
 
   localProxyAuthNoUsername = mkBadFixture [
-    { services.proxy-suite.singBox.auth.password = "local-pass"; }
+    { services.proxy-suite.proxy.auth.password = "local-pass"; }
   ];
 
   localProxyAuthBothPasswordSources = mkBadFixture [
     {
-      services.proxy-suite.singBox.auth = {
+      services.proxy-suite.proxy.auth = {
         username = "local-user";
         password = "local-pass";
         passwordFile = "/run/secrets/local-proxy-password";
@@ -1337,14 +1525,30 @@ let
     }
   ];
 
+  noProxyBackendDefaultFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite.enable = true;
+    }
+  ];
+
   noOutboundsNoSubscriptions = mkBadFixtureRaw [
-    { system.stateVersion = "26.05"; services.proxy-suite.enable = true; }
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+        };
+      };
+    }
   ];
 
   blockGeoFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.singBox.routing.block = {
+      services.proxy-suite.proxy.routing.block = {
         geosites = [ "category-ads-all" ];
         geoips = [ "cn" ];
       };
@@ -1364,10 +1568,10 @@ let
 
   validated = builtins.all (x: x) [
     (
-      assert minimal.config.services.proxy-suite.singBox.listenAddress == "127.0.0.1";
+      assert minimal.config.services.proxy-suite.proxy.listenAddress == "127.0.0.1";
       true
     )
-    # -- singBox.auth: default mixed inbound stays unauthenticated --
+    # -- proxy.auth: default mixed inbound stays unauthenticated --
     (
       let
         mixedInbound = builtins.head (
@@ -1377,7 +1581,7 @@ let
       assert !(mixedInbound ? users);
       true
     )
-    # -- singBox.auth: authenticated mixed inbound is injected at runtime --
+    # -- proxy.auth: authenticated mixed inbound is injected at runtime --
     (
       assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat "'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''--arg user local-user'' localProxyAuthStartScript;
@@ -1386,7 +1590,7 @@ let
       assert pkgs.lib.hasInfix ''chmod 600 "$RUNTIME_DIR/config.json"'' localProxyAuthStartScript;
       true
     )
-    # -- singBox.auth: passwordFile is read from runtime path and proxychains uses runtime config --
+    # -- proxy.auth: passwordFile is read from runtime path and proxychains uses runtime config --
     (
       assert pkgs.lib.hasInfix ''/run/secrets/local-proxy-password'' localProxyAuthPasswordFileStartScript;
       assert pkgs.lib.hasInfix ''/run/proxy-suite-socks/proxychains.conf'' localProxyAuthPasswordFileStartScript;
@@ -1398,7 +1602,7 @@ let
       assert pkgs.lib.hasInfix "Proxychains config is not readable" localProxyAuthPasswordFileScript;
       true
     )
-    # -- singBox.auth: incomplete or conflicting auth config fails --
+    # -- proxy.auth: incomplete or conflicting auth config fails --
     (
       assert localProxyAuthNoPassword.success == false;
       assert localProxyAuthNoUsername.success == false;
@@ -1448,6 +1652,74 @@ let
       assert pkgs.lib.hasInfix customSingBoxPackageBin customSingBoxPackageStartScript;
       true
     )
+    # -- xray backend: same service surface, XRay config shape, and urltest balancer --
+    (
+      let
+        socksInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "mixed-in") xrayTproxyConfig.inbounds
+        );
+        tproxyInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "tproxy-in") xrayTproxyConfig.inbounds
+        );
+        specificRule = builtins.head (
+          builtins.filter (
+            rule: (rule ? domain) && builtins.elem "domain:specific.example" rule.domain
+          ) xrayTproxyConfig.routing.rules
+        );
+        balancer = builtins.head xrayTproxyConfig.routing.balancers;
+      in
+      assert xrayFixture.config.services.proxy-suite.proxy.xray.enable;
+      assert xrayFixture.config.systemd.services ? "proxy-suite-socks";
+      assert xrayFixture.config.systemd.services ? "proxy-suite-tproxy";
+      assert xrayFixture.config.systemd.services ? "proxy-suite-tun";
+      assert xrayFixture.config.systemd.services ? "proxy-suite-per-app-tun";
+      assert pkgs.lib.hasInfix "/bin/xray run -c" xrayStartScript;
+      assert pkgs.lib.hasInfix "--backend xray" xrayStartScript;
+      assert socksInbound.protocol == "socks";
+      assert socksInbound.settings.auth == "noauth";
+      assert socksInbound.settings.udp == true;
+      assert tproxyInbound.protocol == "tunnel";
+      assert tproxyInbound.settings.followRedirect == true;
+      assert tproxyInbound.streamSettings.sockopt.tproxy == "tproxy";
+      assert specificRule.outboundTag == "proxy-suite-ob-primary";
+      assert balancer.tag == "proxy";
+      assert balancer.selector == [ "proxy-suite-ob-" ];
+      assert balancer.strategy.type == "leastPing";
+      assert xrayTproxyConfig.observatory.subjectSelector == [ "proxy-suite-ob-" ];
+      assert xrayTproxyConfig.observatory.probeUrl == "https://www.gstatic.com/generate_204";
+      true
+    )
+    (
+      let
+        tunInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "tun-in") xrayTunConfig.inbounds
+        );
+        perAppTunInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "tun-in") xrayPerAppTunConfig.inbounds
+        );
+      in
+      assert tunInbound.protocol == "tun";
+      assert tunInbound.settings.name == "singtun0";
+      assert tunInbound.settings.gateway == [ "172.19.0.1/30" ];
+      assert tunInbound.settings.autoOutboundsInterface == "auto";
+      assert perAppTunInbound.settings.name == "psperapptun0";
+      assert perAppTunInbound.settings.gateway == [ "172.20.0.1/30" ];
+      true
+    )
+    (
+      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/xray/xray-sub.json"'' xraySubscriptionStartScript;
+      assert pkgs.lib.hasInfix "--backend xray" xraySubscriptionStartScript;
+      true
+    )
+    # -- backend selection and backend-specific raw JSON options are enforced --
+    (
+      assert xrayBothBackends.success == false;
+      assert proxyEnabledNoBackend.success == false;
+      assert xraySelectorUnavailable.success == false;
+      assert xraySingBoxJsonUnavailable.success == false;
+      assert singBoxXrayJsonUnavailable.success == false;
+      true
+    )
     (
       assert duplicateTags.success == false;
       true
@@ -1477,7 +1749,7 @@ let
       true
     )
     (
-      assert tproxyManualFixture.config.services.proxy-suite.singBox.tproxy.autostart == false;
+      assert tproxyManualFixture.config.services.proxy-suite.proxy.tproxy.autostart == false;
       assert tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".wantedBy == [ ];
       true
     )
@@ -1496,7 +1768,7 @@ let
       true
     )
     (
-      assert tunManualFixture.config.services.proxy-suite.singBox.tun.autostart == false;
+      assert tunManualFixture.config.services.proxy-suite.proxy.tun.autostart == false;
       assert tunManualFixture.config.systemd.services."proxy-suite-tun".wantedBy == [ ];
       true
     )
@@ -1533,8 +1805,8 @@ let
       true
     )
     (
-      assert globalTunWithoutSingBox.success == false;
-      assert globalTproxyWithoutSingBox.success == false;
+      assert globalTunWithoutProxy.success == false;
+      assert globalTproxyWithoutProxy.success == false;
       true
     )
     (
@@ -1755,7 +2027,7 @@ let
 
     # -- subscription: basic config is accepted --
     (
-      assert subscriptionOnlyFixture.config.services.proxy-suite.singBox.subscriptions != [ ];
+      assert subscriptionOnlyFixture.config.services.proxy-suite.proxy.subscriptions != [ ];
       true
     )
 
@@ -1842,8 +2114,8 @@ let
 
     # -- subscription/runtime: generated cache paths use the raw validated tag, not shell-escaped quotes --
     (
-      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/community.json"'' subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''/var/lib/proxy-suite/subscriptions/community.json.tmp'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/sing-box/community.json"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp'' subscriptionOnlyUpdateScript;
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyStartScript);
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyUpdateScript);
       true
@@ -1887,7 +2159,7 @@ let
 
     # -- subscription: urlFile form accepted --
     (
-      assert subscriptionUrlFileFixture.config.services.proxy-suite.singBox.subscriptions != [ ];
+      assert subscriptionUrlFileFixture.config.services.proxy-suite.proxy.subscriptions != [ ];
       true
     )
 
@@ -2005,8 +2277,8 @@ let
     (
       assert pkgs.lib.hasInfix "help)" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "show this help message" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "enable/disable the sing-box proxy stack" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "restart active sing-box services" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "enable/disable the proxy backend stack" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "restart active global proxy-suite services" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true
@@ -2104,7 +2376,7 @@ let
     # -- perAppRouting: app TUN applies outbound routing marks when TProxy is enabled --
     (
       let
-        expectedMark = perAppRoutingTunWithTproxyFixture.config.services.proxy-suite.singBox.tproxy.proxyMark;
+        expectedMark = perAppRoutingTunWithTproxyFixture.config.services.proxy-suite.proxy.tproxy.proxyMark;
       in
       assert builtins.match ".*--routing-mark.*" perAppRoutingTunWithTproxyStartScript != null;
       assert perAppRoutingTunWithTproxyDirectOutbound.routing_mark == expectedMark;
@@ -2269,9 +2541,9 @@ let
       true
     )
 
-    # -- perAppRouting: proxychains requires singBox.enable --
+    # -- perAppRouting: proxychains requires proxy.enable --
     (
-      assert perAppRoutingProxychainsWithoutSingBox.success == false;
+      assert perAppRoutingProxychainsWithoutProxy.success == false;
       true
     )
 
@@ -2287,29 +2559,29 @@ let
       true
     )
 
-    # -- perAppRouting: route=tun requires singBox.tun.perApp.enable --
+    # -- perAppRouting: route=tun requires proxy.tun.perApp.enable --
     (
       assert perAppRoutingTunWithoutEnable.success == false;
       true
     )
 
-    # -- perAppRouting: app TUN backend requires singBox.enable --
+    # -- perAppRouting: app TUN backend requires proxy.enable --
     (
-      assert perAppRoutingTunBackendWithoutSingBox.success == false;
-      assert perAppRoutingTunProfileWithoutSingBox.success == false;
+      assert perAppRoutingTunBackendWithoutProxy.success == false;
+      assert perAppRoutingTunProfileWithoutProxy.success == false;
       true
     )
 
-    # -- perAppRouting: route=tproxy requires singBox.tproxy.perApp.enable --
+    # -- perAppRouting: route=tproxy requires proxy.tproxy.perApp.enable --
     (
       assert perAppRoutingTproxyWithoutEnable.success == false;
       true
     )
 
-    # -- perAppRouting: app TProxy backend requires singBox.enable --
+    # -- perAppRouting: app TProxy backend requires proxy.enable --
     (
-      assert perAppRoutingTproxyBackendWithoutSingBox.success == false;
-      assert perAppRoutingTproxyProfileWithoutSingBox.success == false;
+      assert perAppRoutingTproxyBackendWithoutProxy.success == false;
+      assert perAppRoutingTproxyProfileWithoutProxy.success == false;
       true
     )
 
@@ -2331,7 +2603,7 @@ let
       true
     )
 
-    # -- perAppRouting: app TProxy fwmark must differ from sing-box proxyMark --
+    # -- perAppRouting: app TProxy fwmark must differ from proxy.tproxy.proxyMark --
     (
       assert perAppRoutingTproxyFwmarkCollision.success == false;
       true
@@ -2349,7 +2621,7 @@ let
       true
     )
 
-    # -- perAppRouting: app zapret filter mark must differ from sing-box proxyMark --
+    # -- perAppRouting: app zapret filter mark must differ from proxy.tproxy.proxyMark --
     (
       assert perAppRoutingZapretFilterMarkCollision.success == false;
       true
@@ -2363,6 +2635,8 @@ let
 
     # -- subscription: no outbounds + no subscriptions fails --
     (
+      assert noProxyBackendDefaultFixture.config.services.proxy-suite.proxy.enable == false;
+      assert !(noProxyBackendDefaultFixture.config.systemd.services ? "proxy-suite-socks");
       assert noOutboundsNoSubscriptions.success == false;
       true
     )
@@ -2383,11 +2657,11 @@ let
     # -- urlTest: defaults are sane --
     (
       let
-        cfg = minimal.config.services.proxy-suite.singBox.urlTest;
+        cfg = minimal.config.services.proxy-suite.proxy.urlTest;
       in
       assert cfg.url == "https://www.gstatic.com/generate_204";
       assert cfg.interval == "3m";
-      assert cfg.tolerance == 50;
+      assert minimal.config.services.proxy-suite.proxy.singBox.urlTest.tolerance == 50;
       true
     )
   ];

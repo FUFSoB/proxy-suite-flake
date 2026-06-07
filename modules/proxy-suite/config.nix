@@ -1,5 +1,5 @@
-# Build-time sing-box configuration templates.
-# The proxy outbound(s) are injected at service start time, not here.
+# Build-time proxy backend configuration templates.
+# Proxy outbounds are injected at service start time, not here.
 {
   lib,
   pkgs,
@@ -10,7 +10,9 @@
 let
   derived = import ./derived.nix { inherit lib cfg; };
   inherit (derived)
+    proxyCfg
     singBoxCfg
+    xrayEnabled
     globalTun
     globalTproxy
     clashApiEnabled
@@ -18,7 +20,7 @@ let
   perAppTun = derived.perAppRoutingTun;
   direct = rules.direct;
 
-  mkDnsServer =
+  mkSingBoxDnsServer =
     tag: upstream: detour:
     {
       inherit tag;
@@ -28,17 +30,17 @@ let
     }
     // lib.optionalAttrs (detour != null) { inherit detour; };
 
-  mkDnsConfig =
+  mkSingBoxDnsConfig =
     {
       localDetour ? null,
     }:
     {
       servers = [
-        (mkDnsServer "remote" singBoxCfg.dns.remote "proxy")
-        (mkDnsServer "local" singBoxCfg.dns.local localDetour)
+        (mkSingBoxDnsServer "remote" proxyCfg.dns.remote "proxy")
+        (mkSingBoxDnsServer "local" proxyCfg.dns.local localDetour)
       ];
       rules =
-        lib.optional (builtins.elem "google" singBoxCfg.routing.proxy.geosites) {
+        lib.optional (builtins.elem "google" proxyCfg.routing.proxy.geosites) {
           rule_set = [ "geosite-google" ];
           server = "remote";
         }
@@ -46,7 +48,7 @@ let
           rule_set = map (s: "geosite-${s}") direct.geosites;
           server = "local";
         };
-      final = if singBoxCfg.proxyByDefault then "remote" else "local";
+      final = if proxyCfg.proxyByDefault then "remote" else "local";
     };
 
   clashApiBlock = lib.optionalAttrs clashApiEnabled {
@@ -57,7 +59,7 @@ let
     };
   };
 
-  mkConfig =
+  mkSingBoxConfig =
     {
       enableMixed ? false,
       enableTProxy ? false,
@@ -77,10 +79,7 @@ let
     {
       log.level = "warn";
 
-      # Keep "local" DNS on the direct path by default, but avoid explicit
-      # detour="direct" because sing-box rejects detouring to an empty
-      # direct outbound. Global TUN can force local DNS through proxy.
-      dns = mkDnsConfig {
+      dns = mkSingBoxDnsConfig {
         localDetour = if forceLocalDnsViaProxy then "proxy" else null;
       };
 
@@ -88,8 +87,8 @@ let
         lib.optional enableMixed {
           type = "mixed";
           tag = "mixed-in";
-          listen = singBoxCfg.listenAddress;
-          listen_port = singBoxCfg.port;
+          listen = proxyCfg.listenAddress;
+          listen_port = proxyCfg.port;
         }
         ++ lib.optional enableTProxy {
           type = "tproxy";
@@ -110,14 +109,11 @@ let
             stack = "mixed";
           }
           // lib.optionalAttrs tunAutoRoute {
-            # Keep sing-box auto_route indexes explicit so service cleanup can
-            # reliably remove stale policy-routing state after unclean stops.
             iproute2_table_index = tunAutoRouteTableIndex;
             iproute2_rule_index = tunAutoRouteRuleIndex;
           }
         );
 
-      # proxy outbound(s) are prepended at runtime by the start script
       outbounds = [
         (
           {
@@ -135,25 +131,155 @@ let
       route = {
         default_domain_resolver = "local";
         rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
-        rules = rules.routingRules;
-        final = if singBoxCfg.proxyByDefault then "proxy" else "direct";
+        rules = rules.singBoxRoutingRules;
+        final = if proxyCfg.proxyByDefault then "proxy" else "direct";
       }
       // lib.optionalAttrs (enableTun && tunAutoRoute) {
-        # sing-box recommends this with auto_route to keep its own outbound
-        # connections pinned to the host's default NIC instead of looping back
-        # into the TUN interface.
         auto_detect_interface = true;
       };
     }
     // lib.optionalAttrs enableClashApi clashApiBlock;
 
-  tproxyTemplate = mkConfig {
+  xrayDnsAddress =
+    upstream:
+    let
+      base =
+        if upstream.type == "tls" then
+          "tls://${upstream.address}"
+        else
+          upstream.address;
+    in
+    if upstream.port == 53 && upstream.type != "tls" then
+      base
+    else
+      "${base}:${toString upstream.port}";
+
+  xraySniffing = {
+    enabled = true;
+    destOverride = [
+      "http"
+      "tls"
+      "quic"
+    ];
+  };
+
+  xrayFinalRule =
+    tag:
+    { type = "field"; network = "tcp,udp"; }
+    // (
+      if tag == "proxy" && proxyCfg.selection == "urltest" then
+        { balancerTag = "proxy"; }
+      else
+        { outboundTag = tag; }
+    );
+
+  xrayRouteRules =
+    rules.xrayRoutingRules ++ [ (xrayFinalRule (if proxyCfg.proxyByDefault then "proxy" else "direct")) ];
+
+  xrayDirectOutbound =
+    useOutboundRoutingMark:
+    {
+      protocol = "freedom";
+      tag = "direct";
+      settings = { };
+    }
+    // lib.optionalAttrs useOutboundRoutingMark {
+      streamSettings.sockopt.mark = globalTproxy.proxyMark;
+    };
+
+  mkXrayConfig =
+    {
+      enableMixed ? false,
+      enableTProxy ? false,
+      enableTun ? false,
+      tunInterface ? globalTun.interface,
+      tunAddress ? globalTun.address,
+      tunMtu ? globalTun.mtu,
+      useOutboundRoutingMark ? false,
+      enableUrlTest ? proxyCfg.selection == "urltest",
+    }:
+    {
+      log.loglevel = "warning";
+      dns.servers = [
+        (xrayDnsAddress proxyCfg.dns.remote)
+        (xrayDnsAddress proxyCfg.dns.local)
+      ];
+      inbounds =
+        lib.optional enableMixed {
+          tag = "mixed-in";
+          protocol = "socks";
+          listen = proxyCfg.listenAddress;
+          port = proxyCfg.port;
+          settings = {
+            auth = "noauth";
+            udp = true;
+            ip = proxyCfg.listenAddress;
+          };
+          sniffing = xraySniffing;
+        }
+        ++ lib.optional enableTProxy {
+          tag = "tproxy-in";
+          protocol = "tunnel";
+          listen = "127.0.0.1";
+          port = globalTproxy.port;
+          settings = {
+            allowedNetwork = "tcp,udp";
+            followRedirect = true;
+          };
+          streamSettings.sockopt.tproxy = "tproxy";
+          sniffing = xraySniffing;
+        }
+        ++ lib.optional enableTun {
+          tag = "tun-in";
+          protocol = "tun";
+          settings = {
+            name = tunInterface;
+            mtu = tunMtu;
+            gateway = [ tunAddress ];
+            dns = [ proxyCfg.dns.local.address ];
+            userLevel = 0;
+            autoOutboundsInterface = "auto";
+          };
+          sniffing = xraySniffing;
+        };
+      outbounds = [
+        (xrayDirectOutbound useOutboundRoutingMark)
+        {
+          protocol = "blackhole";
+          tag = "block";
+          settings = { };
+        }
+      ];
+      routing = {
+        domainStrategy = "IPIfNonMatch";
+        domainMatcher = "hybrid";
+        rules = xrayRouteRules;
+      }
+      // lib.optionalAttrs enableUrlTest {
+        balancers = [
+          {
+            tag = "proxy";
+            selector = [ "proxy-suite-ob-" ];
+            strategy = { type = "leastPing"; };
+          }
+        ];
+      };
+    }
+    // lib.optionalAttrs enableUrlTest {
+      observatory = {
+        subjectSelector = [ "proxy-suite-ob-" ];
+        probeUrl = proxyCfg.urlTest.url;
+        probeInterval = proxyCfg.urlTest.interval;
+      };
+    };
+
+  singBoxTproxyTemplate = mkSingBoxConfig {
     enableMixed = true;
     enableTProxy = true;
     useOutboundRoutingMark = true;
   };
 
-  tunTemplate = mkConfig {
+  singBoxTunTemplate = mkSingBoxConfig {
     enableTun = true;
     tunInterface = globalTun.interface;
     tunAddress = globalTun.address;
@@ -161,15 +287,11 @@ let
     tunAutoRoute = true;
     tunAutoRedirect = true;
     tunStrictRoute = true;
-    # Keep the bootstrap resolver on the direct path. Sending the "local" DNS
-    # transport through outbound tag "proxy" causes a resolver loop in global
-    # TUN mode because outbound hostname resolution and urltest probe lookups
-    # recurse back into the same proxy path.
     forceLocalDnsViaProxy = false;
     enableClashApi = false;
   };
 
-  perAppTunTemplate = mkConfig {
+  singBoxPerAppTunTemplate = mkSingBoxConfig {
     enableTun = true;
     tunInterface = perAppTun.interface;
     tunAddress = perAppTun.address;
@@ -178,11 +300,35 @@ let
     tunAutoRedirect = false;
     tunStrictRoute = false;
     forceLocalDnsViaProxy = false;
-    # App TUN can be used alongside TProxy; mark direct egress so TProxy output
-    # rules do not re-intercept sing-box's own packets.
     useOutboundRoutingMark = globalTproxy.enable;
     enableClashApi = false;
   };
+
+  xrayTproxyTemplate = mkXrayConfig {
+    enableMixed = true;
+    enableTProxy = true;
+    useOutboundRoutingMark = true;
+  };
+
+  xrayTunTemplate = mkXrayConfig {
+    enableTun = true;
+    tunInterface = globalTun.interface;
+    tunAddress = globalTun.address;
+    tunMtu = globalTun.mtu;
+  };
+
+  xrayPerAppTunTemplate = mkXrayConfig {
+    enableTun = true;
+    tunInterface = perAppTun.interface;
+    tunAddress = perAppTun.address;
+    tunMtu = perAppTun.mtu;
+    useOutboundRoutingMark = globalTproxy.enable;
+  };
+
+  tproxyTemplate = if xrayEnabled then xrayTproxyTemplate else singBoxTproxyTemplate;
+  tunTemplate = if xrayEnabled then xrayTunTemplate else singBoxTunTemplate;
+  perAppTunTemplate = if xrayEnabled then xrayPerAppTunTemplate else singBoxPerAppTunTemplate;
+  routeModeRules = if xrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules;
 
   tproxyFile = pkgs.writeText "proxy-suite-tproxy-template.json" (builtins.toJSON tproxyTemplate);
   tunFile = pkgs.writeText "proxy-suite-tun-template.json" (builtins.toJSON tunTemplate);
@@ -190,7 +336,7 @@ let
     builtins.toJSON perAppTunTemplate
   );
   routeModeRulesFile = pkgs.writeText "proxy-suite-route-mode-rules.json" (
-    builtins.toJSON rules.routeModeRules
+    builtins.toJSON routeModeRules
   );
 
 in

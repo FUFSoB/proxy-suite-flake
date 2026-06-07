@@ -21,99 +21,106 @@ Update module option docs there instead of editing this file by hand.
       - [enable](#services-proxy-suite-perapprouting-proxychains-enable)
       - [proxyDns](#services-proxy-suite-perapprouting-proxychains-proxydns)
       - [quiet](#services-proxy-suite-perapprouting-proxychains-quiet)
-  - singBox
-    - [enable](#services-proxy-suite-singbox-enable)
-    - [package](#services-proxy-suite-singbox-package)
+  - proxy
+    - [enable](#services-proxy-suite-proxy-enable)
     - auth
-      - [password](#services-proxy-suite-singbox-auth-password)
-      - [passwordFile](#services-proxy-suite-singbox-auth-passwordfile)
-      - [username](#services-proxy-suite-singbox-auth-username)
-    - [clashApiPort](#services-proxy-suite-singbox-clashapiport)
+      - [password](#services-proxy-suite-proxy-auth-password)
+      - [passwordFile](#services-proxy-suite-proxy-auth-passwordfile)
+      - [username](#services-proxy-suite-proxy-auth-username)
     - dns
-      - [local](#services-proxy-suite-singbox-dns-local)
-        - [address](#services-proxy-suite-singbox-dns-local-address)
-        - [port](#services-proxy-suite-singbox-dns-local-port)
-        - [type](#services-proxy-suite-singbox-dns-local-type)
-      - [remote](#services-proxy-suite-singbox-dns-remote)
-        - [address](#services-proxy-suite-singbox-dns-remote-address)
-        - [port](#services-proxy-suite-singbox-dns-remote-port)
-        - [type](#services-proxy-suite-singbox-dns-remote-type)
-    - [listenAddress](#services-proxy-suite-singbox-listenaddress)
-    - [outbounds](#services-proxy-suite-singbox-outbounds)
+      - [local](#services-proxy-suite-proxy-dns-local)
+        - [address](#services-proxy-suite-proxy-dns-local-address)
+        - [port](#services-proxy-suite-proxy-dns-local-port)
+        - [type](#services-proxy-suite-proxy-dns-local-type)
+      - [remote](#services-proxy-suite-proxy-dns-remote)
+        - [address](#services-proxy-suite-proxy-dns-remote-address)
+        - [port](#services-proxy-suite-proxy-dns-remote-port)
+        - [type](#services-proxy-suite-proxy-dns-remote-type)
+    - [listenAddress](#services-proxy-suite-proxy-listenaddress)
+    - [outbounds](#services-proxy-suite-proxy-outbounds)
       - item
-        - [json](#services-proxy-suite-singbox-outbounds-json)
         - routing
-          - [domains](#services-proxy-suite-singbox-outbounds-routing-domains)
-          - [geoips](#services-proxy-suite-singbox-outbounds-routing-geoips)
-          - [geosites](#services-proxy-suite-singbox-outbounds-routing-geosites)
-          - [ips](#services-proxy-suite-singbox-outbounds-routing-ips)
-        - [tag](#services-proxy-suite-singbox-outbounds-tag)
-        - [url](#services-proxy-suite-singbox-outbounds-url)
-        - [urlFile](#services-proxy-suite-singbox-outbounds-urlfile)
-    - [port](#services-proxy-suite-singbox-port)
-    - [proxyByDefault](#services-proxy-suite-singbox-proxybydefault)
+          - [domains](#services-proxy-suite-proxy-outbounds-routing-domains)
+          - [geoips](#services-proxy-suite-proxy-outbounds-routing-geoips)
+          - [geosites](#services-proxy-suite-proxy-outbounds-routing-geosites)
+          - [ips](#services-proxy-suite-proxy-outbounds-routing-ips)
+        - [singBoxJson](#services-proxy-suite-proxy-outbounds-singboxjson)
+        - [tag](#services-proxy-suite-proxy-outbounds-tag)
+        - [url](#services-proxy-suite-proxy-outbounds-url)
+        - [urlFile](#services-proxy-suite-proxy-outbounds-urlfile)
+        - [xrayJson](#services-proxy-suite-proxy-outbounds-xrayjson)
+    - [port](#services-proxy-suite-proxy-port)
+    - [proxyByDefault](#services-proxy-suite-proxy-proxybydefault)
     - routing
-      - [enableRuDirect](#services-proxy-suite-singbox-routing-enablerudirect)
+      - [enableRuDirect](#services-proxy-suite-proxy-routing-enablerudirect)
       - block
-        - [domains](#services-proxy-suite-singbox-routing-block-domains)
-        - [geoips](#services-proxy-suite-singbox-routing-block-geoips)
-        - [geosites](#services-proxy-suite-singbox-routing-block-geosites)
-        - [ips](#services-proxy-suite-singbox-routing-block-ips)
+        - [domains](#services-proxy-suite-proxy-routing-block-domains)
+        - [geoips](#services-proxy-suite-proxy-routing-block-geoips)
+        - [geosites](#services-proxy-suite-proxy-routing-block-geosites)
+        - [ips](#services-proxy-suite-proxy-routing-block-ips)
       - direct
-        - [domains](#services-proxy-suite-singbox-routing-direct-domains)
-        - [geoips](#services-proxy-suite-singbox-routing-direct-geoips)
-        - [geosites](#services-proxy-suite-singbox-routing-direct-geosites)
-        - [ips](#services-proxy-suite-singbox-routing-direct-ips)
+        - [domains](#services-proxy-suite-proxy-routing-direct-domains)
+        - [geoips](#services-proxy-suite-proxy-routing-direct-geoips)
+        - [geosites](#services-proxy-suite-proxy-routing-direct-geosites)
+        - [ips](#services-proxy-suite-proxy-routing-direct-ips)
       - proxy
-        - [domains](#services-proxy-suite-singbox-routing-proxy-domains)
-        - [geoips](#services-proxy-suite-singbox-routing-proxy-geoips)
-        - [geosites](#services-proxy-suite-singbox-routing-proxy-geosites)
-        - [ips](#services-proxy-suite-singbox-routing-proxy-ips)
-      - [rules](#services-proxy-suite-singbox-routing-rules)
+        - [domains](#services-proxy-suite-proxy-routing-proxy-domains)
+        - [geoips](#services-proxy-suite-proxy-routing-proxy-geoips)
+        - [geosites](#services-proxy-suite-proxy-routing-proxy-geosites)
+        - [ips](#services-proxy-suite-proxy-routing-proxy-ips)
+      - [rules](#services-proxy-suite-proxy-routing-rules)
         - item
-          - [domains](#services-proxy-suite-singbox-routing-rules-domains)
-          - [geoips](#services-proxy-suite-singbox-routing-rules-geoips)
-          - [geosites](#services-proxy-suite-singbox-routing-rules-geosites)
-          - [ips](#services-proxy-suite-singbox-routing-rules-ips)
-          - [outbound](#services-proxy-suite-singbox-routing-rules-outbound)
-    - [selection](#services-proxy-suite-singbox-selection)
-    - [subscriptionUpdateInterval](#services-proxy-suite-singbox-subscriptionupdateinterval)
-    - [subscriptions](#services-proxy-suite-singbox-subscriptions)
+          - [domains](#services-proxy-suite-proxy-routing-rules-domains)
+          - [geoips](#services-proxy-suite-proxy-routing-rules-geoips)
+          - [geosites](#services-proxy-suite-proxy-routing-rules-geosites)
+          - [ips](#services-proxy-suite-proxy-routing-rules-ips)
+          - [outbound](#services-proxy-suite-proxy-routing-rules-outbound)
+    - [selection](#services-proxy-suite-proxy-selection)
+    - singBox
+      - [enable](#services-proxy-suite-proxy-singbox-enable)
+      - [package](#services-proxy-suite-proxy-singbox-package)
+      - [clashApiPort](#services-proxy-suite-proxy-singbox-clashapiport)
+      - urlTest
+        - [tolerance](#services-proxy-suite-proxy-singbox-urltest-tolerance)
+    - [subscriptionUpdateInterval](#services-proxy-suite-proxy-subscriptionupdateinterval)
+    - [subscriptions](#services-proxy-suite-proxy-subscriptions)
       - item
-        - [tag](#services-proxy-suite-singbox-subscriptions-tag)
-        - [url](#services-proxy-suite-singbox-subscriptions-url)
-        - [urlFile](#services-proxy-suite-singbox-subscriptions-urlfile)
+        - [tag](#services-proxy-suite-proxy-subscriptions-tag)
+        - [url](#services-proxy-suite-proxy-subscriptions-url)
+        - [urlFile](#services-proxy-suite-proxy-subscriptions-urlfile)
     - tproxy
-      - [enable](#services-proxy-suite-singbox-tproxy-enable)
-      - [autostart](#services-proxy-suite-singbox-tproxy-autostart)
-      - [fwmark](#services-proxy-suite-singbox-tproxy-fwmark)
-      - [localSubnets](#services-proxy-suite-singbox-tproxy-localsubnets)
+      - [enable](#services-proxy-suite-proxy-tproxy-enable)
+      - [autostart](#services-proxy-suite-proxy-tproxy-autostart)
+      - [fwmark](#services-proxy-suite-proxy-tproxy-fwmark)
+      - [localSubnets](#services-proxy-suite-proxy-tproxy-localsubnets)
       - perApp
-        - [enable](#services-proxy-suite-singbox-tproxy-perapp-enable)
-        - [fwmark](#services-proxy-suite-singbox-tproxy-perapp-fwmark)
-        - [localSubnets](#services-proxy-suite-singbox-tproxy-perapp-localsubnets)
-        - [routeTable](#services-proxy-suite-singbox-tproxy-perapp-routetable)
-      - [port](#services-proxy-suite-singbox-tproxy-port)
-      - [proxyMark](#services-proxy-suite-singbox-tproxy-proxymark)
-      - [routeTable](#services-proxy-suite-singbox-tproxy-routetable)
+        - [enable](#services-proxy-suite-proxy-tproxy-perapp-enable)
+        - [fwmark](#services-proxy-suite-proxy-tproxy-perapp-fwmark)
+        - [localSubnets](#services-proxy-suite-proxy-tproxy-perapp-localsubnets)
+        - [routeTable](#services-proxy-suite-proxy-tproxy-perapp-routetable)
+      - [port](#services-proxy-suite-proxy-tproxy-port)
+      - [proxyMark](#services-proxy-suite-proxy-tproxy-proxymark)
+      - [routeTable](#services-proxy-suite-proxy-tproxy-routetable)
     - tun
-      - [enable](#services-proxy-suite-singbox-tun-enable)
-      - [address](#services-proxy-suite-singbox-tun-address)
-      - [autostart](#services-proxy-suite-singbox-tun-autostart)
-      - [interface](#services-proxy-suite-singbox-tun-interface)
-      - [mtu](#services-proxy-suite-singbox-tun-mtu)
+      - [enable](#services-proxy-suite-proxy-tun-enable)
+      - [address](#services-proxy-suite-proxy-tun-address)
+      - [autostart](#services-proxy-suite-proxy-tun-autostart)
+      - [interface](#services-proxy-suite-proxy-tun-interface)
+      - [mtu](#services-proxy-suite-proxy-tun-mtu)
       - perApp
-        - [enable](#services-proxy-suite-singbox-tun-perapp-enable)
-        - [address](#services-proxy-suite-singbox-tun-perapp-address)
-        - [fwmark](#services-proxy-suite-singbox-tun-perapp-fwmark)
-        - [interface](#services-proxy-suite-singbox-tun-perapp-interface)
-        - [localSubnets](#services-proxy-suite-singbox-tun-perapp-localsubnets)
-        - [mtu](#services-proxy-suite-singbox-tun-perapp-mtu)
-        - [routeTable](#services-proxy-suite-singbox-tun-perapp-routetable)
+        - [enable](#services-proxy-suite-proxy-tun-perapp-enable)
+        - [address](#services-proxy-suite-proxy-tun-perapp-address)
+        - [fwmark](#services-proxy-suite-proxy-tun-perapp-fwmark)
+        - [interface](#services-proxy-suite-proxy-tun-perapp-interface)
+        - [localSubnets](#services-proxy-suite-proxy-tun-perapp-localsubnets)
+        - [mtu](#services-proxy-suite-proxy-tun-perapp-mtu)
+        - [routeTable](#services-proxy-suite-proxy-tun-perapp-routetable)
     - urlTest
-      - [interval](#services-proxy-suite-singbox-urltest-interval)
-      - [tolerance](#services-proxy-suite-singbox-urltest-tolerance)
-      - [url](#services-proxy-suite-singbox-urltest-url)
+      - [interval](#services-proxy-suite-proxy-urltest-interval)
+      - [url](#services-proxy-suite-proxy-urltest-url)
+    - xray
+      - [enable](#services-proxy-suite-proxy-xray-enable)
+      - [package](#services-proxy-suite-proxy-xray-package)
   - tgWsProxy
     - [enable](#services-proxy-suite-tgwsproxy-enable)
     - [bypassTransparentProxy](#services-proxy-suite-tgwsproxy-bypasstransparentproxy)
@@ -176,13 +183,12 @@ services.proxy-suite = {
       quiet = true;
     };
   };
-  singBox = {
+  proxy = {
     auth = {
       password = null;
       passwordFile = null;
       username = null;
     };
-    clashApiPort = 9090;
     dns = {
       local = {
         address = "1.1.1.1";
@@ -195,10 +201,9 @@ services.proxy-suite = {
         type = "udp";
       };
     };
-    enable = true;
+    enable = false;
     listenAddress = "127.0.0.1";
     outbounds = [ ];
-    package = pkgs.sing-box;
     port = 1080;
     proxyByDefault = true;
     routing = {
@@ -224,6 +229,14 @@ services.proxy-suite = {
       rules = [ ];
     };
     selection = "first";
+    singBox = {
+      clashApiPort = 9090;
+      enable = false;
+      package = pkgs.sing-box;
+      urlTest = {
+        tolerance = 50;
+      };
+    };
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
     tproxy = {
@@ -265,8 +278,11 @@ services.proxy-suite = {
     };
     urlTest = {
       interval = "3m";
-      tolerance = 50;
       url = "https://www.gstatic.com/generate_204";
+    };
+    xray = {
+      enable = false;
+      package = pkgs.xray;
     };
   };
   tgWsProxy = {
@@ -346,13 +362,12 @@ services.proxy-suite = {
       quiet = true;
     };
   };
-  singBox = {
+  proxy = {
     auth = {
       password = "change-me";
       passwordFile = "/run/secrets/proxy-suite-local-proxy-password";
       username = "proxy-user";
     };
-    clashApiPort = 9090;
     dns = {
       local = {
         address = "9.9.9.9";
@@ -365,7 +380,7 @@ services.proxy-suite = {
         type = "tls";
       };
     };
-    enable = true;
+    enable = false;
     listenAddress = "127.0.0.1";
     outbounds = [
       {
@@ -377,7 +392,6 @@ services.proxy-suite = {
         url = "hy2://password@example.com:443?sni=example.com";
       }
     ];
-    package = pkgs.sing-box;
     port = 1080;
     proxyByDefault = true;
     routing = {
@@ -452,6 +466,14 @@ services.proxy-suite = {
       ];
     };
     selection = "urltest";
+    singBox = {
+      clashApiPort = 9090;
+      enable = true;
+      package = pkgs.sing-box;
+      urlTest = {
+        tolerance = 100;
+      };
+    };
     subscriptionUpdateInterval = "6h";
     subscriptions = [
       {
@@ -505,9 +527,15 @@ services.proxy-suite = {
     };
     urlTest = {
       interval = "1m";
-      tolerance = 100;
       url = "https://telegram.org";
     };
+    xray = {
+      enable = true;
+      package = pkgs.xray;
+    };
+  };
+  singBox = {
+    _freeformOptions = { };
   };
   tgWsProxy = {
     bypassTransparentProxy = true;
@@ -597,7 +625,7 @@ services.proxy-suite = {
 <a id="services-proxy-suite-enable"></a>
 ## services\.proxy-suite\.enable
 
-Whether to enable proxy suite (sing-box + zapret + tg-ws-proxy)\.
+Whether to enable proxy suite (proxy backend + zapret + tg-ws-proxy)\.
 
 
 
@@ -671,8 +699,8 @@ user-defined profile with the same name already exists\.
 Current curated defaults:
 
  - ` proxychains `: route = “proxychains”
- - ` tun `: route = “tun” when singBox\.tun\.perApp\.enable = true
- - ` tproxy `: route = “tproxy” when singBox\.tproxy\.perApp\.enable = true
+ - ` tun `: route = “tun” when proxy\.tun\.perApp\.enable = true
+ - ` tproxy `: route = “tproxy” when proxy\.tproxy\.perApp\.enable = true
  - ` zapret `: route = “zapret” when zapret\.perApp\.enable = true
 
 This makes ` proxy-ctl wrap proxychains -- <command> ` available
@@ -727,10 +755,10 @@ This initial implementation supports:
  - “zapret” for per-app-scoped zapret handling through a separate
    zapret instance without changing the app’s network path or exit IP
 
-proxychains-based wrapping depends on singBox\.enable = true and the
-local proxy-suite mixed proxy listener provided by sing-box\. The
-“tun” route depends on singBox\.tun\.perApp\.enable = true\. The “tproxy”
-route depends on singBox\.tproxy\.perApp\.enable = true\. The “zapret”
+proxychains-based wrapping depends on proxy\.enable = true and the
+local proxy-suite proxy listener provided by the active backend\. The
+“tun” route depends on proxy\.tun\.perApp\.enable = true\. The “tproxy”
+route depends on proxy\.tproxy\.perApp\.enable = true\. The “zapret”
 route depends on zapret\.perApp\.enable = true\.
 
 When createDefaultProfiles = true, curated defaults are added on top
@@ -812,7 +840,7 @@ Per-app route backend used by proxy-ctl wrap\.
    only that app’s traffic is policy-routed into the app TUN backend\.
  - “tproxy”: launch the command in the dedicated per-app-routing TProxy
    slice so only that app’s traffic is transparently intercepted by
-   the local sing-box TProxy inbound\.
+   the local proxy TProxy inbound\.
  - “zapret”: launch the command in the dedicated per-app-routing zapret
    slice so only that app’s traffic is handled by the separate
    per-app-scoped zapret instance\.
@@ -947,14 +975,14 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-enable"></a>
-## services\.proxy-suite\.singBox\.enable
+<a id="services-proxy-suite-proxy-enable"></a>
+## services\.proxy-suite\.proxy\.enable
 
 
 
-Whether to configure and run sing-box services for proxy-suite\.
-When disabled, sing-box services and generated sing-box configs are
-skipped even if proxy-suite itself is enabled\.
+Whether to configure and run the proxy backend services\.
+This is disabled by default; enable it explicitly and choose exactly
+one backend with proxy\.singBox\.enable or proxy\.xray\.enable\.
 
 
 
@@ -966,7 +994,7 @@ boolean
 *Default:*
 
 ```nix
-true
+false
 ```
 
 *Declared by:*
@@ -974,44 +1002,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-package"></a>
-## services\.proxy-suite\.singBox\.package
-
-
-
-sing-box package used by proxy-suite systemd services\.
-
-Override this to pin or test a specific sing-box build when upstream
-protocol behavior changes\.
-
-
-
-*Type:*
-package
-
-
-
-*Default:*
-
-```nix
-pkgs.sing-box
-```
-
-
-
-*Example:*
-
-```nix
-pkgs.sing-box
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
-
-
-
-<a id="services-proxy-suite-singbox-auth-password"></a>
-## services\.proxy-suite\.singBox\.auth\.password
+<a id="services-proxy-suite-proxy-auth-password"></a>
+## services\.proxy-suite\.proxy\.auth\.password
 
 
 
@@ -1046,8 +1038,8 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-auth-passwordfile"></a>
-## services\.proxy-suite\.singBox\.auth\.passwordFile
+<a id="services-proxy-suite-proxy-auth-passwordfile"></a>
+## services\.proxy-suite\.proxy\.auth\.passwordFile
 
 
 
@@ -1086,8 +1078,8 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-auth-username"></a>
-## services\.proxy-suite\.singBox\.auth\.username
+<a id="services-proxy-suite-proxy-auth-username"></a>
+## services\.proxy-suite\.proxy\.auth\.username
 
 
 
@@ -1123,48 +1115,13 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-clashapiport"></a>
-## services\.proxy-suite\.singBox\.clashApiPort
-
-
-
-Port for the Clash-compatible REST API exposed by sing-box\.
-Only used when selection is “selector” or “urltest”\. Ignored in
-“first” mode because there is no selector-style outbound to control\.
-
-
-
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-
-
-*Default:*
-
-```nix
-9090
-```
-
-
-
-*Example:*
-
-```nix
-9090
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
-
-
-
-<a id="services-proxy-suite-singbox-dns-local"></a>
-## services\.proxy-suite\.singBox\.dns\.local
+<a id="services-proxy-suite-proxy-dns-local"></a>
+## services\.proxy-suite\.proxy\.dns\.local
 
 
 
 DNS upstream used for the built-in “local” resolver role\.
-This resolver is also used as sing-box route\.default_domain_resolver\.
+This resolver is also used as the backend’s default domain resolver\.
 
 The module keeps detour policy automatic: in mixed/TProxy mode and
 per-app-routing TUN mode, “local” stays on the direct path (without an
@@ -1205,8 +1162,8 @@ submodule
 
 
 
-<a id="services-proxy-suite-singbox-dns-local-address"></a>
-## services\.proxy-suite\.singBox\.dns\.local\.address
+<a id="services-proxy-suite-proxy-dns-local-address"></a>
+## services\.proxy-suite\.proxy\.dns\.local\.address
 
 
 
@@ -1230,8 +1187,8 @@ string matching the pattern \.+
 
 
 
-<a id="services-proxy-suite-singbox-dns-local-port"></a>
-## services\.proxy-suite\.singBox\.dns\.local\.port
+<a id="services-proxy-suite-proxy-dns-local-port"></a>
+## services\.proxy-suite\.proxy\.dns\.local\.port
 
 
 
@@ -1263,12 +1220,12 @@ Destination port for this DNS upstream\.
 
 
 
-<a id="services-proxy-suite-singbox-dns-local-type"></a>
-## services\.proxy-suite\.singBox\.dns\.local\.type
+<a id="services-proxy-suite-proxy-dns-local-type"></a>
+## services\.proxy-suite\.proxy\.dns\.local\.type
 
 
 
-sing-box DNS transport type for this upstream resolver\.
+DNS transport type for this upstream resolver\.
 
 
 
@@ -1296,15 +1253,15 @@ one of “udp”, “tcp”, “tls”
 
 
 
-<a id="services-proxy-suite-singbox-dns-remote"></a>
-## services\.proxy-suite\.singBox\.dns\.remote
+<a id="services-proxy-suite-proxy-dns-remote"></a>
+## services\.proxy-suite\.proxy\.dns\.remote
 
 
 
 DNS upstream used for the built-in “remote” resolver role\.
 
 This resolver always detours through the proxy and becomes the
-generated dns\.final target when singBox\.proxyByDefault = true\.
+generated dns\.final target when proxy\.proxyByDefault = true\.
 
 
 
@@ -1340,8 +1297,8 @@ submodule
 
 
 
-<a id="services-proxy-suite-singbox-dns-remote-address"></a>
-## services\.proxy-suite\.singBox\.dns\.remote\.address
+<a id="services-proxy-suite-proxy-dns-remote-address"></a>
+## services\.proxy-suite\.proxy\.dns\.remote\.address
 
 
 
@@ -1365,8 +1322,8 @@ string matching the pattern \.+
 
 
 
-<a id="services-proxy-suite-singbox-dns-remote-port"></a>
-## services\.proxy-suite\.singBox\.dns\.remote\.port
+<a id="services-proxy-suite-proxy-dns-remote-port"></a>
+## services\.proxy-suite\.proxy\.dns\.remote\.port
 
 
 
@@ -1398,12 +1355,12 @@ Destination port for this DNS upstream\.
 
 
 
-<a id="services-proxy-suite-singbox-dns-remote-type"></a>
-## services\.proxy-suite\.singBox\.dns\.remote\.type
+<a id="services-proxy-suite-proxy-dns-remote-type"></a>
+## services\.proxy-suite\.proxy\.dns\.remote\.type
 
 
 
-sing-box DNS transport type for this upstream resolver\.
+DNS transport type for this upstream resolver\.
 
 
 
@@ -1431,13 +1388,13 @@ one of “udp”, “tcp”, “tls”
 
 
 
-<a id="services-proxy-suite-singbox-listenaddress"></a>
-## services\.proxy-suite\.singBox\.listenAddress
+<a id="services-proxy-suite-proxy-listenaddress"></a>
+## services\.proxy-suite\.proxy\.listenAddress
 
 
 
-Address for the SOCKS5/HTTP mixed inbound to bind to\.
-This affects the always-on proxy-suite-socks service\.
+Address for the local SOCKS5/HTTP inbound to bind to\.
+This affects the proxy-suite-socks service\.
 
 Use “0\.0\.0\.0” only if you intentionally want to expose the proxy to
 other machines on your network\.
@@ -1468,16 +1425,18 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds"></a>
-## services\.proxy-suite\.singBox\.outbounds
+<a id="services-proxy-suite-proxy-outbounds"></a>
+## services\.proxy-suite\.proxy\.outbounds
 
 
 
 List of static proxy outbounds\.
-Set exactly one of urlFile, url, or json per entry\.
+Set exactly one of urlFile, url, singBoxJson, xrayJson, or the
+deprecated json field per entry\. Backend-specific raw JSON fields are
+only valid with their matching backend\.
 
 At least one outbound or one subscription is required when
-singBox\.enable = true\.
+proxy\.enable = true\.
 
 
 
@@ -1514,52 +1473,8 @@ list of (submodule)
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-json"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.json
-
-
-
-Raw sing-box outbound configuration as a Nix attribute set\.
-Embedded directly into the config at build time\. The tag field
-is overridden by the outbound’s tag option\.
-
-Set exactly one of urlFile, url, or json for each outbound\.
-Use this when the proxy definition is easier to generate as native Nix
-than as a single URL string\.
-
-
-
-*Type:*
-null or (attribute set)
-
-
-
-*Default:*
-
-```nix
-null
-```
-
-
-
-*Example:*
-
-```nix
-{
-  server = "example.com";
-  server_port = 443;
-  type = "vless";
-  uuid = "...";
-}
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
-
-
-
-<a id="services-proxy-suite-singbox-outbounds-routing-domains"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.domains
+<a id="services-proxy-suite-proxy-outbounds-routing-domains"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.domains
 
 
 
@@ -1595,13 +1510,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-routing-geoips"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geoips
+<a id="services-proxy-suite-proxy-outbounds-routing-geoips"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.geoips
 
 
 
 sing-geoip rule-set names to match in this routing rule\.
-Each name becomes a sing-box geoip rule-set reference\.
+Each name becomes a backend geoip rule-set reference\.
 
 
 
@@ -1632,13 +1547,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-routing-geosites"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.geosites
+<a id="services-proxy-suite-proxy-outbounds-routing-geosites"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.geosites
 
 
 
 sing-geosite rule-set names to match in this routing rule\.
-Each name becomes a sing-box geosite rule-set reference\.
+Each name becomes a backend geosite rule-set reference\.
 
 
 
@@ -1669,8 +1584,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-routing-ips"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.routing\.ips
+<a id="services-proxy-suite-proxy-outbounds-routing-ips"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.ips
 
 
 
@@ -1705,15 +1620,60 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-tag"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.tag
+<a id="services-proxy-suite-proxy-outbounds-singboxjson"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.singBoxJson
+
+
+
+Raw sing-box outbound configuration as a Nix attribute set\.
+Embedded directly into the config at build time\. The tag field
+is overridden by the outbound’s tag option\.
+
+Set exactly one of urlFile, url, singBoxJson, xrayJson, or json for
+each outbound\.
+Use this when the proxy definition is easier to generate as native Nix
+than as a single URL string\. Only valid with the SingBox backend\.
+
+
+
+*Type:*
+null or (attribute set)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+{
+  server = "example.com";
+  server_port = 443;
+  type = "vless";
+  uuid = "...";
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxy-outbounds-tag"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.tag
 
 
 
 Outbound tag used in routing rules and multi-outbound selection\.
 
 With selection = “selector” or “urltest”, each outbound keeps its own
-tag and can be selected directly\. With selection = “first”, sing-box
+tag and can be selected directly\. With selection = “first”, proxy-suite
 routes through a single active outbound tagged “proxy”, so individual
 proxy tags are mainly useful for documentation and config structure\.
 
@@ -1735,8 +1695,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-url"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.url
+<a id="services-proxy-suite-proxy-outbounds-url"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.url
 
 
 
@@ -1772,8 +1732,8 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-outbounds-urlfile"></a>
-## services\.proxy-suite\.singBox\.outbounds\.\*\.urlFile
+<a id="services-proxy-suite-proxy-outbounds-urlfile"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.urlFile
 
 
 
@@ -1809,13 +1769,60 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-port"></a>
-## services\.proxy-suite\.singBox\.port
+<a id="services-proxy-suite-proxy-outbounds-xrayjson"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.xrayJson
 
 
 
-Listen port for the always-on SOCKS5/HTTP mixed inbound provided by
-proxy-suite-socks\.
+Raw XRay outbound configuration as a Nix attribute set\.
+Embedded directly into the config at build time\. The tag field is
+overridden by the outbound’s tag option\.
+
+Set exactly one of urlFile, url, singBoxJson, xrayJson, or json for
+each outbound\. Only valid with the XRay backend\.
+
+
+
+*Type:*
+null or (attribute set)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+{
+  protocol = "vless";
+  settings = {
+    address = "example.com";
+    encryption = "none";
+    id = "...";
+    port = 443;
+  };
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxy-port"></a>
+## services\.proxy-suite\.proxy\.port
+
+
+
+Listen port for the local SOCKS5/HTTP proxy inbound provided by
+proxy-suite-socks\. SingBox exposes SOCKS5 and HTTP on this port\.
+XRay’s Socks inbound also accepts SOCKS and HTTP\.
 
 
 
@@ -1843,15 +1850,15 @@ proxy-suite-socks\.
 
 
 
-<a id="services-proxy-suite-singbox-proxybydefault"></a>
-## services\.proxy-suite\.singBox\.proxyByDefault
+<a id="services-proxy-suite-proxy-proxybydefault"></a>
+## services\.proxy-suite\.proxy\.proxyByDefault
 
 
 
 Whether traffic that does not match any explicit routing rule should
 go through the proxy or go direct\.
 
-This affects sing-box route\.final and dns\.final in the generated
+This affects the generated backend route final and DNS final in the
 config\.
 
 
@@ -1880,8 +1887,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-routing-enablerudirect"></a>
-## services\.proxy-suite\.singBox\.routing\.enableRuDirect
+<a id="services-proxy-suite-proxy-routing-enablerudirect"></a>
+## services\.proxy-suite\.proxy\.routing\.enableRuDirect
 
 
 
@@ -1916,8 +1923,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-routing-block-domains"></a>
-## services\.proxy-suite\.singBox\.routing\.block\.domains
+<a id="services-proxy-suite-proxy-routing-block-domains"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.domains
 
 
 
@@ -1951,8 +1958,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-block-geoips"></a>
-## services\.proxy-suite\.singBox\.routing\.block\.geoips
+<a id="services-proxy-suite-proxy-routing-block-geoips"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.geoips
 
 
 
@@ -1986,8 +1993,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-block-geosites"></a>
-## services\.proxy-suite\.singBox\.routing\.block\.geosites
+<a id="services-proxy-suite-proxy-routing-block-geosites"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.geosites
 
 
 
@@ -2021,8 +2028,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-block-ips"></a>
-## services\.proxy-suite\.singBox\.routing\.block\.ips
+<a id="services-proxy-suite-proxy-routing-block-ips"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.ips
 
 
 
@@ -2056,8 +2063,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-direct-domains"></a>
-## services\.proxy-suite\.singBox\.routing\.direct\.domains
+<a id="services-proxy-suite-proxy-routing-direct-domains"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.domains
 
 
 
@@ -2093,8 +2100,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-direct-geoips"></a>
-## services\.proxy-suite\.singBox\.routing\.direct\.geoips
+<a id="services-proxy-suite-proxy-routing-direct-geoips"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.geoips
 
 
 
@@ -2129,8 +2136,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-direct-geosites"></a>
-## services\.proxy-suite\.singBox\.routing\.direct\.geosites
+<a id="services-proxy-suite-proxy-routing-direct-geosites"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.geosites
 
 
 
@@ -2165,8 +2172,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-direct-ips"></a>
-## services\.proxy-suite\.singBox\.routing\.direct\.ips
+<a id="services-proxy-suite-proxy-routing-direct-ips"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.ips
 
 
 
@@ -2202,8 +2209,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-proxy-domains"></a>
-## services\.proxy-suite\.singBox\.routing\.proxy\.domains
+<a id="services-proxy-suite-proxy-routing-proxy-domains"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.domains
 
 
 
@@ -2239,13 +2246,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-proxy-geoips"></a>
-## services\.proxy-suite\.singBox\.routing\.proxy\.geoips
+<a id="services-proxy-suite-proxy-routing-proxy-geoips"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.geoips
 
 
 
 sing-geoip rule-set names to match in this routing rule\.
-Each name becomes a sing-box geoip rule-set reference\.
+Each name becomes a backend geoip rule-set reference\.
 
 
 
@@ -2276,13 +2283,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-proxy-geosites"></a>
-## services\.proxy-suite\.singBox\.routing\.proxy\.geosites
+<a id="services-proxy-suite-proxy-routing-proxy-geosites"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.geosites
 
 
 
 sing-geosite rule-set names to match in this routing rule\.
-Each name becomes a sing-box geosite rule-set reference\.
+Each name becomes a backend geosite rule-set reference\.
 
 
 
@@ -2313,8 +2320,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-proxy-ips"></a>
-## services\.proxy-suite\.singBox\.routing\.proxy\.ips
+<a id="services-proxy-suite-proxy-routing-proxy-ips"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.ips
 
 
 
@@ -2349,8 +2356,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules"></a>
-## services\.proxy-suite\.singBox\.routing\.rules
+<a id="services-proxy-suite-proxy-routing-rules"></a>
+## services\.proxy-suite\.proxy\.routing\.rules
 
 
 
@@ -2360,7 +2367,7 @@ Each rule routes matching traffic to a specific outbound tag\.
 The outbound can be a configured outbound tag (useful with selector/urltest),
 or one of: “proxy” (active proxy), “direct”, “block”\.
 
-Order is preserved\. The first matching rule wins in sing-box\.
+Order is preserved\. The first matching rule wins in the active backend\.
 With selection = “first”, non-built-in outbound tags are effectively
 routed to the single active “proxy” outbound\.
 
@@ -2412,8 +2419,8 @@ list of (submodule)
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules-domains"></a>
-## services\.proxy-suite\.singBox\.routing\.rules\.\*\.domains
+<a id="services-proxy-suite-proxy-routing-rules-domains"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.domains
 
 
 
@@ -2449,13 +2456,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules-geoips"></a>
-## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geoips
+<a id="services-proxy-suite-proxy-routing-rules-geoips"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.geoips
 
 
 
 sing-geoip rule-set names to match in this routing rule\.
-Each name becomes a sing-box geoip rule-set reference\.
+Each name becomes a backend geoip rule-set reference\.
 
 
 
@@ -2486,13 +2493,13 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules-geosites"></a>
-## services\.proxy-suite\.singBox\.routing\.rules\.\*\.geosites
+<a id="services-proxy-suite-proxy-routing-rules-geosites"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.geosites
 
 
 
 sing-geosite rule-set names to match in this routing rule\.
-Each name becomes a sing-box geosite rule-set reference\.
+Each name becomes a backend geosite rule-set reference\.
 
 
 
@@ -2523,8 +2530,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules-ips"></a>
-## services\.proxy-suite\.singBox\.routing\.rules\.\*\.ips
+<a id="services-proxy-suite-proxy-routing-rules-ips"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.ips
 
 
 
@@ -2559,8 +2566,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-routing-rules-outbound"></a>
-## services\.proxy-suite\.singBox\.routing\.rules\.\*\.outbound
+<a id="services-proxy-suite-proxy-routing-rules-outbound"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.outbound
 
 
 
@@ -2590,8 +2597,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-selection"></a>
-## services\.proxy-suite\.singBox\.selection
+<a id="services-proxy-suite-proxy-selection"></a>
+## services\.proxy-suite\.proxy\.selection
 
 
 
@@ -2603,11 +2610,13 @@ How to pick between multiple proxy outbounds:
  - “selector”: create a Clash-compatible selector outbound tagged
    “proxy” and keep all configured outbounds available for manual
    switching via the Clash API\.
- - “urltest”: create an automatic latency-testing outbound tagged
-   “proxy” and keep all configured outbounds available so sing-box
-   can periodically probe and switch to a faster one\.
+ - “urltest”: create automatic latency testing tagged “proxy” and
+   keep all configured outbounds available so the active backend can
+   periodically probe and switch to a faster one\.
 
-clashApiPort is only used with “selector” or “urltest”\.
+proxy\.singBox\.clashApiPort is only used with “selector” or “urltest”
+on the SingBox backend\. “selector” is SingBox-only\. “urltest” maps to
+SingBox urltest or XRay observatory/balancer depending on backend\.
 urlTest\.\* options are only used with “urltest”\.
 Per-outbound tags are only individually meaningful with “selector”
 or “urltest”\.
@@ -2638,8 +2647,151 @@ one of “first”, “selector”, “urltest”
 
 
 
-<a id="services-proxy-suite-singbox-subscriptionupdateinterval"></a>
-## services\.proxy-suite\.singBox\.subscriptionUpdateInterval
+<a id="services-proxy-suite-proxy-singbox-enable"></a>
+## services\.proxy-suite\.proxy\.singBox\.enable
+
+
+
+Whether to enable SingBox proxy backend\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-proxy-singbox-package"></a>
+## services\.proxy-suite\.proxy\.singBox\.package
+
+
+
+sing-box package used by proxy-suite systemd services\.
+
+Override this to pin or test a specific sing-box build when upstream
+protocol behavior changes\.
+
+
+
+*Type:*
+package
+
+
+
+*Default:*
+
+```nix
+pkgs.sing-box
+```
+
+
+
+*Example:*
+
+```nix
+pkgs.sing-box
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-proxy-singbox-clashapiport"></a>
+## services\.proxy-suite\.proxy\.singBox\.clashApiPort
+
+
+
+Port for the Clash-compatible REST API exposed by sing-box\.
+Only used when proxy\.selection is “selector” or “urltest”\. Ignored
+in “first” mode because there is no selector-style outbound to
+control\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+9090
+```
+
+
+
+*Example:*
+
+```nix
+9090
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-proxy-singbox-urltest-tolerance"></a>
+## services\.proxy-suite\.proxy\.singBox\.urlTest\.tolerance
+
+
+
+Latency tolerance in milliseconds for sing-box urltest\. The current
+proxy is only replaced when a competing one is faster by more than
+this value\.
+
+Only used when proxy\.selection = “urltest” and the SingBox backend
+is active\.
+
+
+
+*Type:*
+signed integer
+
+
+
+*Default:*
+
+```nix
+50
+```
+
+
+
+*Example:*
+
+```nix
+100
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-proxy-subscriptionupdateinterval"></a>
+## services\.proxy-suite\.proxy\.subscriptionUpdateInterval
 
 
 
@@ -2647,7 +2799,7 @@ How often the proxy-suite-subscription-update timer fires and refreshes
 all subscription caches\. Accepts any systemd time span string
 (e\.g\. “1h”, “6h”, “1d”, “12h”)\.
 
-Only used when singBox\.subscriptions is non-empty\. The timer also runs
+Only used when proxy\.subscriptions is non-empty\. The timer also runs
 once shortly after boot\.
 
 
@@ -2676,8 +2828,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-subscriptions"></a>
-## services\.proxy-suite\.singBox\.subscriptions
+<a id="services-proxy-suite-proxy-subscriptions"></a>
+## services\.proxy-suite\.proxy\.subscriptions
 
 
 
@@ -2686,12 +2838,12 @@ Each URL must return a base64-encoded newline-separated list of proxy URIs
 (standard v2rayN / Clash subscription format) or plain text of the same\.
 
 On first service start, each subscription is fetched live and cached
-under /var/lib/proxy-suite/subscriptions/\<tag>\.json\. Later restarts
+under /var/lib/proxy-suite/subscriptions/\<backend>/\<tag>\.json\. Later restarts
 reuse the cache, so ordinary service restarts do not need network access\.
 
-A systemd timer (proxy-suite-subscription-update) refreshes all caches on
-the interval set by subscriptionUpdateInterval and restarts the running
-sing-box services after a successful refresh\.
+A systemd timer (proxy-suite-subscription-update) refreshes all caches
+on the interval set by subscriptionUpdateInterval and restarts the
+running proxy services after a successful refresh\.
 
 
 
@@ -2728,8 +2880,8 @@ list of (submodule)
 
 
 
-<a id="services-proxy-suite-singbox-subscriptions-tag"></a>
-## services\.proxy-suite\.singBox\.subscriptions\.\*\.tag
+<a id="services-proxy-suite-proxy-subscriptions-tag"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.tag
 
 
 
@@ -2738,7 +2890,8 @@ Used as a prefix for all outbound tags generated from its proxy list,
 e\.g\. “my-sub” -> tags like “my-sub-Server-DE”\.
 
 This value is also used as the subscription cache filename stem under
-/var/lib/proxy-suite/subscriptions/, so it must be a safe identifier\.
+/var/lib/proxy-suite/subscriptions/\<backend>/, so it must be a safe
+identifier\.
 
 
 
@@ -2758,8 +2911,8 @@ string matching the pattern ^\[A-Za-z0-9]\[A-Za-z0-9\._-]\*$
 
 
 
-<a id="services-proxy-suite-singbox-subscriptions-url"></a>
-## services\.proxy-suite\.singBox\.subscriptions\.\*\.url
+<a id="services-proxy-suite-proxy-subscriptions-url"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.url
 
 
 
@@ -2796,8 +2949,8 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-subscriptions-urlfile"></a>
-## services\.proxy-suite\.singBox\.subscriptions\.\*\.urlFile
+<a id="services-proxy-suite-proxy-subscriptions-urlfile"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.urlFile
 
 
 
@@ -2833,12 +2986,12 @@ null
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-enable"></a>
-## services\.proxy-suite\.singBox\.tproxy\.enable
+<a id="services-proxy-suite-proxy-tproxy-enable"></a>
+## services\.proxy-suite\.proxy\.tproxy\.enable
 
 
 
-Whether to enable global sing-box TProxy mode service\.
+Whether to enable global proxy TProxy mode service\.
 
 
 
@@ -2866,14 +3019,14 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-autostart"></a>
-## services\.proxy-suite\.singBox\.tproxy\.autostart
+<a id="services-proxy-suite-proxy-tproxy-autostart"></a>
+## services\.proxy-suite\.proxy\.tproxy\.autostart
 
 
 
 Whether to start proxy-suite-tproxy automatically during boot by
 attaching it to multi-user\.target\.
-Cannot be enabled together with singBox\.tun\.autostart\.
+Cannot be enabled together with proxy\.tun\.autostart\.
 
 
 
@@ -2901,14 +3054,14 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-fwmark"></a>
-## services\.proxy-suite\.singBox\.tproxy\.fwmark
+<a id="services-proxy-suite-proxy-tproxy-fwmark"></a>
+## services\.proxy-suite\.proxy\.tproxy\.fwmark
 
 
 
 Mark applied to intercepted packets in global TProxy mode\.
 A matching ` ip rule ` routes this mark to
-singBox\.tproxy\.routeTable, which points traffic to
+proxy\.tproxy\.routeTable, which points traffic to
 loopback for local proxy processing\.
 
 
@@ -2937,8 +3090,8 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-localsubnets"></a>
-## services\.proxy-suite\.singBox\.tproxy\.localSubnets
+<a id="services-proxy-suite-proxy-tproxy-localsubnets"></a>
+## services\.proxy-suite\.proxy\.tproxy\.localSubnets
 
 
 
@@ -2980,12 +3133,12 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-perapp-enable"></a>
-## services\.proxy-suite\.singBox\.tproxy\.perApp\.enable
+<a id="services-proxy-suite-proxy-tproxy-perapp-enable"></a>
+## services\.proxy-suite\.proxy\.tproxy\.perApp\.enable
 
 
 
-Whether to enable per-app-scoped sing-box TProxy backend for perAppRouting profiles\.
+Whether to enable per-app-scoped proxy TProxy backend for perAppRouting profiles\.
 
 
 
@@ -3013,8 +3166,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-perapp-fwmark"></a>
-## services\.proxy-suite\.singBox\.tproxy\.perApp\.fwmark
+<a id="services-proxy-suite-proxy-tproxy-perapp-fwmark"></a>
+## services\.proxy-suite\.proxy\.tproxy\.perApp\.fwmark
 
 
 
@@ -3047,8 +3200,8 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-perapp-localsubnets"></a>
-## services\.proxy-suite\.singBox\.tproxy\.perApp\.localSubnets
+<a id="services-proxy-suite-proxy-tproxy-perapp-localsubnets"></a>
+## services\.proxy-suite\.proxy\.tproxy\.perApp\.localSubnets
 
 
 
@@ -3086,8 +3239,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-perapp-routetable"></a>
-## services\.proxy-suite\.singBox\.tproxy\.perApp\.routeTable
+<a id="services-proxy-suite-proxy-tproxy-perapp-routetable"></a>
+## services\.proxy-suite\.proxy\.tproxy\.perApp\.routeTable
 
 
 
@@ -3119,12 +3272,12 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-port"></a>
-## services\.proxy-suite\.singBox\.tproxy\.port
+<a id="services-proxy-suite-proxy-tproxy-port"></a>
+## services\.proxy-suite\.proxy\.tproxy\.port
 
 
 
-Local listen port for sing-box’s TProxy inbound\.
+Local listen port for the proxy backend’s TProxy inbound\.
 nftables redirection created by proxy-suite-tproxy sends intercepted
 TCP/UDP traffic to this port\.
 
@@ -3154,12 +3307,12 @@ TCP/UDP traffic to this port\.
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-proxymark"></a>
-## services\.proxy-suite\.singBox\.tproxy\.proxyMark
+<a id="services-proxy-suite-proxy-tproxy-proxymark"></a>
+## services\.proxy-suite\.proxy\.tproxy\.proxyMark
 
 
 
-Mark applied to sing-box egress packets in global TProxy mode so
+Mark applied to backend egress packets in global TProxy mode so
 they bypass re-interception and do not loop back into the
 transparent proxy path\.
 
@@ -3189,14 +3342,14 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tproxy-routetable"></a>
-## services\.proxy-suite\.singBox\.tproxy\.routeTable
+<a id="services-proxy-suite-proxy-tproxy-routetable"></a>
+## services\.proxy-suite\.proxy\.tproxy\.routeTable
 
 
 
 Policy-routing table number used for global TProxy interception flow\.
 The module installs a local default route in this table and binds it
-to singBox\.tproxy\.fwmark\.
+to proxy\.tproxy\.fwmark\.
 
 
 
@@ -3224,12 +3377,12 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tun-enable"></a>
-## services\.proxy-suite\.singBox\.tun\.enable
+<a id="services-proxy-suite-proxy-tun-enable"></a>
+## services\.proxy-suite\.proxy\.tun\.enable
 
 
 
-Whether to enable global sing-box TUN mode service\.
+Whether to enable global proxy TUN mode service\.
 
 
 
@@ -3257,8 +3410,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tun-address"></a>
-## services\.proxy-suite\.singBox\.tun\.address
+<a id="services-proxy-suite-proxy-tun-address"></a>
+## services\.proxy-suite\.proxy\.tun\.address
 
 
 
@@ -3290,14 +3443,14 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-tun-autostart"></a>
-## services\.proxy-suite\.singBox\.tun\.autostart
+<a id="services-proxy-suite-proxy-tun-autostart"></a>
+## services\.proxy-suite\.proxy\.tun\.autostart
 
 
 
 Whether to start proxy-suite-tun automatically during boot by
 attaching it to multi-user\.target\.
-Cannot be enabled together with singBox\.tproxy\.autostart\.
+Cannot be enabled together with proxy\.tproxy\.autostart\.
 
 
 
@@ -3325,8 +3478,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tun-interface"></a>
-## services\.proxy-suite\.singBox\.tun\.interface
+<a id="services-proxy-suite-proxy-tun-interface"></a>
+## services\.proxy-suite\.proxy\.tun\.interface
 
 
 
@@ -3358,8 +3511,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-tun-mtu"></a>
-## services\.proxy-suite\.singBox\.tun\.mtu
+<a id="services-proxy-suite-proxy-tun-mtu"></a>
+## services\.proxy-suite\.proxy\.tun\.mtu
 
 
 
@@ -3391,12 +3544,12 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-enable"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.enable
+<a id="services-proxy-suite-proxy-tun-perapp-enable"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.enable
 
 
 
-Whether to enable per-app-scoped sing-box TUN backend for perAppRouting profiles\.
+Whether to enable per-app-scoped proxy TUN backend for perAppRouting profiles\.
 
 
 
@@ -3424,8 +3577,8 @@ true
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-address"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.address
+<a id="services-proxy-suite-proxy-tun-perapp-address"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.address
 
 
 
@@ -3458,8 +3611,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-fwmark"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.fwmark
+<a id="services-proxy-suite-proxy-tun-perapp-fwmark"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.fwmark
 
 
 
@@ -3492,8 +3645,8 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-interface"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.interface
+<a id="services-proxy-suite-proxy-tun-perapp-interface"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.interface
 
 
 
@@ -3526,8 +3679,8 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-localsubnets"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.localSubnets
+<a id="services-proxy-suite-proxy-tun-perapp-localsubnets"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.localSubnets
 
 
 
@@ -3565,8 +3718,8 @@ list of string
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-mtu"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.mtu
+<a id="services-proxy-suite-proxy-tun-perapp-mtu"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.mtu
 
 
 
@@ -3598,8 +3751,8 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-tun-perapp-routetable"></a>
-## services\.proxy-suite\.singBox\.tun\.perApp\.routeTable
+<a id="services-proxy-suite-proxy-tun-perapp-routetable"></a>
+## services\.proxy-suite\.proxy\.tun\.perApp\.routeTable
 
 
 
@@ -3631,13 +3784,13 @@ signed integer
 
 
 
-<a id="services-proxy-suite-singbox-urltest-interval"></a>
-## services\.proxy-suite\.singBox\.urlTest\.interval
+<a id="services-proxy-suite-proxy-urltest-interval"></a>
+## services\.proxy-suite\.proxy\.urlTest\.interval
 
 
 
-How often sing-box re-tests all outbounds\. Accepts a Go duration
-string (e\.g\. “1m”, “3m”, “10m”)\.
+How often the active backend re-tests all outbounds\. Accepts a Go
+duration string (e\.g\. “1m”, “3m”, “10m”)\.
 Only used when selection = “urltest”\.
 
 
@@ -3666,48 +3819,12 @@ string
 
 
 
-<a id="services-proxy-suite-singbox-urltest-tolerance"></a>
-## services\.proxy-suite\.singBox\.urlTest\.tolerance
+<a id="services-proxy-suite-proxy-urltest-url"></a>
+## services\.proxy-suite\.proxy\.urlTest\.url
 
 
 
-Latency tolerance in milliseconds\. The current proxy is only replaced
-when a competing one is faster by more than this value\.
-
-Only used when selection = “urltest”\.
-
-
-
-*Type:*
-signed integer
-
-
-
-*Default:*
-
-```nix
-50
-```
-
-
-
-*Example:*
-
-```nix
-100
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
-
-
-
-<a id="services-proxy-suite-singbox-urltest-url"></a>
-## services\.proxy-suite\.singBox\.urlTest\.url
-
-
-
-URL that sing-box fetches through each proxy to measure latency\.
+URL that the active backend fetches through each proxy to measure latency\.
 Only used when selection = “urltest”\.
 
 Set this to a URL that is actually blocked in your region (e\.g\.
@@ -3738,6 +3855,75 @@ string
 
 *Declared by:*
  - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxy-xray-enable"></a>
+## services\.proxy-suite\.proxy\.xray\.enable
+
+
+
+Whether to enable XRay proxy backend\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-proxy-xray-package"></a>
+## services\.proxy-suite\.proxy\.xray\.package
+
+
+
+XRay package used by proxy-suite systemd services\.
+
+Override this to pin or test a specific XRay build when upstream
+protocol behavior changes\.
+
+
+
+*Type:*
+package
+
+
+
+*Default:*
+
+```nix
+pkgs.xray
+```
+
+
+
+*Example:*
+
+```nix
+pkgs.xray
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
 
 
 
@@ -3785,7 +3971,7 @@ transparent routing backends\.
 When enabled and global TUN or TProxy mode is configured, the
 tg-ws-proxy systemd service receives a packet mark and an earlier
 policy-routing rule back to the main table\. This prevents global TUN
-from routing the local Telegram MTProto relay through sing-box again,
+from routing the local Telegram MTProto relay through the proxy backend again,
 which can otherwise break tg-ws-proxy after enabling TUN mode\.
 
 
@@ -4101,8 +4287,6 @@ true
 <a id="services-proxy-suite-tray-pollinterval"></a>
 ## services\.proxy-suite\.tray\.pollInterval
 
-
-
 Tray status refresh interval in seconds\.
 Lower values make UI state changes appear faster, while higher values
 reduce background polling overhead\.
@@ -4309,6 +4493,8 @@ true
 <a id="services-proxy-suite-zapret-cidrexemption-cidrs"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.cidrs
 
+
+
 Subnets to exempt from zapret’s NFQUEUE mangle rules\.
 Useful when a VM (libvirt, etc\.) is behind NAT and zapret
 would corrupt its traffic through the host’s nftables\.
@@ -4471,7 +4657,7 @@ list of (submodule)
 
 
 
-Whether this custom hostlist should also be mirrored into sing-box
+Whether this custom hostlist should also be mirrored into proxy
 direct domain routing when zapret\.syncDirectRouting = true\.
 
 
@@ -4637,7 +4823,7 @@ and list-twitter\.txt in the generated zapret config when the selected
 upstream preset does not already reference them\.
 
 When syncDirectRouting = true, domains from these extra lists are also
-mirrored into sing-box direct routing\.
+mirrored into proxy direct routing\.
 
 
 
@@ -4671,7 +4857,7 @@ false
 
 
 Extra IPs/CIDRs to add to zapret’s ipset\.
-Mirrored into sing-box direct IP routing when
+Mirrored into proxy direct IP routing when
 syncDirectRoutingUserIps = true\.
 
 
@@ -4708,7 +4894,7 @@ list of string
 
 
 IPs/CIDRs to exclude from zapret’s ipset\.
-Also excluded from zapret-derived sing-box direct IP routing when
+Also excluded from zapret-derived proxy direct IP routing when
 syncDirectRoutingUserIps = true\.
 
 
@@ -4746,7 +4932,7 @@ list of string
 
 Domains to exclude from zapret interception\.
 When syncDirectRouting = true, these exclusions also remove matching
-domains from the zapret-derived sing-box direct-routing set\.
+domains from the zapret-derived proxy direct-routing set\.
 
 
 
@@ -4783,7 +4969,7 @@ list of string
 
 Extra domains to include in zapret’s interception list\.
 When syncDirectRouting = true, these domains are also mirrored into
-sing-box direct routing\.
+proxy direct routing\.
 
 
 
@@ -4921,7 +5107,7 @@ signed integer
 
 
 When zapret\.enable = true, mirror zapret’s upstream domain hostlists
-into sing-box direct domain routing\.
+into proxy direct domain routing\.
 
 This includes the default zapret domain lists and any custom
 hostlistRules entries with enableDirectSync = true\.
@@ -4958,7 +5144,7 @@ true
 
 
 When zapret\.enable = true, mirror zapret’s upstream ipset ranges
-(such as ipset-all\.txt minus exclusions) into sing-box direct IP routing\.
+(such as ipset-all\.txt minus exclusions) into proxy direct IP routing\.
 
 
 
@@ -4992,7 +5178,7 @@ false
 
 
 When zapret\.enable = true, mirror user-defined zapret\.ipsetAll and
-zapret\.ipsetExclude entries into sing-box direct IP routing\.
+zapret\.ipsetExclude entries into proxy direct IP routing\.
 
 
 
@@ -5017,5 +5203,4 @@ true
 
 *Declared by:*
  - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
-
 

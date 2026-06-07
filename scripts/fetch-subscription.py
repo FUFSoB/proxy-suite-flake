@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a subscription URL from stdin and emit a JSON array of outbounds."""
+"""Read a subscription URL from stdin and emit a JSON array of backend outbounds."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from proxy_parsing import decode_subscription, fetch_raw, parse_subscription
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Fetch a proxy subscription URL from stdin and emit a sing-box outbound JSON array."
+        description="Fetch a proxy subscription URL from stdin and emit a backend outbound JSON array."
     )
     ap.add_argument(
         "--tag-prefix",
@@ -18,6 +18,7 @@ def main() -> None:
         dest="tag_prefix",
         help="Prefix for outbound tags, e.g. 'my-sub'.",
     )
+    ap.add_argument("--backend", choices=["sing-box", "xray"], default="sing-box")
     ap.add_argument("--routing-mark", type=int, default=None, dest="routing_mark")
     args = ap.parse_args()
 
@@ -33,7 +34,7 @@ def main() -> None:
         sys.exit(1)
 
     lines = decode_subscription(raw)
-    outbounds = parse_subscription(lines, args.tag_prefix, args.routing_mark)
+    outbounds = parse_subscription(lines, args.tag_prefix, args.routing_mark, args.backend)
 
     if not outbounds:
         print("error: subscription contained no parseable proxy URIs", file=sys.stderr)

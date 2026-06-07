@@ -19,6 +19,12 @@ let
   derived = import ../derived.nix { inherit lib cfg; };
   inherit (derived)
     singBoxCfg
+    proxyCfg
+    xrayCfg
+    proxyEnabled
+    singBoxEnabled
+    xrayEnabled
+    activeBackend
     perAppRoutingCfg
     globalTun
     globalTproxy
@@ -39,6 +45,7 @@ let
   jq = "${pkgs.jq}/bin/jq";
   python3 = "${pkgs.python3}/bin/python3";
   singBox = "${singBoxCfg.package}/bin/sing-box";
+  xray = "${xrayCfg.package}/bin/xray";
   grepBin = "${pkgs.gnugrep}/bin/grep";
   awk = "${pkgs.gawk}/bin/awk";
   sleepBin = "${pkgs.coreutils}/bin/sleep";
@@ -60,6 +67,11 @@ let
       lib
       pkgs
       singBoxCfg
+      proxyCfg
+      proxyEnabled
+      singBoxEnabled
+      xrayEnabled
+      activeBackend
       perAppRoutingCfg
       userControlCfg
       perAppRoutingTun
@@ -71,6 +83,7 @@ let
       jq
       python3
       singBox
+      xray
       parserScriptsPythonPath
       buildOutboundPy
       fetchSubscriptionPy
@@ -84,6 +97,7 @@ let
       pkgs
       cfg
       singBoxCfg
+      proxyCfg
       perAppRoutingCfg
       perAppRoutingTun
       perAppRoutingTproxy
@@ -105,13 +119,14 @@ let
     inherit
       packages
       singBoxCfg
+      proxyCfg
       perAppRoutingCfg
       perAppRoutingTun
       perAppRoutingTproxy
       perAppZapretCfg
       selectionMode
       ;
-    inherit (scripts) subscriptionTagsFile;
+    inherit (scripts) subscriptionTagsFile subscriptionCacheDir;
     inherit (scripts) routeModeStateFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile
@@ -124,6 +139,12 @@ in
   inherit
     derived
     singBoxCfg
+    proxyCfg
+    xrayCfg
+    proxyEnabled
+    singBoxEnabled
+    xrayEnabled
+    activeBackend
     perAppRoutingCfg
     globalTun
     globalTproxy

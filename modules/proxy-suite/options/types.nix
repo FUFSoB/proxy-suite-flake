@@ -32,7 +32,7 @@ let
       default = [ ];
       description = ''
         sing-geosite rule-set names to match in this routing rule.
-        Each name becomes a sing-box geosite rule-set reference.
+        Each name becomes a backend geosite rule-set reference.
       '';
       example = [
         "netflix"
@@ -44,7 +44,7 @@ let
       default = [ ];
       description = ''
         sing-geoip rule-set names to match in this routing rule.
-        Each name becomes a sing-box geoip rule-set reference.
+        Each name becomes a backend geoip rule-set reference.
       '';
       example = [
         "us"
@@ -83,7 +83,8 @@ let
           e.g. "my-sub" -> tags like "my-sub-Server-DE".
 
           This value is also used as the subscription cache filename stem under
-          /var/lib/proxy-suite/subscriptions/, so it must be a safe identifier.
+          /var/lib/proxy-suite/subscriptions/<backend>/, so it must be a safe
+          identifier.
         '';
         example = "community-list";
       };
@@ -125,7 +126,7 @@ let
           Outbound tag used in routing rules and multi-outbound selection.
 
           With selection = "selector" or "urltest", each outbound keeps its own
-          tag and can be selected directly. With selection = "first", sing-box
+          tag and can be selected directly. With selection = "first", proxy-suite
           routes through a single active outbound tagged "proxy", so individual
           proxy tags are mainly useful for documentation and config structure.
         '';
@@ -158,7 +159,7 @@ let
         example = "hy2://password@example.com:443?sni=example.com";
       };
 
-      json = mkOption {
+      singBoxJson = mkOption {
         type = types.nullOr types.attrs;
         default = null;
         description = ''
@@ -166,9 +167,10 @@ let
           Embedded directly into the config at build time. The tag field
           is overridden by the outbound's tag option.
 
-          Set exactly one of urlFile, url, or json for each outbound.
+          Set exactly one of urlFile, url, singBoxJson, xrayJson, or json for
+          each outbound.
           Use this when the proxy definition is easier to generate as native Nix
-          than as a single URL string.
+          than as a single URL string. Only valid with the SingBox backend.
         '';
         example = {
           type = "vless";
@@ -176,6 +178,37 @@ let
           server_port = 443;
           uuid = "...";
         };
+      };
+
+      xrayJson = mkOption {
+        type = types.nullOr types.attrs;
+        default = null;
+        description = ''
+          Raw XRay outbound configuration as a Nix attribute set.
+          Embedded directly into the config at build time. The tag field is
+          overridden by the outbound's tag option.
+
+          Set exactly one of urlFile, url, singBoxJson, xrayJson, or json for
+          each outbound. Only valid with the XRay backend.
+        '';
+        example = {
+          protocol = "vless";
+          settings = {
+            address = "example.com";
+            port = 443;
+            id = "...";
+            encryption = "none";
+          };
+        };
+      };
+
+      json = mkOption {
+        type = types.nullOr types.attrs;
+        default = null;
+        visible = false;
+        description = ''
+          Deprecated alias for singBoxJson. Use singBoxJson instead.
+        '';
       };
 
       # Shorthand for attaching routing rules directly to an outbound definition.
@@ -196,7 +229,7 @@ let
         ];
         default = "udp";
         description = ''
-          sing-box DNS transport type for this upstream resolver.
+          DNS transport type for this upstream resolver.
         '';
         example = "tls";
       };
@@ -280,7 +313,7 @@ let
         type = types.bool;
         default = true;
         description = ''
-          Whether this custom hostlist should also be mirrored into sing-box
+          Whether this custom hostlist should also be mirrored into proxy
           direct domain routing when zapret.syncDirectRouting = true.
         '';
       };
@@ -317,7 +350,7 @@ let
             only that app's traffic is policy-routed into the app TUN backend.
           - "tproxy": launch the command in the dedicated per-app-routing TProxy
             slice so only that app's traffic is transparently intercepted by
-            the local sing-box TProxy inbound.
+            the local proxy TProxy inbound.
           - "zapret": launch the command in the dedicated per-app-routing zapret
             slice so only that app's traffic is handled by the separate
             per-app-scoped zapret instance.

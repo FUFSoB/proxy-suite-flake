@@ -2,12 +2,14 @@
 {
   packages,
   singBoxCfg,
+  proxyCfg,
   perAppRoutingCfg,
   perAppRoutingTun,
   perAppRoutingTproxy,
   perAppZapretCfg,
   selectionMode,
   subscriptionTagsFile,
+  subscriptionCacheDir,
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
   proxychainsQuietArg,
@@ -19,12 +21,13 @@
     selection = selectionMode;
     inherit
       subscriptionTagsFile
+      subscriptionCacheDir
       perAppRoutingProfilesFile
       proxychainsConfigFile
       proxychainsQuietArg
       routeModeStateFile
       ;
-    defaultRouteMode = if singBoxCfg.proxyByDefault then "blacklist" else "whitelist";
+    defaultRouteMode = if proxyCfg.proxyByDefault then "blacklist" else "whitelist";
     perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";
     perAppRoutingProxychainsEnabled = if perAppRoutingCfg.proxychains.enable then "1" else "0";
     perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";

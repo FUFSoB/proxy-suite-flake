@@ -4,8 +4,8 @@ let
   inherit (lib) mkOption mkEnableOption types;
 in
 {
-  options.services.proxy-suite.singBox.tproxy = {
-    enable = mkEnableOption "global sing-box TProxy mode service";
+  options.services.proxy-suite.proxy.tproxy = {
+    enable = mkEnableOption "global proxy TProxy mode service";
 
     autostart = mkOption {
       type = types.bool;
@@ -13,7 +13,7 @@ in
       description = ''
         Whether to start proxy-suite-tproxy automatically during boot by
         attaching it to multi-user.target.
-        Cannot be enabled together with singBox.tun.autostart.
+        Cannot be enabled together with proxy.tun.autostart.
       '';
       example = true;
     };
@@ -22,7 +22,7 @@ in
       type = types.port;
       default = 1081;
       description = ''
-        Local listen port for sing-box's TProxy inbound.
+        Local listen port for the proxy backend's TProxy inbound.
         nftables redirection created by proxy-suite-tproxy sends intercepted
         TCP/UDP traffic to this port.
       '';
@@ -35,7 +35,7 @@ in
       description = ''
         Mark applied to intercepted packets in global TProxy mode.
         A matching `ip rule` routes this mark to
-        singBox.tproxy.routeTable, which points traffic to
+        proxy.tproxy.routeTable, which points traffic to
         loopback for local proxy processing.
       '';
       example = 1;
@@ -45,7 +45,7 @@ in
       type = types.int;
       default = 2;
       description = ''
-        Mark applied to sing-box egress packets in global TProxy mode so
+        Mark applied to backend egress packets in global TProxy mode so
         they bypass re-interception and do not loop back into the
         transparent proxy path.
       '';
@@ -58,7 +58,7 @@ in
       description = ''
         Policy-routing table number used for global TProxy interception flow.
         The module installs a local default route in this table and binds it
-        to singBox.tproxy.fwmark.
+        to proxy.tproxy.fwmark.
       '';
       example = 100;
     };
@@ -81,7 +81,7 @@ in
     };
 
     perApp = {
-      enable = mkEnableOption "per-app-scoped sing-box TProxy backend for perAppRouting profiles";
+      enable = mkEnableOption "per-app-scoped proxy TProxy backend for perAppRouting profiles";
 
       fwmark = mkOption {
         type = types.int;

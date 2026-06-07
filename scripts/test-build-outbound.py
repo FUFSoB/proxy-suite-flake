@@ -11,6 +11,10 @@ def run_parser(url: str):
     return build_outbound(url, "test-outbound")
 
 
+def run_xray_parser(url: str):
+    return build_outbound(url, "test-outbound", backend="xray")
+
+
 class BuildOutboundTests(unittest.TestCase):
     def test_vless_reality(self):
         ob = run_parser(
@@ -49,6 +53,41 @@ class BuildOutboundTests(unittest.TestCase):
             run_parser(
                 "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com"
             )
+
+    def test_xray_vless_xhttp(self):
+        ob = run_xray_parser(
+            "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fx"
+        )
+        self.assertEqual(ob["protocol"], "vless")
+        self.assertEqual(ob["settings"]["address"], "example.com")
+        self.assertEqual(ob["settings"]["id"], "uuid")
+        self.assertEqual(ob["streamSettings"]["network"], "xhttp")
+        self.assertEqual(ob["streamSettings"]["xhttpSettings"]["path"], "/x")
+
+    def test_xray_vless_ech(self):
+        ob = run_xray_parser(
+            "vless://uuid@example.com:443?type=tcp&security=tls&sni=cdn.example.com&ech=udp%3A%2F%2F1.1.1.1"
+        )
+        self.assertEqual(ob["streamSettings"]["tlsSettings"]["echConfigList"], "udp://1.1.1.1")
+
+    def test_xray_socks_uses_current_flat_settings_shape(self):
+        ob = run_xray_parser("socks5://user:pass@example.com:1080")
+        self.assertEqual(ob["protocol"], "socks")
+        self.assertEqual(ob["settings"]["address"], "example.com")
+        self.assertEqual(ob["settings"]["user"], "user")
+        self.assertNotIn("servers", ob["settings"])
+
+    def test_xray_shadowsocks_uses_current_flat_settings_shape(self):
+        credentials = (
+            base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:passw0rd")
+            .decode()
+            .rstrip("=")
+        )
+        ob = run_xray_parser(f"ss://{credentials}@ss.example.com:8388")
+        self.assertEqual(ob["protocol"], "shadowsocks")
+        self.assertEqual(ob["settings"]["address"], "ss.example.com")
+        self.assertEqual(ob["settings"]["method"], "chacha20-ietf-poly1305")
+        self.assertNotIn("servers", ob["settings"])
 
     def test_vless_ech_fails_loudly(self):
         with self.assertRaisesRegex(ValueError, "unsupported VLESS parameter 'ech'"):

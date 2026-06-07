@@ -39,7 +39,7 @@ in
       default = true;
       description = ''
         When zapret.enable = true, mirror zapret's upstream domain hostlists
-        into sing-box direct domain routing.
+        into proxy direct domain routing.
 
         This includes the default zapret domain lists and any custom
         hostlistRules entries with enableDirectSync = true.
@@ -52,7 +52,7 @@ in
       default = false;
       description = ''
         When zapret.enable = true, mirror zapret's upstream ipset ranges
-        (such as ipset-all.txt minus exclusions) into sing-box direct IP routing.
+        (such as ipset-all.txt minus exclusions) into proxy direct IP routing.
       '';
       example = false;
     };
@@ -62,7 +62,7 @@ in
       default = true;
       description = ''
         When zapret.enable = true, mirror user-defined zapret.ipsetAll and
-        zapret.ipsetExclude entries into sing-box direct IP routing.
+        zapret.ipsetExclude entries into proxy direct IP routing.
       '';
       example = true;
     };
@@ -87,7 +87,7 @@ in
       description = ''
         Extra domains to include in zapret's interception list.
         When syncDirectRouting = true, these domains are also mirrored into
-        sing-box direct routing.
+        proxy direct routing.
       '';
       example = [ "youtube.com" ];
     };
@@ -98,7 +98,7 @@ in
       description = ''
         Domains to exclude from zapret interception.
         When syncDirectRouting = true, these exclusions also remove matching
-        domains from the zapret-derived sing-box direct-routing set.
+        domains from the zapret-derived proxy direct-routing set.
       '';
       example = [ "music.youtube.com" ];
     };
@@ -108,7 +108,7 @@ in
       default = [ ];
       description = ''
         Extra IPs/CIDRs to add to zapret's ipset.
-        Mirrored into sing-box direct IP routing when
+        Mirrored into proxy direct IP routing when
         syncDirectRoutingUserIps = true.
       '';
       example = [ "203.0.113.0/24" ];
@@ -119,7 +119,7 @@ in
       default = [ ];
       description = ''
         IPs/CIDRs to exclude from zapret's ipset.
-        Also excluded from zapret-derived sing-box direct IP routing when
+        Also excluded from zapret-derived proxy direct IP routing when
         syncDirectRoutingUserIps = true.
       '';
       example = [ "203.0.113.10/32" ];
@@ -134,7 +134,7 @@ in
         upstream preset does not already reference them.
 
         When syncDirectRouting = true, domains from these extra lists are also
-        mirrored into sing-box direct routing.
+        mirrored into proxy direct routing.
       '';
       example = false;
     };

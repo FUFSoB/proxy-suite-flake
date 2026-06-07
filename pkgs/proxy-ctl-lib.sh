@@ -14,7 +14,7 @@ _usage() {
   echo "Commands:"
   echo "  help                      show this help message"
   echo "  status [--tray]           show status of all proxy-suite services"
-  echo "  proxy on|off              enable/disable the sing-box proxy stack"
+  echo "  proxy on|off              enable/disable the proxy backend stack"
   echo "  tproxy on|off             enable/disable TProxy transparent mode"
   echo "  tun on|off                enable/disable TUN mode"
   echo "  route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
@@ -27,7 +27,7 @@ _usage() {
   echo "  apps                      list configured per-app routing profiles"
   echo "  wrap <profile> -- <cmd>   run a command via a perAppRouting profile"
   echo "  subscription list         show subscriptions, cache age, and proxy count"
-  echo "  subscription update       force-refresh all subscription caches and restart active sing-box services"
+  echo "  subscription update       force-refresh all subscription caches and restart active proxy services"
   exit "$status"
 }
 
@@ -240,11 +240,11 @@ cmd_status() {
 cmd_proxy() {
   case "${1:-on}" in
     on)
-      _require_service proxy-suite-socks "SOCKS proxy service is not available because singBox is not enabled."
+      _require_service proxy-suite-socks "SOCKS proxy service is not available because proxy.enable is not enabled."
       systemctl start proxy-suite-socks
       ;;
     off)
-      _require_service proxy-suite-socks "SOCKS proxy service is not available because singBox is not enabled."
+      _require_service proxy-suite-socks "SOCKS proxy service is not available because proxy.enable is not enabled."
       _stop_if_exists proxy-suite-tproxy
       _stop_if_exists proxy-suite-tun
       systemctl stop proxy-suite-socks
@@ -281,7 +281,7 @@ cmd_route_mode() {
   local action
 
   if ! _svc_exists proxy-suite-socks; then
-    echo "Route mode is unavailable because sing-box services are not enabled."
+    echo "Route mode is unavailable because proxy services are not enabled."
     exit 1
   fi
 
@@ -410,13 +410,13 @@ cmd_wrap() {
     tun)
       _check_no_global_proxy tun
       _wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED" \
-        "Profile '$profile' uses route=tun, but singBox.tun.perApp.enable is false." \
+        "Profile '$profile' uses route=tun, but proxy.tun.perApp.enable is false." \
         "proxy-suite-per-app-tun.service" "$@"
       ;;
     tproxy)
       _check_no_global_proxy tproxy
       _wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED" \
-        "Profile '$profile' uses route=tproxy, but singBox.tproxy.perApp.enable is false." \
+        "Profile '$profile' uses route=tproxy, but proxy.tproxy.perApp.enable is false." \
         "proxy-suite-per-app-tproxy.service" "$@"
       ;;
     zapret)
@@ -439,7 +439,7 @@ cmd_subscription() {
 
   case "$subcmd" in
     list)
-      CACHE_DIR="/var/lib/proxy-suite/subscriptions"
+      CACHE_DIR="${SUB_CACHE_DIR:-/var/lib/proxy-suite/subscriptions}"
       if [ ${#SUB_TAGS[@]} -eq 0 ]; then
         echo "No subscriptions configured."
         return

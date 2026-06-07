@@ -13,14 +13,186 @@ def detect_scheme(url: str) -> str:
     return url.split("://", 1)[0].lower()
 
 
-def build_outbound(url: str, tag: str, routing_mark: int | None = None) -> dict:
+def _parse_url(url: str, tag: str, backend: str) -> dict:
     scheme = detect_scheme(url)
     if scheme not in PARSERS:
         raise ValueError(f"unsupported scheme '{scheme}'")
 
-    outbound = PARSERS[scheme](url, tag)
+    parser = PARSERS[scheme]
+    try:
+        return parser(url, tag, backend)
+    except TypeError:
+        return parser(url, tag)
+
+
+def _xray_sockopt(routing_mark: int | None) -> dict:
+    if routing_mark is None:
+        return {}
+    return {"streamSettings": {"sockopt": {"mark": routing_mark}}}
+
+
+def _xray_tls(tls: dict | None) -> tuple[str, dict]:
+    if not tls or not tls.get("enabled"):
+        return "none", {}
+
+    if tls.get("reality", {}).get("enabled"):
+        reality = tls["reality"]
+        settings = {
+            "serverName": tls.get("server_name", ""),
+            "publicKey": reality["public_key"],
+            "shortId": reality.get("short_id", ""),
+        }
+        utls = tls.get("utls", {})
+        if utls.get("enabled") and utls.get("fingerprint"):
+            settings["fingerprint"] = utls["fingerprint"]
+        return "reality", {"realitySettings": settings}
+
+    settings = {"serverName": tls.get("server_name", "")}
+    if tls.get("alpn"):
+        settings["alpn"] = tls["alpn"]
+    if tls.get("insecure"):
+        settings["allowInsecure"] = True
+    if tls.get("ech_config_list"):
+        settings["echConfigList"] = tls["ech_config_list"]
+    utls = tls.get("utls", {})
+    if utls.get("enabled") and utls.get("fingerprint"):
+        settings["fingerprint"] = utls["fingerprint"]
+    return "tls", {"tlsSettings": settings}
+
+
+def _xray_transport(transport: dict | None) -> tuple[str, dict]:
+    if not transport:
+        return "tcp", {}
+
+    t = transport["type"]
+    if t == "ws":
+        return "ws", {"wsSettings": {"path": transport.get("path", "/"), "headers": transport.get("headers", {})}}
+    if t == "grpc":
+        return "grpc", {"grpcSettings": {"serviceName": transport.get("service_name", "")}}
+    if t == "http":
+        return "http", {"httpSettings": {"host": transport.get("host", []), "path": transport.get("path", "/")}}
+    if t == "httpupgrade":
+        return "httpupgrade", {
+            "httpupgradeSettings": {
+                "host": transport.get("host", ""),
+                "path": transport.get("path", "/"),
+            }
+        }
+    if t == "quic":
+        return "quic", {}
+    if t == "xhttp":
+        return "xhttp", {
+            "xhttpSettings": {
+                "host": transport.get("host", ""),
+                "path": transport.get("path", "/"),
+            }
+        }
+    return t, {}
+
+
+def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
+    typ = ob["type"]
+    tag = ob["tag"]
+
+    def stream_settings() -> dict:
+        security, sec = _xray_tls(ob.get("tls"))
+        network, net = _xray_transport(ob.get("transport"))
+        stream = {"network": network, "security": security}
+        stream.update(sec)
+        stream.update(net)
+        if routing_mark is not None:
+            stream.setdefault("sockopt", {})["mark"] = routing_mark
+        return stream
+
+    if typ == "vless":
+        settings = {
+            "address": ob["server"],
+            "port": ob["server_port"],
+            "id": ob["uuid"],
+            "encryption": "none",
+        }
+        if ob.get("flow"):
+            settings["flow"] = ob["flow"]
+        return {"protocol": "vless", "tag": tag, "settings": settings, "streamSettings": stream_settings()}
+
+    if typ == "vmess":
+        settings = {
+            "address": ob["server"],
+            "port": ob["server_port"],
+            "id": ob["uuid"],
+            "security": ob.get("security", "auto"),
+            "alterId": ob.get("alter_id", 0),
+        }
+        return {"protocol": "vmess", "tag": tag, "settings": settings, "streamSettings": stream_settings()}
+
+    if typ == "trojan":
+        settings = {
+            "address": ob["server"],
+            "port": ob["server_port"],
+            "password": ob["password"],
+        }
+        return {"protocol": "trojan", "tag": tag, "settings": settings, "streamSettings": stream_settings()}
+
+    if typ == "shadowsocks":
+        settings = {
+            "address": ob["server"],
+            "port": ob["server_port"],
+            "method": ob["method"],
+            "password": ob["password"],
+        }
+        return {"protocol": "shadowsocks", "tag": tag, "settings": settings, **_xray_sockopt(routing_mark)}
+
+    if typ == "hysteria2":
+        stream = stream_settings()
+        stream["network"] = "hysteria"
+        stream["security"] = "tls"
+        settings = {
+            "version": 2,
+            "address": ob["server"],
+            "port": ob["server_port"],
+        }
+        if ob.get("password"):
+            settings["password"] = ob["password"]
+        return {"protocol": "hysteria", "tag": tag, "settings": settings, "streamSettings": stream}
+
+    if typ == "socks":
+        settings = {"address": ob["server"], "port": ob["server_port"]}
+        if ob.get("username"):
+            settings["user"] = ob["username"]
+            settings["pass"] = ob.get("password", "")
+        return {"protocol": "socks", "tag": tag, "settings": settings, **_xray_sockopt(routing_mark)}
+
+    if typ == "http":
+        settings = {"address": ob["server"], "port": ob["server_port"]}
+        if ob.get("username"):
+            settings["user"] = ob["username"]
+            settings["pass"] = ob.get("password", "")
+        outbound = {"protocol": "http", "tag": tag, "settings": settings}
+        if ob.get("tls"):
+            security, sec = _xray_tls(ob.get("tls"))
+            outbound["streamSettings"] = {"security": security, **sec}
+            if routing_mark is not None:
+                outbound["streamSettings"].setdefault("sockopt", {})["mark"] = routing_mark
+        elif routing_mark is not None:
+            outbound.update(_xray_sockopt(routing_mark))
+        return outbound
+
+    raise ValueError(f"unsupported XRay outbound type '{typ}'")
+
+
+def build_outbound(
+    url: str, tag: str, routing_mark: int | None = None, backend: str = "sing-box"
+) -> dict:
+    if backend not in {"sing-box", "xray"}:
+        raise ValueError(f"unsupported backend '{backend}'")
+
+    outbound = _parse_url(url, tag, backend)
     if routing_mark is not None:
+        if backend == "xray":
+            return render_xray_outbound(outbound, routing_mark)
         outbound["routing_mark"] = routing_mark
+    elif backend == "xray":
+        return render_xray_outbound(outbound)
     return outbound
 
 
@@ -63,7 +235,7 @@ def make_tag(prefix: str, remark: str, index: int) -> str:
 
 
 def parse_subscription(
-    lines: list[str], tag_prefix: str, routing_mark: int | None
+    lines: list[str], tag_prefix: str, routing_mark: int | None, backend: str = "sing-box"
 ) -> list[dict]:
     outbounds = []
     seen_tags: set[str] = set()
@@ -84,7 +256,7 @@ def parse_subscription(
             tag = f"{base_tag}-{suffix}"
 
         try:
-            outbound = build_outbound(line, tag, routing_mark)
+            outbound = build_outbound(line, tag, routing_mark, backend)
         except Exception as exc:
             print(f"warning: skipping entry {index} ({scheme}): {exc}", file=sys.stderr)
             continue

@@ -6,7 +6,7 @@ let
 in
 {
   options.services.proxy-suite = {
-    enable = mkEnableOption "proxy suite (sing-box + zapret + tg-ws-proxy)";
+    enable = mkEnableOption "proxy suite (proxy backend + zapret + tg-ws-proxy)";
 
     userControl = {
       group = mkOption {
@@ -141,7 +141,7 @@ in
           When enabled and global TUN or TProxy mode is configured, the
           tg-ws-proxy systemd service receives a packet mark and an earlier
           policy-routing rule back to the main table. This prevents global TUN
-          from routing the local Telegram MTProto relay through sing-box again,
+          from routing the local Telegram MTProto relay through the proxy backend again,
           which can otherwise break tg-ws-proxy after enabling TUN mode.
         '';
         example = true;

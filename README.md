@@ -2,7 +2,7 @@
 
 Declarative proxy stack for NixOS.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
 
 The goal is to replace GUI clients like v2rayN and throne – you configure your proxies in Nix, rebuild, and they just work as systemd services.
 
@@ -10,14 +10,15 @@ The goal is to replace GUI clients like v2rayN and throne – you configure your
 
 ## What it gives you
 
-- **SOCKS5/HTTP proxy** on `127.0.0.1:1080` by default – always running, always available to apps
-- **Transparent proxy (TProxy)** – redirect all system traffic through sing-box without configuring each app; start/stop on demand or autostart at boot
+- **SOCKS5/HTTP proxy** on `127.0.0.1:1080` when `proxy.enable = true`
+- **Backend choice** – use SingBox or XRay through the same `services.proxy-suite.proxy` option tree
+- **Transparent proxy (TProxy)** – redirect all system traffic through the active backend without configuring each app; start/stop on demand or autostart at boot
 - **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something, with optional boot-time autostart
 - **Per-app wrapping** – run selected apps through the local proxy with `proxy-ctl wrap <profile> -- <command>`, without enabling global TProxy or TUN
 - **Subscription URLs** – point at a v2rayN/Clash-format subscription endpoint; the module fetches, decodes, and imports all proxies automatically, with a periodic refresh timer
 - **Multiple outbounds** with automatic latency-based switching or manual selection
 - **Per-outbound routing** – route specific domains, IPs, or geo sets to specific servers
-- **Protocol support**: vless (Reality, TLS), vmess, trojan, shadowsocks, hysteria2, TUIC v5, socks5, socks4, http/https proxy
+- **Protocol support**: vless (Reality, TLS), vmess, trojan, shadowsocks, hysteria2, socks5, socks4, http/https proxy; SingBox also supports TUIC v5, while XRay supports XHTTP/ECH share links
 - **`proxy-ctl`** – control script for managing services, switching outbounds, and following logs
 - **DPI bypass** via zapret – handles YouTube, Discord, and other sites defined by the project
 - **Telegram proxy** – running local MTProto WebSocket proxy using tg-ws-proxy
@@ -46,8 +47,12 @@ Feature-complete starter config:
 services.proxy-suite = {
   enable = true;
 
-  singBox = {
+  proxy = {
     enable = true;
+    singBox.enable = true;
+    # Or use XRay instead:
+    # xray.enable = true;
+
     port = 1080;
 
     # Individual proxy example
@@ -132,7 +137,7 @@ Usage: proxy-ctl <command> [args]
 Commands:
   help                      show this help message
   status [--tray]           show status of all proxy-suite services
-  proxy on|off              enable/disable the sing-box proxy stack
+  proxy on|off              enable/disable the proxy backend stack
   tproxy on|off             enable/disable TProxy transparent mode
   tun on|off                enable/disable TUN mode
   route-mode default|whitelist|blacklist|all-proxy|all-bypass|status
@@ -145,6 +150,6 @@ Commands:
   apps                      list configured per-app routing profiles
   wrap <profile> -- <cmd>   run a command via a perAppRouting profile
   subscription list         show subscriptions, cache age, and proxy count
-  subscription update       force-refresh all subscription caches and restart active sing-box services
+  subscription update       force-refresh all subscription caches and restart active proxy services
 ```
 <!-- proxy-ctl-help:end -->

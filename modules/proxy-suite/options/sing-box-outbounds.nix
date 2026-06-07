@@ -5,16 +5,18 @@ let
   t = import ./types.nix { inherit lib; };
 in
 {
-  options.services.proxy-suite.singBox = {
+  options.services.proxy-suite.proxy = {
     outbounds = mkOption {
       type = types.listOf t.outboundType;
       default = [ ];
       description = ''
         List of static proxy outbounds.
-        Set exactly one of urlFile, url, or json per entry.
+        Set exactly one of urlFile, url, singBoxJson, xrayJson, or the
+        deprecated json field per entry. Backend-specific raw JSON fields are
+        only valid with their matching backend.
 
         At least one outbound or one subscription is required when
-        singBox.enable = true.
+        proxy.enable = true.
       '';
       example = [
         {
@@ -37,12 +39,12 @@ in
         (standard v2rayN / Clash subscription format) or plain text of the same.
 
         On first service start, each subscription is fetched live and cached
-        under /var/lib/proxy-suite/subscriptions/<tag>.json. Later restarts
+        under /var/lib/proxy-suite/subscriptions/<backend>/<tag>.json. Later restarts
         reuse the cache, so ordinary service restarts do not need network access.
 
-        A systemd timer (proxy-suite-subscription-update) refreshes all caches on
-        the interval set by subscriptionUpdateInterval and restarts the running
-        sing-box services after a successful refresh.
+        A systemd timer (proxy-suite-subscription-update) refreshes all caches
+        on the interval set by subscriptionUpdateInterval and restarts the
+        running proxy services after a successful refresh.
       '';
       example = [
         {
@@ -64,7 +66,7 @@ in
         all subscription caches. Accepts any systemd time span string
         (e.g. "1h", "6h", "1d", "12h").
 
-        Only used when singBox.subscriptions is non-empty. The timer also runs
+        Only used when proxy.subscriptions is non-empty. The timer also runs
         once shortly after boot.
       '';
       example = "6h";
@@ -86,11 +88,13 @@ in
         - "selector": create a Clash-compatible selector outbound tagged
           "proxy" and keep all configured outbounds available for manual
           switching via the Clash API.
-        - "urltest": create an automatic latency-testing outbound tagged
-          "proxy" and keep all configured outbounds available so sing-box
-          can periodically probe and switch to a faster one.
+        - "urltest": create automatic latency testing tagged "proxy" and
+          keep all configured outbounds available so the active backend can
+          periodically probe and switch to a faster one.
 
-        clashApiPort is only used with "selector" or "urltest".
+        proxy.singBox.clashApiPort is only used with "selector" or "urltest"
+        on the SingBox backend. "selector" is SingBox-only. "urltest" maps to
+        SingBox urltest or XRay observatory/balancer depending on backend.
         urlTest.* options are only used with "urltest".
         Per-outbound tags are only individually meaningful with "selector"
         or "urltest".
@@ -103,7 +107,7 @@ in
         type = types.str;
         default = "https://www.gstatic.com/generate_204";
         description = ''
-          URL that sing-box fetches through each proxy to measure latency.
+          URL that the active backend fetches through each proxy to measure latency.
           Only used when selection = "urltest".
 
           Set this to a URL that is actually blocked in your region (e.g.
@@ -118,35 +122,12 @@ in
         type = types.str;
         default = "3m";
         description = ''
-          How often sing-box re-tests all outbounds. Accepts a Go duration
-          string (e.g. "1m", "3m", "10m").
+          How often the active backend re-tests all outbounds. Accepts a Go
+          duration string (e.g. "1m", "3m", "10m").
           Only used when selection = "urltest".
         '';
         example = "1m";
       };
-
-      tolerance = mkOption {
-        type = types.int;
-        default = 50;
-        description = ''
-          Latency tolerance in milliseconds. The current proxy is only replaced
-          when a competing one is faster by more than this value.
-
-          Only used when selection = "urltest".
-        '';
-        example = 100;
-      };
-    };
-
-    clashApiPort = mkOption {
-      type = types.port;
-      default = 9090;
-      description = ''
-        Port for the Clash-compatible REST API exposed by sing-box.
-        Only used when selection is "selector" or "urltest". Ignored in
-        "first" mode because there is no selector-style outbound to control.
-      '';
-      example = 9090;
     };
   };
 }

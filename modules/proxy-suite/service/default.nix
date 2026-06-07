@@ -1,4 +1,4 @@
-# Assembles all sing-box systemd services from the sub-modules.
+# Assembles proxy-suite systemd services from the sub-modules.
 {
   config,
   lib,
@@ -55,6 +55,10 @@ let
 
   inherit (derived)
     singBoxCfg
+    proxyCfg
+    proxyEnabled
+    xrayEnabled
+    activeBackend
     perAppRoutingCfg
     globalTun
     globalTproxy
@@ -82,12 +86,34 @@ let
   };
 
   localProxyAuthEnabled =
-    singBoxCfg.auth.username != null
-    && (singBoxCfg.auth.password != null || singBoxCfg.auth.passwordFile != null);
+    proxyCfg.auth.username != null
+    && (proxyCfg.auth.password != null || proxyCfg.auth.passwordFile != null);
 
-  # Must match the explicit iproute2_* indexes written to the global TUN
-  # sing-box template in config.nix.
+  # Must match the explicit iproute2_* indexes written to the global SingBox TUN
+  # template in config.nix. XRay uses the same table for manual Linux
+  # policy routing because XRay's autoSystemRoutingTable is not Linux-ready.
   tunAutoRouteTableIndex = 2022;
+  tunAutoRouteRulePriority = 9000;
+
+  xrayTunUpScript = pkgs.writeShellScript "proxy-suite-xray-tun-up" ''
+    set -euo pipefail
+
+    for _ in $(${pkgs.coreutils}/bin/seq 1 50); do
+      if ${ip} link show dev ${lib.escapeShellArg globalTun.interface} >/dev/null 2>&1; then
+        break
+      fi
+      ${pkgs.coreutils}/bin/sleep 0.1
+    done
+
+    if ! ${ip} link show dev ${lib.escapeShellArg globalTun.interface} >/dev/null 2>&1; then
+      echo "proxy-suite: XRay TUN interface ${globalTun.interface} did not appear in time" >&2
+      exit 1
+    fi
+
+    while ${ip} -4 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
+    ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
+    ${ip} -4 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
+  '';
 
   tproxyUpScript = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
     set -euo pipefail
@@ -115,7 +141,7 @@ let
   tunCleanupScript = pkgs.writeShellScript "proxy-suite-tun-cleanup" ''
     set +e
 
-    # sing-box normally removes these on graceful shutdown, but stale
+    # SingBox normally removes these on graceful shutdown, but stale
     # auto_route/auto_redirect state leaves the host routing through a dead TUN
     # interface after `proxy-ctl tun off` or an unclean service stop.
     ${nft} delete table inet sing-box 2>/dev/null || true
@@ -130,10 +156,10 @@ let
 
   systemServiceEntries = [
     {
-      enable = singBoxCfg.enable;
+      enable = proxyEnabled;
       name = serviceNames.socks;
       value = mkRestartingService {
-        description = "sing-box proxy client (SOCKS + TProxy-ready)";
+        description = "${if xrayEnabled then "XRay" else "sing-box"} proxy client (SOCKS + TProxy-ready)";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
@@ -143,10 +169,10 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && globalTproxy.enable;
+      enable = proxyEnabled && globalTproxy.enable;
       name = serviceNames.tproxy;
       value = mkOneshotService {
-        description = "sing-box TProxy – nftables rules and policy routing";
+        description = "proxy-suite TProxy - nftables rules and policy routing";
         after = [
           "network.target"
           "${serviceNames.socks}.service"
@@ -162,26 +188,27 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && globalTun.enable;
+      enable = proxyEnabled && globalTun.enable;
       name = serviceNames.tun;
       value = mkRestartingService {
-        description = "sing-box TUN proxy client";
+        description = "${if xrayEnabled then "XRay" else "sing-box"} TUN proxy client";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         wantedBy = lib.optionals globalTun.autostart [ "multi-user.target" ];
         conflicts = [ "${serviceNames.tproxy}.service" ];
         execStartPre = tunCleanupScript;
         execStart = scripts.startTun;
+        execStartPost = if xrayEnabled then xrayTunUpScript else null;
         execStopPost = tunCleanupScript;
         runtimeDirectory = serviceNames.tun;
         stateDirectory = "proxy-suite";
       };
     }
     {
-      enable = singBoxCfg.enable && perAppRoutingTun.enable;
+      enable = proxyEnabled && perAppRoutingTun.enable;
       name = serviceNames.perAppTun;
       value = mkRestartingService {
-        description = "sing-box per-app-routing TUN backend";
+        description = "proxy-suite per-app-routing TUN backend";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         execStartPre = perAppRouting.perAppTunDownScript;
@@ -193,7 +220,7 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && perAppRoutingTun.enable;
+      enable = proxyEnabled && perAppRoutingTun.enable;
       name = "${serviceNames.perAppTun}-user@";
       value = mkUserRuleService {
         description = "Enable proxy-suite app TUN marking for user %i";
@@ -203,7 +230,7 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && perAppRoutingTproxy.enable;
+      enable = proxyEnabled && perAppRoutingTproxy.enable;
       name = serviceNames.perAppTproxy;
       value = mkOneshotService {
         description = "proxy-suite per-app-routing TProxy backend";
@@ -221,7 +248,7 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && perAppRoutingTproxy.enable;
+      enable = proxyEnabled && perAppRoutingTproxy.enable;
       name = "${serviceNames.perAppTproxy}-user@";
       value = mkUserRuleService {
         description = "Enable proxy-suite app TProxy marking for user %i";
@@ -241,7 +268,7 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable && hasSubscriptions;
+      enable = proxyEnabled && hasSubscriptions;
       name = serviceNames.subscriptionUpdate;
       value = mkOneshotService {
         description = "Refresh proxy-suite subscription caches";
@@ -252,7 +279,7 @@ let
       };
     }
     {
-      enable = singBoxCfg.enable;
+      enable = proxyEnabled;
       name = "proxy-suite-route-mode@";
       value = mkOneshotService {
         description = "Set proxy-suite route mode to %i";
@@ -282,14 +309,14 @@ let
 
   timerEntries = [
     {
-      enable = singBoxCfg.enable && hasSubscriptions;
+      enable = proxyEnabled && hasSubscriptions;
       name = serviceNames.subscriptionUpdate;
       value = {
         description = "Periodic proxy-suite subscription refresh";
         wantedBy = [ "timers.target" ];
         timerConfig = {
           OnBootSec = "5m";
-          OnUnitActiveSec = singBoxCfg.subscriptionUpdateInterval;
+          OnUnitActiveSec = proxyCfg.subscriptionUpdateInterval;
         };
       };
     }
@@ -299,7 +326,7 @@ in
   environment.systemPackages = [ control.proxyCtl ];
 
   # nftables must be on for transparent routing backends. Global TUN uses
-  # sing-box auto_redirect, which programs an `inet sing-box` nftables table.
+  # SingBox auto_redirect programs an `inet sing-box` nftables table.
   networking.nftables.enable = lib.mkIf (
     globalTun.enable
     || globalTproxy.enable

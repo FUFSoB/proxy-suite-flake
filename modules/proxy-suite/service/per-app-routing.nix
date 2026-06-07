@@ -4,6 +4,7 @@
   pkgs,
   cfg,
   singBoxCfg,
+  proxyCfg,
   perAppRoutingCfg,
   perAppRoutingTun,
   perAppRoutingTproxy,
@@ -62,7 +63,7 @@ let
       profile: !(builtins.elem profile.name perAppRoutingProfileNames)
     ) defaultPerAppRoutingProfiles;
   effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
-  localProxyAuth = singBoxCfg.auth;
+  localProxyAuth = proxyCfg.auth;
   localProxyAuthEnabled =
     localProxyAuth.username != null
     && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
@@ -83,7 +84,7 @@ let
         tcp_connect_time_out 8000
 
         [ProxyList]
-        socks5 ${singBoxCfg.listenAddress} ${toString singBoxCfg.port}
+        socks5 ${proxyCfg.listenAddress} ${toString proxyCfg.port}
       '';
   proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 

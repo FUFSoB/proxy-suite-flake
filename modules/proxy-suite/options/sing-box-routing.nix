@@ -5,7 +5,7 @@ let
   t = import ./types.nix { inherit lib; };
 in
 {
-  options.services.proxy-suite.singBox.routing = {
+  options.services.proxy-suite.proxy.routing = {
     enableRuDirect = mkOption {
       type = types.bool;
       default = true;
@@ -98,7 +98,7 @@ in
         The outbound can be a configured outbound tag (useful with selector/urltest),
         or one of: "proxy" (active proxy), "direct", "block".
 
-        Order is preserved. The first matching rule wins in sing-box.
+        Order is preserved. The first matching rule wins in the active backend.
         With selection = "first", non-built-in outbound tags are effectively
         routed to the single active "proxy" outbound.
       '';

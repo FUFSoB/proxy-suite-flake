@@ -5,7 +5,7 @@ let
   t = import ./types.nix { inherit lib; };
 in
 {
-  options.services.proxy-suite.singBox.dns = {
+  options.services.proxy-suite.proxy.dns = {
     local = mkOption {
       type = t.dnsUpstreamType;
       default = {
@@ -15,7 +15,7 @@ in
       };
       description = ''
         DNS upstream used for the built-in "local" resolver role.
-        This resolver is also used as sing-box route.default_domain_resolver.
+        This resolver is also used as the backend's default domain resolver.
 
         The module keeps detour policy automatic: in mixed/TProxy mode and
         per-app-routing TUN mode, "local" stays on the direct path (without an
@@ -40,7 +40,7 @@ in
         DNS upstream used for the built-in "remote" resolver role.
 
         This resolver always detours through the proxy and becomes the
-        generated dns.final target when singBox.proxyByDefault = true.
+        generated dns.final target when proxy.proxyByDefault = true.
       '';
       example = {
         type = "tls";

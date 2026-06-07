@@ -6,10 +6,10 @@
 }:
 
 let
-  singBoxCfg = cfg.singBox;
-  globalTproxy = singBoxCfg.tproxy;
-  perAppTun = singBoxCfg.tun.perApp;
-  perAppTproxy = singBoxCfg.tproxy.perApp;
+  proxyCfg = cfg.proxy;
+  globalTproxy = proxyCfg.tproxy;
+  perAppTun = proxyCfg.tun.perApp;
+  perAppTproxy = proxyCfg.tproxy.perApp;
   zapretApp = cfg.zapret.perApp;
   tgWsProxyCfg = cfg.tgWsProxy;
   tgWsProxyBypassEnabled = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;

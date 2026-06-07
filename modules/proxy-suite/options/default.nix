@@ -3,6 +3,7 @@
 {
   imports = [
     ./other.nix
+    ./legacy-sing-box.nix
     ./sing-box.nix
     ./sing-box-outbounds.nix
     ./sing-box-dns.nix

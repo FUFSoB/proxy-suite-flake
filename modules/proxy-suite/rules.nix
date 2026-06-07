@@ -8,8 +8,8 @@
 
 let
   derived = import ./derived.nix { inherit lib cfg; };
-  r = cfg.singBox.routing;
-  singBoxCfg = derived.singBoxCfg;
+  r = cfg.proxy.routing;
+  proxyCfg = derived.proxyCfg;
   zapretCfg = cfg.zapret;
   tgWsProxyCfg = cfg.tgWsProxy;
 
@@ -116,7 +116,12 @@ let
   # to "proxy" instead of the original tag (which won't exist in sing-box).
   resolveTag =
     tag:
-    if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then "proxy" else tag;
+    if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then
+      "proxy"
+    else if derived.xrayEnabled && derived.selectionMode == "urltest" && !builtins.elem tag derived.builtinTags then
+      "proxy-suite-ob-${tag}"
+    else
+      tag;
 
   # Collect per-outbound routing attached directly to outbound definitions.
   perOutboundRules = lib.concatMap (
@@ -134,7 +139,7 @@ let
         geoips
         ;
     }
-  ) singBoxCfg.outbounds;
+  ) proxyCfg.outbounds;
 
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.
   customRules =
@@ -230,7 +235,7 @@ let
     (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
   ];
 
-  routingRules =
+  singBoxRoutingRules =
     commonRules
     ++ lib.concatMap (item: item.entries) customRouteRules
     ++ proxyPrimaryRules
@@ -239,7 +244,7 @@ let
     ++ blockRules
     ++ proxyGeoRules;
 
-  routeModeRules = {
+  singBoxRouteModeRules = {
     common = commonRules;
     custom = customRouteRules;
     proxyPrimary = proxyPrimaryRules;
@@ -249,12 +254,118 @@ let
     proxyGeo = proxyGeoRules;
   };
 
+  xrayTarget =
+    tag:
+    if tag == "proxy" && derived.selectionMode == "urltest" then
+      { balancerTag = "proxy"; }
+    else
+      { outboundTag = tag; };
+
+  mkXrayRule =
+    fields: tag:
+    ({ type = "field"; } // fields // (xrayTarget tag));
+
+  xrayDomainRules =
+    tag: domains:
+    lib.optional (domains != [ ]) (mkXrayRule {
+      domain = map (domain: "domain:${domain}") domains;
+    } tag);
+
+  xrayIPRules =
+    tag: ips:
+    lib.optional (ips != [ ]) (mkXrayRule {
+      ip = ips;
+    } tag);
+
+  xrayGeositeRules =
+    tag: geosites:
+    lib.optional (geosites != [ ]) (mkXrayRule {
+      domain = map (name: "geosite:${name}") geosites;
+    } tag);
+
+  xrayGeoIPRules =
+    tag: geoips:
+    lib.optional (geoips != [ ]) (mkXrayRule {
+      ip = map (name: "geoip:${name}") geoips;
+    } tag);
+
+  mkXrayCustomRuleEntries =
+    rule:
+    lib.flatten [
+      (xrayDomainRules rule.outbound rule.domains)
+      (xrayIPRules rule.outbound rule.ips)
+      (xrayGeositeRules rule.outbound rule.geosites)
+      (xrayGeoIPRules rule.outbound rule.geoips)
+    ];
+
+  xrayCustomRouteRules = map (
+    rule: {
+      category = customRuleCategory rule.outbound;
+      entries = mkXrayCustomRuleEntries rule;
+    }
+  ) customRules;
+
+  xrayProxyPrimaryRules = lib.flatten [
+    (xrayDomainRules "proxy" r.proxy.domains)
+    (xrayIPRules "proxy" r.proxy.ips)
+  ];
+
+  xrayDirectRules = lib.flatten [
+    (xrayDomainRules "direct" direct.domains)
+    (xrayIPRules "direct" direct.ips)
+    (xrayGeositeRules "direct" direct.geosites)
+    (xrayGeoIPRules "direct" direct.geoips)
+  ];
+
+  xraySafetyDirectRules = [
+    (mkXrayRule { ip = [ "geoip:private" ]; } "direct")
+  ] ++ lib.optional (
+    tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { }
+  ) (mkXrayRule { ip = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps); } "direct");
+
+  xrayBlockRules = lib.flatten [
+    (xrayDomainRules "block" r.block.domains)
+    (xrayIPRules "block" r.block.ips)
+    (xrayGeositeRules "block" r.block.geosites)
+    (xrayGeoIPRules "block" r.block.geoips)
+  ];
+
+  xrayProxyGeoRules = lib.flatten [
+    (xrayGeositeRules "proxy" r.proxy.geosites)
+    (xrayGeoIPRules "proxy" r.proxy.geoips)
+  ];
+
+  xrayRoutingRules =
+    lib.concatMap (item: item.entries) xrayCustomRouteRules
+    ++ xrayProxyPrimaryRules
+    ++ xrayDirectRules
+    ++ xraySafetyDirectRules
+    ++ xrayBlockRules
+    ++ xrayProxyGeoRules;
+
+  xrayRouteModeRules = {
+    common = [ ];
+    custom = xrayCustomRouteRules;
+    proxyPrimary = xrayProxyPrimaryRules;
+    direct = xrayDirectRules;
+    safetyDirect = xraySafetyDirectRules;
+    block = xrayBlockRules;
+    proxyGeo = xrayProxyGeoRules;
+  };
+
+  routingRules = singBoxRoutingRules;
+  routeModeRules = singBoxRouteModeRules;
+
 in
 {
   inherit
     direct
     geositeRuleSets
     geoIPRuleSets
+    singBoxRoutingRules
+    singBoxRouteModeRules
+    xrayRoutingRules
+    xrayRouteModeRules
     routeModeRules
     routingRules
     ;

@@ -19,22 +19,41 @@ let
     ];
   };
   filterGeneratedOptions = lib.filterAttrs (name: _: name != "_module");
-  docPackagePlaceholder = "__proxy_suite_doc_pkg_sing_box__";
+  singBoxPackagePlaceholder = "__proxy_suite_doc_pkg_sing_box__";
+  xrayPackagePlaceholder = "__proxy_suite_doc_pkg_xray__";
   sanitizeConfigForDocs =
     config:
-    config
+    builtins.removeAttrs config [ "singBox" ]
     // {
-      singBox =
-        (config.singBox or { })
-        // lib.optionalAttrs ((config.singBox or { }) ? package) {
-          package = docPackagePlaceholder;
+      proxy =
+        (config.proxy or { })
+        // {
+          singBox =
+            ((config.proxy or { }).singBox or { })
+            // lib.optionalAttrs (((config.proxy or { }).singBox or { }) ? package) {
+              package = singBoxPackagePlaceholder;
+            };
+          xray =
+            ((config.proxy or { }).xray or { })
+            // lib.optionalAttrs (((config.proxy or { }).xray or { }) ? package) {
+              package = xrayPackagePlaceholder;
+            };
         };
     };
   renderConfigText =
     config:
-    lib.replaceStrings [ "\"${docPackagePlaceholder}\"" ] [ "pkgs.sing-box" ] (
+    lib.replaceStrings
+      [
+        "\"${singBoxPackagePlaceholder}\""
+        "\"${xrayPackagePlaceholder}\""
+      ]
+      [
+        "pkgs.sing-box"
+        "pkgs.xray"
+      ]
+      (
       lib.generators.toPretty { } (sanitizeConfigForDocs config)
-    );
+      );
   mkGeneratedExampleValue =
     option:
     if (option ? _type) && option._type == "option" then
@@ -49,9 +68,9 @@ let
     else
       lib.mapAttrs (_: mkGeneratedExampleValue) (filterGeneratedOptions option);
   defaultConfigText = renderConfigText eval.config.services.proxy-suite;
-  exampleConfigText = renderConfigText (
-    lib.mapAttrs (_: mkGeneratedExampleValue) (filterGeneratedOptions eval.options.services.proxy-suite)
-  );
+  generatedExampleConfig =
+    lib.mapAttrs (_: mkGeneratedExampleValue) (filterGeneratedOptions eval.options.services.proxy-suite);
+  exampleConfigText = renderConfigText (builtins.removeAttrs generatedExampleConfig [ "singBox" ]);
   repoRoot = toString ../.;
   repoUrl = "https://github.com/FUFSoB/proxy-suite-flake/blob/main";
   transformDeclaration =

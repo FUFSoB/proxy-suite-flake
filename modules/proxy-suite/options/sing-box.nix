@@ -1,31 +1,18 @@
-# Core sing-box options. Feature-area options live in sing-box-{outbounds,dns,tun,tproxy,routing}.nix.
+# Core proxy options. Feature-area options live in sing-box-{outbounds,dns,tun,tproxy,routing}.nix.
 { lib, pkgs, ... }:
 
 let
   inherit (lib) literalExpression mkOption mkEnableOption types;
 in
 {
-  options.services.proxy-suite.singBox = {
+  options.services.proxy-suite.proxy = {
     enable = mkOption {
       type = types.bool;
-      default = true;
+      default = false;
       description = ''
-        Whether to configure and run sing-box services for proxy-suite.
-        When disabled, sing-box services and generated sing-box configs are
-        skipped even if proxy-suite itself is enabled.
-      '';
-    };
-
-    package = mkOption {
-      type = types.package;
-      default = pkgs.sing-box;
-      defaultText = literalExpression "pkgs.sing-box";
-      example = literalExpression "pkgs.sing-box";
-      description = ''
-        sing-box package used by proxy-suite systemd services.
-
-        Override this to pin or test a specific sing-box build when upstream
-        protocol behavior changes.
+        Whether to configure and run the proxy backend services.
+        This is disabled by default; enable it explicitly and choose exactly
+        one backend with proxy.singBox.enable or proxy.xray.enable.
       '';
     };
 
@@ -33,8 +20,8 @@ in
       type = types.str;
       default = "127.0.0.1";
       description = ''
-        Address for the SOCKS5/HTTP mixed inbound to bind to.
-        This affects the always-on proxy-suite-socks service.
+        Address for the local SOCKS5/HTTP inbound to bind to.
+        This affects the proxy-suite-socks service.
 
         Use "0.0.0.0" only if you intentionally want to expose the proxy to
         other machines on your network.
@@ -46,8 +33,9 @@ in
       type = types.port;
       default = 1080;
       description = ''
-        Listen port for the always-on SOCKS5/HTTP mixed inbound provided by
-        proxy-suite-socks.
+        Listen port for the local SOCKS5/HTTP proxy inbound provided by
+        proxy-suite-socks. SingBox exposes SOCKS5 and HTTP on this port.
+        XRay's Socks inbound also accepts SOCKS and HTTP.
       '';
       example = 1080;
     };
@@ -102,10 +90,70 @@ in
         Whether traffic that does not match any explicit routing rule should
         go through the proxy or go direct.
 
-        This affects sing-box route.final and dns.final in the generated
+        This affects the generated backend route final and DNS final in the
         config.
       '';
       example = true;
+    };
+
+    singBox = {
+      enable = mkEnableOption "SingBox proxy backend";
+
+      package = mkOption {
+        type = types.package;
+        default = pkgs.sing-box;
+        defaultText = literalExpression "pkgs.sing-box";
+        example = literalExpression "pkgs.sing-box";
+        description = ''
+          sing-box package used by proxy-suite systemd services.
+
+          Override this to pin or test a specific sing-box build when upstream
+          protocol behavior changes.
+        '';
+      };
+
+      clashApiPort = mkOption {
+        type = types.port;
+        default = 9090;
+        description = ''
+          Port for the Clash-compatible REST API exposed by sing-box.
+          Only used when proxy.selection is "selector" or "urltest". Ignored
+          in "first" mode because there is no selector-style outbound to
+          control.
+        '';
+        example = 9090;
+      };
+
+      urlTest.tolerance = mkOption {
+        type = types.int;
+        default = 50;
+        description = ''
+          Latency tolerance in milliseconds for sing-box urltest. The current
+          proxy is only replaced when a competing one is faster by more than
+          this value.
+
+          Only used when proxy.selection = "urltest" and the SingBox backend
+          is active.
+        '';
+        example = 100;
+      };
+    };
+
+    xray = {
+      enable = mkEnableOption "XRay proxy backend";
+
+      package = mkOption {
+        type = types.package;
+        default = pkgs.xray;
+        defaultText = literalExpression "pkgs.xray";
+        example = literalExpression "pkgs.xray";
+        description = ''
+          XRay package used by proxy-suite systemd services.
+
+          Override this to pin or test a specific XRay build when upstream
+          protocol behavior changes.
+        '';
+      };
     };
   };
 }
