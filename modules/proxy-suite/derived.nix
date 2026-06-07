@@ -26,7 +26,7 @@ let
   hasSubscriptions = singBoxCfg.subscriptions != [ ];
   collapseNamedOutbounds = selectionMode == "first";
   clashApiEnabled = selectionMode != "first";
-  perAppZapretEnabled = cfg.zapret.enable && perAppZapretCfg.enable;
+  perAppZapretEnabled = perAppZapretCfg.enable;
   userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
 
   invalidRoutingTargets = lib.unique (

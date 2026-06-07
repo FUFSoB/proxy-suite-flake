@@ -116,11 +116,8 @@ let
     (requireEnabled perAppZapretCfg.enable perAppRoutingCfg.enable
       "proxy-suite: zapret.perApp.enable requires perAppRouting.enable = true"
     )
-    (requireEnabled perAppZapretCfg.enable cfg.zapret.enable
-      "proxy-suite: zapret.perApp.enable requires zapret.enable = true"
-    )
-    (requireAvailable hasZapretProfiles (perAppZapretCfg.enable && cfg.zapret.enable)
-      "proxy-suite: route=zapret in perAppRouting.profiles requires zapret.perApp.enable = true and zapret.enable = true"
+    (requireAvailable hasZapretProfiles perAppZapretCfg.enable
+      "proxy-suite: route=zapret in perAppRouting.profiles requires zapret.perApp.enable = true"
     )
   ];
 

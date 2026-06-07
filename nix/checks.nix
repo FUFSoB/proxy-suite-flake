@@ -1138,6 +1138,30 @@ let
   perAppRoutingPerAppZapretConfig = builtins.readFile "${perAppRoutingPerAppZapretBase}/config";
   perAppRoutingZapretGlobalCustomScript =
     builtins.readFile "${perAppRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
+
+  perAppRoutingZapretWithoutGlobalFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        zapret = {
+          enable = false;
+          perApp.enable = true;
+        };
+        perAppRouting = {
+          enable = true;
+          createDefaultProfiles = true;
+          proxychains.enable = true;
+        };
+      };
+    }
+  ];
+  _perAppRoutingZapretWithoutGlobal = mkProxyCtlDerived perAppRoutingZapretWithoutGlobalFixture;
+  perAppRoutingZapretWithoutGlobalProfiles = _perAppRoutingZapretWithoutGlobal.profiles;
+  perAppRoutingZapretWithoutGlobalPerAppBase =
+    mkZapretBaseFor perAppRoutingZapretWithoutGlobalFixture "proxy-suite-per-app-zapret";
+  perAppRoutingZapretWithoutGlobalPerAppConfig =
+    builtins.readFile "${perAppRoutingZapretWithoutGlobalPerAppBase}/config";
+
   perAppRoutingTunPolkitConfig = perAppRoutingTunFixture.config.security.polkit.extraConfig;
 
   userControlGlobalOnlyFixture = evalProxySuite [
@@ -1184,15 +1208,6 @@ let
       services.proxy-suite = {
         zapret.enable = true;
         perAppRouting = { enable = true; profiles = [ { name = "yt"; route = "zapret"; } ]; };
-      };
-    }
-  ];
-
-  perAppRoutingZapretWithoutZapretService = mkBadFixture [
-    {
-      services.proxy-suite = {
-        zapret = { enable = false; perApp.enable = true; };
-        perAppRouting.enable = true;
       };
     }
   ];
@@ -1979,7 +1994,7 @@ let
       true
     )
 
-    # -- perAppRouting: createDefaultProfiles injects curated zapret profile when backend and zapret are enabled --
+    # -- perAppRouting: createDefaultProfiles injects curated zapret profile when backend is enabled --
     (
       assert builtins.length perAppRoutingZapretProfiles == 2;
       assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") perAppRoutingZapretProfiles;
@@ -2126,6 +2141,19 @@ let
       true
     )
 
+    # -- perAppRouting: app zapret can run without the global zapret service --
+    (
+      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
+      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret-user@";
+      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
+      assert !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "zapret-discord-youtube");
+      assert builtins.length perAppRoutingZapretWithoutGlobalProfiles == 2;
+      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") perAppRoutingZapretWithoutGlobalProfiles;
+      assert pkgs.lib.hasInfix "proxy-suite-per-app-zapret" perAppRoutingZapretWithoutGlobalPerAppBase;
+      assert !(pkgs.lib.hasInfix "proxy-suite-zapret" perAppRoutingZapretWithoutGlobalPerAppBase);
+      true
+    )
+
     # -- perAppRouting: app TUN enables nftables and user control group --
     (
       assert perAppRoutingTunFixture.config.networking.nftables.enable;
@@ -2222,6 +2250,11 @@ let
       assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_per_app_zapret" perAppRoutingPerAppZapretConfig;
       true
     )
+    (
+      assert pkgs.lib.hasInfix "FILTER_MARK=0x10000000" perAppRoutingZapretWithoutGlobalPerAppConfig;
+      assert pkgs.lib.hasInfix "QNUM=201" perAppRoutingZapretWithoutGlobalPerAppConfig;
+      true
+    )
 
     # -- perAppRouting: global zapret installs a bypass hook for app-marked traffic --
     (
@@ -2280,13 +2313,9 @@ let
       true
     )
 
-    # -- perAppRouting: route=zapret requires zapret.perApp.enable and zapret.enable --
+    # -- perAppRouting: route=zapret requires zapret.perApp.enable --
     (
       assert perAppRoutingZapretWithoutEnable.success == false;
-      true
-    )
-    (
-      assert perAppRoutingZapretWithoutZapretService.success == false;
       true
     )
 

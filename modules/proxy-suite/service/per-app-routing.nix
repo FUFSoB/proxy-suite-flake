@@ -49,7 +49,7 @@ let
         route = "tproxy";
       }
     ]
-    ++ lib.optionals (perAppZapretCfg.enable && cfg.zapret.enable) [
+    ++ lib.optionals perAppZapretCfg.enable [
       {
         name = "zapret";
         route = "zapret";

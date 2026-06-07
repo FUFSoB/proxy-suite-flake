@@ -111,7 +111,6 @@ let
       perAppZapretCfg
       selectionMode
       ;
-    zapretEnabled = cfg.zapret.enable;
     inherit (scripts) subscriptionTagsFile;
     inherit (scripts) routeModeStateFile;
     inherit (perAppRouting)

@@ -58,7 +58,7 @@ in
           ;
       })
 
-      (lib.mkIf cfg.zapret.enable (
+      (lib.mkIf (cfg.zapret.enable || cfg.zapret.perApp.enable) (
         import ./zapret.nix {
           inherit
             lib

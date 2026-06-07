@@ -333,10 +333,11 @@ in
   ];
 
   environment.systemPackages = lib.mkBefore (
-    [ globalZapretPackage ] ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
+    lib.optionals zapretCfg.enable [ globalZapretPackage ]
+    ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
   );
 
-  systemd.services.zapret-discord-youtube = mkOneshotService {
+  systemd.services.zapret-discord-youtube = lib.mkIf zapretCfg.enable (mkOneshotService {
     description = "zapret DPI bypass";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -349,7 +350,7 @@ in
       ExecReload = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret restart";
       Environment = globalZapretEnv;
     };
-  };
+  });
 
   systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (mkOneshotService {
     description = "proxy-suite per-app-routing zapret backend";
@@ -369,7 +370,7 @@ in
   });
 
   systemd.services.proxy-suite-zapret-vm-exempt =
-    lib.mkIf zapretCfg.cidrExemption.enable
+    lib.mkIf (zapretCfg.enable && zapretCfg.cidrExemption.enable)
       (mkOneshotService {
         description = "Exempt CIDRs from zapret NFQUEUE";
         after = [ "zapret-discord-youtube.service" ];

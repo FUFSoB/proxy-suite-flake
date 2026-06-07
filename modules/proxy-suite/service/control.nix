@@ -7,7 +7,6 @@
   perAppRoutingTproxy,
   perAppZapretCfg,
   selectionMode,
-  zapretEnabled,
   subscriptionTagsFile,
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
@@ -30,6 +29,6 @@
     perAppRoutingProxychainsEnabled = if perAppRoutingCfg.proxychains.enable then "1" else "0";
     perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";
     perAppRoutingTproxyEnabled = if perAppRoutingTproxy.enable then "1" else "0";
-    perAppRoutingZapretEnabled = if (perAppZapretCfg.enable && zapretEnabled) then "1" else "0";
+    perAppRoutingZapretEnabled = if perAppZapretCfg.enable then "1" else "0";
   };
 }

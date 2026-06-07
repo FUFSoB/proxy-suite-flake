@@ -673,8 +673,7 @@ Current curated defaults:
  - ` proxychains `: route = “proxychains”
  - ` tun `: route = “tun” when singBox\.tun\.perApp\.enable = true
  - ` tproxy `: route = “tproxy” when singBox\.tproxy\.perApp\.enable = true
- - ` zapret `: route = “zapret” when zapret\.perApp\.enable = true and
-   zapret\.enable = true
+ - ` zapret `: route = “zapret” when zapret\.perApp\.enable = true
 
 This makes ` proxy-ctl wrap proxychains -- <command> ` available
 without defining the profile manually, and similarly exposes
@@ -732,7 +731,7 @@ proxychains-based wrapping depends on singBox\.enable = true and the
 local proxy-suite mixed proxy listener provided by sing-box\. The
 “tun” route depends on singBox\.tun\.perApp\.enable = true\. The “tproxy”
 route depends on singBox\.tproxy\.perApp\.enable = true\. The “zapret”
-route depends on zapret\.perApp\.enable = true and zapret\.enable = true\.
+route depends on zapret\.perApp\.enable = true\.
 
 When createDefaultProfiles = true, curated defaults are added on top
 of this list unless a user-defined profile already uses the same

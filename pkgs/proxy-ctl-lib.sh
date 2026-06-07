@@ -422,7 +422,7 @@ cmd_wrap() {
     zapret)
       _check_no_global_proxy zapret
       _wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED" \
-        "Profile '$profile' uses route=zapret, but zapret.perApp.enable or zapret.enable is false." \
+        "Profile '$profile' uses route=zapret, but zapret.perApp.enable is false." \
         "proxy-suite-per-app-zapret.service" "$@"
       ;;
     *)
