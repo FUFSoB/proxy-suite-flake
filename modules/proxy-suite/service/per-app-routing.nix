@@ -98,6 +98,8 @@ let
   hasZapretProfiles = builtins.any (
     profile: profile.route == "zapret"
   ) effectivePerAppRoutingProfiles;
+  xrayPerAppTunIPv6Address = "fd66:20::1/64";
+  xrayPerAppTunIPv6RoutePrefix = "fd66:20::/64";
 
   perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app-tun-wait-for-interface" ''
     set -euo pipefail
@@ -115,8 +117,11 @@ let
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg perAppRoutingTun.address}
+    tun6_cidr=${lib.escapeShellArg xrayPerAppTunIPv6Address}
+    tun6_route_prefix=${lib.escapeShellArg xrayPerAppTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
+    uplink_addr=""
 
     cidr_network() {
       local cidr="$1"
@@ -142,16 +147,36 @@ let
     }
 
     ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    ${ip} route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    while ${ip} -4 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
+    while ${ip} -6 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
+    ${ip} -4 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} -6 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
+    uplink_addr="$(${ip} -4 route get 1.1.1.1 2>/dev/null | ${awk} '
+      /src/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i == "src" && i + 1 <= NF) {
+            print $(i + 1)
+            exit
+          }
+        }
+      }
+    ')"
+    if [ -z "$uplink_addr" ]; then
+      echo "proxy-suite: could not determine the default uplink IPv4 address for app TUN" >&2
+      exit 1
+    fi
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
-    ${ip} route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
-    ${ip} route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
-    ${ip} rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
+    ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
+    ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$uplink_addr" table ${toString perAppRoutingTun.routeTable}
+    ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+    ${ip} -6 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+    ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
   '';
 
   perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app-tun-down" ''
@@ -159,9 +184,12 @@ let
 
     # Best-effort cleanup for graceful stops and for unclean previous exits.
     ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    ${ip} route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    while ${ip} -4 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
+    while ${ip} -6 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
+    ${ip} -4 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${ip} -6 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
     ${ip} link del dev ${lib.escapeShellArg perAppRoutingTun.interface} 2>/dev/null || true
+    ${pkgs.systemd}/bin/resolvectl flush-caches 2>/dev/null || true
   '';
 
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-up" ''

@@ -354,7 +354,7 @@ let
     if xrayEnabled then
       ''
         def xray_bind_outbound($interface):
-          if $interface == "" or .protocol == "blackhole" then
+          if $interface == "" or .protocol == "blackhole" or .protocol == "dns" then
             .
           else
             .streamSettings = (.streamSettings // {})
@@ -377,11 +377,30 @@ let
           else
             .
           end;
+        def xray_preserved_rules:
+          [.routing.rules[]
+           | select(((.ruleTag? // "") == "dns-hijack") or ((.ruleTag? // "") == "dns-upstream-direct"))];
         def xray_final_rule($tag; $single_tag):
           if $tag == "proxy" and "${selectionMode}" == "urltest" then
             {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)
           else
             {type:"field",network:"tcp,udp",ruleTag:"final-default",outboundTag:$tag}
+          end;
+        def xray_dns_server_order($dns_final):
+          if $dns_final == "" then
+            .dns.servers
+          else
+            ([.dns.servers[] | select((.tag? // "") == "fakedns")]
+             + [.dns.servers[] | select((.tag? // "") == $dns_final)]
+             + [.dns.servers[] | select((.tag? // "") != "fakedns" and (.tag? // "") != $dns_final)])
+          end;
+        def xray_tun_dns_addresses($dns_final; $local_addr; $remote_addr):
+          if $dns_final == "local" then
+            [$local_addr, $remote_addr]
+          elif $dns_final == "remote" then
+            [$remote_addr, $local_addr]
+          else
+            [$remote_addr, $local_addr]
           end;
         .outbounds = (($obs + .outbounds) | map(xray_bind_outbound($xray_bind_interface)))
           | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
@@ -389,8 +408,16 @@ let
               (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
               | (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.users) = [{user:$user,pass:$password}]
             else . end
+          | if $xray_tun_dns_runtime then
+              .dns.servers = xray_dns_server_order($dns_final)
+              | if $dns_final == "" then
+                  .
+                else
+                  (.inbounds[] | select(.protocol == "tun" and .tag == "tun-in") | .settings.dns) = xray_tun_dns_addresses($dns_final; $xray_dns_local_client; $xray_dns_remote_client)
+                end
+            else . end
           | if $route_enabled then
-              .routing.rules = ($route_rules + [xray_final_rule($route_final; $xray_single_proxy_tag)])
+              .routing.rules = (xray_preserved_rules + $route_rules + [xray_final_rule($route_final; $xray_single_proxy_tag)])
             else . end
           | if $xray_single_proxy_tag == "" then
               .
@@ -413,6 +440,7 @@ let
               | if $clear_dns_rules then .dns.rules = [] else . end
             else . end
       '';
+  backendJqFilterFile = pkgs.writeText "proxy-suite-${backend}-backend-filter.jq" mkBackendJqFilter;
 
   mkStartScript =
     {
@@ -422,11 +450,13 @@ let
       routingMark ? null,
       enableLocalProxyAuth ? false,
       xrayTunEgressBinding ? false,
+      xrayTunDnsRuntime ? false,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
       RUNTIME_DIR="${runtimeDir}"
       ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
+      BACKEND_JQ_FILTER=${lib.escapeShellArg backendJqFilterFile}
       XRAY_LOGLEVEL=""
       XRAY_TUN_BIND_INTERFACE=""
       XRAY_SINGLE_PROXY_TAG=""
@@ -483,7 +513,10 @@ let
         --arg xray_loglevel "$XRAY_LOGLEVEL" \
         --arg xray_bind_interface "$XRAY_TUN_BIND_INTERFACE" \
         --arg xray_single_proxy_tag "$XRAY_SINGLE_PROXY_TAG" \
-        '${mkBackendJqFilter}' \
+        --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
+        --arg xray_dns_local_client ${lib.escapeShellArg proxyCfg.dns.local.address} \
+        --arg xray_dns_remote_client ${lib.escapeShellArg proxyCfg.dns.remote.address} \
+        -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json"
       ${lib.optionalString enableLocalProxyAuth ''
         chmod 600 "$RUNTIME_DIR/config.json"
@@ -506,14 +539,16 @@ let
     configFile = tunFile;
     routingMark = if xrayEnabled then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
+    xrayTunDnsRuntime = xrayEnabled;
   };
 
   startPerAppTun = mkStartScript {
     name = "proxy-suite-start-per-app-tun";
     runtimeDir = "/run/proxy-suite-per-app-tun";
     configFile = perAppTunFile;
-    routingMark = if globalTproxy.enable then globalTproxy.proxyMark else null;
+    routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
+    xrayTunDnsRuntime = xrayEnabled;
   };
 
   mkSubscriptionFetchBlock =

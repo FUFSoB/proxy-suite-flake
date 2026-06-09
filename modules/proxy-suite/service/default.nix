@@ -99,13 +99,18 @@ let
   # packets intended for per-app routing tables.
   xrayTunPerAppTproxyRulePriority = 8996;
   xrayTunPerAppTunRulePriority = 8997;
+  xrayGlobalTunIPv6Address = "fd66:19::1/64";
+  xrayGlobalTunIPv6RoutePrefix = "fd66:19::/64";
 
   xrayTunUpScript = pkgs.writeShellScript "proxy-suite-xray-tun-up" ''
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg globalTun.address}
+    tun6_cidr=${lib.escapeShellArg xrayGlobalTunIPv6Address}
+    tun6_route_prefix=${lib.escapeShellArg xrayGlobalTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
+    uplink_addr=""
 
     cidr_network() {
       local cidr="$1"
@@ -142,23 +147,45 @@ let
       exit 1
     fi
 
+    uplink_addr="$(${ip} -4 route get 1.1.1.1 2>/dev/null | ${pkgs.gawk}/bin/awk '
+      /src/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i == "src" && i + 1 <= NF) {
+            print $(i + 1)
+            exit
+          }
+        }
+      }
+    ')"
+    if [ -z "$uplink_addr" ]; then
+      echo "proxy-suite: could not determine the default uplink IPv4 address for XRay TUN" >&2
+      exit 1
+    fi
+
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
+    while ${ip} -6 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
+    while ${ip} -6 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
 
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
 
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg globalTun.interface}
+    ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg globalTun.interface}
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg globalTun.interface} src "$tun_addr" table ${toString tunAutoRouteTableIndex}
-    ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
+    ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} src "$uplink_addr" table ${toString tunAutoRouteTableIndex}
+    ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
+    ${ip} -6 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
     ${lib.optionalString perAppRoutingTproxy.enable ''
       ${ip} -4 rule add pref ${toString xrayTunPerAppTproxyRulePriority} fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable}
     ''}
     ${lib.optionalString perAppRoutingTun.enable ''
       ${ip} -4 rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
+      ${ip} -6 rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
     ''}
     ${ip} -4 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
+    ${ip} -6 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
   '';
 
   tproxyUpScript = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
@@ -196,10 +223,12 @@ let
     while ${ip} -6 rule del table ${toString tunAutoRouteTableIndex} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
+    while ${ip} -6 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
     ${ip} -4 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
     ${ip} -6 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
 
     ${ip} link del dev ${lib.escapeShellArg globalTun.interface} 2>/dev/null || true
+    ${pkgs.systemd}/bin/resolvectl flush-caches 2>/dev/null || true
   '';
 
   systemServiceEntries = [

@@ -19,6 +19,19 @@ let
     ;
   perAppTun = derived.perAppRoutingTun;
   direct = rules.direct;
+  xrayGlobalTunIPv6Address = "fd66:19::1/64";
+  xrayPerAppTunIPv6Address = "fd66:20::1/64";
+  xrayFakeDnsPools = [
+    {
+      ipPool = "198.18.0.0/15";
+      poolSize = 32768;
+    }
+    {
+      ipPool = "fc00::/18";
+      poolSize = 32768;
+    }
+  ];
+  stripCidr = cidr: builtins.head (lib.splitString "/" cidr);
 
   mkSingBoxDnsServer =
     tag: upstream: detour:
@@ -154,13 +167,74 @@ let
     else
       "${base}:${toString upstream.port}";
 
-  xraySniffing = {
-    enabled = true;
-    destOverride = [
-      "http"
-      "tls"
-      "quic"
-    ];
+  mkXrayDnsServer =
+    tag: upstream:
+    {
+      address = xrayDnsAddress upstream;
+      inherit tag;
+      queryStrategy = "UseIP";
+    };
+
+  mkXraySniffing =
+    {
+      fakeDnsOnly ? false,
+    }:
+    if fakeDnsOnly then
+      {
+        enabled = true;
+        destOverride = [ "fakedns" ];
+        metadataOnly = true;
+      }
+    else
+      {
+        enabled = true;
+        destOverride = [
+          "http"
+          "tls"
+          "quic"
+        ];
+      };
+
+  xraySniffing = mkXraySniffing { };
+
+  mkXrayTunDnsConfig =
+    {
+      preferRemote ? proxyCfg.proxyByDefault,
+    }:
+    let
+      primaryTag = if preferRemote then "remote" else "local";
+      secondaryTag = if preferRemote then "local" else "remote";
+      primaryUpstream = if preferRemote then proxyCfg.dns.remote else proxyCfg.dns.local;
+      secondaryUpstream = if preferRemote then proxyCfg.dns.local else proxyCfg.dns.remote;
+    in
+    {
+      queryStrategy = "UseIP";
+      tag = "dns-in";
+      servers = [
+        {
+          address = "fakedns";
+          tag = "fakedns";
+        }
+        (mkXrayDnsServer primaryTag primaryUpstream)
+        (mkXrayDnsServer secondaryTag secondaryUpstream)
+      ];
+    };
+
+  xrayTunDnsHijackRule = {
+    type = "field";
+    inboundTag = [ "tun-in" ];
+    network = "tcp,udp";
+    port = 53;
+    outboundTag = "dns-out";
+    ruleTag = "dns-hijack";
+  };
+
+  xrayTunDnsUpstreamRule = {
+    type = "field";
+    inboundTag = [ "dns-in" ];
+    network = "tcp,udp";
+    outboundTag = "direct";
+    ruleTag = "dns-upstream-direct";
   };
 
   xrayFinalRule =
@@ -198,17 +272,55 @@ let
       enableTun ? false,
       tunInterface ? globalTun.interface,
       tunAddress ? globalTun.address,
+      tunIPv6Address ? null,
       tunMtu ? globalTun.mtu,
       useOutboundRoutingMark ? false,
       enableUrlTest ? proxyCfg.selection == "urltest",
       domainStrategy ? "IPIfNonMatch",
+      enableTunFakeDns ? false,
     }:
+    let
+      tunDnsServers = [
+        (if proxyCfg.proxyByDefault then proxyCfg.dns.remote.address else proxyCfg.dns.local.address)
+        (if proxyCfg.proxyByDefault then proxyCfg.dns.local.address else proxyCfg.dns.remote.address)
+      ];
+      xrayTunSniffing = mkXraySniffing { fakeDnsOnly = enableTunFakeDns; };
+      xrayDnsConfig =
+        if enableTunFakeDns then
+          mkXrayTunDnsConfig { }
+        else
+          {
+            servers = [
+              (xrayDnsAddress proxyCfg.dns.remote)
+              (xrayDnsAddress proxyCfg.dns.local)
+            ];
+          };
+      xrayTunOutbounds = lib.optionals enableTunFakeDns [
+        {
+          protocol = "dns";
+          tag = "dns-out";
+          settings = {
+            userLevel = 0;
+            rules = [
+              {
+                action = "direct";
+                qType = "2-27,29-65535";
+              }
+            ];
+          };
+        }
+      ];
+      xrayRoutingRules =
+        lib.optionals enableTunFakeDns [
+          xrayTunDnsUpstreamRule
+          xrayTunDnsHijackRule
+        ]
+        ++ rules.xrayRoutingRules
+        ++ [ (xrayFinalRule (if proxyCfg.proxyByDefault then "proxy" else "direct")) ];
+    in
     {
       log.loglevel = "warning";
-      dns.servers = [
-        (xrayDnsAddress proxyCfg.dns.remote)
-        (xrayDnsAddress proxyCfg.dns.local)
-      ];
+      dns = xrayDnsConfig;
       inbounds =
         lib.optional enableMixed {
           tag = "mixed-in";
@@ -240,14 +352,14 @@ let
           settings = {
             name = tunInterface;
             mtu = tunMtu;
-            gateway = [ tunAddress ];
-            dns = [ proxyCfg.dns.local.address ];
+            gateway = [ tunAddress ] ++ lib.optionals (tunIPv6Address != null) [ tunIPv6Address ];
+            dns = tunDnsServers;
             userLevel = 0;
             autoOutboundsInterface = "auto";
           };
-          sniffing = xraySniffing;
+          sniffing = xrayTunSniffing;
         };
-      outbounds = [
+      outbounds = xrayTunOutbounds ++ [
         (xrayDirectOutbound useOutboundRoutingMark)
         {
           protocol = "blackhole";
@@ -258,7 +370,7 @@ let
       routing = {
         domainStrategy = domainStrategy;
         domainMatcher = "hybrid";
-        rules = xrayRouteRules;
+        rules = xrayRoutingRules;
       }
       // lib.optionalAttrs enableUrlTest {
         balancers = [
@@ -276,7 +388,8 @@ let
         probeUrl = proxyCfg.urlTest.url;
         probeInterval = proxyCfg.urlTest.interval;
       };
-    };
+    }
+    // lib.optionalAttrs enableTunFakeDns { fakedns = xrayFakeDnsPools; };
 
   singBoxTproxyTemplate = mkSingBoxConfig {
     enableMixed = true;
@@ -319,18 +432,20 @@ let
     enableTun = true;
     tunInterface = globalTun.interface;
     tunAddress = globalTun.address;
+    tunIPv6Address = xrayGlobalTunIPv6Address;
     tunMtu = globalTun.mtu;
     useOutboundRoutingMark = true;
-    domainStrategy = "AsIs";
+    enableTunFakeDns = true;
   };
 
   xrayPerAppTunTemplate = mkXrayConfig {
     enableTun = true;
     tunInterface = perAppTun.interface;
     tunAddress = perAppTun.address;
+    tunIPv6Address = xrayPerAppTunIPv6Address;
     tunMtu = perAppTun.mtu;
-    useOutboundRoutingMark = globalTproxy.enable;
-    domainStrategy = "AsIs";
+    useOutboundRoutingMark = true;
+    enableTunFakeDns = true;
   };
 
   tproxyTemplate = if xrayEnabled then xrayTproxyTemplate else singBoxTproxyTemplate;
