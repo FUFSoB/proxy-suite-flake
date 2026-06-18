@@ -108,8 +108,7 @@ let
     dnsRules: ruleSet:
     builtins.any (rule: (rule ? rule_set) && builtins.elem ruleSet rule.rule_set) dnsRules;
   dnsServerByTag =
-    dnsConfig: tag:
-    builtins.head (builtins.filter (server: server.tag == tag) dnsConfig.dns.servers);
+    dnsConfig: tag: builtins.head (builtins.filter (server: server.tag == tag) dnsConfig.dns.servers);
   mkZapretBaseFor =
     fixture: serviceName:
     let
@@ -157,8 +156,7 @@ let
     in
     pkgs.lib.concatStringsSep "\n" (map builtins.readFile execs);
   quotedValueByPrefix =
-    text: prefix:
-    pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix prefix (lineByPrefix text prefix));
+    text: prefix: pkgs.lib.removeSuffix "\"" (pkgs.lib.removePrefix prefix (lineByPrefix text prefix));
   shellValueByPrefix =
     text: prefix:
     let
@@ -187,20 +185,24 @@ let
       };
     };
   };
-  mkFixture = proxySuiteConfig: evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = proxySuiteConfig;
-    }
-  ];
+  mkFixture =
+    proxySuiteConfig:
+    evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = proxySuiteConfig;
+      }
+    ];
   # Fixture that must fail validation; uses baseModule as the base.
-  mkBadFixture = modules:
+  mkBadFixture =
+    modules:
     forceEval ((evalProxySuite ([ baseModule ] ++ modules)).config.system.build.toplevel.drvPath);
   # Same but without baseModule (for fixtures that need custom base config).
-  mkBadFixtureRaw = modules:
-    forceEval ((evalProxySuite modules).config.system.build.toplevel.drvPath);
+  mkBadFixtureRaw =
+    modules: forceEval ((evalProxySuite modules).config.system.build.toplevel.drvPath);
   # Extract the proxy-ctl package and derived script/profile values from a fixture.
-  mkProxyCtlDerived = fixture:
+  mkProxyCtlDerived =
+    fixture:
     let
       proxyCtl = packageByPattern fixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
       wrapper = builtins.readFile "${proxyCtl}/bin/proxy-ctl";
@@ -208,7 +210,9 @@ let
     {
       inherit proxyCtl wrapper;
       script = wrapper + "\n" + builtins.readFile "${proxyCtl}/bin/.proxy-ctl-wrapped";
-      profiles = builtins.fromJSON (builtins.readFile (shellValueByPrefix wrapper "export PER_APP_ROUTING_PROFILES_FILE="));
+      profiles = builtins.fromJSON (
+        builtins.readFile (shellValueByPrefix wrapper "export PER_APP_ROUTING_PROFILES_FILE=")
+      );
     };
 
   minimal = evalProxySuite [ baseModule ];
@@ -294,58 +298,63 @@ let
   xrayBackendJqFilter = builtins.readFile xrayTunBackendJqFilterFile;
   xrayDnsLocalClient = xrayFixture.config.services.proxy-suite.proxy.dns.local.address;
   xrayDnsRemoteClient = xrayFixture.config.services.proxy-suite.proxy.dns.remote.address;
-  xrayTunConfigJson = pkgs.writeText "proxy-suite-xray-tun-check.json" (builtins.toJSON xrayTunConfig);
-  xrayPerAppTunConfigJson =
-    pkgs.writeText "proxy-suite-xray-per-app-tun-check.json" (builtins.toJSON xrayPerAppTunConfig);
-  xrayJqFilterRuntimeCheck = pkgs.runCommand "proxy-suite-xray-jq-filter-runtime-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
-    OBS='[{"protocol":"freedom","tag":"proxy-suite-ob-primary"}]'
+  xrayTunConfigJson = pkgs.writeText "proxy-suite-xray-tun-check.json" (
+    builtins.toJSON xrayTunConfig
+  );
+  xrayPerAppTunConfigJson = pkgs.writeText "proxy-suite-xray-per-app-tun-check.json" (
+    builtins.toJSON xrayPerAppTunConfig
+  );
+  xrayJqFilterRuntimeCheck =
+    pkgs.runCommand "proxy-suite-xray-jq-filter-runtime-check" { nativeBuildInputs = [ pkgs.jq ]; }
+      ''
+        OBS='[{"protocol":"freedom","tag":"proxy-suite-ob-primary"}]'
 
-    check_runtime() {
-      local name="$1"
-      local input="$2"
-      local output="$TMPDIR/$name.json"
+        check_runtime() {
+          local name="$1"
+          local input="$2"
+          local output="$TMPDIR/$name.json"
 
-      jq \
-        --argjson obs "$OBS" \
-        --argjson auth_enabled false \
-        --arg user "" \
-        --arg password "" \
-        --argjson route_enabled true \
-        --argjson route_rules '[]' \
-        --arg route_final "proxy" \
-        --arg dns_final "remote" \
-        --argjson clear_dns_rules false \
-        --arg xray_loglevel "" \
-        --arg xray_bind_interface "eth0" \
-        --arg xray_single_proxy_tag "proxy-suite-ob-primary" \
-        --argjson xray_tun_dns_runtime true \
-        --arg xray_dns_local_client ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
-        --arg xray_dns_remote_client ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
-        -f ${pkgs.lib.escapeShellArg xrayTunBackendJqFilterFile} \
-        "$input" > "$output"
+          jq \
+            --argjson obs "$OBS" \
+            --argjson auth_enabled false \
+            --arg user "" \
+            --arg password "" \
+            --argjson route_enabled true \
+            --argjson route_rules '[]' \
+            --arg route_final "proxy" \
+            --arg dns_final "remote" \
+            --argjson clear_dns_rules false \
+            --arg xray_loglevel "" \
+            --arg xray_bind_interface "eth0" \
+            --arg xray_single_proxy_tag "proxy-suite-ob-primary" \
+            --argjson xray_tun_dns_runtime true \
+            --arg xray_dns_local_client ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
+            --arg xray_dns_remote_client ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
+            -f ${pkgs.lib.escapeShellArg xrayTunBackendJqFilterFile} \
+            "$input" > "$output"
 
-      jq -e \
-        --arg remote ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
-        --arg local ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
-        '
-          type == "object"
-          and (.dns.servers | length) >= 3
-          and .dns.servers[0].tag == "fakedns"
-          and ([.routing.rules[] | select((.ruleTag? // "") == "dns-hijack")] | length) == 1
-          and ([.routing.rules[] | select((.ruleTag? // "") == "dns-upstream-direct")] | length) == 1
-          and ([.outbounds[] | select(.tag == "proxy-suite-ob-primary" and (.streamSettings.sockopt.interface? // "") == "eth0")] | length) == 1
-          and ([.outbounds[] | select(.tag == "dns-out" and ((.streamSettings.sockopt.interface? // "") == ""))] | length) == 1
-          and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns] | length) == 1
-          and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns][0] == [$remote, $local])
-          and ((.routing | has("balancers")) | not)
-          and ((has("observatory")) | not)
-        ' "$output" >/dev/null
-    }
+          jq -e \
+            --arg remote ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
+            --arg local ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
+            '
+              type == "object"
+              and (.dns.servers | length) >= 3
+              and .dns.servers[0].tag == "fakedns"
+              and ([.routing.rules[] | select((.ruleTag? // "") == "dns-hijack")] | length) == 1
+              and ([.routing.rules[] | select((.ruleTag? // "") == "dns-upstream-direct")] | length) == 1
+              and ([.outbounds[] | select(.tag == "proxy-suite-ob-primary" and (.streamSettings.sockopt.interface? // "") == "eth0")] | length) == 1
+              and ([.outbounds[] | select(.tag == "dns-out" and ((.streamSettings.sockopt.interface? // "") == ""))] | length) == 1
+              and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns] | length) == 1
+              and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns][0] == [$remote, $local])
+              and ((.routing | has("balancers")) | not)
+              and ((has("observatory")) | not)
+            ' "$output" >/dev/null
+        }
 
-    check_runtime global ${pkgs.lib.escapeShellArg xrayTunConfigJson}
-    check_runtime per-app ${pkgs.lib.escapeShellArg xrayPerAppTunConfigJson}
-    touch "$out"
-  '';
+        check_runtime global ${pkgs.lib.escapeShellArg xrayTunConfigJson}
+        check_runtime per-app ${pkgs.lib.escapeShellArg xrayPerAppTunConfigJson}
+        touch "$out"
+      '';
   xraySubscriptionFixture = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -354,7 +363,12 @@ let
         proxy = {
           enable = true;
           xray.enable = true;
-          subscriptions = [ { tag = "xray-sub"; url = "https://example.com/xray-sub"; } ];
+          subscriptions = [
+            {
+              tag = "xray-sub";
+              url = "https://example.com/xray-sub";
+            }
+          ];
         };
       };
     }
@@ -412,7 +426,12 @@ let
             address = "9.9.9.9";
             port = 5353;
           };
-          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+          outbounds = [
+            {
+              tag = "primary";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
         };
       };
     }
@@ -431,12 +450,54 @@ let
             address = "1.1.1.1";
             port = 853;
           };
-          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+          outbounds = [
+            {
+              tag = "primary";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
         };
       };
     }
   ];
-  xrayBothBackends = mkBadFixtureRaw [
+  hybridModule = {
+    system.stateVersion = "26.05";
+    services.proxy-suite = {
+      enable = true;
+      proxy = {
+        enable = true;
+        singBox.enable = true;
+        xray.enable = true;
+        selection = "selector";
+        outbounds = [
+          {
+            tag = "primary";
+            url = "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none";
+          }
+          {
+            tag = "xray-only";
+            url = "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fx";
+          }
+        ];
+        tproxy.enable = true;
+        tun.enable = true;
+        tun.perApp.enable = true;
+      };
+    };
+  };
+  hybridFixture = evalProxySuite [ hybridModule ];
+  hybridTproxyConfig = mkTProxyConfig hybridFixture;
+  hybridTunConfig = mkTunConfig hybridFixture;
+  hybridStartScript = builtins.readFile (
+    hybridFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  hybridTunStartScript = builtins.readFile (
+    hybridFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStart
+  );
+  hybridPerAppTunStartScript = builtins.readFile (
+    hybridFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart
+  );
+  hybridXrayRawFixture = evalProxySuite [
     {
       system.stateVersion = "26.05";
       services.proxy-suite = {
@@ -445,11 +506,22 @@ let
           enable = true;
           singBox.enable = true;
           xray.enable = true;
-          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+          outbounds = [
+            {
+              tag = "raw-xray";
+              xrayJson = {
+                protocol = "freedom";
+                settings = { };
+              };
+            }
+          ];
         };
       };
     }
   ];
+  hybridXrayRawStartScript = builtins.readFile (
+    hybridXrayRawFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
   proxyEnabledNoBackend = mkBadFixtureRaw [
     {
       system.stateVersion = "26.05";
@@ -457,7 +529,12 @@ let
         enable = true;
         proxy = {
           enable = true;
-          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+          outbounds = [
+            {
+              tag = "primary";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
         };
       };
     }
@@ -471,7 +548,12 @@ let
           enable = true;
           xray.enable = true;
           selection = "selector";
-          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+          outbounds = [
+            {
+              tag = "primary";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
         };
       };
     }
@@ -487,7 +569,9 @@ let
           outbounds = [
             {
               tag = "raw";
-              singBoxJson = { type = "direct"; };
+              singBoxJson = {
+                type = "direct";
+              };
             }
           ];
         };
@@ -505,7 +589,10 @@ let
           outbounds = [
             {
               tag = "raw";
-              xrayJson = { protocol = "freedom"; settings = { }; };
+              xrayJson = {
+                protocol = "freedom";
+                settings = { };
+              };
             }
           ];
         };
@@ -572,7 +659,8 @@ let
       };
     }
   ];
-  tgWithGlobalTunServiceConfig = tgWithGlobalTun.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig;
+  tgWithGlobalTunServiceConfig =
+    tgWithGlobalTun.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig;
   tgWithGlobalTunBypassUp = builtins.readFile tgWithGlobalTunServiceConfig.ExecStartPre;
   tgWithGlobalTunBypassDown = builtins.readFile tgWithGlobalTunServiceConfig.ExecStopPost;
   tgWithGlobalTunRules = mkRoutingRules tgWithGlobalTun;
@@ -611,8 +699,14 @@ let
         enable = true;
         singBox.enable = true;
         outbounds = [
-          { tag = "dup"; url = "http://one.example.com:8080"; }
-          { tag = "dup"; url = "http://two.example.com:8080"; }
+          {
+            tag = "dup";
+            url = "http://one.example.com:8080";
+          }
+          {
+            tag = "dup";
+            url = "http://two.example.com:8080";
+          }
         ];
       };
     }).config.system.build.toplevel.drvPath
@@ -624,7 +718,12 @@ let
       proxy = {
         enable = true;
         singBox.enable = true;
-        outbounds = [ { tag = "proxy"; url = "http://proxy.example.com:8080"; } ];
+        outbounds = [
+          {
+            tag = "proxy";
+            url = "http://proxy.example.com:8080";
+          }
+        ];
       };
     }).config.system.build.toplevel.drvPath
   );
@@ -635,8 +734,18 @@ let
       proxy = {
         enable = true;
         singBox.enable = true;
-        outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
-        routing.rules = [ { outbound = "missing"; domains = [ "example.com" ]; } ];
+        outbounds = [
+          {
+            tag = "primary";
+            url = "http://proxy.example.com:8080";
+          }
+        ];
+        routing.rules = [
+          {
+            outbound = "missing";
+            domains = [ "example.com" ];
+          }
+        ];
       };
     }).config.system.build.toplevel.drvPath
   );
@@ -668,7 +777,8 @@ let
       services.proxy-suite.proxy.tproxy.enable = true;
     }
   ];
-  tproxyManualServiceConfig = tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
+  tproxyManualServiceConfig =
+    tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
   tproxyManualStartScript = builtins.readFile tproxyManualServiceConfig.ExecStart;
   tproxyManualStopScript = builtins.readFile tproxyManualServiceConfig.ExecStop;
 
@@ -702,18 +812,34 @@ let
   conflictingAutostartModes = mkBadFixture [
     {
       services.proxy-suite.proxy = {
-        tproxy = { enable = true; autostart = true; };
-        tun    = { enable = true; autostart = true; };
+        tproxy = {
+          enable = true;
+          autostart = true;
+        };
+        tun = {
+          enable = true;
+          autostart = true;
+        };
       };
     }
   ];
 
   globalTunWithoutProxy = mkBadFixture [
-    { services.proxy-suite.proxy = { enable = false; tun.enable = true; }; }
+    {
+      services.proxy-suite.proxy = {
+        enable = false;
+        tun.enable = true;
+      };
+    }
   ];
 
   globalTproxyWithoutProxy = mkBadFixture [
-    { services.proxy-suite.proxy = { enable = false; tproxy.enable = true; }; }
+    {
+      services.proxy-suite.proxy = {
+        enable = false;
+        tproxy.enable = true;
+      };
+    }
   ];
 
   routingOrFixture = evalProxySuite [
@@ -957,8 +1083,16 @@ let
       services.proxy-suite.zapret = {
         enable = true;
         hostlistRules = [
-          { name = "dup"; domains = [ "one.example" ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
-          { name = "dup"; domains = [ "two.example" ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
+          {
+            name = "dup";
+            domains = [ "one.example" ];
+            nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+          }
+          {
+            name = "dup";
+            domains = [ "two.example" ];
+            nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+          }
         ];
       };
     }
@@ -969,7 +1103,11 @@ let
       services.proxy-suite.zapret = {
         enable = true;
         hostlistRules = [
-          { name = "empty"; domains = [ ]; nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ]; }
+          {
+            name = "empty";
+            domains = [ ];
+            nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+          }
         ];
       };
     }
@@ -979,7 +1117,12 @@ let
     {
       services.proxy-suite.zapret = {
         enable = true;
-        hostlistRules = [ { name = "missing"; domains = [ "missing.example" ]; } ];
+        hostlistRules = [
+          {
+            name = "missing";
+            domains = [ "missing.example" ];
+          }
+        ];
       };
     }
   ];
@@ -1031,24 +1174,21 @@ let
       };
     }
   ];
-  subscriptionOnlyProxyCtl =
-    packageByPattern subscriptionOnlyFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
-  subscriptionOnlyWrapper =
-    builtins.readFile "${subscriptionOnlyProxyCtl}/bin/proxy-ctl";
+  subscriptionOnlyProxyCtl = packageByPattern subscriptionOnlyFixture.config.environment.systemPackages ".*/[^/]*proxy-ctl(-[0-9.]+)?$";
+  subscriptionOnlyWrapper = builtins.readFile "${subscriptionOnlyProxyCtl}/bin/proxy-ctl";
   subscriptionOnlyScript =
     subscriptionOnlyWrapper
     + "\n"
     + builtins.readFile "${subscriptionOnlyProxyCtl}/bin/.proxy-ctl-wrapped";
-  subscriptionOnlyTags =
-    builtins.fromJSON (
-      builtins.readFile (
-        shellValueByPrefix subscriptionOnlyWrapper "export SUB_TAGS_FILE="
-      )
-    );
+  subscriptionOnlyTags = builtins.fromJSON (
+    builtins.readFile (shellValueByPrefix subscriptionOnlyWrapper "export SUB_TAGS_FILE=")
+  );
   subscriptionOnlyStartScript =
-    builtins.readFile subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+    builtins.readFile
+      subscriptionOnlyFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
   subscriptionOnlyUpdateScript =
-    builtins.readFile subscriptionOnlyFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart;
+    builtins.readFile
+      subscriptionOnlyFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart;
 
   subscriptionWithStaticFixture = evalProxySuite [
     {
@@ -1085,8 +1225,14 @@ let
           enable = true;
           singBox.enable = true;
           subscriptions = [
-            { tag = "dup"; url = "https://example.com/sub/one"; }
-            { tag = "dup"; url = "https://example.com/sub/two"; }
+            {
+              tag = "dup";
+              url = "https://example.com/sub/one";
+            }
+            {
+              tag = "dup";
+              url = "https://example.com/sub/two";
+            }
           ];
         };
       };
@@ -1101,7 +1247,12 @@ let
         proxy = {
           enable = true;
           singBox.enable = true;
-          subscriptions = [ { tag = "bad/tag"; url = "https://example.com/sub/token"; } ];
+          subscriptions = [
+            {
+              tag = "bad/tag";
+              url = "https://example.com/sub/token";
+            }
+          ];
         };
       };
     }
@@ -1148,10 +1299,9 @@ let
       };
     }
   ];
-  subscriptionPerAppTunUpdateScript =
-    builtins.readFile (
-      subscriptionPerAppTunFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
-    );
+  subscriptionPerAppTunUpdateScript = builtins.readFile (
+    subscriptionPerAppTunFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
+  );
 
   subscriptionUrlFileFixture = evalProxySuite [
     {
@@ -1221,8 +1371,9 @@ let
   perAppRoutingProxychainsWrapper = _perAppRoutingProxychains.wrapper;
   perAppRoutingProxychainsScript = _perAppRoutingProxychains.script;
   perAppRoutingProxychainsProfiles = _perAppRoutingProxychains.profiles;
-  perAppRoutingProxychainsConfig =
-    builtins.readFile (shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG=");
+  perAppRoutingProxychainsConfig = builtins.readFile (
+    shellValueByPrefix perAppRoutingProxychainsWrapper "export PROXYCHAINS_CONFIG="
+  );
 
   localProxyAuthFixture = evalProxySuite [
     baseModule
@@ -1250,7 +1401,12 @@ let
         perAppRouting = {
           enable = true;
           proxychains.enable = true;
-          profiles = [ { name = "steam-browser"; route = "proxychains"; } ];
+          profiles = [
+            {
+              name = "steam-browser";
+              route = "proxychains";
+            }
+          ];
         };
       };
     }
@@ -1305,7 +1461,12 @@ let
   perAppRoutingNoDefaultProfiles = _perAppRoutingNoDefaultProfiles.profiles;
 
   perAppRoutingDefaultProfilesWithoutProxychainsEnable = mkBadFixture [
-    { services.proxy-suite.perAppRouting = { enable = true; createDefaultProfiles = true; }; }
+    {
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        createDefaultProfiles = true;
+      };
+    }
   ];
 
   perAppRoutingTunFixture = evalProxySuite [
@@ -1325,16 +1486,19 @@ let
   perAppRoutingTunWrapper = _perAppRoutingTun.wrapper;
   perAppRoutingTunScript = _perAppRoutingTun.script;
   perAppRoutingTunProfiles = _perAppRoutingTun.profiles;
-  perAppRoutingTunServiceConfig = perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig;
+  perAppRoutingTunServiceConfig =
+    perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig;
   perAppRoutingTunStartScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStart;
   perAppRoutingTunCleanupScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStopPost;
   perAppRoutingTunConfig = mkPerAppTunConfig perAppRoutingTunFixture;
-  perAppRoutingTunDirectOutbound =
-    builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunConfig.outbounds);
+  perAppRoutingTunDirectOutbound = builtins.head (
+    builtins.filter (item: item.tag == "direct") perAppRoutingTunConfig.outbounds
+  );
   perAppRoutingTunUserStartExec =
     perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".serviceConfig.ExecStart;
-  perAppRoutingTunUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingTunUserStartExec));
+  perAppRoutingTunUserStartScript = builtins.readFile (
+    builtins.head (pkgs.lib.splitString " " perAppRoutingTunUserStartExec)
+  );
 
   perAppRoutingTunWithTproxyFixture = evalProxySuite [
     baseModule
@@ -1352,16 +1516,23 @@ let
     }
   ];
   perAppRoutingTunWithTproxyStartScript =
-    builtins.readFile perAppRoutingTunWithTproxyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
+    builtins.readFile
+      perAppRoutingTunWithTproxyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart;
   perAppRoutingTunWithTproxyConfig = mkPerAppTunConfig perAppRoutingTunWithTproxyFixture;
-  perAppRoutingTunWithTproxyDirectOutbound =
-    builtins.head (builtins.filter (item: item.tag == "direct") perAppRoutingTunWithTproxyConfig.outbounds);
+  perAppRoutingTunWithTproxyDirectOutbound = builtins.head (
+    builtins.filter (item: item.tag == "direct") perAppRoutingTunWithTproxyConfig.outbounds
+  );
 
   perAppRoutingTunWithoutEnable = mkBadFixture [
     {
       services.proxy-suite.perAppRouting = {
         enable = true;
-        profiles = [ { name = "game"; route = "tun"; } ];
+        profiles = [
+          {
+            name = "game";
+            route = "tun";
+          }
+        ];
       };
     }
   ];
@@ -1383,19 +1554,26 @@ let
   perAppRoutingTproxyWrapper = _perAppRoutingTproxy.wrapper;
   perAppRoutingTproxyScript = _perAppRoutingTproxy.script;
   perAppRoutingTproxyProfiles = _perAppRoutingTproxy.profiles;
-  perAppRoutingTproxyServiceConfig = perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig;
+  perAppRoutingTproxyServiceConfig =
+    perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy".serviceConfig;
   perAppRoutingTproxyStartScript = builtins.readFile perAppRoutingTproxyServiceConfig.ExecStart;
   perAppRoutingTproxyStopScript = builtins.readFile perAppRoutingTproxyServiceConfig.ExecStop;
   perAppRoutingTproxyUserStartExec =
     perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".serviceConfig.ExecStart;
-  perAppRoutingTproxyUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingTproxyUserStartExec));
+  perAppRoutingTproxyUserStartScript = builtins.readFile (
+    builtins.head (pkgs.lib.splitString " " perAppRoutingTproxyUserStartExec)
+  );
 
   perAppRoutingTproxyWithoutEnable = mkBadFixture [
     {
       services.proxy-suite.perAppRouting = {
         enable = true;
-        profiles = [ { name = "browser"; route = "tproxy"; } ];
+        profiles = [
+          {
+            name = "browser";
+            route = "tproxy";
+          }
+        ];
       };
     }
   ];
@@ -1404,7 +1582,10 @@ let
     {
       services.proxy-suite = {
         proxy.enable = false;
-        perAppRouting = { enable = true; proxychains.enable = true; };
+        perAppRouting = {
+          enable = true;
+          proxychains.enable = true;
+        };
       };
     }
   ];
@@ -1412,7 +1593,10 @@ let
   perAppRoutingTunBackendWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        proxy = { enable = false; tun.perApp.enable = true; };
+        proxy = {
+          enable = false;
+          tun.perApp.enable = true;
+        };
         perAppRouting.enable = true;
       };
     }
@@ -1421,7 +1605,10 @@ let
   perAppRoutingTproxyBackendWithoutProxy = mkBadFixture [
     {
       services.proxy-suite = {
-        proxy = { enable = false; tproxy.perApp.enable = true; };
+        proxy = {
+          enable = false;
+          tproxy.perApp.enable = true;
+        };
         perAppRouting.enable = true;
       };
     }
@@ -1431,7 +1618,15 @@ let
     {
       services.proxy-suite = {
         proxy.enable = false;
-        perAppRouting = { enable = true; profiles = [ { name = "game"; route = "tun"; } ]; };
+        perAppRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "game";
+              route = "tun";
+            }
+          ];
+        };
       };
     }
   ];
@@ -1440,7 +1635,15 @@ let
     {
       services.proxy-suite = {
         proxy.enable = false;
-        perAppRouting = { enable = true; profiles = [ { name = "browser"; route = "tproxy"; } ]; };
+        perAppRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "browser";
+              route = "tproxy";
+            }
+          ];
+        };
       };
     }
   ];
@@ -1467,18 +1670,20 @@ let
   perAppRoutingZapretScript = _perAppRoutingZapret.script;
   perAppRoutingZapretProfiles = _perAppRoutingZapret.profiles;
   perAppRoutingZapretStartScript =
-    readExecScripts perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret".serviceConfig.ExecStartPre;
+    readExecScripts
+      perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret".serviceConfig.ExecStartPre;
   perAppRoutingZapretUserStartExec =
     perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".serviceConfig.ExecStart;
-  perAppRoutingZapretUserStartScript =
-    builtins.readFile (builtins.head (pkgs.lib.splitString " " perAppRoutingZapretUserStartExec));
-  perAppRoutingZapretService = perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret";
+  perAppRoutingZapretUserStartScript = builtins.readFile (
+    builtins.head (pkgs.lib.splitString " " perAppRoutingZapretUserStartExec)
+  );
+  perAppRoutingZapretService =
+    perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret";
   perAppRoutingZapretBase = mkZapretBase perAppRoutingZapretFixture;
   perAppRoutingZapretConfig = builtins.readFile "${perAppRoutingZapretBase}/config";
   perAppRoutingPerAppZapretBase = mkZapretBaseFor perAppRoutingZapretFixture "proxy-suite-per-app-zapret";
   perAppRoutingPerAppZapretConfig = builtins.readFile "${perAppRoutingPerAppZapretBase}/config";
-  perAppRoutingZapretGlobalCustomScript =
-    builtins.readFile "${perAppRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
+  perAppRoutingZapretGlobalCustomScript = builtins.readFile "${perAppRoutingZapretBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh";
 
   perAppRoutingZapretWithoutGlobalFixture = evalProxySuite [
     baseModule
@@ -1498,10 +1703,8 @@ let
   ];
   _perAppRoutingZapretWithoutGlobal = mkProxyCtlDerived perAppRoutingZapretWithoutGlobalFixture;
   perAppRoutingZapretWithoutGlobalProfiles = _perAppRoutingZapretWithoutGlobal.profiles;
-  perAppRoutingZapretWithoutGlobalPerAppBase =
-    mkZapretBaseFor perAppRoutingZapretWithoutGlobalFixture "proxy-suite-per-app-zapret";
-  perAppRoutingZapretWithoutGlobalPerAppConfig =
-    builtins.readFile "${perAppRoutingZapretWithoutGlobalPerAppBase}/config";
+  perAppRoutingZapretWithoutGlobalPerAppBase = mkZapretBaseFor perAppRoutingZapretWithoutGlobalFixture "proxy-suite-per-app-zapret";
+  perAppRoutingZapretWithoutGlobalPerAppConfig = builtins.readFile "${perAppRoutingZapretWithoutGlobalPerAppBase}/config";
 
   perAppRoutingTunPolkitConfig = perAppRoutingTunFixture.config.security.polkit.extraConfig;
 
@@ -1548,7 +1751,15 @@ let
     {
       services.proxy-suite = {
         zapret.enable = true;
-        perAppRouting = { enable = true; profiles = [ { name = "yt"; route = "zapret"; } ]; };
+        perAppRouting = {
+          enable = true;
+          profiles = [
+            {
+              name = "yt";
+              route = "zapret";
+            }
+          ];
+        };
       };
     }
   ];
@@ -1557,7 +1768,10 @@ let
     {
       services.proxy-suite.perAppRouting = {
         enable = true;
-        profiles = [ { name = "dup"; } { name = "dup"; } ];
+        profiles = [
+          { name = "dup"; }
+          { name = "dup"; }
+        ];
       };
     }
   ];
@@ -1570,7 +1784,12 @@ let
     {
       services.proxy-suite.perAppRouting = {
         enable = true;
-        profiles = [ { name = "steam-browser"; route = "proxychains"; } ];
+        profiles = [
+          {
+            name = "steam-browser";
+            route = "proxychains";
+          }
+        ];
       };
     }
   ];
@@ -1579,8 +1798,14 @@ let
     {
       services.proxy-suite = {
         proxy = {
-          tproxy = { enable = true; proxyMark = 16; };
-          tun.perApp = { enable = true; fwmark = 16; };
+          tproxy = {
+            enable = true;
+            proxyMark = 16;
+          };
+          tun.perApp = {
+            enable = true;
+            fwmark = 16;
+          };
         };
         perAppRouting.enable = true;
       };
@@ -1590,7 +1815,13 @@ let
   perAppRoutingTproxyFwmarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        proxy.tproxy = { proxyMark = 17; perApp = { enable = true; fwmark = 17; }; };
+        proxy.tproxy = {
+          proxyMark = 17;
+          perApp = {
+            enable = true;
+            fwmark = 17;
+          };
+        };
         perAppRouting.enable = true;
       };
     }
@@ -1600,8 +1831,14 @@ let
     {
       services.proxy-suite = {
         proxy = {
-          tun.perApp   = { enable = true; fwmark = 23; };
-          tproxy.perApp = { enable = true; fwmark = 23; };
+          tun.perApp = {
+            enable = true;
+            fwmark = 23;
+          };
+          tproxy.perApp = {
+            enable = true;
+            fwmark = 23;
+          };
         };
         perAppRouting.enable = true;
       };
@@ -1612,8 +1849,14 @@ let
     {
       services.proxy-suite = {
         proxy = {
-          tun.perApp   = { enable = true; routeTable = 123; };
-          tproxy.perApp = { enable = true; routeTable = 123; };
+          tun.perApp = {
+            enable = true;
+            routeTable = 123;
+          };
+          tproxy.perApp = {
+            enable = true;
+            routeTable = 123;
+          };
         };
         perAppRouting.enable = true;
       };
@@ -1623,7 +1866,13 @@ let
   perAppRoutingZapretFilterMarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        zapret = { enable = true; perApp = { enable = true; filterMark = 268435456; }; };
+        zapret = {
+          enable = true;
+          perApp = {
+            enable = true;
+            filterMark = 268435456;
+          };
+        };
         proxy.tproxy.proxyMark = 268435456;
         perAppRouting.enable = true;
       };
@@ -1633,8 +1882,17 @@ let
   perAppRoutingTproxyZapretMarkCollision = mkBadFixture [
     {
       services.proxy-suite = {
-        zapret = { enable = true; perApp = { enable = true; filterMark = 23; }; };
-        proxy.tproxy.perApp = { enable = true; fwmark = 23; };
+        zapret = {
+          enable = true;
+          perApp = {
+            enable = true;
+            filterMark = 23;
+          };
+        };
+        proxy.tproxy.perApp = {
+          enable = true;
+          fwmark = 23;
+        };
         perAppRouting.enable = true;
       };
     }
@@ -1650,7 +1908,11 @@ let
           enable = true;
           singBox.enable = true;
           subscriptions = [
-            { tag = "bad"; url = "https://example.com/sub/token"; urlFile = "/run/secrets/sub-url"; }
+            {
+              tag = "bad";
+              url = "https://example.com/sub/token";
+              urlFile = "/run/secrets/sub-url";
+            }
           ];
         };
       };
@@ -1750,21 +2012,27 @@ let
       assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat "'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' localProxyAuthStartScript;
-      assert pkgs.lib.hasInfix ''--arg user local-user'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix "--arg user local-user" localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''--arg password "$LOCAL_PROXY_PASSWORD"'' localProxyAuthStartScript;
-      assert pkgs.lib.hasInfix ''select(.type == "mixed" and .tag == "mixed-in") | .users'' localProxyAuthBackendJqFilter;
+      assert pkgs.lib.hasInfix ''select(.type == "mixed" and .tag == "mixed-in") | .users''
+        localProxyAuthBackendJqFilter;
       assert pkgs.lib.hasInfix ''chmod 600 "$RUNTIME_DIR/config.json"'' localProxyAuthStartScript;
       true
     )
     # -- proxy.auth: passwordFile is read from runtime path and proxychains uses runtime config --
     (
-      assert pkgs.lib.hasInfix ''/run/secrets/local-proxy-password'' localProxyAuthPasswordFileStartScript;
-      assert pkgs.lib.hasInfix ''/run/proxy-suite-socks/proxychains.conf'' localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix "/run/secrets/local-proxy-password" localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix "/run/proxy-suite-socks/proxychains.conf"
+        localProxyAuthPasswordFileStartScript;
       assert pkgs.lib.hasInfix "printf 'socks5 %s %s %s %s\\n'" localProxyAuthPasswordFileStartScript;
-      assert pkgs.lib.hasInfix ''chgrp proxy-suite "/run/proxy-suite-socks/proxychains.conf"'' localProxyAuthPasswordFileStartScript;
-      assert pkgs.lib.hasInfix ''chmod 640 "/run/proxy-suite-socks/proxychains.conf"'' localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix ''chgrp proxy-suite "/run/proxy-suite-socks/proxychains.conf"''
+        localProxyAuthPasswordFileStartScript;
+      assert pkgs.lib.hasInfix ''chmod 640 "/run/proxy-suite-socks/proxychains.conf"''
+        localProxyAuthPasswordFileStartScript;
       assert builtins.hasAttr "proxy-suite" localProxyAuthPasswordFileFixture.config.users.groups;
-      assert shellValueByPrefix localProxyAuthPasswordFileWrapper "export PROXYCHAINS_CONFIG=" == "/run/proxy-suite-socks/proxychains.conf";
+      assert
+        shellValueByPrefix localProxyAuthPasswordFileWrapper "export PROXYCHAINS_CONFIG="
+        == "/run/proxy-suite-socks/proxychains.conf";
       assert pkgs.lib.hasInfix "Proxychains config is not readable" localProxyAuthPasswordFileScript;
       true
     )
@@ -1816,6 +2084,49 @@ let
     # -- sing-box package override propagates into generated service scripts --
     (
       assert pkgs.lib.hasInfix customSingBoxPackageBin customSingBoxPackageStartScript;
+      true
+    )
+    # -- hybrid backend: sing-box frontend with XRay loopback sidecar --
+    (
+      let
+        dnsBridgeInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "xray-dns-in") hybridTproxyConfig.inbounds
+        );
+        mixedInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "mixed-in") hybridTproxyConfig.inbounds
+        );
+        tproxyInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "tproxy-in") hybridTproxyConfig.inbounds
+        );
+        tunDnsBridgeInbound = builtins.head (
+          builtins.filter (inbound: inbound.tag == "xray-dns-in") hybridTunConfig.inbounds
+        );
+      in
+      assert hybridFixture.config.services.proxy-suite.proxy.singBox.enable;
+      assert hybridFixture.config.services.proxy-suite.proxy.xray.enable;
+      assert hybridTproxyConfig ? route;
+      assert !(hybridTproxyConfig ? routing);
+      assert dnsBridgeInbound.type == "direct";
+      assert dnsBridgeInbound.listen == "127.0.0.1";
+      assert dnsBridgeInbound.listen_port == 18533;
+      assert mixedInbound.type == "mixed";
+      assert tproxyInbound.type == "tproxy";
+      assert tunDnsBridgeInbound.listen_port == 18534;
+      assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
+      assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
+      assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33080" hybridStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18533" hybridStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33180" hybridTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18534" hybridTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33280" hybridPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18535" hybridPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "--backend sing-box" hybridStartScript;
+      assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
+      assert pkgs.lib.hasInfix "hybrid XRay json sidecar" hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix ''{type:"socks",tag:$tag,server:"127.0.0.1"'' hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "routing_mark:2" hybridXrayRawStartScript;
       true
     )
     # -- xray backend: same service surface, XRay config shape, and urltest balancer --
@@ -1876,14 +2187,26 @@ let
         tunDnsOutbound = builtins.head (
           builtins.filter (outbound: outbound.tag == "dns-out") xrayTunConfig.outbounds
         );
-        tunHasFinalRuleTag = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "final-default") xrayTunConfig.routing.rules;
-        tunHasDirectGeositeRule = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "direct-geosite") xrayTunConfig.routing.rules;
-        tunHasDnsHijackRule = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "dns-hijack") xrayTunConfig.routing.rules;
-        tunHasDnsUpstreamRule = builtins.any (rule: (rule ? ruleTag) && rule.ruleTag == "dns-upstream-direct") xrayTunConfig.routing.rules;
+        tunHasFinalRuleTag = builtins.any (
+          rule: (rule ? ruleTag) && rule.ruleTag == "final-default"
+        ) xrayTunConfig.routing.rules;
+        tunHasDirectGeositeRule = builtins.any (
+          rule: (rule ? ruleTag) && rule.ruleTag == "direct-geosite"
+        ) xrayTunConfig.routing.rules;
+        tunHasDnsHijackRule = builtins.any (
+          rule: (rule ? ruleTag) && rule.ruleTag == "dns-hijack"
+        ) xrayTunConfig.routing.rules;
+        tunHasDnsUpstreamRule = builtins.any (
+          rule: (rule ? ruleTag) && rule.ruleTag == "dns-upstream-direct"
+        ) xrayTunConfig.routing.rules;
       in
       assert tunInbound.protocol == "tun";
       assert tunInbound.settings.name == "singtun0";
-      assert tunInbound.settings.gateway == [ "172.19.0.1/30" "fd66:19::1/64" ];
+      assert
+        tunInbound.settings.gateway == [
+          "172.19.0.1/30"
+          "fd66:19::1/64"
+        ];
       assert builtins.length tunInbound.settings.dns == 2;
       assert tunInbound.settings.autoOutboundsInterface == "auto";
       assert tunInbound.sniffing.destOverride == [ "fakedns" ];
@@ -1901,14 +2224,23 @@ let
       assert (builtins.elemAt xrayTunConfig.dns.servers 2).tag == "local";
       assert builtins.length xrayTunConfig.fakedns == 2;
       assert tunDnsOutbound.protocol == "dns";
-      assert tunDnsOutbound.settings.rules == [ { action = "direct"; qType = "2-27,29-65535"; } ];
+      assert
+        tunDnsOutbound.settings.rules == [
+          {
+            action = "direct";
+            qType = "2-27,29-65535";
+          }
+        ];
       assert tunDirectOutbound.streamSettings.sockopt.mark == 2;
       assert xrayStartBackendJqFilterFile == xrayTunBackendJqFilterFile;
       assert xrayTunBackendJqFilterFile == xrayPerAppTunBackendJqFilterFile;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" xrayStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayStartScript;
-      assert pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.accounts'' xrayBackendJqFilter;
-      assert !(pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.users'' xrayBackendJqFilter);
+      assert pkgs.lib.hasInfix
+        ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.accounts''
+        xrayBackendJqFilter;
+      assert
+        !(pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.users'' xrayBackendJqFilter);
       assert pkgs.lib.hasInfix "xray-loglevel" xrayTunStartScript;
       assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayTunStartScript;
       assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayTunStartScript;
@@ -1930,17 +2262,25 @@ let
       assert pkgs.lib.hasInfix ''uplink_addr="$('' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev singtun0'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table 2022'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''route replace default dev singtun0 src "$uplink_addr" table 2022'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev singtun0 table 2022'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 route replace default dev singtun0 table 2022'' xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table 2022''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix ''route replace default dev singtun0 src "$uplink_addr" table 2022''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev singtun0 table 2022''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix "-6 route replace default dev singtun0 table 2022" xrayTunUpScript;
       assert pkgs.lib.hasInfix "rule add pref 8996 fwmark 17 table 102" xrayTunUpScript;
       assert pkgs.lib.hasInfix "rule add pref 8997 fwmark 16 table 101" xrayTunUpScript;
       assert pkgs.lib.hasInfix "rule add pref 9000 not fwmark 2 table 2022" xrayTunUpScript;
       assert pkgs.lib.hasInfix "-6 rule add pref 8997 fwmark 16 table 101" xrayTunUpScript;
       assert pkgs.lib.hasInfix "-6 rule add pref 9000 not fwmark 2 table 2022" xrayTunUpScript;
       assert perAppTunInbound.settings.name == "psperapptun0";
-      assert perAppTunInbound.settings.gateway == [ "172.20.0.1/30" "fd66:20::1/64" ];
+      assert
+        perAppTunInbound.settings.gateway == [
+          "172.20.0.1/30"
+          "fd66:20::1/64"
+        ];
       assert builtins.length perAppTunInbound.settings.dns == 2;
       assert perAppTunInbound.sniffing.destOverride == [ "fakedns" ];
       assert perAppTunInbound.sniffing.metadataOnly == true;
@@ -1964,18 +2304,24 @@ let
       assert pkgs.lib.hasInfix ''uplink_addr="$('' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''route replace "$tun_route_prefix" dev psperapptun0 src "$tun_addr" table 101'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''route replace default dev psperapptun0 src "$uplink_addr" table 101'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev psperapptun0 table 101'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 route replace default dev psperapptun0 table 101'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 rule add fwmark 16 table 101'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix ''-4 route flush table 101'' xrayPerAppTunCleanupScript;
-      assert pkgs.lib.hasInfix ''-6 route flush table 101'' xrayPerAppTunCleanupScript;
+      assert pkgs.lib.hasInfix
+        ''route replace "$tun_route_prefix" dev psperapptun0 src "$tun_addr" table 101''
+        xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix ''route replace default dev psperapptun0 src "$uplink_addr" table 101''
+        xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev psperapptun0 table 101''
+        xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix "-6 route replace default dev psperapptun0 table 101"
+        xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix "-6 rule add fwmark 16 table 101" xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix "-4 route flush table 101" xrayPerAppTunCleanupScript;
+      assert pkgs.lib.hasInfix "-6 route flush table 101" xrayPerAppTunCleanupScript;
       assert pkgs.lib.hasInfix "resolvectl flush-caches" xrayPerAppTunCleanupScript;
       true
     )
     (
-      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/xray/xray-sub.json"'' xraySubscriptionStartScript;
+      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/xray/xray-sub.json"''
+        xraySubscriptionStartScript;
       assert pkgs.lib.hasInfix "--backend xray" xraySubscriptionStartScript;
       true
     )
@@ -1999,7 +2345,6 @@ let
     )
     # -- backend selection and backend-specific raw JSON options are enforced --
     (
-      assert xrayBothBackends.success == false;
       assert proxyEnabledNoBackend.success == false;
       assert xraySelectorUnavailable.success == false;
       assert xraySingBoxJsonUnavailable.success == false;
@@ -2073,19 +2418,18 @@ let
     )
     (
       assert tunServiceConfig.ExecStartPre == tunServiceConfig.ExecStopPost;
-      assert pkgs.lib.hasInfix ''delete table inet sing-box'' tunCleanupScript;
-      assert pkgs.lib.hasInfix ''rule del table 2022'' tunCleanupScript;
-      assert pkgs.lib.hasInfix ''rule del pref 8996'' tunCleanupScript;
-      assert pkgs.lib.hasInfix ''rule del pref 8997'' tunCleanupScript;
-      assert pkgs.lib.hasInfix ''route flush table 2022'' tunCleanupScript;
+      assert pkgs.lib.hasInfix "delete table inet sing-box" tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del table 2022" tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del pref 8996" tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del pref 8997" tunCleanupScript;
+      assert pkgs.lib.hasInfix "route flush table 2022" tunCleanupScript;
       assert pkgs.lib.hasInfix "link del dev" tunCleanupScript;
       assert pkgs.lib.hasInfix "singtun0" tunCleanupScript;
       true
     )
     (
       assert
-        tunAutostartFixture.config.systemd.services."proxy-suite-tun".wantedBy
-        == [ "multi-user.target" ];
+        tunAutostartFixture.config.systemd.services."proxy-suite-tun".wantedBy == [ "multi-user.target" ];
       true
     )
     (
@@ -2402,8 +2746,10 @@ let
 
     # -- subscription/runtime: generated cache paths use the raw validated tag, not shell-escaped quotes --
     (
-      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/sing-box/community.json"'' subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/sing-box/community.json"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp"
+        subscriptionOnlyUpdateScript;
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyStartScript);
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyUpdateScript);
       true
@@ -2420,18 +2766,19 @@ let
 
     # -- subscription/runtime: refresh only restarts sing-box units that are active --
     (
-      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-socks'' subscriptionOnlyUpdateScript;
-      assert pkgs.lib.hasInfix ''restart proxy-suite-socks'' subscriptionOnlyUpdateScript;
-      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-tun'' subscriptionOnlyUpdateScript;
-      assert !(pkgs.lib.hasInfix ''SOCKS_WAS_ACTIVE'' subscriptionOnlyUpdateScript);
+      assert pkgs.lib.hasInfix "is-active --quiet proxy-suite-socks" subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "restart proxy-suite-socks" subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "is-active --quiet proxy-suite-tun" subscriptionOnlyUpdateScript;
+      assert !(pkgs.lib.hasInfix "SOCKS_WAS_ACTIVE" subscriptionOnlyUpdateScript);
       true
     )
 
     # -- subscription/runtime: refresh also handles the per-app TUN sing-box service when present --
     (
-      assert pkgs.lib.hasInfix ''is-active --quiet proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
-      assert pkgs.lib.hasInfix ''restart proxy-suite-per-app-tun'' subscriptionPerAppTunUpdateScript;
-      assert !(pkgs.lib.hasInfix ''PER_APP_TUN_WAS_ACTIVE'' subscriptionPerAppTunUpdateScript);
+      assert pkgs.lib.hasInfix "is-active --quiet proxy-suite-per-app-tun"
+        subscriptionPerAppTunUpdateScript;
+      assert pkgs.lib.hasInfix "restart proxy-suite-per-app-tun" subscriptionPerAppTunUpdateScript;
+      assert !(pkgs.lib.hasInfix "PER_APP_TUN_WAS_ACTIVE" subscriptionPerAppTunUpdateScript);
       true
     )
 
@@ -2453,29 +2800,36 @@ let
 
     # -- runtime route mode: proxy-ctl wrapper exports the volatile state file and baseline default --
     (
-      assert shellValueByPrefix minimalProxyCtlWrapper "export ROUTE_MODE_STATE_FILE=" == "/run/proxy-suite/route-mode";
+      assert
+        shellValueByPrefix minimalProxyCtlWrapper "export ROUTE_MODE_STATE_FILE="
+        == "/run/proxy-suite/route-mode";
       assert shellValueByPrefix minimalProxyCtlWrapper "export DEFAULT_ROUTE_MODE=" == "blacklist";
       true
     )
 
     # -- runtime route mode: proxy-ctl help/status script exposes default + four explicit modes --
     (
-      assert pkgs.lib.hasInfix "route-mode default|whitelist|blacklist|all-proxy|all-bypass|status" minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''printf 'route_mode=%s\n' "$(_route_mode_current)"'' minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''printf 'default_route_mode=%s\n' "$(_route_mode_default)"'' minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''systemctl start "proxy-suite-route-mode@''${action}.service"'' minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
+        minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''printf 'route_mode=%s\n' "$(_route_mode_current)"''
+        minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''printf 'default_route_mode=%s\n' "$(_route_mode_default)"''
+        minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix ''systemctl start "proxy-suite-route-mode@''${action}.service"''
+        minimalProxyCtlScript;
       true
     )
 
     # -- runtime route mode: socks start script includes all override branches and uses volatile state --
     (
-      assert pkgs.lib.hasInfix ''ROUTE_MODE_STATE_FILE="/run/proxy-suite/route-mode"'' routeModeStartScript;
+      assert pkgs.lib.hasInfix ''ROUTE_MODE_STATE_FILE="/run/proxy-suite/route-mode"''
+        routeModeStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" routeModeStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' routeModeStartScript;
-      assert pkgs.lib.hasInfix ''all-proxy)'' routeModeStartScript;
-      assert pkgs.lib.hasInfix ''all-bypass)'' routeModeStartScript;
-      assert pkgs.lib.hasInfix ''.route.rules = $route_rules'' routeModeBackendJqFilter;
-      assert pkgs.lib.hasInfix ''.dns.rules = []'' routeModeBackendJqFilter;
+      assert pkgs.lib.hasInfix "all-proxy)" routeModeStartScript;
+      assert pkgs.lib.hasInfix "all-bypass)" routeModeStartScript;
+      assert pkgs.lib.hasInfix ".route.rules = $route_rules" routeModeBackendJqFilter;
+      assert pkgs.lib.hasInfix ".dns.rules = []" routeModeBackendJqFilter;
       true
     )
 
@@ -2492,13 +2846,15 @@ let
     (
       let
         setterSvc = routeModeFixture.config.systemd.services."proxy-suite-route-mode@";
-        setterScript = builtins.readFile (builtins.head (pkgs.lib.splitString " " setterSvc.serviceConfig.ExecStart));
+        setterScript = builtins.readFile (
+          builtins.head (pkgs.lib.splitString " " setterSvc.serviceConfig.ExecStart)
+        );
       in
       assert !(setterSvc.serviceConfig ? RuntimeDirectory);
       assert pkgs.lib.hasInfix "/run/proxy-suite/route-mode" setterScript;
-      assert pkgs.lib.hasInfix ''default)'' setterScript;
-      assert pkgs.lib.hasInfix ''all-proxy)'' setterScript;
-      assert pkgs.lib.hasInfix ''all-bypass)'' setterScript;
+      assert pkgs.lib.hasInfix "default)" setterScript;
+      assert pkgs.lib.hasInfix "all-proxy)" setterScript;
+      assert pkgs.lib.hasInfix "all-bypass)" setterScript;
       true
     )
 
@@ -2520,7 +2876,9 @@ let
       true
     )
     (
-      assert builtins.length perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.profiles == 2;
+      assert
+        builtins.length perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.profiles
+        == 2;
       true
     )
     (
@@ -2545,21 +2903,27 @@ let
     # -- perAppRouting: createDefaultProfiles injects curated tun profile when backend is enabled --
     (
       assert builtins.length perAppRoutingTunProfiles == 2;
-      assert builtins.any (profile: profile.name == "tun" && profile.route == "tun") perAppRoutingTunProfiles;
+      assert builtins.any (
+        profile: profile.name == "tun" && profile.route == "tun"
+      ) perAppRoutingTunProfiles;
       true
     )
 
     # -- perAppRouting: createDefaultProfiles injects curated tproxy profile when backend is enabled --
     (
       assert builtins.length perAppRoutingTproxyProfiles == 2;
-      assert builtins.any (profile: profile.name == "tproxy" && profile.route == "tproxy") perAppRoutingTproxyProfiles;
+      assert builtins.any (
+        profile: profile.name == "tproxy" && profile.route == "tproxy"
+      ) perAppRoutingTproxyProfiles;
       true
     )
 
     # -- perAppRouting: createDefaultProfiles injects curated zapret profile when backend is enabled --
     (
       assert builtins.length perAppRoutingZapretProfiles == 2;
-      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") perAppRoutingZapretProfiles;
+      assert builtins.any (
+        profile: profile.name == "zapret" && profile.route == "zapret"
+      ) perAppRoutingZapretProfiles;
       true
     )
 
@@ -2568,7 +2932,8 @@ let
       assert pkgs.lib.hasInfix "help)" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "show this help message" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "enable/disable the proxy backend stack" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "restart active global proxy-suite services" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "restart active global proxy-suite services"
+        perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true
@@ -2593,16 +2958,20 @@ let
     # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
     (
       assert pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG='-q'" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "exec proxychains4 $PROXYCHAINS_QUIET_ARG -f \"$PROXYCHAINS_CONFIG\" \"$@\"" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix
+        "exec proxychains4 $PROXYCHAINS_QUIET_ARG -f \"$PROXYCHAINS_CONFIG\" \"$@\""
+        perAppRoutingProxychainsScript;
       true
     )
 
     # -- perAppRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir" perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir"
+        perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "_check_no_global_proxy tun" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED"'' perAppRoutingTunScript;
+      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED"''
+        perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "cleanup_slice()" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "trap cleanup_slice EXIT" perAppRoutingTunScript;
@@ -2612,16 +2981,20 @@ let
     # -- perAppRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
-      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED"'' perAppRoutingTproxyScript;
-      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingTproxyScript;
+      assert pkgs.lib.hasInfix
+        ''_wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED"''
+        perAppRoutingTproxyScript;
+      assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingTproxyScript;
       true
     )
 
     # -- perAppRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
-      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED"'' perAppRoutingZapretScript;
-      assert pkgs.lib.hasInfix ''$slice_base-''${profile}-$$'' perAppRoutingZapretScript;
+      assert pkgs.lib.hasInfix
+        ''_wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED"''
+        perAppRoutingZapretScript;
+      assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingZapretScript;
       true
     )
 
@@ -2635,7 +3008,9 @@ let
     # -- perAppRouting: app TUN config is separate and does not auto-route globally --
     (
       let
-        inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") perAppRoutingTunConfig.inbounds);
+        inbound = builtins.head (
+          builtins.filter (item: item.tag == "tun-in") perAppRoutingTunConfig.inbounds
+        );
       in
       assert inbound.interface_name == "psperapptun0";
       assert inbound.address == [ "172.20.0.1/30" ];
@@ -2689,7 +3064,8 @@ let
     (
       assert perAppRoutingTproxyFixture.config.systemd.services ? "proxy-suite-per-app-tproxy";
       assert perAppRoutingTproxyFixture.config.systemd.services ? "proxy-suite-per-app-tproxy-user@";
-      assert perAppRoutingTproxyFixture.config.systemd.user.services ? "proxy-suite-per-app-tproxy-anchor";
+      assert
+        perAppRoutingTproxyFixture.config.systemd.user.services ? "proxy-suite-per-app-tproxy-anchor";
       true
     )
 
@@ -2697,7 +3073,8 @@ let
     (
       assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
       assert perAppRoutingZapretFixture.config.systemd.services ? "proxy-suite-per-app-zapret-user@";
-      assert perAppRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
+      assert
+        perAppRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
       assert builtins.elem "network-online.target" perAppRoutingZapretService.after;
       assert builtins.elem "network-online.target" perAppRoutingZapretService.wants;
       true
@@ -2705,12 +3082,20 @@ let
 
     # -- perAppRouting: app zapret can run without the global zapret service --
     (
-      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
-      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret-user@";
-      assert perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
-      assert !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "zapret-discord-youtube");
+      assert
+        perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
+      assert
+        perAppRoutingZapretWithoutGlobalFixture.config.systemd.services
+        ? "proxy-suite-per-app-zapret-user@";
+      assert
+        perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services
+        ? "proxy-suite-per-app-zapret-anchor";
+      assert
+        !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "zapret-discord-youtube");
       assert builtins.length perAppRoutingZapretWithoutGlobalProfiles == 2;
-      assert builtins.any (profile: profile.name == "zapret" && profile.route == "zapret") perAppRoutingZapretWithoutGlobalProfiles;
+      assert builtins.any (
+        profile: profile.name == "zapret" && profile.route == "zapret"
+      ) perAppRoutingZapretWithoutGlobalProfiles;
       assert pkgs.lib.hasInfix "proxy-suite-per-app-zapret" perAppRoutingZapretWithoutGlobalPerAppBase;
       assert !(pkgs.lib.hasInfix "proxy-suite-zapret" perAppRoutingZapretWithoutGlobalPerAppBase);
       true
@@ -2720,16 +3105,20 @@ let
     (
       assert perAppRoutingTunFixture.config.networking.nftables.enable;
       assert perAppRoutingTunFixture.config.users.groups ? "proxy-suite";
-      assert builtins.elem "network-online.target" tunManualFixture.config.systemd.services."proxy-suite-tun".after;
-      assert builtins.elem "network-online.target" tunManualFixture.config.systemd.services."proxy-suite-tun".wants;
+      assert builtins.elem "network-online.target"
+        tunManualFixture.config.systemd.services."proxy-suite-tun".after;
+      assert builtins.elem "network-online.target"
+        tunManualFixture.config.systemd.services."proxy-suite-tun".wants;
       true
     )
 
     # -- userControl: default polkit rule covers both per-app and global proxy-ctl managed units --
     (
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0" perAppRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0"
+        perAppRoutingTunPolkitConfig;
       assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" perAppRoutingTunPolkitConfig;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0" perAppRoutingTunPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0"
+        perAppRoutingTunPolkitConfig;
       assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" perAppRoutingTunPolkitConfig;
       true
     )
@@ -2738,18 +3127,27 @@ let
     (
       assert userControlGlobalOnlyFixture.config.users.groups ? "proxy-suite";
       assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" userControlGlobalOnlyPolkitConfig;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0" userControlGlobalOnlyPolkitConfig;
-      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) === 0.*" userControlGlobalOnlyPolkitConfig == null;
-      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\"" userControlGlobalOnlyPolkitConfig;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0"
+        userControlGlobalOnlyPolkitConfig;
+      assert
+        builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) === 0.*" userControlGlobalOnlyPolkitConfig
+        == null;
+      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\""
+        userControlGlobalOnlyPolkitConfig;
       true
     )
 
     # -- userControl: per-app-only rule covers per-app-scoped helpers only --
     (
       assert userControlPerAppOnlyFixture.config.users.groups ? "proxy-suite";
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0" userControlPerAppOnlyPolkitConfig;
-      assert builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) !== 0.*" userControlPerAppOnlyPolkitConfig == null;
-      assert builtins.match ".*unit === \"zapret-discord-youtube\\.service\".*" userControlPerAppOnlyPolkitConfig == null;
+      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") === 0"
+        userControlPerAppOnlyPolkitConfig;
+      assert
+        builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) !== 0.*" userControlPerAppOnlyPolkitConfig
+        == null;
+      assert
+        builtins.match ".*unit === \"zapret-discord-youtube\\.service\".*" userControlPerAppOnlyPolkitConfig
+        == null;
       true
     )
 
@@ -2757,8 +3155,12 @@ let
     (
       assert !(userControlDisabledFixture.config.users.groups ? "proxy-suite");
       assert !userControlDisabledFixture.config.security.polkit.enable;
-      assert builtins.match ".*subject\\.isInGroup\\(\"proxy-suite\"\\).*" userControlDisabledFixture.config.security.polkit.extraConfig == null;
-      assert builtins.match ".*org\\.freedesktop\\.systemd1\\.manage-units.*" userControlDisabledFixture.config.security.polkit.extraConfig == null;
+      assert
+        builtins.match ".*subject\\.isInGroup\\(\"proxy-suite\"\\).*" userControlDisabledFixture.config.security.polkit.extraConfig
+        == null;
+      assert
+        builtins.match ".*org\\.freedesktop\\.systemd1\\.manage-units.*" userControlDisabledFixture.config.security.polkit.extraConfig
+        == null;
       true
     )
 
@@ -2774,7 +3176,8 @@ let
     (
       assert pkgs.lib.hasInfix "proxy_suite_per_app_tproxy" perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "rule del fwmark 17 table 102" perAppRoutingTproxyStartScript;
-      assert pkgs.lib.hasInfix "route replace local default dev lo table 102" perAppRoutingTproxyStartScript;
+      assert pkgs.lib.hasInfix "route replace local default dev lo table 102"
+        perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "set +e" perAppRoutingTproxyStopScript;
       assert pkgs.lib.hasInfix "rule del fwmark 17 table 102" perAppRoutingTproxyStopScript;
@@ -2809,7 +3212,8 @@ let
       assert pkgs.lib.hasInfix "QNUM=201" perAppRoutingPerAppZapretConfig;
       assert pkgs.lib.hasInfix "DESYNC_MARK=0x8000000" perAppRoutingPerAppZapretConfig;
       assert pkgs.lib.hasInfix "DESYNC_MARK_POSTNAT=0x4000000" perAppRoutingPerAppZapretConfig;
-      assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_per_app_zapret" perAppRoutingPerAppZapretConfig;
+      assert pkgs.lib.hasInfix "ZAPRET_NFT_TABLE=proxy_suite_per_app_zapret"
+        perAppRoutingPerAppZapretConfig;
       true
     )
     (

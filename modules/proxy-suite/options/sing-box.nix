@@ -2,7 +2,12 @@
 { lib, pkgs, ... }:
 
 let
-  inherit (lib) literalExpression mkOption mkEnableOption types;
+  inherit (lib)
+    literalExpression
+    mkOption
+    mkEnableOption
+    types
+    ;
 in
 {
   options.services.proxy-suite.proxy = {
@@ -11,8 +16,10 @@ in
       default = false;
       description = ''
         Whether to configure and run the proxy backend services.
-        This is disabled by default; enable it explicitly and choose exactly
-        one backend with proxy.singBox.enable or proxy.xray.enable.
+        This is disabled by default; enable it explicitly and choose at least
+        one backend with proxy.singBox.enable or proxy.xray.enable. Enabling
+        both runs sing-box as the frontend and XRay as a sidecar for outbounds
+        that require XRay.
       '';
     };
 

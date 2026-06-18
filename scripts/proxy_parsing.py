@@ -67,7 +67,7 @@ def _xray_tls(tls: dict | None) -> tuple[str, dict]:
 
 def _xray_transport(transport: dict | None) -> tuple[str, dict]:
     if not transport:
-        return "tcp", {}
+        return "raw", {}
 
     t = transport["type"]
     if t == "ws":
@@ -107,6 +107,7 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
         stream = {"network": network, "security": security}
         stream.update(sec)
         stream.update(net)
+        stream.setdefault("sockopt", {})["domainStrategy"] = "UseIP"
         if routing_mark is not None:
             stream.setdefault("sockopt", {})["mark"] = routing_mark
         return stream

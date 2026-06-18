@@ -159,6 +159,22 @@ let
         example = "hy2://password@example.com:443?sni=example.com";
       };
 
+      backend = mkOption {
+        type = types.enum [
+          "auto"
+          "sing-box"
+          "xray"
+        ];
+        default = "auto";
+        description = ''
+          Backend preference for this outbound when both SingBox and XRay are
+          enabled. "auto" uses SingBox when the URL or JSON can be represented
+          there and falls back to XRay for XRay-only transports such as XHTTP
+          or ECH. Ignored by single-backend configurations.
+        '';
+        example = "xray";
+      };
+
       singBoxJson = mkOption {
         type = types.nullOr types.attrs;
         default = null;

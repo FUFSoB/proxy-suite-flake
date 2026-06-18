@@ -39,6 +39,7 @@ Update module option docs there instead of editing this file by hand.
     - [listenAddress](#services-proxy-suite-proxy-listenaddress)
     - [outbounds](#services-proxy-suite-proxy-outbounds)
       - item
+        - [backend](#services-proxy-suite-proxy-outbounds-backend)
         - routing
           - [domains](#services-proxy-suite-proxy-outbounds-routing-domains)
           - [geoips](#services-proxy-suite-proxy-outbounds-routing-geoips)
@@ -978,8 +979,10 @@ true
 
 
 Whether to configure and run the proxy backend services\.
-This is disabled by default; enable it explicitly and choose exactly
-one backend with proxy\.singBox\.enable or proxy\.xray\.enable\.
+This is disabled by default; enable it explicitly and choose at least
+one backend with proxy\.singBox\.enable or proxy\.xray\.enable\. Enabling
+both runs sing-box as the frontend and XRay as a sidecar for outbounds
+that require XRay\.
 
 
 
@@ -1463,6 +1466,42 @@ list of (submodule)
     url = "hy2://password@example.com:443?sni=example.com";
   }
 ]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/sing-box-outbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box-outbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxy-outbounds-backend"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.backend
+
+
+
+Backend preference for this outbound when both SingBox and XRay are
+enabled\. “auto” uses SingBox when the URL or JSON can be represented
+there and falls back to XRay for XRay-only transports such as XHTTP
+or ECH\. Ignored by single-backend configurations\.
+
+
+
+*Type:*
+one of “auto”, “sing-box”, “xray”
+
+
+
+*Default:*
+
+```nix
+"auto"
+```
+
+
+
+*Example:*
+
+```nix
+"xray"
 ```
 
 *Declared by:*
@@ -4217,8 +4256,6 @@ null
 <a id="services-proxy-suite-tray-enable"></a>
 ## services\.proxy-suite\.tray\.enable
 
-
-
 Whether to enable system tray indicator for proxy-suite\.
 
 
@@ -4283,6 +4320,8 @@ true
 
 <a id="services-proxy-suite-tray-pollinterval"></a>
 ## services\.proxy-suite\.tray\.pollInterval
+
+
 
 Tray status refresh interval in seconds\.
 Lower values make UI state changes appear faster, while higher values
@@ -4451,6 +4490,7 @@ true
 
 *Declared by:*
  - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
 
 
 <a id="services-proxy-suite-zapret-cidrexemption-enable"></a>
@@ -5199,4 +5239,3 @@ true
 
 *Declared by:*
  - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
-

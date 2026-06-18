@@ -7,6 +7,8 @@
   proxyEnabled,
   singBoxEnabled,
   xrayEnabled,
+  hybridEnabled,
+  pureXrayEnabled,
   activeBackend,
   perAppRoutingCfg,
   userControlCfg,
@@ -31,8 +33,9 @@ let
   globalTproxy = proxyCfg.tproxy;
   systemctl = "${pkgs.systemd}/bin/systemctl";
   backend = if activeBackend == null then "sing-box" else activeBackend;
-  backendArg = "--backend ${backend}";
-  backendBin = if xrayEnabled then xray else singBox;
+  mainBackend = if pureXrayEnabled then "xray" else "sing-box";
+  backendArg = "--backend ${mainBackend}";
+  backendBin = if pureXrayEnabled then xray else singBox;
   localProxyAuth = proxyCfg.auth;
   localProxyAuthEnabled =
     localProxyAuth.username != null
@@ -48,6 +51,7 @@ let
   routeModeStateFile = "/run/proxy-suite/route-mode";
   xrayLoglevelFile = "/run/proxy-suite/xray-loglevel";
   runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
+  xraySidecarRoutingMark = globalTproxy.proxyMark;
 
   mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
 
@@ -97,7 +101,7 @@ let
     routingMark:
     if routingMark == null then
       ""
-    else if xrayEnabled then
+    else if pureXrayEnabled then
       " | .streamSettings.sockopt.mark = ${toString routingMark}"
     else
       " | .routing_mark = ${toString routingMark}";
@@ -106,7 +110,7 @@ let
     ob: tag: routingMark:
     let
       backendRaw =
-        if xrayEnabled then
+        if pureXrayEnabled then
           ob.xrayJson
         else if ob.singBoxJson != null then
           ob.singBoxJson
@@ -115,22 +119,21 @@ let
       markAttrs =
         if routingMark == null then
           { }
-        else if xrayEnabled then
+        else if pureXrayEnabled then
           { streamSettings.sockopt.mark = routingMark; }
         else
           { routing_mark = routingMark; };
-      taggedRaw = backendRaw // { inherit tag; };
+      taggedRaw = backendRaw // {
+        inherit tag;
+      };
     in
-    if xrayEnabled then
-      lib.recursiveUpdate taggedRaw markAttrs
-    else
-      taggedRaw // markAttrs;
+    if pureXrayEnabled then lib.recursiveUpdate taggedRaw markAttrs else taggedRaw // markAttrs;
 
   mkOutboundBlock =
     ob: routingMark: tag:
     let
       backendRaw =
-        if xrayEnabled then
+        if pureXrayEnabled then
           ob.xrayJson
         else if ob.singBoxJson != null then
           ob.singBoxJson
@@ -150,17 +153,102 @@ let
     else
       let
         urlSource =
-          if ob.urlFile != null then
-            ob.urlFile
-          else
-            pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
+          if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
       in
       ''
         # outbound: ${tag}
         URL=$(cat "${urlSource}")
-        OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} ${backendArg} --tag ${lib.escapeShellArg tag}${lib.optionalString (routingMark != null) " --routing-mark ${toString routingMark}"})
+        OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} ${backendArg} --tag ${lib.escapeShellArg tag}${
+          lib.optionalString (routingMark != null) " --routing-mark ${toString routingMark}"
+        })
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       '';
+
+  singBoxRawOutboundJson =
+    ob: tag: routingMark:
+    let
+      backendRaw = if ob.singBoxJson != null then ob.singBoxJson else ob.json;
+      markAttrs = lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; };
+    in
+    backendRaw // { inherit tag; } // markAttrs;
+
+  xrayRawOutboundJson =
+    ob: tag:
+    lib.recursiveUpdate (ob.xrayJson // { inherit tag; }) {
+      streamSettings.sockopt = {
+        mark = xraySidecarRoutingMark;
+        domainStrategy = "UseIP";
+      };
+    };
+
+  mkHybridOutboundBlock =
+    ob: routingMark: tag:
+    if ob.xrayJson != null then
+      let
+        outboundJson = builtins.toJSON (xrayRawOutboundJson ob tag);
+        jsonFile = pkgs.writeText "proxy-suite-xray-sidecar-ob-${tag}.json" outboundJson;
+      in
+      ''
+        # outbound: ${tag} (hybrid XRay json sidecar)
+        OB_JSON=$(cat "${jsonFile}")
+        _proxy_suite_add_xray_sidecar_ob "$OB_JSON" ${lib.escapeShellArg tag}
+      ''
+    else if ob.singBoxJson != null || ob.json != null then
+      let
+        outboundJson = builtins.toJSON (singBoxRawOutboundJson ob tag routingMark);
+        jsonFile = pkgs.writeText "proxy-suite-sing-box-ob-${tag}.json" outboundJson;
+      in
+      ''
+        # outbound: ${tag} (hybrid SingBox json)
+        OB_JSON=$(cat "${jsonFile}")
+        _proxy_suite_add_sing_box_ob "$OB_JSON"
+      ''
+    else
+      let
+        urlSource =
+          if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
+        singBoxCommand = ''
+          printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} --backend sing-box --tag ${lib.escapeShellArg tag}${
+            lib.optionalString (routingMark != null) " --routing-mark ${toString routingMark}"
+          }
+        '';
+        xrayCommand = ''
+          printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} --backend xray --tag ${lib.escapeShellArg tag} --routing-mark ${toString xraySidecarRoutingMark}
+        '';
+      in
+      if ob.backend == "xray" then
+        ''
+          # outbound: ${tag} (hybrid forced XRay sidecar)
+          URL=$(cat "${urlSource}")
+          OB_JSON=$(${xrayCommand})
+          _proxy_suite_add_xray_sidecar_ob "$OB_JSON" ${lib.escapeShellArg tag}
+        ''
+      else if ob.backend == "sing-box" then
+        ''
+          # outbound: ${tag} (hybrid forced SingBox)
+          URL=$(cat "${urlSource}")
+          OB_JSON=$(${singBoxCommand})
+          _proxy_suite_add_sing_box_ob "$OB_JSON"
+        ''
+      else
+        ''
+          # outbound: ${tag} (hybrid auto)
+          URL=$(cat "${urlSource}")
+          if OB_JSON=$(${singBoxCommand} 2>"$RUNTIME_DIR/sing-box-parser.err"); then
+            _proxy_suite_add_sing_box_ob "$OB_JSON"
+          else
+            SING_BOX_PARSE_ERROR="$(cat "$RUNTIME_DIR/sing-box-parser.err" 2>/dev/null || true)"
+            if OB_JSON=$(${xrayCommand}); then
+              _proxy_suite_add_xray_sidecar_ob "$OB_JSON" ${lib.escapeShellArg tag}
+            else
+              echo "proxy-suite: outbound '${tag}' cannot be parsed by SingBox or XRay" >&2
+              if [ -n "$SING_BOX_PARSE_ERROR" ]; then
+                printf '%s\n' "$SING_BOX_PARSE_ERROR" >&2
+              fi
+              exit 1
+            fi
+          fi
+        '';
 
   mkSubscriptionBlock =
     sub: routingMark:
@@ -184,9 +272,11 @@ let
       fi
       if [ -f "$CACHE_FILE" ]; then
         SUB_JSON=$(cat "$CACHE_FILE")
-        ${lib.optionalString (routingMark != null) ''
-          SUB_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_JSON")
-        ''}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+        ${
+          lib.optionalString (routingMark != null) ''
+            SUB_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_JSON")
+          ''
+        }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
       fi
     '';
 
@@ -197,14 +287,124 @@ let
     fi
   '';
 
+  hybridRuntimeHelpersBlock =
+    routingMark: xraySidecarBasePort: xrayDnsBridgePort:
+    lib.optionalString hybridEnabled ''
+      XRAY_OUTBOUNDS_JSON='[]'
+      XRAY_INBOUNDS_JSON='[]'
+      XRAY_ROUTE_RULES_JSON='[]'
+      XRAY_SIDECAR_NEXT_PORT=${toString xraySidecarBasePort}
+      XRAY_SIDECAR_DNS_PORT=${toString xrayDnsBridgePort}
+
+      _proxy_suite_add_sing_box_ob() {
+        local ob="$1"
+        OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+      }
+
+      _proxy_suite_next_xray_sidecar_port() {
+        local port="$XRAY_SIDECAR_NEXT_PORT"
+        XRAY_SIDECAR_NEXT_PORT=$((XRAY_SIDECAR_NEXT_PORT + 1))
+        printf '%s\n' "$port"
+      }
+
+      _proxy_suite_add_xray_sidecar_ob() {
+        local ob="$1" tag="$2" port auth inbound_tag sing_ob inbound route_rule
+        port="$(_proxy_suite_next_xray_sidecar_port)"
+        auth="proxy-suite-xray-$port"
+        inbound_tag="$tag-inbound"
+        ob=$(${jq} \
+          --arg tag "$tag" \
+          --argjson mark ${toString xraySidecarRoutingMark} \
+          '.tag = $tag
+           | .streamSettings = (.streamSettings // {})
+           | .streamSettings.sockopt = (.streamSettings.sockopt // {})
+           | .streamSettings.sockopt.mark = $mark
+           | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")' \
+          <<< "$ob")
+        XRAY_OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$XRAY_OUTBOUNDS_JSON")
+        inbound=$(${jq} -n \
+          --arg tag "$inbound_tag" \
+          --arg auth "$auth" \
+          --argjson port "$port" \
+          '{tag:$tag,listen:"127.0.0.1",port:$port,protocol:"socks",settings:{auth:"password",udp:false,accounts:[{user:$auth,pass:$auth}]}}')
+        XRAY_INBOUNDS_JSON=$(${jq} --argjson inbound "$inbound" '. + [$inbound]' <<< "$XRAY_INBOUNDS_JSON")
+        route_rule=$(${jq} -n \
+          --arg inbound "$inbound_tag" \
+          --arg outbound "$tag" \
+          '{type:"field",inboundTag:[$inbound],outboundTag:$outbound}')
+        XRAY_ROUTE_RULES_JSON=$(${jq} --argjson rule "$route_rule" '. + [$rule]' <<< "$XRAY_ROUTE_RULES_JSON")
+        sing_ob=$(${jq} -n \
+          --arg tag "$tag" \
+          --arg auth "$auth" \
+          --argjson port "$port" \
+          '{type:"socks",tag:$tag,server:"127.0.0.1",server_port:$port,version:"5",username:$auth,password:$auth${
+            lib.optionalString (routingMark != null) ",routing_mark:${toString routingMark}"
+          }}')
+        OUTBOUNDS_JSON=$(${jq} --argjson ob "$sing_ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+      }
+
+      _proxy_suite_write_xray_sidecar_config() {
+        if [ "$(${jq} 'length' <<< "$XRAY_OUTBOUNDS_JSON")" -eq 0 ]; then
+          return 0
+        fi
+        ${jq} -n \
+          --arg loglevel "$XRAY_LOGLEVEL" \
+          --arg bind_interface "$XRAY_TUN_BIND_INTERFACE" \
+          --argjson dns_port "$XRAY_SIDECAR_DNS_PORT" \
+          --argjson inbounds "$XRAY_INBOUNDS_JSON" \
+          --argjson outbounds "$XRAY_OUTBOUNDS_JSON" \
+          --argjson route_rules "$XRAY_ROUTE_RULES_JSON" \
+          '
+          def bind_xray_sidecar($interface):
+            if $interface == "" then
+              .
+            else
+              .streamSettings = (.streamSettings // {})
+              | .streamSettings.sockopt = (.streamSettings.sockopt // {})
+              | if (.streamSettings.sockopt.interface? // "") == "" then
+                  .streamSettings.sockopt.interface = $interface
+                else
+                  .
+                end
+            end;
+          {
+            log: {
+              loglevel: (if $loglevel == "" then "warning" else $loglevel end),
+              access: "none"
+            },
+            dns: {
+              servers: [
+                {
+                  address: "127.0.0.1",
+                  port: $dns_port,
+                  queryStrategy: "UseIP",
+                  skipFallBack: true
+                }
+              ]
+            },
+            inbounds: $inbounds,
+            outbounds: (($outbounds | map(bind_xray_sidecar($bind_interface))) + [{protocol:"freedom",tag:"direct"}]),
+            routing: {
+              domainStrategy: "AsIs",
+              rules: ($route_rules + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])
+            }
+          }' > "$RUNTIME_DIR/xray-sidecar.json"
+      }
+    '';
+
   mkOutboundScript =
     routingMark:
     let
       outboundBlocks =
         if collapseNamedOutbounds && proxyCfg.outbounds != [ ] then
-          mkOutboundBlock (builtins.head proxyCfg.outbounds) routingMark "proxy"
+          (if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock)
+            (builtins.head proxyCfg.outbounds)
+            routingMark
+            "proxy"
         else
-          lib.concatMapStrings (ob: mkOutboundBlock ob routingMark ob.tag) proxyCfg.outbounds;
+          lib.concatMapStrings (
+            ob: (if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock) ob routingMark ob.tag
+          ) proxyCfg.outbounds;
 
       subscriptionBlocks = lib.concatMapStrings (
         sub: mkSubscriptionBlock sub routingMark
@@ -218,7 +418,7 @@ let
       '';
 
       wrapperBlock =
-        if xrayEnabled && selectionMode == "urltest" then
+        if pureXrayEnabled && selectionMode == "urltest" then
           xrayUrltestTagFilter
         else if collapseNamedOutbounds then
           lib.optionalString (proxyCfg.outbounds == [ ] && proxyCfg.subscriptions != [ ]) ''
@@ -270,18 +470,21 @@ let
     chmod 640 "${runtimeProxychainsConfig}"
   '';
 
-  restartActiveConfigConsumersBlock = lib.concatMapStrings (svc: ''
-    if ${systemctl} is-active --quiet ${svc}; then
-      ${systemctl} restart ${svc}
-    fi
-  '') [
-    "proxy-suite-socks"
-    "proxy-suite-tun"
-    "proxy-suite-per-app-tun"
-  ];
+  restartActiveConfigConsumersBlock =
+    lib.concatMapStrings
+      (svc: ''
+        if ${systemctl} is-active --quiet ${svc}; then
+          ${systemctl} restart ${svc}
+        fi
+      '')
+      [
+        "proxy-suite-socks"
+        "proxy-suite-tun"
+        "proxy-suite-per-app-tun"
+      ];
 
   routeModeBlacklistTail =
-    if xrayEnabled then
+    if pureXrayEnabled then
       ''
         + .proxyGeo
         + .block
@@ -355,7 +558,7 @@ let
   '';
 
   mkBackendJqFilter =
-    if xrayEnabled then
+    if pureXrayEnabled then
       ''
         def xray_bind_outbound($interface):
           if $interface == "" or .protocol == "blackhole" or .protocol == "dns" then
@@ -455,6 +658,8 @@ let
       enableLocalProxyAuth ? false,
       xrayTunEgressBinding ? false,
       xrayTunDnsRuntime ? false,
+      xraySidecarBasePort ? 33080,
+      xrayDnsBridgePort ? 18533,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
@@ -472,6 +677,7 @@ let
       ROUTE_RULES_JSON='[]'
       ROUTE_MODE_ACTIVE=false
       CLEAR_DNS_RULES=false
+      ${hybridRuntimeHelpersBlock routingMark xraySidecarBasePort xrayDnsBridgePort}
       ${subscriptionCacheHelpersBlock}
       ${lib.optionalString enableLocalProxyAuth ''
         umask 077
@@ -503,6 +709,7 @@ let
       ${routeModeCaseBlock}
 
       ${mkOutboundScript routingMark}
+      ${lib.optionalString hybridEnabled "_proxy_suite_write_xray_sidecar_config"}
 
       ${jq} \
         --argjson obs "$OUTBOUNDS_JSON" \
@@ -526,7 +733,43 @@ let
         chmod 600 "$RUNTIME_DIR/config.json"
       ''}
 
-      exec ${backendBin} run -c "$RUNTIME_DIR/config.json"
+      ${
+        if hybridEnabled then
+          ''
+            if [ -s "$RUNTIME_DIR/xray-sidecar.json" ]; then
+              XRAY_SIDECAR_PID=""
+              _proxy_suite_cleanup_xray_sidecar() {
+                if [ -n "$XRAY_SIDECAR_PID" ]; then
+                  kill "$XRAY_SIDECAR_PID" 2>/dev/null || true
+                  wait "$XRAY_SIDECAR_PID" 2>/dev/null || true
+                fi
+              }
+              trap _proxy_suite_cleanup_xray_sidecar EXIT
+              trap 'exit 143' INT TERM
+
+              ${xray} run -c "$RUNTIME_DIR/xray-sidecar.json" &
+              XRAY_SIDECAR_PID="$!"
+              ${pkgs.coreutils}/bin/sleep 0.2
+              if ! kill -0 "$XRAY_SIDECAR_PID" 2>/dev/null; then
+                XRAY_SIDECAR_STATUS=1
+                wait "$XRAY_SIDECAR_PID" || XRAY_SIDECAR_STATUS="$?"
+                exit "$XRAY_SIDECAR_STATUS"
+              fi
+
+              ${singBox} run -c "$RUNTIME_DIR/config.json" &
+              SING_BOX_PID="$!"
+              SING_BOX_STATUS=0
+              wait "$SING_BOX_PID" || SING_BOX_STATUS="$?"
+              exit "$SING_BOX_STATUS"
+            fi
+
+            exec ${singBox} run -c "$RUNTIME_DIR/config.json"
+          ''
+        else
+          ''
+            exec ${backendBin} run -c "$RUNTIME_DIR/config.json"
+          ''
+      }
     '';
 
   startSocks = mkStartScript {
@@ -535,15 +778,19 @@ let
     configFile = tproxyFile;
     routingMark = globalTproxy.proxyMark;
     enableLocalProxyAuth = localProxyAuthEnabled;
+    xraySidecarBasePort = 33080;
+    xrayDnsBridgePort = 18533;
   };
 
   startTun = mkStartScript {
     name = "proxy-suite-start-tun";
     runtimeDir = "/run/proxy-suite-tun";
     configFile = tunFile;
-    routingMark = if xrayEnabled then globalTproxy.proxyMark else null;
+    routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
-    xrayTunDnsRuntime = xrayEnabled;
+    xrayTunDnsRuntime = pureXrayEnabled;
+    xraySidecarBasePort = 33180;
+    xrayDnsBridgePort = 18534;
   };
 
   startPerAppTun = mkStartScript {
@@ -552,7 +799,9 @@ let
     configFile = perAppTunFile;
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
-    xrayTunDnsRuntime = xrayEnabled;
+    xrayTunDnsRuntime = pureXrayEnabled;
+    xraySidecarBasePort = 33280;
+    xrayDnsBridgePort = 18535;
   };
 
   mkSubscriptionFetchBlock =

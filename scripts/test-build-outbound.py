@@ -34,7 +34,23 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["tls"]["server_name"], "last.fm")
         self.assertEqual(ob["tls"]["utls"]["fingerprint"], "qq")
         self.assertEqual(ob["tls"]["reality"]["short_id"], "8a54")
+        self.assertNotIn("spider_x", ob["tls"]["reality"])
         self.assertNotIn("transport", ob)
+
+    def test_xray_vless_reality_germany_main_shape(self):
+        ob = run_xray_parser(
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
+        )
+        self.assertEqual(ob["protocol"], "vless")
+        self.assertEqual(ob["settings"]["address"], "example.com")
+        self.assertEqual(ob["settings"]["flow"], "xtls-rprx-vision")
+        self.assertEqual(ob["streamSettings"]["network"], "raw")
+        self.assertEqual(ob["streamSettings"]["sockopt"]["domainStrategy"], "UseIP")
+        self.assertEqual(ob["streamSettings"]["realitySettings"]["serverName"], "last.fm")
+        self.assertEqual(ob["streamSettings"]["realitySettings"]["fingerprint"], "qq")
+        self.assertEqual(
+            ob["streamSettings"]["realitySettings"]["spiderX"], "/-/en/gp/bestsellers"
+        )
 
     def test_vless_httpupgrade_transport(self):
         ob = run_parser(

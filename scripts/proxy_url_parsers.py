@@ -169,7 +169,7 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
             "public_key": params["pbk"],
             "short_id": params.get("sid", ""),
         }
-        if params.get("spx"):
+        if backend == "xray" and params.get("spx"):
             ob["tls"]["reality"]["spider_x"] = params["spx"]
     elif security == "tls":
         ob["tls"] = _mk_tls(

@@ -24,6 +24,8 @@ let
     proxyEnabled
     singBoxEnabled
     xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
     activeBackend
     perAppRoutingCfg
     globalTun
@@ -71,6 +73,8 @@ let
       proxyEnabled
       singBoxEnabled
       xrayEnabled
+      hybridEnabled
+      pureXrayEnabled
       activeBackend
       perAppRoutingCfg
       userControlCfg
@@ -88,7 +92,12 @@ let
       buildOutboundPy
       fetchSubscriptionPy
       ;
-    inherit tproxyFile tunFile perAppTunFile routeModeRulesFile;
+    inherit
+      tproxyFile
+      tunFile
+      perAppTunFile
+      routeModeRulesFile
+      ;
   };
 
   perAppRouting = import ./per-app-routing.nix {
@@ -144,6 +153,8 @@ in
     proxyEnabled
     singBoxEnabled
     xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
     activeBackend
     perAppRoutingCfg
     globalTun

@@ -13,6 +13,8 @@ let
     proxyCfg
     singBoxCfg
     xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
     globalTun
     globalTproxy
     clashApiEnabled
@@ -88,6 +90,8 @@ let
       forceLocalDnsViaProxy ? false,
       useOutboundRoutingMark ? false,
       enableClashApi ? clashApiEnabled,
+      enableXrayDnsBridge ? hybridEnabled,
+      xrayDnsBridgePort ? 18533,
     }:
     {
       log.level = "warn";
@@ -97,7 +101,13 @@ let
       };
 
       inbounds =
-        lib.optional enableMixed {
+        lib.optional enableXrayDnsBridge {
+          type = "direct";
+          tag = "xray-dns-in";
+          listen = "127.0.0.1";
+          listen_port = xrayDnsBridgePort;
+        }
+        ++ lib.optional enableMixed {
           type = "mixed";
           tag = "mixed-in";
           listen = proxyCfg.listenAddress;
@@ -154,20 +164,14 @@ let
     // lib.optionalAttrs enableClashApi clashApiBlock;
 
   xrayDnsAddress =
-    upstream:
-    if upstream.type == "tcp" then
-      "tcp://${upstream.address}"
-    else
-      upstream.address;
+    upstream: if upstream.type == "tcp" then "tcp://${upstream.address}" else upstream.address;
 
-  mkXrayDnsServer =
-    tag: upstream:
-    {
-      address = xrayDnsAddress upstream;
-      inherit tag;
-      port = upstream.port;
-      queryStrategy = "UseIP";
-    };
+  mkXrayDnsServer = tag: upstream: {
+    address = xrayDnsAddress upstream;
+    inherit tag;
+    port = upstream.port;
+    queryStrategy = "UseIP";
+  };
 
   mkXraySniffing =
     {
@@ -245,8 +249,9 @@ let
         { outboundTag = tag; }
     );
 
-  xrayRouteRules =
-    rules.xrayRoutingRules ++ [ (xrayFinalRule (if proxyCfg.proxyByDefault then "proxy" else "direct")) ];
+  xrayRouteRules = rules.xrayRoutingRules ++ [
+    (xrayFinalRule (if proxyCfg.proxyByDefault then "proxy" else "direct"))
+  ];
 
   xrayDirectOutbound =
     useOutboundRoutingMark:
@@ -371,7 +376,9 @@ let
           {
             tag = "proxy";
             selector = [ "proxy-suite-ob-" ];
-            strategy = { type = "leastPing"; };
+            strategy = {
+              type = "leastPing";
+            };
           }
         ];
       };
@@ -389,6 +396,7 @@ let
     enableMixed = true;
     enableTProxy = true;
     useOutboundRoutingMark = true;
+    xrayDnsBridgePort = 18533;
   };
 
   singBoxTunTemplate = mkSingBoxConfig {
@@ -401,6 +409,7 @@ let
     tunStrictRoute = true;
     forceLocalDnsViaProxy = false;
     enableClashApi = false;
+    xrayDnsBridgePort = 18534;
   };
 
   singBoxPerAppTunTemplate = mkSingBoxConfig {
@@ -414,6 +423,7 @@ let
     forceLocalDnsViaProxy = false;
     useOutboundRoutingMark = globalTproxy.enable;
     enableClashApi = false;
+    xrayDnsBridgePort = 18535;
   };
 
   xrayTproxyTemplate = mkXrayConfig {
@@ -442,10 +452,10 @@ let
     enableTunFakeDns = true;
   };
 
-  tproxyTemplate = if xrayEnabled then xrayTproxyTemplate else singBoxTproxyTemplate;
-  tunTemplate = if xrayEnabled then xrayTunTemplate else singBoxTunTemplate;
-  perAppTunTemplate = if xrayEnabled then xrayPerAppTunTemplate else singBoxPerAppTunTemplate;
-  routeModeRules = if xrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules;
+  tproxyTemplate = if pureXrayEnabled then xrayTproxyTemplate else singBoxTproxyTemplate;
+  tunTemplate = if pureXrayEnabled then xrayTunTemplate else singBoxTunTemplate;
+  perAppTunTemplate = if pureXrayEnabled then xrayPerAppTunTemplate else singBoxPerAppTunTemplate;
+  routeModeRules = if pureXrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules;
 
   tproxyFile = pkgs.writeText "proxy-suite-tproxy-template.json" (builtins.toJSON tproxyTemplate);
   tunFile = pkgs.writeText "proxy-suite-tun-template.json" (builtins.toJSON tunTemplate);
@@ -458,5 +468,10 @@ let
 
 in
 {
-  inherit tproxyFile tunFile perAppTunFile routeModeRulesFile;
+  inherit
+    tproxyFile
+    tunFile
+    perAppTunFile
+    routeModeRulesFile
+    ;
 }

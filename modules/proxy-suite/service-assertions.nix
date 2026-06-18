@@ -32,6 +32,8 @@ let
     proxyEnabled
     singBoxEnabled
     xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
     perAppRoutingCfg
     globalTun
     globalTproxy
@@ -49,9 +51,9 @@ let
     (requireAvailable proxyCfg.xray.enable proxyEnabled
       "proxy-suite: proxy.xray.enable requires proxy.enable = true"
     )
-    (mkAssertion (
-      !proxyEnabled || (proxyCfg.singBox.enable != proxyCfg.xray.enable)
-    ) "proxy-suite: exactly one of proxy.singBox.enable or proxy.xray.enable must be true when proxy.enable = true")
+    (mkAssertion (!proxyEnabled || proxyCfg.singBox.enable || proxyCfg.xray.enable)
+      "proxy-suite: at least one of proxy.singBox.enable or proxy.xray.enable must be true when proxy.enable = true"
+    )
     (requireAvailable proxyEnabled (
       proxyCfg.outbounds != [ ] || proxyCfg.subscriptions != [ ]
     ) "proxy-suite: at least one outbound or subscription is required when proxy.enable = true")
@@ -66,11 +68,12 @@ let
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )
     (mkAssertion (
-      !(xrayEnabled && proxyCfg.selection == "selector")
+      !(pureXrayEnabled && proxyCfg.selection == "selector")
     ) "proxy-suite: proxy.selection = \"selector\" is only available with proxy.singBox.enable = true")
-    (mkAssertion (
-      !(xrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls"))
-    ) "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.xray.enable = true; use udp/tcp DNS for XRay")
+    (mkAssertion
+      (!(pureXrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls")))
+      "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.xray.enable = true; use udp/tcp DNS for XRay"
+    )
     (requireEnabled globalTun.enable proxyEnabled
       "proxy-suite: proxy.tun.enable requires proxy.enable = true"
     )
@@ -250,7 +253,8 @@ let
       message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tun.perApp.fwmark";
     }
     {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTproxy.enable;
+      condition =
+        tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTproxy.enable;
       left = tgWsProxyCfg.routingMark;
       right = perAppRoutingTproxy.fwmark;
       message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tproxy.perApp.fwmark";
@@ -268,68 +272,70 @@ let
     134217728
   ];
 
-  positiveNumberAssertions = map (item: mkAssertion (!item.condition || item.value > 0) item.message) [
-    {
-      condition = globalTun.enable;
-      value = globalTun.mtu;
-      message = "proxy-suite: proxy.tun.mtu must be greater than zero";
-    }
-    {
-      condition = perAppRoutingTun.enable;
-      value = perAppRoutingTun.mtu;
-      message = "proxy-suite: proxy.tun.perApp.mtu must be greater than zero";
-    }
-    {
-      condition = globalTproxy.enable;
-      value = globalTproxy.fwmark;
-      message = "proxy-suite: proxy.tproxy.fwmark must be greater than zero";
-    }
-    {
-      condition = globalTproxy.enable;
-      value = globalTproxy.proxyMark;
-      message = "proxy-suite: proxy.tproxy.proxyMark must be greater than zero";
-    }
-    {
-      condition = globalTproxy.enable;
-      value = globalTproxy.routeTable;
-      message = "proxy-suite: proxy.tproxy.routeTable must be greater than zero";
-    }
-    {
-      condition = perAppRoutingTun.enable;
-      value = perAppRoutingTun.fwmark;
-      message = "proxy-suite: proxy.tun.perApp.fwmark must be greater than zero";
-    }
-    {
-      condition = perAppRoutingTun.enable;
-      value = perAppRoutingTun.routeTable;
-      message = "proxy-suite: proxy.tun.perApp.routeTable must be greater than zero";
-    }
-    {
-      condition = perAppRoutingTproxy.enable;
-      value = perAppRoutingTproxy.fwmark;
-      message = "proxy-suite: proxy.tproxy.perApp.fwmark must be greater than zero";
-    }
-    {
-      condition = perAppRoutingTproxy.enable;
-      value = perAppRoutingTproxy.routeTable;
-      message = "proxy-suite: proxy.tproxy.perApp.routeTable must be greater than zero";
-    }
-    {
-      condition = perAppZapretCfg.enable;
-      value = perAppZapretCfg.filterMark;
-      message = "proxy-suite: zapret.perApp.filterMark must be greater than zero";
-    }
-    {
-      condition = perAppZapretCfg.enable;
-      value = perAppZapretCfg.qnum;
-      message = "proxy-suite: zapret.perApp.qnum must be greater than zero";
-    }
-    {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
-      value = tgWsProxyCfg.routingMark;
-      message = "proxy-suite: tgWsProxy.routingMark must be greater than zero";
-    }
-  ];
+  positiveNumberAssertions =
+    map (item: mkAssertion (!item.condition || item.value > 0) item.message)
+      [
+        {
+          condition = globalTun.enable;
+          value = globalTun.mtu;
+          message = "proxy-suite: proxy.tun.mtu must be greater than zero";
+        }
+        {
+          condition = perAppRoutingTun.enable;
+          value = perAppRoutingTun.mtu;
+          message = "proxy-suite: proxy.tun.perApp.mtu must be greater than zero";
+        }
+        {
+          condition = globalTproxy.enable;
+          value = globalTproxy.fwmark;
+          message = "proxy-suite: proxy.tproxy.fwmark must be greater than zero";
+        }
+        {
+          condition = globalTproxy.enable;
+          value = globalTproxy.proxyMark;
+          message = "proxy-suite: proxy.tproxy.proxyMark must be greater than zero";
+        }
+        {
+          condition = globalTproxy.enable;
+          value = globalTproxy.routeTable;
+          message = "proxy-suite: proxy.tproxy.routeTable must be greater than zero";
+        }
+        {
+          condition = perAppRoutingTun.enable;
+          value = perAppRoutingTun.fwmark;
+          message = "proxy-suite: proxy.tun.perApp.fwmark must be greater than zero";
+        }
+        {
+          condition = perAppRoutingTun.enable;
+          value = perAppRoutingTun.routeTable;
+          message = "proxy-suite: proxy.tun.perApp.routeTable must be greater than zero";
+        }
+        {
+          condition = perAppRoutingTproxy.enable;
+          value = perAppRoutingTproxy.fwmark;
+          message = "proxy-suite: proxy.tproxy.perApp.fwmark must be greater than zero";
+        }
+        {
+          condition = perAppRoutingTproxy.enable;
+          value = perAppRoutingTproxy.routeTable;
+          message = "proxy-suite: proxy.tproxy.perApp.routeTable must be greater than zero";
+        }
+        {
+          condition = perAppZapretCfg.enable;
+          value = perAppZapretCfg.filterMark;
+          message = "proxy-suite: zapret.perApp.filterMark must be greater than zero";
+        }
+        {
+          condition = perAppZapretCfg.enable;
+          value = perAppZapretCfg.qnum;
+          message = "proxy-suite: zapret.perApp.qnum must be greater than zero";
+        }
+        {
+          condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
+          value = tgWsProxyCfg.routingMark;
+          message = "proxy-suite: tgWsProxy.routingMark must be greater than zero";
+        }
+      ];
 
   localProxyAuthCfg = proxyCfg.auth;
   localProxyAuthUsed =
@@ -404,19 +410,28 @@ let
   ];
 
   outboundAssertions = lib.concatMap (ob: [
-    (exactlyOneOf proxyEnabled [
-      ob.urlFile
-      ob.url
-      ob.singBoxJson
-      ob.xrayJson
-      ob.json
-    ] "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, xrayJson, or json")
-    (mkAssertion (!singBoxEnabled || ob.xrayJson == null)
-      "proxy-suite: outbound '${ob.tag}': xrayJson is only available with proxy.xray.enable = true"
+    (exactlyOneOf proxyEnabled
+      [
+        ob.urlFile
+        ob.url
+        ob.singBoxJson
+        ob.xrayJson
+        ob.json
+      ]
+      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, xrayJson, or json"
     )
-    (mkAssertion (!xrayEnabled || (ob.singBoxJson == null && ob.json == null))
+    (mkAssertion (
+      !singBoxEnabled || hybridEnabled || ob.xrayJson == null
+    ) "proxy-suite: outbound '${ob.tag}': xrayJson is only available with proxy.xray.enable = true")
+    (mkAssertion (!xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null))
       "proxy-suite: outbound '${ob.tag}': singBoxJson/json are only available with proxy.singBox.enable = true"
     )
+    (mkAssertion (
+      !(ob.backend == "xray") || xrayEnabled
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.xray.enable = true")
+    (mkAssertion (
+      !(ob.backend == "sing-box") || singBoxEnabled
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.singBox.enable = true")
   ]) proxyCfg.outbounds;
 
   subscriptionAssertions = lib.concatMap (sub: [

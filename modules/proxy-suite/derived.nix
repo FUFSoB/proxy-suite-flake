@@ -5,22 +5,27 @@
 
 let
   proxyCfg = cfg.proxy;
-  singBoxCfg =
-    proxyCfg
-    // {
-      enable = proxyCfg.enable && proxyCfg.singBox.enable;
-      package = proxyCfg.singBox.package;
-      clashApiPort = proxyCfg.singBox.clashApiPort;
-      urlTest = proxyCfg.urlTest // { tolerance = proxyCfg.singBox.urlTest.tolerance; };
+  singBoxCfg = proxyCfg // {
+    enable = proxyCfg.enable && proxyCfg.singBox.enable;
+    package = proxyCfg.singBox.package;
+    clashApiPort = proxyCfg.singBox.clashApiPort;
+    urlTest = proxyCfg.urlTest // {
+      tolerance = proxyCfg.singBox.urlTest.tolerance;
     };
+  };
   xrayCfg = proxyCfg.xray;
   proxyEnabled = proxyCfg.enable;
   singBoxEnabled = proxyCfg.enable && proxyCfg.singBox.enable;
   xrayEnabled = proxyCfg.enable && proxyCfg.xray.enable;
+  hybridEnabled = singBoxEnabled && xrayEnabled;
+  pureSingBoxEnabled = singBoxEnabled && !xrayEnabled;
+  pureXrayEnabled = xrayEnabled && !singBoxEnabled;
   activeBackend =
-    if xrayEnabled then
+    if hybridEnabled then
+      "hybrid"
+    else if pureXrayEnabled then
       "xray"
-    else if singBoxEnabled then
+    else if pureSingBoxEnabled then
       "sing-box"
     else
       null;
@@ -44,7 +49,7 @@ let
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
   collapseNamedOutbounds = selectionMode == "first";
-  clashApiEnabled = singBoxEnabled && selectionMode != "first";
+  clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
   userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
 
@@ -64,6 +69,9 @@ in
     proxyEnabled
     singBoxEnabled
     xrayEnabled
+    hybridEnabled
+    pureSingBoxEnabled
+    pureXrayEnabled
     activeBackend
     perAppRoutingCfg
     globalTun

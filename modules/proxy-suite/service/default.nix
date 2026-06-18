@@ -58,6 +58,8 @@ let
     proxyCfg
     proxyEnabled
     xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
     activeBackend
     perAppRoutingCfg
     globalTun
@@ -236,7 +238,14 @@ let
       enable = proxyEnabled;
       name = serviceNames.socks;
       value = mkRestartingService {
-        description = "${if xrayEnabled then "XRay" else "sing-box"} proxy client (SOCKS + TProxy-ready)";
+        description = "${
+          if pureXrayEnabled then
+            "XRay"
+          else if hybridEnabled then
+            "sing-box + XRay sidecar"
+          else
+            "sing-box"
+        } proxy client (SOCKS + TProxy-ready)";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
@@ -268,14 +277,21 @@ let
       enable = proxyEnabled && globalTun.enable;
       name = serviceNames.tun;
       value = mkRestartingService {
-        description = "${if xrayEnabled then "XRay" else "sing-box"} TUN proxy client";
+        description = "${
+          if pureXrayEnabled then
+            "XRay"
+          else if hybridEnabled then
+            "sing-box + XRay sidecar"
+          else
+            "sing-box"
+        } TUN proxy client";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         wantedBy = lib.optionals globalTun.autostart [ "multi-user.target" ];
         conflicts = [ "${serviceNames.tproxy}.service" ];
         execStartPre = tunCleanupScript;
         execStart = scripts.startTun;
-        execStartPost = if xrayEnabled then xrayTunUpScript else null;
+        execStartPost = if pureXrayEnabled then xrayTunUpScript else null;
         execStopPost = tunCleanupScript;
         runtimeDirectory = serviceNames.tun;
         stateDirectory = "proxy-suite";

@@ -118,7 +118,11 @@ let
     tag:
     if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then
       "proxy"
-    else if derived.xrayEnabled && derived.selectionMode == "urltest" && !builtins.elem tag derived.builtinTags then
+    else if
+      derived.pureXrayEnabled
+      && derived.selectionMode == "urltest"
+      && !builtins.elem tag derived.builtinTags
+    then
       "proxy-suite-ob-${tag}"
     else
       tag;
@@ -190,12 +194,10 @@ let
     { action = "sniff"; }
   ];
 
-  customRouteRules = map (
-    rule: {
-      category = customRuleCategory rule.outbound;
-      entries = mkCustomRuleEntries rule;
-    }
-  ) customRules;
+  customRouteRules = map (rule: {
+    category = customRuleCategory rule.outbound;
+    entries = mkCustomRuleEntries rule;
+  }) customRules;
 
   proxyPrimaryRules = lib.flatten [
     (mkDomainRule "proxy" r.proxy.domains)
@@ -209,19 +211,21 @@ let
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
   ];
 
-  tgWsProxyRelayDirectRules = lib.optional (
-    tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { }
-  ) {
-    ip_cidr = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps);
-    outbound = "direct";
-  };
+  tgWsProxyRelayDirectRules =
+    lib.optional
+      (tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { })
+      {
+        ip_cidr = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps);
+        outbound = "direct";
+      };
 
   safetyDirectRules = [
     {
       ip_is_private = true;
       outbound = "direct";
     }
-  ] ++ tgWsProxyRelayDirectRules;
+  ]
+  ++ tgWsProxyRelayDirectRules;
 
   blockRules = lib.flatten [
     (mkDomainRule "block" r.block.domains)
@@ -263,54 +267,68 @@ let
 
   mkXrayRule =
     ruleTag: fields: tag:
-    ({
-      type = "field";
-      inherit ruleTag;
-    }
-    // fields
-    // (xrayTarget tag));
+    (
+      {
+        type = "field";
+        inherit ruleTag;
+      }
+      // fields
+      // (xrayTarget tag)
+    );
 
   xrayDomainRules =
     ruleTag: tag: domains:
-    lib.optional (domains != [ ]) (mkXrayRule ruleTag {
-      domain = map (domain: "domain:${domain}") domains;
-    } tag);
+    lib.optional (domains != [ ]) (
+      mkXrayRule ruleTag {
+        domain = map (domain: "domain:${domain}") domains;
+      } tag
+    );
 
   xrayIPRules =
     ruleTag: tag: ips:
-    lib.optional (ips != [ ]) (mkXrayRule ruleTag {
-      ip = ips;
-    } tag);
+    lib.optional (ips != [ ]) (
+      mkXrayRule ruleTag {
+        ip = ips;
+      } tag
+    );
 
   xrayGeositeRules =
     ruleTag: tag: geosites:
-    lib.optional (geosites != [ ]) (mkXrayRule ruleTag {
-      domain = map (name: "geosite:${name}") geosites;
-    } tag);
+    lib.optional (geosites != [ ]) (
+      mkXrayRule ruleTag {
+        domain = map (name: "geosite:${name}") geosites;
+      } tag
+    );
 
   xrayGeoIPRules =
     ruleTag: tag: geoips:
-    lib.optional (geoips != [ ]) (mkXrayRule ruleTag {
-      ip = map (name: "geoip:${name}") geoips;
-    } tag);
+    lib.optional (geoips != [ ]) (
+      mkXrayRule ruleTag {
+        ip = map (name: "geoip:${name}") geoips;
+      } tag
+    );
 
   xrayCustomRuleTag = category: kind: "custom-${category}-${kind}";
 
   mkXrayCustomRuleEntries =
     rule:
     lib.flatten [
-      (xrayDomainRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "domain") rule.outbound rule.domains)
+      (xrayDomainRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "domain") rule.outbound
+        rule.domains
+      )
       (xrayIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "ip") rule.outbound rule.ips)
-      (xrayGeositeRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geosite") rule.outbound rule.geosites)
-      (xrayGeoIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geoip") rule.outbound rule.geoips)
+      (xrayGeositeRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geosite") rule.outbound
+        rule.geosites
+      )
+      (xrayGeoIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geoip") rule.outbound
+        rule.geoips
+      )
     ];
 
-  xrayCustomRouteRules = map (
-    rule: {
-      category = customRuleCategory rule.outbound;
-      entries = mkXrayCustomRuleEntries rule;
-    }
-  ) customRules;
+  xrayCustomRouteRules = map (rule: {
+    category = customRuleCategory rule.outbound;
+    entries = mkXrayCustomRuleEntries rule;
+  }) customRules;
 
   xrayProxyPrimaryRules = lib.flatten [
     (xrayDomainRules "proxy-domain" "proxy" r.proxy.domains)
@@ -326,9 +344,13 @@ let
 
   xraySafetyDirectRules = [
     (mkXrayRule "direct-private" { ip = [ "geoip:private" ]; } "direct")
-  ] ++ lib.optional (
-    tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { }
-  ) (mkXrayRule "direct-tg-relay" { ip = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps); } "direct");
+  ]
+  ++
+    lib.optional
+      (tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && tgWsProxyCfg.dcIps != { })
+      (
+        mkXrayRule "direct-tg-relay" { ip = lib.unique (builtins.attrValues tgWsProxyCfg.dcIps); } "direct"
+      );
 
   xrayBlockRules = lib.flatten [
     (xrayDomainRules "block-domain" "block" r.block.domains)
