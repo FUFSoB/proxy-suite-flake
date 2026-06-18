@@ -137,6 +137,18 @@ let
     builtins.head (
       builtins.filter (line: pkgs.lib.hasPrefix prefix line) (pkgs.lib.splitString "\n" text)
     );
+  lineContaining =
+    text: infix:
+    builtins.head (
+      builtins.filter (line: pkgs.lib.hasInfix infix line) (pkgs.lib.splitString "\n" text)
+    );
+  staticOutboundJsonFromScript =
+    script:
+    let
+      line = lineContaining script "OB_JSON=$(cat \"";
+      parts = pkgs.lib.splitString "\"" line;
+    in
+    builtins.fromJSON (builtins.readFile (builtins.elemAt parts 1));
   normalizeExec = value: if builtins.isList value then builtins.head value else value;
   readExecScripts =
     value:
@@ -350,6 +362,80 @@ let
   xraySubscriptionStartScript = builtins.readFile (
     xraySubscriptionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
+  xrayRawStreamFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          outbounds = [
+            {
+              tag = "raw-stream";
+              xrayJson = {
+                protocol = "vless";
+                settings = {
+                  address = "example.com";
+                  port = 443;
+                  id = "00000000-0000-0000-0000-000000000000";
+                  encryption = "none";
+                };
+                streamSettings = {
+                  network = "ws";
+                  security = "tls";
+                  tlsSettings.serverName = "cdn.example.com";
+                  wsSettings.path = "/ws";
+                  sockopt.tcpFastOpen = true;
+                };
+              };
+            }
+          ];
+        };
+      };
+    }
+  ];
+  xrayRawStreamStartScript = builtins.readFile (
+    xrayRawStreamFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  xrayRawStreamOutbound = staticOutboundJsonFromScript xrayRawStreamStartScript;
+  xrayDnsTcpFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          dns.local = {
+            type = "tcp";
+            address = "9.9.9.9";
+            port = 5353;
+          };
+          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        };
+      };
+    }
+  ];
+  xrayDnsTcpConfig = mkTProxyConfig xrayDnsTcpFixture;
+  xrayDnsTlsUnavailable = mkBadFixtureRaw [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          xray.enable = true;
+          dns.remote = {
+            type = "tls";
+            address = "1.1.1.1";
+            port = 853;
+          };
+          outbounds = [ { tag = "primary"; url = "http://proxy.example.com:8080"; } ];
+        };
+      };
+    }
+  ];
   xrayBothBackends = mkBadFixtureRaw [
     {
       system.stateVersion = "26.05";
@@ -1821,9 +1907,12 @@ let
       assert xrayTunBackendJqFilterFile == xrayPerAppTunBackendJqFilterFile;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" xrayStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayStartScript;
+      assert pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.accounts'' xrayBackendJqFilter;
+      assert !(pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.users'' xrayBackendJqFilter);
       assert pkgs.lib.hasInfix "xray-loglevel" xrayTunStartScript;
       assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayTunStartScript;
       assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayTunStartScript;
+      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1 mark 2" xrayTunStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" xrayTunStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayTunStartScript;
       assert pkgs.lib.hasInfix "xray_tun_dns_runtime" xrayTunStartScript;
@@ -1862,6 +1951,7 @@ let
       assert perAppTunDirectOutbound.streamSettings.sockopt.mark == 2;
       assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1 mark 2" xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix "--routing-mark 2" xrayPerAppTunStartScript;
@@ -1887,6 +1977,24 @@ let
     (
       assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/xray/xray-sub.json"'' xraySubscriptionStartScript;
       assert pkgs.lib.hasInfix "--backend xray" xraySubscriptionStartScript;
+      true
+    )
+    # -- xray backend: raw stream settings and DNS encoding are preserved --
+    (
+      let
+        localDns = dnsServerByTag xrayDnsTcpConfig "local";
+      in
+      assert xrayRawStreamOutbound.tag == "proxy";
+      assert xrayRawStreamOutbound.streamSettings.network == "ws";
+      assert xrayRawStreamOutbound.streamSettings.security == "tls";
+      assert xrayRawStreamOutbound.streamSettings.tlsSettings.serverName == "cdn.example.com";
+      assert xrayRawStreamOutbound.streamSettings.wsSettings.path == "/ws";
+      assert xrayRawStreamOutbound.streamSettings.sockopt.tcpFastOpen == true;
+      assert xrayRawStreamOutbound.streamSettings.sockopt.mark == 2;
+      assert localDns.address == "tcp://9.9.9.9";
+      assert localDns.port == 5353;
+      assert localDns.queryStrategy == "UseIP";
+      assert xrayDnsTlsUnavailable.success == false;
       true
     )
     # -- backend selection and backend-specific raw JSON options are enforced --

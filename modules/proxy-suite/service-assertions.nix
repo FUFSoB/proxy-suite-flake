@@ -68,6 +68,9 @@ let
     (mkAssertion (
       !(xrayEnabled && proxyCfg.selection == "selector")
     ) "proxy-suite: proxy.selection = \"selector\" is only available with proxy.singBox.enable = true")
+    (mkAssertion (
+      !(xrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls"))
+    ) "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.xray.enable = true; use udp/tcp DNS for XRay")
     (requireEnabled globalTun.enable proxyEnabled
       "proxy-suite: proxy.tun.enable requires proxy.enable = true"
     )

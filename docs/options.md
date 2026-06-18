@@ -534,9 +534,6 @@ services.proxy-suite = {
       package = pkgs.xray;
     };
   };
-  singBox = {
-    _freeformOptions = { };
-  };
   tgWsProxy = {
     bypassTransparentProxy = true;
     dcIps = {
@@ -4454,7 +4451,6 @@ true
 
 *Declared by:*
  - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
-
 
 
 <a id="services-proxy-suite-zapret-cidrexemption-enable"></a>

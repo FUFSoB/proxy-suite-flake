@@ -182,6 +182,25 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertTrue(ob["tls"]["insecure"])
         self.assertEqual(ob["obfs"]["password"], "mask")
 
+    def test_xray_hysteria2(self):
+        ob = run_xray_parser(
+            "hy2://secret@example.com:443?sni=hy.example.com&obfs=salamander&obfs-password=mask"
+        )
+        self.assertEqual(ob["protocol"], "hysteria")
+        self.assertEqual(ob["settings"]["address"], "example.com")
+        self.assertNotIn("password", ob["settings"])
+        self.assertEqual(ob["streamSettings"]["network"], "hysteria")
+        self.assertEqual(ob["streamSettings"]["tlsSettings"]["serverName"], "hy.example.com")
+        self.assertEqual(ob["streamSettings"]["hysteriaSettings"]["auth"], "secret")
+        self.assertEqual(
+            ob["streamSettings"]["finalmask"]["udp"],
+            [{"type": "salamander", "settings": {"password": "mask"}}],
+        )
+
+    def test_xray_hysteria2_insecure_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, "allowInsecure"):
+            run_xray_parser("hy2://secret@example.com:443?sni=hy.example.com&insecure=1")
+
     def test_tuic(self):
         ob = run_parser(
             "tuic://00000000-0000-0000-0000-000000000000:secret@example.com:443?sni=tuic.example.com&alpn=h3,hq-29"

@@ -53,7 +53,10 @@ def _xray_tls(tls: dict | None) -> tuple[str, dict]:
     if tls.get("alpn"):
         settings["alpn"] = tls["alpn"]
     if tls.get("insecure"):
-        settings["allowInsecure"] = True
+        raise ValueError(
+            "XRay no longer supports tlsSettings.allowInsecure; "
+            "remove insecure=1 or use a supported certificate verification option"
+        )
     if tls.get("ech_config_list"):
         settings["echConfigList"] = tls["ech_config_list"]
     utls = tls.get("utls", {})
@@ -150,13 +153,21 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
         stream = stream_settings()
         stream["network"] = "hysteria"
         stream["security"] = "tls"
+        stream["hysteriaSettings"] = {"version": 2}
         settings = {
             "version": 2,
             "address": ob["server"],
             "port": ob["server_port"],
         }
         if ob.get("password"):
-            settings["password"] = ob["password"]
+            stream["hysteriaSettings"]["auth"] = ob["password"]
+        if ob.get("obfs", {}).get("type") == "salamander":
+            stream.setdefault("finalmask", {}).setdefault("udp", []).append(
+                {
+                    "type": "salamander",
+                    "settings": {"password": ob["obfs"].get("password", "")},
+                }
+            )
         return {"protocol": "hysteria", "tag": tag, "settings": settings, "streamSettings": stream}
 
     if typ == "socks":

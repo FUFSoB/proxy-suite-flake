@@ -119,8 +119,12 @@ let
           { streamSettings.sockopt.mark = routingMark; }
         else
           { routing_mark = routingMark; };
+      taggedRaw = backendRaw // { inherit tag; };
     in
-    backendRaw // { inherit tag; } // markAttrs;
+    if xrayEnabled then
+      lib.recursiveUpdate taggedRaw markAttrs
+    else
+      taggedRaw // markAttrs;
 
   mkOutboundBlock =
     ob: routingMark: tag:
@@ -406,7 +410,7 @@ let
           | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
           | if $auth_enabled then
               (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
-              | (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.users) = [{user:$user,pass:$password}]
+              | (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.accounts) = [{user:$user,pass:$password}]
             else . end
           | if $xray_tun_dns_runtime then
               .dns.servers = xray_dns_server_order($dns_final)
@@ -480,7 +484,7 @@ let
         fi
       ''}
       ${lib.optionalString xrayTunEgressBinding ''
-        XRAY_TUN_BIND_INTERFACE="$(${pkgs.iproute2}/bin/ip -4 route get 1.1.1.1 2>/dev/null | ${pkgs.gawk}/bin/awk '
+        XRAY_TUN_BIND_INTERFACE="$(${pkgs.iproute2}/bin/ip -4 route get 1.1.1.1 mark ${toString globalTproxy.proxyMark} 2>/dev/null | ${pkgs.gawk}/bin/awk '
           /dev/ {
             for (i = 1; i <= NF; i++) {
               if ($i == "dev" && i + 1 <= NF) {

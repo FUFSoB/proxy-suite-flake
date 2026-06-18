@@ -155,23 +155,17 @@ let
 
   xrayDnsAddress =
     upstream:
-    let
-      base =
-        if upstream.type == "tls" then
-          "tls://${upstream.address}"
-        else
-          upstream.address;
-    in
-    if upstream.port == 53 && upstream.type != "tls" then
-      base
+    if upstream.type == "tcp" then
+      "tcp://${upstream.address}"
     else
-      "${base}:${toString upstream.port}";
+      upstream.address;
 
   mkXrayDnsServer =
     tag: upstream:
     {
       address = xrayDnsAddress upstream;
       inherit tag;
+      port = upstream.port;
       queryStrategy = "UseIP";
     };
 
@@ -291,8 +285,8 @@ let
         else
           {
             servers = [
-              (xrayDnsAddress proxyCfg.dns.remote)
-              (xrayDnsAddress proxyCfg.dns.local)
+              (mkXrayDnsServer "remote" proxyCfg.dns.remote)
+              (mkXrayDnsServer "local" proxyCfg.dns.local)
             ];
           };
       xrayTunOutbounds = lib.optionals enableTunFakeDns [
