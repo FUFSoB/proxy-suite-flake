@@ -43,6 +43,8 @@ def _xray_tls(tls: dict | None) -> tuple[str, dict]:
             "shortId": reality.get("short_id", ""),
         }
         utls = tls.get("utls", {})
+        if reality.get("spider_x"):
+            settings["spiderX"] = reality["spider_x"]
         if utls.get("enabled") and utls.get("fingerprint"):
             settings["fingerprint"] = utls["fingerprint"]
         return "reality", {"realitySettings": settings}
@@ -81,12 +83,14 @@ def _xray_transport(transport: dict | None) -> tuple[str, dict]:
     if t == "quic":
         return "quic", {}
     if t == "xhttp":
-        return "xhttp", {
-            "xhttpSettings": {
-                "host": transport.get("host", ""),
-                "path": transport.get("path", "/"),
-            }
-        }
+        settings = {"path": transport.get("path", "/")}
+        if transport.get("host"):
+            settings["host"] = transport["host"]
+        if transport.get("mode"):
+            settings["mode"] = transport["mode"]
+        if transport.get("extra") is not None:
+            settings["extra"] = transport["extra"]
+        return "xhttp", {"xhttpSettings": settings}
     return t, {}
 
 

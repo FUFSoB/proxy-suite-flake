@@ -47,11 +47,24 @@ def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     return userinfo, host, port, _qs(query)
 
 
+def _parse_json_param(value: str, name: str) -> dict:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid {name} JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"invalid {name} JSON: expected object")
+    return parsed
+
+
 def _mk_transport(
     transport_type: str,
     path: str = "/",
     host_header: str = "",
     service_name: str = "",
+    mode: str = "",
+    extra: str = "",
+    x_padding_bytes: str = "",
 ) -> "dict | None":
     normalized = transport_type.lower()
 
@@ -85,11 +98,19 @@ def _mk_transport(
             "type": "quic",
         }
     if normalized in ("xhttp", "splithttp"):
-        return {
+        transport = {
             "type": "xhttp",
-            "host": host_header,
             "path": urllib.parse.unquote(path),
         }
+        if host_header:
+            transport["host"] = host_header
+        if mode:
+            transport["mode"] = mode
+        if extra:
+            transport["extra"] = _parse_json_param(extra, "xhttp extra")
+        elif x_padding_bytes:
+            transport["extra"] = {"xPaddingBytes": x_padding_bytes}
+        return transport
     return None
 
 
@@ -148,6 +169,8 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
             "public_key": params["pbk"],
             "short_id": params.get("sid", ""),
         }
+        if params.get("spx"):
+            ob["tls"]["reality"]["spider_x"] = params["spx"]
     elif security == "tls":
         ob["tls"] = _mk_tls(
             params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
@@ -160,6 +183,9 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
         path=params.get("path", "/"),
         host_header=params.get("host", host),
         service_name=params.get("serviceName", ""),
+        mode=params.get("mode", ""),
+        extra=params.get("extra", ""),
+        x_padding_bytes=params.get("x_padding_bytes", ""),
     )
     if tr is not None:
         ob["transport"] = tr
