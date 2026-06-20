@@ -39,12 +39,6 @@ in
       };
     in
     lib.mkMerge [
-      {
-        warnings = lib.optional (cfg.proxy.enable && cfg.proxy.xray.enable) ''
-          proxy-suite: XRay backend is still in test mode; sing-box should be preferable for now.
-        '';
-      }
-
       (import ./service {
         inherit
           config

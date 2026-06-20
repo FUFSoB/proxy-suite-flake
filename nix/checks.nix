@@ -2292,9 +2292,6 @@ let
         balancer = builtins.head xrayTproxyConfig.routing.balancers;
       in
       assert xrayFixture.config.services.proxy-suite.proxy.xray.enable;
-      assert builtins.any (
-        warning: pkgs.lib.hasInfix "XRay backend is still in test mode" warning
-      ) xrayFixture.config.warnings;
       assert xrayFixture.config.systemd.services ? "proxy-suite-socks";
       assert xrayFixture.config.systemd.services ? "proxy-suite-tproxy";
       assert xrayFixture.config.systemd.services ? "proxy-suite-tun";
