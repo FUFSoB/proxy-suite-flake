@@ -674,6 +674,36 @@ let
   ];
   tgSecretFileService = tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy";
 
+  tgAllOptions = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.tgWsProxy = {
+        enable = true;
+        port = 2443;
+        host = "0.0.0.0";
+        secretFile = "/run/secrets/tg-ws-proxy";
+        verbose = true;
+        logFile = "/var/log/tg-ws-proxy.log";
+        logMaxMb = 2.5;
+        logBackups = 3;
+        bufKb = 512;
+        poolSize = 8;
+        cfProxyDomains = [
+          "cdn.example.com"
+          "edge.example.net"
+        ];
+        cfProxyWorkerDomains = [ "worker.example.com" ];
+        cfProxyFallback = false;
+        fakeTlsDomain = "mask.example.com";
+        proxyProtocol = true;
+        wsKeepalive = 0;
+      };
+    }
+  ];
+  tgAllOptionsStartScript = builtins.readFile (
+    tgAllOptions.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.ExecStart
+  );
+
   tgWithGlobalTun = evalProxySuite [
     baseModule
     {
@@ -716,6 +746,46 @@ let
           secretFile = "/run/secrets/tg-ws-proxy";
           routingMark = 1;
         };
+      };
+    }
+  ];
+
+  tgInvalidBufKb = mkBadFixture [
+    {
+      services.proxy-suite.tgWsProxy = {
+        enable = true;
+        secretFile = "/run/secrets/tg-ws-proxy";
+        bufKb = 3;
+      };
+    }
+  ];
+
+  tgInvalidPoolSize = mkBadFixture [
+    {
+      services.proxy-suite.tgWsProxy = {
+        enable = true;
+        secretFile = "/run/secrets/tg-ws-proxy";
+        poolSize = -1;
+      };
+    }
+  ];
+
+  tgInvalidLogBackups = mkBadFixture [
+    {
+      services.proxy-suite.tgWsProxy = {
+        enable = true;
+        secretFile = "/run/secrets/tg-ws-proxy";
+        logBackups = 0;
+      };
+    }
+  ];
+
+  tgInvalidWsKeepalive = mkBadFixture [
+    {
+      services.proxy-suite.tgWsProxy = {
+        enable = true;
+        secretFile = "/run/secrets/tg-ws-proxy";
+        wsKeepalive = -1;
       };
     }
   ];
@@ -2084,6 +2154,31 @@ let
       assert minimal.config.services.proxy-suite.tgWsProxy.dcIps == { };
       true
     )
+    # -- tg-ws-proxy: upstream runtime flags are exposed as typed module options --
+    (
+      assert pkgs.lib.hasInfix "--port=2443" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--host=0.0.0.0" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--secret-file=\"$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret\""
+        tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--verbose" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--log-file=/var/log/tg-ws-proxy.log" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--log-max-mb=2.500000" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--log-backups=3" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--buf-kb=512" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--pool-size=8" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--cfproxy-domain=cdn.example.com" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--cfproxy-domain=edge.example.net" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--cfproxy-worker-domain=worker.example.com" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--no-cfproxy" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--fake-tls-domain=mask.example.com" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--proxy-protocol" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--ws-keepalive=0" tgAllOptionsStartScript;
+      assert tgInvalidBufKb.success == false;
+      assert tgInvalidPoolSize.success == false;
+      assert tgInvalidLogBackups.success == false;
+      assert tgInvalidWsKeepalive.success == false;
+      true
+    )
     (
       assert
         tgSecretFile.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.LoadCredential
@@ -2133,9 +2228,7 @@ let
         dnsBridgeRouteRule = builtins.head (
           builtins.filter (
             rule:
-            (rule.action or "") == "hijack-dns"
-            && (rule ? inbound)
-            && builtins.elem "xray-dns-in" rule.inbound
+            (rule.action or "") == "hijack-dns" && (rule ? inbound) && builtins.elem "xray-dns-in" rule.inbound
           ) hybridTproxyConfig.route.rules
         );
       in
@@ -2149,10 +2242,11 @@ let
       assert mixedInbound.type == "mixed";
       assert tproxyInbound.type == "tproxy";
       assert tunDnsBridgeInbound.listen_port == 18534;
-      assert dnsBridgeRouteRule.network == [
-        "tcp"
-        "udp"
-      ];
+      assert
+        dnsBridgeRouteRule.network == [
+          "tcp"
+          "udp"
+        ];
       assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
@@ -2173,7 +2267,8 @@ let
       assert pkgs.lib.hasInfix "xray-dns-in" hybridBackendJqFilter;
       assert pkgs.lib.hasInfix "--backend hybrid" hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix "--backend hybrid" hybridSubscriptionUpdateScript;
-      assert pkgs.lib.hasInfix ''type == "object" and (.singBox | type == "array") and (.xray | type == "array")''
+      assert pkgs.lib.hasInfix
+        ''type == "object" and (.singBox | type == "array") and (.xray | type == "array")''
         hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix ".singBox" hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix ".xray[]" hybridSubscriptionStartScript;

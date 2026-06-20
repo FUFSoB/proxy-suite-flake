@@ -131,6 +131,128 @@ in
         };
       };
 
+      verbose = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether to enable debug logging in tg-ws-proxy.
+        '';
+        example = true;
+      };
+
+      logFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Optional path where tg-ws-proxy writes rotating logs.
+          When unset, tg-ws-proxy logs to stderr only.
+        '';
+        example = "/var/log/tg-ws-proxy.log";
+      };
+
+      logMaxMb = mkOption {
+        type = types.numbers.positive;
+        default = 5.0;
+        description = ''
+          Maximum tg-ws-proxy log file size in MiB before rotation.
+          Only used when tgWsProxy.logFile is set.
+        '';
+        example = 10.0;
+      };
+
+      logBackups = mkOption {
+        type = types.ints.positive;
+        default = 1;
+        description = ''
+          Number of rotated tg-ws-proxy log files to keep.
+          Only used when tgWsProxy.logFile is set.
+        '';
+        example = 3;
+      };
+
+      bufKb = mkOption {
+        type = types.ints.between 4 2147483647;
+        default = 256;
+        description = ''
+          Socket send and receive buffer size for tg-ws-proxy, in KiB.
+        '';
+        example = 512;
+      };
+
+      poolSize = mkOption {
+        type = types.ints.unsigned;
+        default = 4;
+        description = ''
+          WebSocket connection pool size per Telegram DC.
+          Set to 0 to disable connection pooling.
+        '';
+        example = 8;
+      };
+
+      cfProxyDomains = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          User-defined Cloudflare-proxied domains used by tg-ws-proxy for
+          WebSocket fallback. Each entry is passed as a separate
+          --cfproxy-domain argument.
+        '';
+        example = [
+          "cdn.example.com"
+          "edge.example.net"
+        ];
+      };
+
+      cfProxyWorkerDomains = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          Cloudflare Worker domains used by tg-ws-proxy for WebSocket fallback.
+          These are tried before other fallback methods.
+        '';
+        example = [ "worker.example.com" ];
+      };
+
+      cfProxyFallback = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether to allow tg-ws-proxy to use Cloudflare proxy fallback when
+          direct WebSocket routing is unavailable.
+        '';
+        example = false;
+      };
+
+      fakeTlsDomain = mkOption {
+        type = types.nullOr (types.strMatching ".+");
+        default = null;
+        description = ''
+          Optional SNI domain used to enable tg-ws-proxy Fake TLS masking.
+          When set, tg-ws-proxy emits an ee-secret connection link.
+        '';
+        example = "www.example.com";
+      };
+
+      proxyProtocol = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether tg-ws-proxy should accept a PROXY protocol v1 header from a
+          fronting reverse proxy such as nginx or HAProxy.
+        '';
+        example = true;
+      };
+
+      wsKeepalive = mkOption {
+        type = types.numbers.nonnegative;
+        default = 30.0;
+        description = ''
+          Seconds between upstream WebSocket keepalive pings.
+          Set to 0 to disable keepalive pings.
+        '';
+        example = 15.0;
+      };
+
       bypassTransparentProxy = mkOption {
         type = types.bool;
         default = true;

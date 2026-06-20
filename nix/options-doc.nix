@@ -262,8 +262,25 @@ pkgs.runCommand "proxy-suite-options.md" { } ''
     }
   ' "$section_index"
 
-  cat "$preamble" >"$out"
-  cat "$toc" >>"$out"
-  printf '\n' >>"$out"
-  cat "$sections_with_anchors" >>"$out"
+  raw="$TMPDIR/options.md.raw"
+
+  cat "$preamble" >"$raw"
+  cat "$toc" >>"$raw"
+  printf '\n' >>"$raw"
+  cat "$sections_with_anchors" >>"$raw"
+
+  awk '
+    NF {
+      for (i = 0; i < blanks; i++) {
+        print ""
+      }
+      blanks = 0
+      print
+      next
+    }
+
+    {
+      blanks++
+    }
+  ' "$raw" >"$out"
 ''

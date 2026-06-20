@@ -12,24 +12,40 @@ let
   ip = "${pkgs.iproute2}/bin/ip";
 
   transparentBypassEnabled =
-    t.bypassTransparentProxy
-    && cfg.proxy.enable
-    && (cfg.proxy.tun.enable || cfg.proxy.tproxy.enable);
+    t.bypassTransparentProxy && cfg.proxy.enable && (cfg.proxy.tun.enable || cfg.proxy.tproxy.enable);
   bypassRulePriority = 8999;
 
-  dcArgs = lib.concatMapStrings
-    (id: " --dc-ip=${lib.escapeShellArg "${id}:${t.dcIps.${id}}"}")
-    (builtins.attrNames t.dcIps);
+  mkValueArg = name: value: "    args+=(${name}=${lib.escapeShellArg value})\n";
+  mkRawValueArg = name: value: "    args+=(${name}=${toString value})\n";
+  mkFlagArg = condition: name: lib.optionalString condition "    args+=(${name})\n";
+  mkOptionalValueArg =
+    condition: name: value:
+    lib.optionalString condition (mkValueArg name value);
+  mkRepeatedValueArgs = name: values: lib.concatMapStrings (value: mkValueArg name value) values;
+  dcArgs = lib.concatMapStrings (id: mkValueArg "--dc-ip" "${id}:${t.dcIps.${id}}") (
+    builtins.attrNames t.dcIps
+  );
   startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''
-    exec ${tgPkg}/bin/tg-ws-proxy \
-      --port=${toString t.port} \
-      --host=${lib.escapeShellArg t.host} \
-      ${
-        if t.secretFile != null then
-          "--secret-file=$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret"
-        else
-          "--secret=${lib.escapeShellArg t.secret}"
-      }${dcArgs}
+    args=(
+      --port=${toString t.port}
+      --host=${lib.escapeShellArg t.host}
+    )
+    ${
+      if t.secretFile != null then
+        ''args+=(--secret-file="$CREDENTIALS_DIRECTORY/tg_ws_proxy_secret")''
+      else
+        "args+=(--secret=${lib.escapeShellArg t.secret})"
+    }
+    ${dcArgs}${mkFlagArg t.verbose "--verbose"}${
+      mkOptionalValueArg (t.logFile != null) "--log-file" t.logFile
+    }${lib.optionalString (t.logFile != null) (mkRawValueArg "--log-max-mb" t.logMaxMb)}${
+      lib.optionalString (t.logFile != null) (mkRawValueArg "--log-backups" t.logBackups)
+    }${mkRawValueArg "--buf-kb" t.bufKb}${mkRawValueArg "--pool-size" t.poolSize}${mkRepeatedValueArgs "--cfproxy-domain" t.cfProxyDomains}${mkRepeatedValueArgs "--cfproxy-worker-domain" t.cfProxyWorkerDomains}${
+      mkFlagArg (!t.cfProxyFallback) "--no-cfproxy"
+    }${
+      mkOptionalValueArg (t.fakeTlsDomain != null) "--fake-tls-domain" t.fakeTlsDomain
+    }${mkFlagArg t.proxyProtocol "--proxy-protocol"}${mkRawValueArg "--ws-keepalive" t.wsKeepalive}
+    exec ${tgPkg}/bin/tg-ws-proxy "''${args[@]}"
   '';
 
   bypassUpScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-bypass-up" ''

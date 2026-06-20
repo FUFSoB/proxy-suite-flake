@@ -124,13 +124,25 @@ Update module option docs there instead of editing this file by hand.
       - [package](#services-proxy-suite-proxy-xray-package)
   - tgWsProxy
     - [enable](#services-proxy-suite-tgwsproxy-enable)
+    - [bufKb](#services-proxy-suite-tgwsproxy-bufkb)
     - [bypassTransparentProxy](#services-proxy-suite-tgwsproxy-bypasstransparentproxy)
+    - [cfProxyDomains](#services-proxy-suite-tgwsproxy-cfproxydomains)
+    - [cfProxyFallback](#services-proxy-suite-tgwsproxy-cfproxyfallback)
+    - [cfProxyWorkerDomains](#services-proxy-suite-tgwsproxy-cfproxyworkerdomains)
     - [dcIps](#services-proxy-suite-tgwsproxy-dcips)
+    - [fakeTlsDomain](#services-proxy-suite-tgwsproxy-faketlsdomain)
     - [host](#services-proxy-suite-tgwsproxy-host)
+    - [logBackups](#services-proxy-suite-tgwsproxy-logbackups)
+    - [logFile](#services-proxy-suite-tgwsproxy-logfile)
+    - [logMaxMb](#services-proxy-suite-tgwsproxy-logmaxmb)
+    - [poolSize](#services-proxy-suite-tgwsproxy-poolsize)
     - [port](#services-proxy-suite-tgwsproxy-port)
+    - [proxyProtocol](#services-proxy-suite-tgwsproxy-proxyprotocol)
     - [routingMark](#services-proxy-suite-tgwsproxy-routingmark)
     - [secret](#services-proxy-suite-tgwsproxy-secret)
     - [secretFile](#services-proxy-suite-tgwsproxy-secretfile)
+    - [verbose](#services-proxy-suite-tgwsproxy-verbose)
+    - [wsKeepalive](#services-proxy-suite-tgwsproxy-wskeepalive)
   - tray
     - [enable](#services-proxy-suite-tray-enable)
     - [autostart](#services-proxy-suite-tray-autostart)
@@ -287,14 +299,26 @@ services.proxy-suite = {
     };
   };
   tgWsProxy = {
+    bufKb = 256;
     bypassTransparentProxy = true;
+    cfProxyDomains = [ ];
+    cfProxyFallback = true;
+    cfProxyWorkerDomains = [ ];
     dcIps = { };
     enable = false;
+    fakeTlsDomain = null;
     host = "127.0.0.1";
+    logBackups = 1;
+    logFile = null;
+    logMaxMb = 5.0;
+    poolSize = 4;
     port = 1443;
+    proxyProtocol = false;
     routingMark = 4;
     secret = null;
     secretFile = null;
+    verbose = false;
+    wsKeepalive = 30.0;
   };
   tray = {
     autostart = true;
@@ -536,18 +560,35 @@ services.proxy-suite = {
     };
   };
   tgWsProxy = {
+    bufKb = 512;
     bypassTransparentProxy = true;
+    cfProxyDomains = [
+      "cdn.example.com"
+      "edge.example.net"
+    ];
+    cfProxyFallback = false;
+    cfProxyWorkerDomains = [
+      "worker.example.com"
+    ];
     dcIps = {
       "2" = "149.154.167.220";
       "203" = "149.154.167.220";
       "4" = "149.154.167.220";
     };
     enable = true;
+    fakeTlsDomain = "www.example.com";
     host = "127.0.0.1";
+    logBackups = 3;
+    logFile = "/var/log/tg-ws-proxy.log";
+    logMaxMb = 10.0;
+    poolSize = 8;
     port = 1076;
+    proxyProtocol = true;
     routingMark = 4;
     secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     secretFile = "/run/secrets/tg-ws-proxy-secret";
+    verbose = true;
+    wsKeepalive = 15.0;
   };
   tray = {
     autostart = true;
@@ -3996,6 +4037,39 @@ true
 
 
 
+<a id="services-proxy-suite-tgwsproxy-bufkb"></a>
+## services\.proxy-suite\.tgWsProxy\.bufKb
+
+
+
+Socket send and receive buffer size for tg-ws-proxy, in KiB\.
+
+
+
+*Type:*
+integer between 4 and 2147483647 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+256
+```
+
+
+
+*Example:*
+
+```nix
+512
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
 <a id="services-proxy-suite-tgwsproxy-bypasstransparentproxy"></a>
 ## services\.proxy-suite\.tgWsProxy\.bypassTransparentProxy
 
@@ -4029,6 +4103,114 @@ true
 
 ```nix
 true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-cfproxydomains"></a>
+## services\.proxy-suite\.tgWsProxy\.cfProxyDomains
+
+
+
+User-defined Cloudflare-proxied domains used by tg-ws-proxy for
+WebSocket fallback\. Each entry is passed as a separate
+–cfproxy-domain argument\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "cdn.example.com"
+  "edge.example.net"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-cfproxyfallback"></a>
+## services\.proxy-suite\.tgWsProxy\.cfProxyFallback
+
+
+
+Whether to allow tg-ws-proxy to use Cloudflare proxy fallback when
+direct WebSocket routing is unavailable\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-cfproxyworkerdomains"></a>
+## services\.proxy-suite\.tgWsProxy\.cfProxyWorkerDomains
+
+
+
+Cloudflare Worker domains used by tg-ws-proxy for WebSocket fallback\.
+These are tried before other fallback methods\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "worker.example.com"
+]
 ```
 
 *Declared by:*
@@ -4075,6 +4257,40 @@ attribute set of string
 
 
 
+<a id="services-proxy-suite-tgwsproxy-faketlsdomain"></a>
+## services\.proxy-suite\.tgWsProxy\.fakeTlsDomain
+
+
+
+Optional SNI domain used to enable tg-ws-proxy Fake TLS masking\.
+When set, tg-ws-proxy emits an ee-secret connection link\.
+
+
+
+*Type:*
+null or string matching the pattern \.+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"www.example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
 <a id="services-proxy-suite-tgwsproxy-host"></a>
 ## services\.proxy-suite\.tgWsProxy\.host
 
@@ -4110,6 +4326,140 @@ string
 
 
 
+<a id="services-proxy-suite-tgwsproxy-logbackups"></a>
+## services\.proxy-suite\.tgWsProxy\.logBackups
+
+Number of rotated tg-ws-proxy log files to keep\.
+Only used when tgWsProxy\.logFile is set\.
+
+
+
+*Type:*
+positive integer, meaning >0
+
+
+
+*Default:*
+
+```nix
+1
+```
+
+
+
+*Example:*
+
+```nix
+3
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-logfile"></a>
+## services\.proxy-suite\.tgWsProxy\.logFile
+
+
+
+Optional path where tg-ws-proxy writes rotating logs\.
+When unset, tg-ws-proxy logs to stderr only\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/var/log/tg-ws-proxy.log"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-logmaxmb"></a>
+## services\.proxy-suite\.tgWsProxy\.logMaxMb
+
+
+
+Maximum tg-ws-proxy log file size in MiB before rotation\.
+Only used when tgWsProxy\.logFile is set\.
+
+
+
+*Type:*
+positive integer or floating point number, meaning >0
+
+
+
+*Default:*
+
+```nix
+5.0
+```
+
+
+
+*Example:*
+
+```nix
+10.0
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-poolsize"></a>
+## services\.proxy-suite\.tgWsProxy\.poolSize
+
+
+
+WebSocket connection pool size per Telegram DC\.
+Set to 0 to disable connection pooling\.
+
+
+
+*Type:*
+unsigned integer, meaning >=0
+
+
+
+*Default:*
+
+```nix
+4
+```
+
+
+
+*Example:*
+
+```nix
+8
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
 <a id="services-proxy-suite-tgwsproxy-port"></a>
 ## services\.proxy-suite\.tgWsProxy\.port
 
@@ -4138,6 +4488,40 @@ WebSocket proxy\.
 
 ```nix
 1076
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-proxyprotocol"></a>
+## services\.proxy-suite\.tgWsProxy\.proxyProtocol
+
+
+
+Whether tg-ws-proxy should accept a PROXY protocol v1 header from a
+fronting reverse proxy such as nginx or HAProxy\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
 ```
 
 *Declared by:*
@@ -4253,8 +4637,77 @@ null
 
 
 
+<a id="services-proxy-suite-tgwsproxy-verbose"></a>
+## services\.proxy-suite\.tgWsProxy\.verbose
+
+
+
+Whether to enable debug logging in tg-ws-proxy\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
+<a id="services-proxy-suite-tgwsproxy-wskeepalive"></a>
+## services\.proxy-suite\.tgWsProxy\.wsKeepalive
+
+
+
+Seconds between upstream WebSocket keepalive pings\.
+Set to 0 to disable keepalive pings\.
+
+
+
+*Type:*
+nonnegative integer or floating point number, meaning >=0
+
+
+
+*Default:*
+
+```nix
+30.0
+```
+
+
+
+*Example:*
+
+```nix
+15.0
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
+
+
+
 <a id="services-proxy-suite-tray-enable"></a>
 ## services\.proxy-suite\.tray\.enable
+
+
 
 Whether to enable system tray indicator for proxy-suite\.
 
