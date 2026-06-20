@@ -281,3 +281,48 @@ def parse_subscription(
         outbounds.append(outbound)
 
     return outbounds
+
+
+def parse_hybrid_subscription(
+    lines: list[str], tag_prefix: str, routing_mark: int | None = None
+) -> dict[str, list[dict]]:
+    outbounds: dict[str, list[dict]] = {"singBox": [], "xray": []}
+    seen_tags: set[str] = set()
+
+    for index, line in enumerate(lines):
+        scheme = detect_scheme(line)
+        if scheme not in PARSERS:
+            continue
+
+        remark = line.split("#", 1)[1] if "#" in line else ""
+        base_tag = make_tag(tag_prefix, remark, index)
+        tag = base_tag
+
+        if tag in seen_tags:
+            suffix = 2
+            while f"{base_tag}-{suffix}" in seen_tags:
+                suffix += 1
+            tag = f"{base_tag}-{suffix}"
+
+        try:
+            outbound = build_outbound(line, tag, routing_mark, "sing-box")
+            outbounds["singBox"].append(outbound)
+            seen_tags.add(tag)
+            continue
+        except Exception as sing_box_exc:
+            sing_box_error = sing_box_exc
+
+        try:
+            outbound = build_outbound(line, tag, routing_mark, "xray")
+        except Exception as xray_exc:
+            print(
+                f"warning: skipping entry {index} ({scheme}): "
+                f"sing-box: {sing_box_error}; xray: {xray_exc}",
+                file=sys.stderr,
+            )
+            continue
+
+        outbounds["xray"].append(outbound)
+        seen_tags.add(tag)
+
+    return outbounds

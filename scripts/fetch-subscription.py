@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from proxy_parsing import decode_subscription, fetch_raw, parse_subscription
+from proxy_parsing import decode_subscription, fetch_raw, parse_hybrid_subscription, parse_subscription
 
 
 def main() -> None:
@@ -18,7 +18,7 @@ def main() -> None:
         dest="tag_prefix",
         help="Prefix for outbound tags, e.g. 'my-sub'.",
     )
-    ap.add_argument("--backend", choices=["sing-box", "xray"], default="sing-box")
+    ap.add_argument("--backend", choices=["sing-box", "xray", "hybrid"], default="sing-box")
     ap.add_argument("--routing-mark", type=int, default=None, dest="routing_mark")
     args = ap.parse_args()
 
@@ -34,9 +34,14 @@ def main() -> None:
         sys.exit(1)
 
     lines = decode_subscription(raw)
-    outbounds = parse_subscription(lines, args.tag_prefix, args.routing_mark, args.backend)
+    if args.backend == "hybrid":
+        outbounds = parse_hybrid_subscription(lines, args.tag_prefix, args.routing_mark)
+        has_outbounds = bool(outbounds["singBox"] or outbounds["xray"])
+    else:
+        outbounds = parse_subscription(lines, args.tag_prefix, args.routing_mark, args.backend)
+        has_outbounds = bool(outbounds)
 
-    if not outbounds:
+    if not has_outbounds:
         print("error: subscription contained no parseable proxy URIs", file=sys.stderr)
         sys.exit(1)
 

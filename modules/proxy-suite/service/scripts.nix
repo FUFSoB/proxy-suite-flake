@@ -34,7 +34,13 @@ let
   systemctl = "${pkgs.systemd}/bin/systemctl";
   backend = if activeBackend == null then "sing-box" else activeBackend;
   mainBackend = if pureXrayEnabled then "xray" else "sing-box";
+  subscriptionBackend =
+    if hybridEnabled then
+      "hybrid"
+    else
+      mainBackend;
   backendArg = "--backend ${mainBackend}";
+  subscriptionBackendArg = "--backend ${subscriptionBackend}";
   backendBin = if pureXrayEnabled then xray else singBox;
   localProxyAuth = proxyCfg.auth;
   localProxyAuthEnabled =
@@ -69,12 +75,19 @@ let
     in
     ''
       printf '%s' "$(cat "${urlSource}")" \
-        | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} ${backendArg} --tag-prefix ${lib.escapeShellArg sub.tag}
+        | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} ${subscriptionBackendArg} --tag-prefix ${lib.escapeShellArg sub.tag}
     '';
 
   subscriptionCacheHelpersBlock = lib.optionalString hasSubscriptions ''
     _proxy_suite_valid_subscription_cache() {
-      [ -s "$1" ] && ${jq} -e 'type == "array"' "$1" >/dev/null 2>&1
+      [ -s "$1" ] && ${jq} -e ${
+        lib.escapeShellArg (
+          if hybridEnabled then
+            ''type == "object" and (.singBox | type == "array") and (.xray | type == "array")''
+          else
+            ''type == "array"''
+        )
+      } "$1" >/dev/null 2>&1
     }
 
     _proxy_suite_commit_subscription_cache() {
@@ -270,14 +283,34 @@ let
           echo "proxy-suite: warning: could not fetch subscription '${sub.tag}'" >&2
         fi
       fi
-      if [ -f "$CACHE_FILE" ]; then
-        SUB_JSON=$(cat "$CACHE_FILE")
-        ${
-          lib.optionalString (routingMark != null) ''
-            SUB_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_JSON")
+      ${
+        if hybridEnabled then
           ''
-        }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
-      fi
+            if [ -f "$CACHE_FILE" ]; then
+              SUB_SING_BOX_JSON=$(${jq} -c '.singBox' "$CACHE_FILE")
+              ${
+                lib.optionalString (routingMark != null) ''
+                  SUB_SING_BOX_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_SING_BOX_JSON")
+                ''
+              }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_SING_BOX_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+              while IFS= read -r SUB_XRAY_OB; do
+                SUB_XRAY_TAG="$(${jq} -r '.tag' <<< "$SUB_XRAY_OB")"
+                _proxy_suite_add_xray_sidecar_ob "$SUB_XRAY_OB" "$SUB_XRAY_TAG"
+              done < <(${jq} -c '.xray[]' "$CACHE_FILE")
+            fi
+          ''
+        else
+          ''
+            if [ -f "$CACHE_FILE" ]; then
+              SUB_JSON=$(cat "$CACHE_FILE")
+              ${
+                lib.optionalString (routingMark != null) ''
+                  SUB_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_JSON")
+                ''
+              }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+            fi
+          ''
+      }
     '';
 
   xrayUrltestTagFilter = ''
@@ -326,7 +359,7 @@ let
           --arg tag "$inbound_tag" \
           --arg auth "$auth" \
           --argjson port "$port" \
-          '{tag:$tag,listen:"127.0.0.1",port:$port,protocol:"socks",settings:{auth:"password",udp:false,accounts:[{user:$auth,pass:$auth}]}}')
+          '{tag:$tag,listen:"127.0.0.1",port:$port,protocol:"socks",settings:{auth:"password",udp:true,accounts:[{user:$auth,pass:$auth}]}}')
         XRAY_INBOUNDS_JSON=$(${jq} --argjson inbound "$inbound" '. + [$inbound]' <<< "$XRAY_INBOUNDS_JSON")
         route_rule=$(${jq} -n \
           --arg inbound "$inbound_tag" \
@@ -636,12 +669,16 @@ let
       ''
     else
       ''
+        def sing_box_preserved_rules:
+          [.route.rules[]
+           | select(((.action? // "") == "hijack-dns")
+             and (((.inbound? // []) | index("xray-dns-in")) != null))];
         .outbounds = $obs + .outbounds
           | if $auth_enabled then
               (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
             else . end
           | if $route_enabled then
-              .route.rules = $route_rules
+              .route.rules = (sing_box_preserved_rules + $route_rules)
               | .route.final = $route_final
               | .dns.final = $dns_final
               | if $clear_dns_rules then .dns.rules = [] else . end

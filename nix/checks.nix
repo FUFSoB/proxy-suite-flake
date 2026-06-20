@@ -497,6 +497,8 @@ let
   hybridPerAppTunStartScript = builtins.readFile (
     hybridFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart
   );
+  hybridBackendJqFilterFile = shellValueByPrefix hybridStartScript "BACKEND_JQ_FILTER=";
+  hybridBackendJqFilter = builtins.readFile hybridBackendJqFilterFile;
   hybridXrayRawFixture = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -521,6 +523,32 @@ let
   ];
   hybridXrayRawStartScript = builtins.readFile (
     hybridXrayRawFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  hybridSubscriptionFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        proxy = {
+          enable = true;
+          singBox.enable = true;
+          xray.enable = true;
+          subscriptions = [
+            {
+              tag = "community";
+              url = "https://example.com/hybrid-sub";
+            }
+          ];
+          selection = "selector";
+        };
+      };
+    }
+  ];
+  hybridSubscriptionStartScript = builtins.readFile (
+    hybridSubscriptionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
+  );
+  hybridSubscriptionUpdateScript = builtins.readFile (
+    hybridSubscriptionFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
   );
   proxyEnabledNoBackend = mkBadFixtureRaw [
     {
@@ -1489,6 +1517,7 @@ let
   perAppRoutingTunServiceConfig =
     perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig;
   perAppRoutingTunStartScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStart;
+  perAppRoutingTunUpScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStartPost;
   perAppRoutingTunCleanupScript = builtins.readFile perAppRoutingTunServiceConfig.ExecStopPost;
   perAppRoutingTunConfig = mkPerAppTunConfig perAppRoutingTunFixture;
   perAppRoutingTunDirectOutbound = builtins.head (
@@ -2101,6 +2130,14 @@ let
         tunDnsBridgeInbound = builtins.head (
           builtins.filter (inbound: inbound.tag == "xray-dns-in") hybridTunConfig.inbounds
         );
+        dnsBridgeRouteRule = builtins.head (
+          builtins.filter (
+            rule:
+            (rule.action or "") == "hijack-dns"
+            && (rule ? inbound)
+            && builtins.elem "xray-dns-in" rule.inbound
+          ) hybridTproxyConfig.route.rules
+        );
       in
       assert hybridFixture.config.services.proxy-suite.proxy.singBox.enable;
       assert hybridFixture.config.services.proxy-suite.proxy.xray.enable;
@@ -2112,6 +2149,10 @@ let
       assert mixedInbound.type == "mixed";
       assert tproxyInbound.type == "tproxy";
       assert tunDnsBridgeInbound.listen_port == 18534;
+      assert dnsBridgeRouteRule.network == [
+        "tcp"
+        "udp"
+      ];
       assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
@@ -2126,7 +2167,17 @@ let
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
       assert pkgs.lib.hasInfix "hybrid XRay json sidecar" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix ''{type:"socks",tag:$tag,server:"127.0.0.1"'' hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "udp:true" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix "routing_mark:2" hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "sing_box_preserved_rules" hybridBackendJqFilter;
+      assert pkgs.lib.hasInfix "xray-dns-in" hybridBackendJqFilter;
+      assert pkgs.lib.hasInfix "--backend hybrid" hybridSubscriptionStartScript;
+      assert pkgs.lib.hasInfix "--backend hybrid" hybridSubscriptionUpdateScript;
+      assert pkgs.lib.hasInfix ''type == "object" and (.singBox | type == "array") and (.xray | type == "array")''
+        hybridSubscriptionStartScript;
+      assert pkgs.lib.hasInfix ".singBox" hybridSubscriptionStartScript;
+      assert pkgs.lib.hasInfix ".xray[]" hybridSubscriptionStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridSubscriptionStartScript;
       true
     )
     # -- xray backend: same service surface, XRay config shape, and urltest balancer --
@@ -2828,7 +2879,8 @@ let
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' routeModeStartScript;
       assert pkgs.lib.hasInfix "all-proxy)" routeModeStartScript;
       assert pkgs.lib.hasInfix "all-bypass)" routeModeStartScript;
-      assert pkgs.lib.hasInfix ".route.rules = $route_rules" routeModeBackendJqFilter;
+      assert pkgs.lib.hasInfix ".route.rules = (sing_box_preserved_rules + $route_rules)"
+        routeModeBackendJqFilter;
       assert pkgs.lib.hasInfix ".dns.rules = []" routeModeBackendJqFilter;
       true
     )
@@ -3054,6 +3106,9 @@ let
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun-user@";
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
       assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
+      assert !(pkgs.lib.hasInfix "-6 addr replace" perAppRoutingTunUpScript);
+      assert !(pkgs.lib.hasInfix "-6 route replace" perAppRoutingTunUpScript);
+      assert !(pkgs.lib.hasInfix "-6 rule add" perAppRoutingTunUpScript);
       assert pkgs.lib.hasInfix "link del dev" perAppRoutingTunCleanupScript;
       assert pkgs.lib.hasInfix "psperapptun0" perAppRoutingTunCleanupScript;
       assert pkgs.lib.hasInfix "rule del fwmark 16 table 101" perAppRoutingTunCleanupScript;

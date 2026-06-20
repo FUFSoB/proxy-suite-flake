@@ -5,6 +5,7 @@
   cfg,
   singBoxCfg,
   proxyCfg,
+  pureXrayEnabled,
   perAppRoutingCfg,
   perAppRoutingTun,
   perAppRoutingTproxy,
@@ -170,13 +171,15 @@ let
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
-    ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
     ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$uplink_addr" table ${toString perAppRoutingTun.routeTable}
-    ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
-    ${ip} -6 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
     ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${lib.optionalString pureXrayEnabled ''
+      ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
+      ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+      ${ip} -6 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+      ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ''}
   '';
 
   perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app-tun-down" ''

@@ -66,6 +66,15 @@ let
       final = if proxyCfg.proxyByDefault then "remote" else "local";
     };
 
+  xrayDnsBridgeHijackRule = {
+    inbound = [ "xray-dns-in" ];
+    network = [
+      "tcp"
+      "udp"
+    ];
+    action = "hijack-dns";
+  };
+
   clashApiBlock = lib.optionalAttrs clashApiEnabled {
     experimental = {
       clash_api = {
@@ -154,7 +163,7 @@ let
       route = {
         default_domain_resolver = "local";
         rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
-        rules = rules.singBoxRoutingRules;
+        rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
         final = if proxyCfg.proxyByDefault then "proxy" else "direct";
       }
       // lib.optionalAttrs (enableTun && tunAutoRoute) {

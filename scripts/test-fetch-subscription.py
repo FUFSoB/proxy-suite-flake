@@ -2,9 +2,11 @@
 
 import base64
 import unittest
-from proxy_parsing import decode_subscription, parse_subscription
+from proxy_parsing import decode_subscription, parse_hybrid_subscription, parse_subscription
 
 VLESS_URI = "vless://uuid@example.com:443?security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com&sid=abcd"
+VLESS_XHTTP_URI = "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fx"
+VLESS_ECH_URI = "vless://uuid@example.com:443?type=tcp&security=tls&sni=cdn.example.com&ech=udp%3A%2F%2F1.1.1.1"
 SS_URI = "ss://{}@ss.example.com:8388".format(
     base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:passw0rd").decode().rstrip("=")
 )
@@ -18,10 +20,16 @@ def _make_b64_payload(*uris: str) -> bytes:
 
 
 def run_fetcher(
-    server_data: bytes, tag_prefix: str = "test", *, routing_mark: int | None = None
+    server_data: bytes,
+    tag_prefix: str = "test",
+    *,
+    routing_mark: int | None = None,
+    backend: str = "sing-box",
 ):
     lines = decode_subscription(server_data)
-    return parse_subscription(lines, tag_prefix, routing_mark)
+    if backend == "hybrid":
+        return parse_hybrid_subscription(lines, tag_prefix, routing_mark)
+    return parse_subscription(lines, tag_prefix, routing_mark, backend)
 
 
 class FetchSubscriptionTests(unittest.TestCase):
@@ -111,6 +119,23 @@ class FetchSubscriptionTests(unittest.TestCase):
         payload = base64.b64encode(text.encode())
         obs = run_fetcher(payload)
         self.assertEqual(len(obs), 2)
+
+    def test_hybrid_subscription_preserves_xray_only_entries(self):
+        payload = _make_b64_payload(VLESS_URI, VLESS_XHTTP_URI, VLESS_ECH_URI)
+        obs = run_fetcher(payload, backend="hybrid")
+        self.assertEqual(len(obs["singBox"]), 1)
+        self.assertEqual(len(obs["xray"]), 2)
+        self.assertEqual(obs["singBox"][0]["type"], "vless")
+        self.assertEqual(obs["xray"][0]["streamSettings"]["network"], "xhttp")
+        self.assertEqual(
+            obs["xray"][1]["streamSettings"]["tlsSettings"]["echConfigList"],
+            "udp://1.1.1.1",
+        )
+
+    def test_hybrid_subscription_all_invalid_returns_empty_backend_lists(self):
+        payload = _make_b64_payload(INVALID_URI, "not-a-uri-at-all")
+        obs = run_fetcher(payload, backend="hybrid")
+        self.assertEqual(obs, {"singBox": [], "xray": []})
 
 
 if __name__ == "__main__":
