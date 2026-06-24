@@ -4,6 +4,7 @@ import base64
 import json
 import unittest
 
+import proxy_parsing
 from proxy_parsing import build_outbound
 
 
@@ -244,6 +245,19 @@ class BuildOutboundTests(unittest.TestCase):
     def test_invalid_scheme_fails(self):
         with self.assertRaisesRegex(ValueError, "unsupported scheme"):
             run_parser("wireguard://example.com")
+
+    def test_backend_aware_parser_type_error_is_not_arity_fallback(self):
+        def broken_parser(url: str, tag: str, backend: str):
+            raise TypeError("real parser bug")
+
+        proxy_parsing.PARSERS["broken"] = broken_parser
+        proxy_parsing.BACKEND_AWARE_PARSERS.add("broken")
+        try:
+            with self.assertRaisesRegex(TypeError, "real parser bug"):
+                build_outbound("broken://example.com:443", "test-outbound")
+        finally:
+            del proxy_parsing.PARSERS["broken"]
+            proxy_parsing.BACKEND_AWARE_PARSERS.remove("broken")
 
 
 if __name__ == "__main__":

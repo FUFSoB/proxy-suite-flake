@@ -18,8 +18,6 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     $CC -o proxy-suite-tray main.c \
       $(pkg-config --cflags --libs gtk+-3.0 ayatana-appindicator3-0.1) \
-      -DSYSTEMCTL_BIN='"${pkgs.systemd}/bin/systemctl"' \
-      -DPKEXEC_BIN='"/run/wrappers/bin/pkexec"' \
       -DPOLL_INTERVAL=${toString pollInterval} \
       -O2 -Wall -Werror=discarded-qualifiers
   '';

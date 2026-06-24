@@ -132,6 +132,16 @@ class FetchSubscriptionTests(unittest.TestCase):
             "udp://1.1.1.1",
         )
 
+    def test_hybrid_subscription_deduplicates_tags_across_backend_lists(self):
+        payload = _make_b64_payload(
+            VLESS_URI + "#Same",
+            VLESS_XHTTP_URI + "#Same",
+            VLESS_ECH_URI + "#Same",
+        )
+        obs = run_fetcher(payload, tag_prefix="sub", backend="hybrid")
+        tags = [ob["tag"] for ob in obs["singBox"] + obs["xray"]]
+        self.assertEqual(tags, ["sub-Same", "sub-Same-2", "sub-Same-3"])
+
     def test_hybrid_subscription_all_invalid_returns_empty_backend_lists(self):
         payload = _make_b64_payload(INVALID_URI, "not-a-uri-at-all")
         obs = run_fetcher(payload, backend="hybrid")

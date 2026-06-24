@@ -6,7 +6,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-from proxy_url_parsers import PARSERS
+from proxy_url_parsers import BACKEND_AWARE_PARSERS, PARSERS
 
 
 def detect_scheme(url: str) -> str:
@@ -19,10 +19,9 @@ def _parse_url(url: str, tag: str, backend: str) -> dict:
         raise ValueError(f"unsupported scheme '{scheme}'")
 
     parser = PARSERS[scheme]
-    try:
+    if scheme in BACKEND_AWARE_PARSERS:
         return parser(url, tag, backend)
-    except TypeError:
-        return parser(url, tag)
+    return parser(url, tag)
 
 
 def _xray_sockopt(routing_mark: int | None) -> dict:
@@ -250,6 +249,24 @@ def make_tag(prefix: str, remark: str, index: int) -> str:
     return f"{prefix}-{index}"
 
 
+def _remark_from_line(line: str) -> str:
+    return line.split("#", 1)[1] if "#" in line else ""
+
+
+def _unique_tag(base_tag: str, seen_tags: set[str]) -> str:
+    if base_tag not in seen_tags:
+        return base_tag
+
+    suffix = 2
+    while f"{base_tag}-{suffix}" in seen_tags:
+        suffix += 1
+    return f"{base_tag}-{suffix}"
+
+
+def _subscription_tag(line: str, tag_prefix: str, index: int, seen_tags: set[str]) -> str:
+    return _unique_tag(make_tag(tag_prefix, _remark_from_line(line), index), seen_tags)
+
+
 def parse_subscription(
     lines: list[str], tag_prefix: str, routing_mark: int | None, backend: str = "sing-box"
 ) -> list[dict]:
@@ -261,15 +278,7 @@ def parse_subscription(
         if scheme not in PARSERS:
             continue
 
-        remark = line.split("#", 1)[1] if "#" in line else ""
-        base_tag = make_tag(tag_prefix, remark, index)
-        tag = base_tag
-
-        if tag in seen_tags:
-            suffix = 2
-            while f"{base_tag}-{suffix}" in seen_tags:
-                suffix += 1
-            tag = f"{base_tag}-{suffix}"
+        tag = _subscription_tag(line, tag_prefix, index, seen_tags)
 
         try:
             outbound = build_outbound(line, tag, routing_mark, backend)
@@ -294,15 +303,7 @@ def parse_hybrid_subscription(
         if scheme not in PARSERS:
             continue
 
-        remark = line.split("#", 1)[1] if "#" in line else ""
-        base_tag = make_tag(tag_prefix, remark, index)
-        tag = base_tag
-
-        if tag in seen_tags:
-            suffix = 2
-            while f"{base_tag}-{suffix}" in seen_tags:
-                suffix += 1
-            tag = f"{base_tag}-{suffix}"
+        tag = _subscription_tag(line, tag_prefix, index, seen_tags)
 
         try:
             outbound = build_outbound(line, tag, routing_mark, "sing-box")

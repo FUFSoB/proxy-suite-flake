@@ -416,3 +416,7 @@ PARSERS = {
     "http": parse_http_proxy,
     "https": parse_http_proxy,
 }
+
+BACKEND_AWARE_PARSERS = {
+    "vless",
+}

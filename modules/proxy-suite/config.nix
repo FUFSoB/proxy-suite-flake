@@ -9,6 +9,7 @@
 
 let
   derived = import ./derived.nix { inherit lib cfg; };
+  constants = derived.constants;
   inherit (derived)
     proxyCfg
     singBoxCfg
@@ -19,10 +20,15 @@ let
     globalTproxy
     clashApiEnabled
     ;
+  inherit (constants)
+    xrayGlobalTunIPv6Address
+    xrayPerAppTunIPv6Address
+    xrayDnsBridgePorts
+    ;
   perAppTun = derived.perAppRoutingTun;
   direct = rules.direct;
-  xrayGlobalTunIPv6Address = "fd66:19::1/64";
-  xrayPerAppTunIPv6Address = "fd66:20::1/64";
+  defaultTunAutoRouteTableIndex = constants.tunAutoRouteTableIndex;
+  defaultTunAutoRouteRulePriority = constants.tunAutoRouteRulePriority;
   xrayFakeDnsPools = [
     {
       ipPool = "198.18.0.0/15";
@@ -92,15 +98,15 @@ let
       tunAddress ? globalTun.address,
       tunMtu ? globalTun.mtu,
       tunAutoRoute ? true,
-      tunAutoRouteTableIndex ? 2022,
-      tunAutoRouteRuleIndex ? 9000,
+      tunAutoRouteTableIndex ? defaultTunAutoRouteTableIndex,
+      tunAutoRouteRuleIndex ? defaultTunAutoRouteRulePriority,
       tunAutoRedirect ? true,
       tunStrictRoute ? true,
       forceLocalDnsViaProxy ? false,
       useOutboundRoutingMark ? false,
       enableClashApi ? clashApiEnabled,
       enableXrayDnsBridge ? hybridEnabled,
-      xrayDnsBridgePort ? 18533,
+      xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
     }:
     {
       log.level = "warn";
@@ -405,7 +411,7 @@ let
     enableMixed = true;
     enableTProxy = true;
     useOutboundRoutingMark = true;
-    xrayDnsBridgePort = 18533;
+    xrayDnsBridgePort = xrayDnsBridgePorts.socks;
   };
 
   singBoxTunTemplate = mkSingBoxConfig {
@@ -418,7 +424,7 @@ let
     tunStrictRoute = true;
     forceLocalDnsViaProxy = false;
     enableClashApi = false;
-    xrayDnsBridgePort = 18534;
+    xrayDnsBridgePort = xrayDnsBridgePorts.tun;
   };
 
   singBoxPerAppTunTemplate = mkSingBoxConfig {
@@ -432,7 +438,7 @@ let
     forceLocalDnsViaProxy = false;
     useOutboundRoutingMark = globalTproxy.enable;
     enableClashApi = false;
-    xrayDnsBridgePort = 18535;
+    xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
   };
 
   xrayTproxyTemplate = mkXrayConfig {

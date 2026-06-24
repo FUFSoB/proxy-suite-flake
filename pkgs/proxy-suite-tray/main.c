@@ -11,17 +11,14 @@
 #ifndef PROXY_CTL_BIN
 #define PROXY_CTL_BIN "/run/current-system/sw/bin/proxy-ctl"
 #endif
+#define ROUTE_MODE_CHOICE_COUNT 5
 
 static AppIndicator *indicator;
 static GtkWidget *menu;
 static GtkWidget *status_item;
 static GtkWidget *proxy_item;
 static GtkWidget *route_mode_item;
-static GtkWidget *route_mode_default_item;
-static GtkWidget *route_mode_whitelist_item;
-static GtkWidget *route_mode_blacklist_item;
-static GtkWidget *route_mode_all_proxy_item;
-static GtkWidget *route_mode_all_bypass_item;
+static GtkWidget *route_mode_items[ROUTE_MODE_CHOICE_COUNT];
 static GtkWidget *tproxy_item;
 static GtkWidget *tun_item;
 static GtkWidget *zapret_item;
@@ -48,6 +45,21 @@ typedef enum
     ROUTE_MODE_ALL_PROXY,
     ROUTE_MODE_ALL_BYPASS
 } RouteMode;
+
+typedef struct
+{
+    RouteMode mode;
+    const char *id;
+    const char *status_label;
+    const char *control_label;
+} RouteModeInfo;
+
+static const RouteModeInfo route_mode_infos[ROUTE_MODE_CHOICE_COUNT] = {
+    {ROUTE_MODE_DEFAULT, "default", "Default", "Default (stop overriding)"},
+    {ROUTE_MODE_WHITELIST, "whitelist", "Whitelist (direct by default)", "Whitelist (direct by default)"},
+    {ROUTE_MODE_BLACKLIST, "blacklist", "Blacklist (proxy by default)", "Blacklist (proxy by default)"},
+    {ROUTE_MODE_ALL_PROXY, "all-proxy", "All Proxy (override)", "All Proxy (override)"},
+    {ROUTE_MODE_ALL_BYPASS, "all-bypass", "All Bypass (override)", "All Bypass (override)"}};
 
 typedef struct
 {
@@ -169,17 +181,7 @@ static GDBusMessage *on_session_bus_message(
     return message;
 }
 
-static gboolean run_proxy_ctl1(const char *arg1)
-{
-    gchar *argv[] = {
-        (gchar *)PROXY_CTL_BIN,
-        (gchar *)arg1,
-        NULL};
-
-    return command_succeeds(argv);
-}
-
-static gboolean run_proxy_ctl2(const char *arg1, const char *arg2)
+static gboolean proxy_ctl_command(const char *arg1, const char *arg2, gchar **stdout_text)
 {
     gchar *argv[] = {
         (gchar *)PROXY_CTL_BIN,
@@ -187,12 +189,33 @@ static gboolean run_proxy_ctl2(const char *arg1, const char *arg2)
         (gchar *)arg2,
         NULL};
 
+    if (stdout_text)
+    {
+        return command_stdout(argv, stdout_text);
+    }
     return command_succeeds(argv);
+}
+
+static gboolean run_proxy_ctl(const char *arg1, const char *arg2)
+{
+    return proxy_ctl_command(arg1, arg2, NULL);
 }
 
 static gboolean parse_proxy_ctl_bool(const char *value)
 {
     return value && strcmp(value, "true") == 0;
+}
+
+static const RouteModeInfo *route_mode_info_by_mode(RouteMode mode)
+{
+    for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
+    {
+        if (route_mode_infos[i].mode == mode)
+        {
+            return &route_mode_infos[i];
+        }
+    }
+    return NULL;
 }
 
 static RouteMode parse_route_mode(const char *value)
@@ -201,25 +224,12 @@ static RouteMode parse_route_mode(const char *value)
     {
         return ROUTE_MODE_UNKNOWN;
     }
-    if (strcmp(value, "default") == 0)
+    for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
     {
-        return ROUTE_MODE_DEFAULT;
-    }
-    if (strcmp(value, "whitelist") == 0)
-    {
-        return ROUTE_MODE_WHITELIST;
-    }
-    if (strcmp(value, "blacklist") == 0)
-    {
-        return ROUTE_MODE_BLACKLIST;
-    }
-    if (strcmp(value, "all-proxy") == 0)
-    {
-        return ROUTE_MODE_ALL_PROXY;
-    }
-    if (strcmp(value, "all-bypass") == 0)
-    {
-        return ROUTE_MODE_ALL_BYPASS;
+        if (strcmp(value, route_mode_infos[i].id) == 0)
+        {
+            return route_mode_infos[i].mode;
+        }
     }
     return ROUTE_MODE_UNKNOWN;
 }
@@ -250,13 +260,8 @@ static ServiceState get_service_state(void)
 {
     ServiceState state = {0};
     gchar *stdout_text = NULL;
-    gchar *argv[] = {
-        (gchar *)PROXY_CTL_BIN,
-        (gchar *)"status",
-        (gchar *)"--tray",
-        NULL};
 
-    if (!command_stdout(argv, &stdout_text))
+    if (!proxy_ctl_command("status", "--tray", &stdout_text))
     {
         return state;
     }
@@ -351,9 +356,10 @@ static const char *traffic_mode_label(const ServiceState *state)
 
 static const char *route_mode_label(const ServiceState *state)
 {
-    switch (state->route_mode)
+    const RouteModeInfo *info;
+
+    if (state->route_mode == ROUTE_MODE_DEFAULT)
     {
-    case ROUTE_MODE_DEFAULT:
         switch (state->default_route_mode)
         {
         case ROUTE_MODE_WHITELIST:
@@ -363,61 +369,36 @@ static const char *route_mode_label(const ServiceState *state)
         default:
             return "Default";
         }
-    case ROUTE_MODE_WHITELIST:
-        return "Whitelist (direct by default)";
-    case ROUTE_MODE_BLACKLIST:
-        return "Blacklist (proxy by default)";
-    case ROUTE_MODE_ALL_PROXY:
-        return "All Proxy (override)";
-    case ROUTE_MODE_ALL_BYPASS:
-        return "All Bypass (override)";
-    default:
-        return "Unknown";
     }
+
+    info = route_mode_info_by_mode(state->route_mode);
+    return info ? info->status_label : "Unknown";
 }
 
 static gint route_mode_combo_index(RouteMode mode)
 {
-    switch (mode)
+    for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
     {
-    case ROUTE_MODE_DEFAULT:
-        return 0;
-    case ROUTE_MODE_WHITELIST:
-        return 1;
-    case ROUTE_MODE_BLACKLIST:
-        return 2;
-    case ROUTE_MODE_ALL_PROXY:
-        return 3;
-    case ROUTE_MODE_ALL_BYPASS:
-        return 4;
-    default:
-        return -1;
+        if (route_mode_infos[i].mode == mode)
+        {
+            return (gint)i;
+        }
     }
+    return -1;
 }
 
 static void sync_route_mode_widgets(RouteMode mode)
 {
     updating_route_mode_widgets = TRUE;
 
-    if (route_mode_default_item)
+    for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
     {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_default_item), mode == ROUTE_MODE_DEFAULT);
-    }
-    if (route_mode_whitelist_item)
-    {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_whitelist_item), mode == ROUTE_MODE_WHITELIST);
-    }
-    if (route_mode_blacklist_item)
-    {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_blacklist_item), mode == ROUTE_MODE_BLACKLIST);
-    }
-    if (route_mode_all_proxy_item)
-    {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_all_proxy_item), mode == ROUTE_MODE_ALL_PROXY);
-    }
-    if (route_mode_all_bypass_item)
-    {
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(route_mode_all_bypass_item), mode == ROUTE_MODE_ALL_BYPASS);
+        if (route_mode_items[i])
+        {
+            gtk_check_menu_item_set_active(
+                GTK_CHECK_MENU_ITEM(route_mode_items[i]),
+                mode == route_mode_infos[i].mode);
+        }
     }
     if (controls_route_mode_combo)
     {
@@ -670,11 +651,11 @@ static void on_proxy_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.socks)
     {
-        run_proxy_ctl2("proxy", "off");
+        run_proxy_ctl("proxy", "off");
     }
     else
     {
-        run_proxy_ctl2("proxy", "on");
+        run_proxy_ctl("proxy", "on");
     }
     update_status();
 }
@@ -686,11 +667,11 @@ static void on_tproxy_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.tproxy)
     {
-        run_proxy_ctl2("tproxy", "off");
+        run_proxy_ctl("tproxy", "off");
     }
     else
     {
-        run_proxy_ctl2("tproxy", "on");
+        run_proxy_ctl("tproxy", "on");
     }
     update_status();
 }
@@ -707,7 +688,7 @@ static void on_route_mode_menu_toggled(GtkCheckMenuItem *item, gpointer data)
     {
         return;
     }
-    run_proxy_ctl2("route-mode", mode);
+    run_proxy_ctl("route-mode", mode);
     update_status();
 }
 
@@ -731,7 +712,7 @@ static void on_route_mode_combo_changed(GtkComboBox *combo, gpointer data)
     {
         return;
     }
-    run_proxy_ctl2("route-mode", mode);
+    run_proxy_ctl("route-mode", mode);
     update_status();
 }
 
@@ -742,11 +723,11 @@ static void on_tun_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.tun)
     {
-        run_proxy_ctl2("tun", "off");
+        run_proxy_ctl("tun", "off");
     }
     else
     {
-        run_proxy_ctl2("tun", "on");
+        run_proxy_ctl("tun", "on");
     }
     update_status();
 }
@@ -758,11 +739,11 @@ static void on_zapret_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.zapret)
     {
-        run_proxy_ctl2("zapret", "off");
+        run_proxy_ctl("zapret", "off");
     }
     else
     {
-        run_proxy_ctl2("zapret", "on");
+        run_proxy_ctl("zapret", "on");
     }
     update_status();
 }
@@ -771,7 +752,7 @@ static void on_restart(GtkWidget *item, gpointer data)
 {
     (void)item;
     (void)data;
-    run_proxy_ctl1("restart");
+    run_proxy_ctl("restart", NULL);
     update_status();
 }
 
@@ -779,7 +760,7 @@ static void on_subscription_update(GtkWidget *item, gpointer data)
 {
     (void)item;
     (void)data;
-    run_proxy_ctl2("subscription", "update");
+    run_proxy_ctl("subscription", "update");
 }
 
 static void on_open_controls(GtkWidget *item, gpointer data)
@@ -851,11 +832,13 @@ static void build_controls_window(void)
         gtk_box_pack_start(GTK_BOX(routing_box), controls_route_mode_status_label, FALSE, FALSE, 0);
 
         controls_route_mode_combo = gtk_combo_box_text_new();
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "default", "Default (stop overriding)");
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "whitelist", "Whitelist (direct by default)");
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "blacklist", "Blacklist (proxy by default)");
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "all-proxy", "All Proxy (override)");
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_route_mode_combo), "all-bypass", "All Bypass (override)");
+        for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
+        {
+            gtk_combo_box_text_append(
+                GTK_COMBO_BOX_TEXT(controls_route_mode_combo),
+                route_mode_infos[i].id,
+                route_mode_infos[i].control_label);
+        }
         g_signal_connect(controls_route_mode_combo, "changed", G_CALLBACK(on_route_mode_combo_changed), NULL);
         gtk_box_pack_start(GTK_BOX(routing_box), controls_route_mode_combo, FALSE, FALSE, 0);
     }
@@ -948,30 +931,21 @@ static void build_menu(void)
     {
         route_mode_item = gtk_menu_item_new_with_label("[Routing] Mode: Unknown");
         GtkWidget *route_mode_menu = gtk_menu_new();
+        GSList *route_group = NULL;
 
-        route_mode_default_item = gtk_radio_menu_item_new_with_label(NULL, "Default (stop overriding)");
-        g_signal_connect(route_mode_default_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "default");
-        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_default_item);
-
-        GSList *route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_default_item));
-        route_mode_whitelist_item = gtk_radio_menu_item_new_with_label(route_group, "Whitelist (direct by default)");
-        g_signal_connect(route_mode_whitelist_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "whitelist");
-        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_whitelist_item);
-
-        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_whitelist_item));
-        route_mode_blacklist_item = gtk_radio_menu_item_new_with_label(route_group, "Blacklist (proxy by default)");
-        g_signal_connect(route_mode_blacklist_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "blacklist");
-        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_blacklist_item);
-
-        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_blacklist_item));
-        route_mode_all_proxy_item = gtk_radio_menu_item_new_with_label(route_group, "All Proxy (override)");
-        g_signal_connect(route_mode_all_proxy_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "all-proxy");
-        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_all_proxy_item);
-
-        route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_all_proxy_item));
-        route_mode_all_bypass_item = gtk_radio_menu_item_new_with_label(route_group, "All Bypass (override)");
-        g_signal_connect(route_mode_all_bypass_item, "toggled", G_CALLBACK(on_route_mode_menu_toggled), (gpointer) "all-bypass");
-        gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_all_bypass_item);
+        for (gsize i = 0; i < G_N_ELEMENTS(route_mode_infos); ++i)
+        {
+            route_mode_items[i] = gtk_radio_menu_item_new_with_label(
+                route_group,
+                route_mode_infos[i].control_label);
+            g_signal_connect(
+                route_mode_items[i],
+                "toggled",
+                G_CALLBACK(on_route_mode_menu_toggled),
+                (gpointer)route_mode_infos[i].id);
+            gtk_menu_shell_append(GTK_MENU_SHELL(route_mode_menu), route_mode_items[i]);
+            route_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(route_mode_items[i]));
+        }
 
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(route_mode_item), route_mode_menu);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), route_mode_item);

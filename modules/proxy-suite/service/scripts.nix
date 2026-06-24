@@ -16,6 +16,7 @@
   selectionMode,
   collapseNamedOutbounds,
   hasSubscriptions,
+  constants,
   jq,
   python3,
   singBox,
@@ -34,11 +35,7 @@ let
   systemctl = "${pkgs.systemd}/bin/systemctl";
   backend = if activeBackend == null then "sing-box" else activeBackend;
   mainBackend = if pureXrayEnabled then "xray" else "sing-box";
-  subscriptionBackend =
-    if hybridEnabled then
-      "hybrid"
-    else
-      mainBackend;
+  subscriptionBackend = if hybridEnabled then "hybrid" else mainBackend;
   backendArg = "--backend ${mainBackend}";
   subscriptionBackendArg = "--backend ${subscriptionBackend}";
   backendBin = if pureXrayEnabled then xray else singBox;
@@ -58,6 +55,10 @@ let
   xrayLoglevelFile = "/run/proxy-suite/xray-loglevel";
   runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
   xraySidecarRoutingMark = globalTproxy.proxyMark;
+  inherit (constants)
+    xrayDnsBridgePorts
+    xraySidecarBasePorts
+    ;
 
   mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
 
@@ -695,8 +696,8 @@ let
       enableLocalProxyAuth ? false,
       xrayTunEgressBinding ? false,
       xrayTunDnsRuntime ? false,
-      xraySidecarBasePort ? 33080,
-      xrayDnsBridgePort ? 18533,
+      xraySidecarBasePort ? xraySidecarBasePorts.socks,
+      xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
@@ -815,8 +816,8 @@ let
     configFile = tproxyFile;
     routingMark = globalTproxy.proxyMark;
     enableLocalProxyAuth = localProxyAuthEnabled;
-    xraySidecarBasePort = 33080;
-    xrayDnsBridgePort = 18533;
+    xraySidecarBasePort = xraySidecarBasePorts.socks;
+    xrayDnsBridgePort = xrayDnsBridgePorts.socks;
   };
 
   startTun = mkStartScript {
@@ -826,8 +827,8 @@ let
     routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
     xrayTunDnsRuntime = pureXrayEnabled;
-    xraySidecarBasePort = 33180;
-    xrayDnsBridgePort = 18534;
+    xraySidecarBasePort = xraySidecarBasePorts.tun;
+    xrayDnsBridgePort = xrayDnsBridgePorts.tun;
   };
 
   startPerAppTun = mkStartScript {
@@ -837,8 +838,8 @@ let
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
     xrayTunEgressBinding = xrayEnabled;
     xrayTunDnsRuntime = pureXrayEnabled;
-    xraySidecarBasePort = 33280;
-    xrayDnsBridgePort = 18535;
+    xraySidecarBasePort = xraySidecarBasePorts.perAppTun;
+    xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
   };
 
   mkSubscriptionFetchBlock =

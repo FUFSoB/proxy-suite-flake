@@ -17,6 +17,7 @@
 
 let
   derived = import ../derived.nix { inherit lib cfg; };
+  constants = derived.constants;
   inherit (derived)
     singBoxCfg
     proxyCfg
@@ -82,6 +83,7 @@ let
       selectionMode
       collapseNamedOutbounds
       hasSubscriptions
+      constants
       ;
     inherit
       jq
@@ -111,6 +113,7 @@ let
       perAppRoutingCfg
       perAppRoutingTun
       perAppRoutingTproxy
+      constants
       ;
     perAppZapretCfg = perAppZapretCfg;
     inherit perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile;

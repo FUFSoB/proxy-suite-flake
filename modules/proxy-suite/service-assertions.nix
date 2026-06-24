@@ -15,6 +15,7 @@
 }:
 
 let
+  constants = derived.constants;
   assertions = import ./service/assertions-lib.nix { inherit lib; };
   inherit (assertions)
     mkAssertion
@@ -42,7 +43,7 @@ let
     perAppZapretCfg
     ;
 
-  globalTunAutoRouteTable = 2022;
+  globalTunAutoRouteTable = constants.tunAutoRouteTableIndex;
 
   featureAssertions = [
     (requireAvailable proxyCfg.singBox.enable proxyEnabled
@@ -160,7 +161,7 @@ let
       condition = globalTun.enable && perAppRoutingTun.enable;
       left = perAppRoutingTun.routeTable;
       right = globalTunAutoRouteTable;
-      message = "proxy-suite: proxy.tun.perApp.routeTable must differ from the global TUN auto-route table 2022";
+      message = "proxy-suite: proxy.tun.perApp.routeTable must differ from the global TUN auto-route table ${toString globalTunAutoRouteTable}";
     }
     {
       condition = perAppRoutingTun.enable && globalTproxy.enable;

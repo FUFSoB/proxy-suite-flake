@@ -52,6 +52,29 @@ let
   clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
   userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
+  constants = {
+    tunAutoRouteTableIndex = 2022;
+    tunAutoRouteRulePriority = 9000;
+    xrayTunPerAppTproxyRulePriority = 8996;
+    xrayTunPerAppTunRulePriority = 8997;
+
+    xrayGlobalTunIPv6Address = "fd66:19::1/64";
+    xrayGlobalTunIPv6RoutePrefix = "fd66:19::/64";
+    xrayPerAppTunIPv6Address = "fd66:20::1/64";
+    xrayPerAppTunIPv6RoutePrefix = "fd66:20::/64";
+
+    xrayDnsBridgePorts = {
+      socks = 18533;
+      tun = 18534;
+      perAppTun = 18535;
+    };
+
+    xraySidecarBasePorts = {
+      socks = 33080;
+      tun = 33180;
+      perAppTun = 33280;
+    };
+  };
 
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
@@ -82,6 +105,7 @@ in
     perAppZapretEnabled
     userControlCfg
     userControlEnabled
+    constants
     selectionMode
     builtinTags
     outboundTags

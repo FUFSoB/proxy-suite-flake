@@ -216,6 +216,10 @@ let
     };
 
   minimal = evalProxySuite [ baseModule ];
+  checkConstants = (import ../modules/proxy-suite/derived.nix {
+    lib = pkgs.lib;
+    cfg = minimal.config.services.proxy-suite;
+  }).constants;
   _minimalProxyCtl = mkProxyCtlDerived minimal;
   minimalProxyCtlWrapper = _minimalProxyCtl.wrapper;
   minimalProxyCtlScript = _minimalProxyCtl.script;
@@ -2238,10 +2242,10 @@ let
       assert !(hybridTproxyConfig ? routing);
       assert dnsBridgeInbound.type == "direct";
       assert dnsBridgeInbound.listen == "127.0.0.1";
-      assert dnsBridgeInbound.listen_port == 18533;
+      assert dnsBridgeInbound.listen_port == checkConstants.xrayDnsBridgePorts.socks;
       assert mixedInbound.type == "mixed";
       assert tproxyInbound.type == "tproxy";
-      assert tunDnsBridgeInbound.listen_port == 18534;
+      assert tunDnsBridgeInbound.listen_port == checkConstants.xrayDnsBridgePorts.tun;
       assert
         dnsBridgeRouteRule.network == [
           "tcp"
@@ -2250,12 +2254,18 @@ let
       assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33080" hybridStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18533" hybridStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33180" hybridTunStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18534" hybridTunStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=33280" hybridPerAppTunStartScript;
-      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=18535" hybridPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.socks}"
+        hybridStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.socks}"
+        hybridStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.tun}"
+        hybridTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.tun}"
+        hybridTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.perAppTun}"
+        hybridPerAppTunStartScript;
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.perAppTun}"
+        hybridPerAppTunStartScript;
       assert pkgs.lib.hasInfix "--backend sing-box" hybridStartScript;
       assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
@@ -2348,7 +2358,7 @@ let
       assert
         tunInbound.settings.gateway == [
           "172.19.0.1/30"
-          "fd66:19::1/64"
+          checkConstants.xrayGlobalTunIPv6Address
         ];
       assert builtins.length tunInbound.settings.dns == 2;
       assert tunInbound.settings.autoOutboundsInterface == "auto";
@@ -2401,28 +2411,39 @@ let
       assert pkgs.lib.hasInfix "xray_rewrite_proxy_rule" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix ".protocol == \"dns\"" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix "fd66:19::1/64" xrayTunUpScript;
+      assert pkgs.lib.hasInfix checkConstants.xrayGlobalTunIPv6Address xrayTunUpScript;
       assert pkgs.lib.hasInfix ''uplink_addr="$('' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix
-        ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table 2022''
+        ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table ${toString checkConstants.tunAutoRouteTableIndex}''
         xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''route replace default dev singtun0 src "$uplink_addr" table 2022''
+      assert pkgs.lib.hasInfix ''route replace default dev singtun0 src "$uplink_addr" table ${toString checkConstants.tunAutoRouteTableIndex}''
         xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev singtun0 table 2022''
+      assert pkgs.lib.hasInfix ''-6 route replace "$tun6_route_prefix" dev singtun0 table ${toString checkConstants.tunAutoRouteTableIndex}''
         xrayTunUpScript;
-      assert pkgs.lib.hasInfix "-6 route replace default dev singtun0 table 2022" xrayTunUpScript;
-      assert pkgs.lib.hasInfix "rule add pref 8996 fwmark 17 table 102" xrayTunUpScript;
-      assert pkgs.lib.hasInfix "rule add pref 8997 fwmark 16 table 101" xrayTunUpScript;
-      assert pkgs.lib.hasInfix "rule add pref 9000 not fwmark 2 table 2022" xrayTunUpScript;
-      assert pkgs.lib.hasInfix "-6 rule add pref 8997 fwmark 16 table 101" xrayTunUpScript;
-      assert pkgs.lib.hasInfix "-6 rule add pref 9000 not fwmark 2 table 2022" xrayTunUpScript;
+      assert pkgs.lib.hasInfix "-6 route replace default dev singtun0 table ${toString checkConstants.tunAutoRouteTableIndex}"
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        "rule add pref ${toString checkConstants.xrayTunPerAppTproxyRulePriority} fwmark 17 table 102"
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        "rule add pref ${toString checkConstants.xrayTunPerAppTunRulePriority} fwmark 16 table 101"
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        "rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}"
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        "-6 rule add pref ${toString checkConstants.xrayTunPerAppTunRulePriority} fwmark 16 table 101"
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        "-6 rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}"
+        xrayTunUpScript;
       assert perAppTunInbound.settings.name == "psperapptun0";
       assert
         perAppTunInbound.settings.gateway == [
           "172.20.0.1/30"
-          "fd66:20::1/64"
+          checkConstants.xrayPerAppTunIPv6Address
         ];
       assert builtins.length perAppTunInbound.settings.dns == 2;
       assert perAppTunInbound.sniffing.destOverride == [ "fakedns" ];
@@ -2443,7 +2464,7 @@ let
       assert pkgs.lib.hasInfix "del(.routing.balancers)" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "del(.observatory)" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix "fd66:20::1/64" xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix checkConstants.xrayPerAppTunIPv6Address xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''uplink_addr="$('' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
@@ -2550,8 +2571,8 @@ let
       let
         inbound = builtins.head (builtins.filter (item: item.tag == "tun-in") tunDefaultConfig.inbounds);
       in
-      assert inbound.iproute2_table_index == 2022;
-      assert inbound.iproute2_rule_index == 9000;
+      assert inbound.iproute2_table_index == checkConstants.tunAutoRouteTableIndex;
+      assert inbound.iproute2_rule_index == checkConstants.tunAutoRouteRulePriority;
       assert tunDefaultConfig.route.auto_detect_interface == true;
       true
     )
@@ -2562,10 +2583,14 @@ let
     (
       assert tunServiceConfig.ExecStartPre == tunServiceConfig.ExecStopPost;
       assert pkgs.lib.hasInfix "delete table inet sing-box" tunCleanupScript;
-      assert pkgs.lib.hasInfix "rule del table 2022" tunCleanupScript;
-      assert pkgs.lib.hasInfix "rule del pref 8996" tunCleanupScript;
-      assert pkgs.lib.hasInfix "rule del pref 8997" tunCleanupScript;
-      assert pkgs.lib.hasInfix "route flush table 2022" tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del table ${toString checkConstants.tunAutoRouteTableIndex}"
+        tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del pref ${toString checkConstants.xrayTunPerAppTproxyRulePriority}"
+        tunCleanupScript;
+      assert pkgs.lib.hasInfix "rule del pref ${toString checkConstants.xrayTunPerAppTunRulePriority}"
+        tunCleanupScript;
+      assert pkgs.lib.hasInfix "route flush table ${toString checkConstants.tunAutoRouteTableIndex}"
+        tunCleanupScript;
       assert pkgs.lib.hasInfix "link del dev" tunCleanupScript;
       assert pkgs.lib.hasInfix "singtun0" tunCleanupScript;
       true
@@ -3114,7 +3139,8 @@ let
       assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir"
         perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "_check_no_global_proxy tun" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix ''_wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED"''
+      assert pkgs.lib.hasInfix
+        ''_wrap_slice "proxy-suite-per-app-tun" "$profile" "$PER_APP_ROUTING_TUN_ENABLED"''
         perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
       assert pkgs.lib.hasInfix "cleanup_slice()" perAppRoutingTunScript;
@@ -3126,7 +3152,7 @@ let
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
       assert pkgs.lib.hasInfix
-        ''_wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED"''
+        ''_wrap_slice "proxy-suite-per-app-tproxy" "$profile" "$PER_APP_ROUTING_TPROXY_ENABLED"''
         perAppRoutingTproxyScript;
       assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingTproxyScript;
       true
@@ -3136,7 +3162,7 @@ let
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
       assert pkgs.lib.hasInfix
-        ''_wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED"''
+        ''_wrap_slice "proxy-suite-per-app-zapret" "$profile" "$PER_APP_ROUTING_ZAPRET_ENABLED"''
         perAppRoutingZapretScript;
       assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingZapretScript;
       true

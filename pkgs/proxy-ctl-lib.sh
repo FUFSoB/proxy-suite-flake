@@ -186,10 +186,10 @@ _cleanup_slice_if_idle() {
   fi
 }
 
-# _wrap_slice <slice_base> <enabled_var> <disabled_msg> <backend_svc> [cmd...]
+# _wrap_slice <slice_base> <profile> <enabled_var> <disabled_msg> <backend_svc> [cmd...]
 _wrap_slice() {
-  local slice_base="$1" enabled="$2" disabled_msg="$3" backend_svc="$4"
-  shift 4
+  local slice_base="$1" profile="$2" enabled="$3" disabled_msg="$4" backend_svc="$5"
+  shift 5
   if [ "$enabled" != "1" ]; then
     echo "$disabled_msg"
     exit 1
@@ -218,6 +218,22 @@ _wrap_slice() {
   fi
 
   exit "$status"
+}
+
+_subscription_proxy_count() {
+  local cache="$1"
+  jq '
+    if type == "array" then
+      length
+    elif type == "object"
+      and (.singBox | type == "array")
+      and (.xray | type == "array")
+    then
+      (.singBox | length) + (.xray | length)
+    else
+      error("unsupported subscription cache shape")
+    end
+  ' "$cache"
 }
 
 cmd_status() {
@@ -409,19 +425,19 @@ cmd_wrap() {
       ;;
     tun)
       _check_no_global_proxy tun
-      _wrap_slice "proxy-suite-per-app-tun" "$PER_APP_ROUTING_TUN_ENABLED" \
+      _wrap_slice "proxy-suite-per-app-tun" "$profile" "$PER_APP_ROUTING_TUN_ENABLED" \
         "Profile '$profile' uses route=tun, but proxy.tun.perApp.enable is false." \
         "proxy-suite-per-app-tun.service" "$@"
       ;;
     tproxy)
       _check_no_global_proxy tproxy
-      _wrap_slice "proxy-suite-per-app-tproxy" "$PER_APP_ROUTING_TPROXY_ENABLED" \
+      _wrap_slice "proxy-suite-per-app-tproxy" "$profile" "$PER_APP_ROUTING_TPROXY_ENABLED" \
         "Profile '$profile' uses route=tproxy, but proxy.tproxy.perApp.enable is false." \
         "proxy-suite-per-app-tproxy.service" "$@"
       ;;
     zapret)
       _check_no_global_proxy zapret
-      _wrap_slice "proxy-suite-per-app-zapret" "$PER_APP_ROUTING_ZAPRET_ENABLED" \
+      _wrap_slice "proxy-suite-per-app-zapret" "$profile" "$PER_APP_ROUTING_ZAPRET_ENABLED" \
         "Profile '$profile' uses route=zapret, but zapret.perApp.enable is false." \
         "proxy-suite-per-app-zapret.service" "$@"
       ;;
@@ -450,7 +466,7 @@ cmd_subscription() {
         cache="$CACHE_DIR/$t.json"
         if [ -f "$cache" ]; then
           age=$(date -r "$cache" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "unknown")
-          count=$(jq 'length' "$cache" 2>/dev/null || echo "?")
+          count=$(_subscription_proxy_count "$cache" 2>/dev/null || echo "?")
         else
           age="(no cache)"
           count="-"

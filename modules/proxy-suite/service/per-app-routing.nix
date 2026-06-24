@@ -9,6 +9,7 @@
   perAppRoutingCfg,
   perAppRoutingTun,
   perAppRoutingTproxy,
+  constants,
   perAppZapretCfg,
   perAppTunChainFile,
   perAppTproxyRulesFile,
@@ -26,6 +27,10 @@
 let
   builders = import ./builders.nix { inherit lib pkgs; };
   inherit (builders) mkAnchorService;
+  defaultUplinkIPv4Source = builders.mkDefaultUplinkIPv4Source {
+    inherit ip awk;
+    errorMessage = "proxy-suite: could not determine the default uplink IPv4 address for app TUN";
+  };
 
   perAppTunSliceName = "proxy-suite-per-app-tun.slice";
   perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
@@ -99,8 +104,10 @@ let
   hasZapretProfiles = builtins.any (
     profile: profile.route == "zapret"
   ) effectivePerAppRoutingProfiles;
-  xrayPerAppTunIPv6Address = "fd66:20::1/64";
-  xrayPerAppTunIPv6RoutePrefix = "fd66:20::/64";
+  inherit (constants)
+    xrayPerAppTunIPv6Address
+    xrayPerAppTunIPv6RoutePrefix
+    ;
 
   perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app-tun-wait-for-interface" ''
     set -euo pipefail
@@ -124,50 +131,26 @@ let
     tun_route_prefix=""
     uplink_addr=""
 
-    cidr_network() {
-      local cidr="$1"
-      local addr="''${cidr%/*}"
-      local prefix="''${cidr#*/}"
-      local o1 o2 o3 o4 ip mask net
+    ${builders.cidrNetworkFunction}
 
-      IFS=. read -r o1 o2 o3 o4 <<<"$addr"
-      ip=$(((o1 << 24) | (o2 << 16) | (o3 << 8) | o4))
-      if [ "$prefix" -eq 0 ]; then
-        mask=0
-      else
-        mask=$(((0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF))
-      fi
-      net=$((ip & mask))
-
-      printf '%d.%d.%d.%d/%s' \
-        $(((net >> 24) & 255)) \
-        $(((net >> 16) & 255)) \
-        $(((net >> 8) & 255)) \
-        $((net & 255)) \
-        "$prefix"
-    }
-
-    ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
-    while ${ip} -4 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    while ${ip} -6 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    ${ip} -4 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} -6 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tun"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      family = "-4";
+      fwmark = perAppRoutingTun.fwmark;
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      family = "-6";
+      fwmark = perAppRoutingTun.fwmark;
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = perAppRoutingTun.routeTable; }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = perAppRoutingTun.routeTable; }}
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
-    uplink_addr="$(${ip} -4 route get 1.1.1.1 2>/dev/null | ${awk} '
-      /src/ {
-        for (i = 1; i <= NF; i++) {
-          if ($i == "src" && i + 1 <= NF) {
-            print $(i + 1)
-            exit
-          }
-        }
-      }
-    ')"
-    if [ -z "$uplink_addr" ]; then
-      echo "proxy-suite: could not determine the default uplink IPv4 address for app TUN" >&2
-      exit 1
-    fi
+    ${defaultUplinkIPv4Source}
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
@@ -186,21 +169,35 @@ let
     set +e
 
     # Best-effort cleanup for graceful stops and for unclean previous exits.
-    ${nft} delete table inet proxy_suite_per_app_tun 2>/dev/null || true
-    while ${ip} -4 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    while ${ip} -6 rule del fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null; do :; done
-    ${ip} -4 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} -6 route flush table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${ip} link del dev ${lib.escapeShellArg perAppRoutingTun.interface} 2>/dev/null || true
-    ${pkgs.systemd}/bin/resolvectl flush-caches 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tun"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      family = "-4";
+      fwmark = perAppRoutingTun.fwmark;
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      family = "-6";
+      fwmark = perAppRoutingTun.fwmark;
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = perAppRoutingTun.routeTable; }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = perAppRoutingTun.routeTable; }}
+    ${builders.mkIpLinkDelete { inherit ip; interface = perAppRoutingTun.interface; }}
+    ${builders.flushResolvedCaches}
   '';
 
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-up" ''
     set -euo pipefail
 
-    ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null; do :; done
-    ${ip} route del local default dev lo table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      fwmark = perAppRoutingTproxy.fwmark;
+      table = perAppRoutingTproxy.routeTable;
+    }}
+    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = perAppRoutingTproxy.routeTable; }}
 
     ${nft} -f ${perAppTproxyRulesFile}
     ${ip} route replace local default dev lo table ${toString perAppRoutingTproxy.routeTable}
@@ -210,9 +207,13 @@ let
   perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-down" ''
     set +e
 
-    ${nft} delete table ip proxy_suite_per_app_tproxy 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null; do :; done
-    ${ip} route del local default dev lo table ${toString perAppRoutingTproxy.routeTable} 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      fwmark = perAppRoutingTproxy.fwmark;
+      table = perAppRoutingTproxy.routeTable;
+    }}
+    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = perAppRoutingTproxy.routeTable; }}
   '';
 
   # Generate a "start" script that adds a per-user cgroup nftables mark rule.

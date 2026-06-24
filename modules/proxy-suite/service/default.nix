@@ -45,6 +45,12 @@ let
     mkAnchorService
     ;
 
+  defaultUplinkIPv4Source = builders.mkDefaultUplinkIPv4Source {
+    inherit ip;
+    awk = "${pkgs.gawk}/bin/awk";
+    errorMessage = "proxy-suite: could not determine the default uplink IPv4 address for XRay TUN";
+  };
+
   inherit (context)
     derived
     polkit
@@ -76,6 +82,15 @@ let
     invalidRoutingTargets
     builtinTags
     ;
+  constants = derived.constants;
+  inherit (constants)
+    tunAutoRouteTableIndex
+    tunAutoRouteRulePriority
+    xrayTunPerAppTproxyRulePriority
+    xrayTunPerAppTunRulePriority
+    xrayGlobalTunIPv6Address
+    xrayGlobalTunIPv6RoutePrefix
+    ;
 
   serviceNames = {
     socks = "proxy-suite-socks";
@@ -91,19 +106,6 @@ let
     proxyCfg.auth.username != null
     && (proxyCfg.auth.password != null || proxyCfg.auth.passwordFile != null);
 
-  # Must match the explicit iproute2_* indexes written to the global SingBox TUN
-  # template in config.nix. XRay uses the same table for manual Linux
-  # policy routing because XRay's autoSystemRoutingTable is not Linux-ready.
-  tunAutoRouteTableIndex = 2022;
-  tunAutoRouteRulePriority = 9000;
-  # Keep app-scoped marks ahead of the global XRay TUN catch-all. Without
-  # these priorities, iproute2's default priority lets global TUN capture
-  # packets intended for per-app routing tables.
-  xrayTunPerAppTproxyRulePriority = 8996;
-  xrayTunPerAppTunRulePriority = 8997;
-  xrayGlobalTunIPv6Address = "fd66:19::1/64";
-  xrayGlobalTunIPv6RoutePrefix = "fd66:19::/64";
-
   xrayTunUpScript = pkgs.writeShellScript "proxy-suite-xray-tun-up" ''
     set -euo pipefail
 
@@ -114,28 +116,7 @@ let
     tun_route_prefix=""
     uplink_addr=""
 
-    cidr_network() {
-      local cidr="$1"
-      local addr="''${cidr%/*}"
-      local prefix="''${cidr#*/}"
-      local o1 o2 o3 o4 ip mask net
-
-      IFS=. read -r o1 o2 o3 o4 <<<"$addr"
-      ip=$(((o1 << 24) | (o2 << 16) | (o3 << 8) | o4))
-      if [ "$prefix" -eq 0 ]; then
-        mask=0
-      else
-        mask=$(((0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF))
-      fi
-      net=$((ip & mask))
-
-      printf '%d.%d.%d.%d/%s' \
-        $(((net >> 24) & 255)) \
-        $(((net >> 16) & 255)) \
-        $(((net >> 8) & 255)) \
-        $((net & 255)) \
-        "$prefix"
-    }
+    ${builders.cidrNetworkFunction}
 
     for _ in $(${pkgs.coreutils}/bin/seq 1 50); do
       if ${ip} link show dev ${lib.escapeShellArg globalTun.interface} >/dev/null 2>&1; then
@@ -149,20 +130,7 @@ let
       exit 1
     fi
 
-    uplink_addr="$(${ip} -4 route get 1.1.1.1 2>/dev/null | ${pkgs.gawk}/bin/awk '
-      /src/ {
-        for (i = 1; i <= NF; i++) {
-          if ($i == "src" && i + 1 <= NF) {
-            print $(i + 1)
-            exit
-          }
-        }
-      }
-    ')"
-    if [ -z "$uplink_addr" ]; then
-      echo "proxy-suite: could not determine the default uplink IPv4 address for XRay TUN" >&2
-      exit 1
-    fi
+    ${defaultUplinkIPv4Source}
 
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
@@ -196,9 +164,13 @@ let
     # Start from a clean policy-routing state.  `ip rule add` permits duplicate
     # rules on some iproute2 versions, and a stale rule can keep packets routed
     # into a dead local table after a failed restart.
-    ${nft} delete table ip singbox 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null; do :; done
-    ${ip} route del local default dev lo table ${toString globalTproxy.routeTable} 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "singbox"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      fwmark = globalTproxy.fwmark;
+      table = globalTproxy.routeTable;
+    }}
+    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = globalTproxy.routeTable; }}
 
     ${nft} -f ${nftablesRulesFile}
     ${ip} route replace local default dev lo table ${toString globalTproxy.routeTable}
@@ -208,9 +180,13 @@ let
   tproxyDownScript = pkgs.writeShellScript "proxy-suite-tproxy-down" ''
     set +e
 
-    ${nft} delete table ip singbox 2>/dev/null || true
-    while ${ip} rule del fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable} 2>/dev/null; do :; done
-    ${ip} route del local default dev lo table ${toString globalTproxy.routeTable} 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "singbox"; }}
+    ${builders.mkIpRuleDeleteByFwmark {
+      inherit ip;
+      fwmark = globalTproxy.fwmark;
+      table = globalTproxy.routeTable;
+    }}
+    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = globalTproxy.routeTable; }}
   '';
 
   tunCleanupScript = pkgs.writeShellScript "proxy-suite-tun-cleanup" ''
@@ -219,18 +195,28 @@ let
     # SingBox normally removes these on graceful shutdown, but stale
     # auto_route/auto_redirect state leaves the host routing through a dead TUN
     # interface after `proxy-ctl tun off` or an unclean service stop.
-    ${nft} delete table inet sing-box 2>/dev/null || true
-
-    while ${ip} -4 rule del table ${toString tunAutoRouteTableIndex} 2>/dev/null; do :; done
-    while ${ip} -6 rule del table ${toString tunAutoRouteTableIndex} 2>/dev/null; do :; done
-    while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
-    while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
-    while ${ip} -6 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
-    ${ip} -4 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
-    ${ip} -6 route flush table ${toString tunAutoRouteTableIndex} 2>/dev/null || true
-
-    ${ip} link del dev ${lib.escapeShellArg globalTun.interface} 2>/dev/null || true
-    ${pkgs.systemd}/bin/resolvectl flush-caches 2>/dev/null || true
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "sing-box"; }}
+    ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
+    ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
+    ${builders.mkIpRuleDeleteByPriority {
+      inherit ip;
+      family = "-4";
+      priority = xrayTunPerAppTproxyRulePriority;
+    }}
+    ${builders.mkIpRuleDeleteByPriority {
+      inherit ip;
+      family = "-4";
+      priority = xrayTunPerAppTunRulePriority;
+    }}
+    ${builders.mkIpRuleDeleteByPriority {
+      inherit ip;
+      family = "-6";
+      priority = xrayTunPerAppTunRulePriority;
+    }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
+    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
+    ${builders.mkIpLinkDelete { inherit ip; interface = globalTun.interface; }}
+    ${builders.flushResolvedCaches}
   '';
 
   systemServiceEntries = [
