@@ -5022,7 +5022,9 @@ list of string
 
 
 
-zapret strategy preset name passed through to the generated zapret configuration\.
+zapret strategy preset name selected from the upstream configs
+directory\. Exact filenames are accepted, and names that differ only by
+whitespace are treated as aliases\.
 
 
 

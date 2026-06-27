@@ -120,10 +120,41 @@ let
           -e 's|${baseZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
           {} \;
 
-        if [ -f "$out/opt/zapret/configs/${configName}" ]; then
-          cp "$out/opt/zapret/configs/${configName}" "$out/opt/zapret/config"
+        requested_config=${lib.escapeShellArg configName}
+        configs_dir="$out/opt/zapret/configs"
+        selected_config="$configs_dir/$requested_config"
+
+        config_name_key() {
+          printf '%s' "$1" | tr -d '[:space:]'
+        }
+
+        if [ ! -f "$selected_config" ]; then
+          requested_key=$(config_name_key "$requested_config")
+          matched_config=""
+
+          for candidate in "$configs_dir"/*; do
+            [ -f "$candidate" ] || continue
+            candidate_name="''${candidate##*/}"
+
+            if [ "$(config_name_key "$candidate_name")" = "$requested_key" ]; then
+              if [ -n "$matched_config" ]; then
+                echo "proxy-suite: zapret config '$requested_config' is ambiguous after whitespace normalization" >&2
+                echo "proxy-suite: matched '$matched_config' and '$candidate'" >&2
+                exit 1
+              fi
+              matched_config="$candidate"
+            fi
+          done
+
+          if [ -n "$matched_config" ]; then
+            selected_config="$matched_config"
+          fi
+        fi
+
+        if [ -f "$selected_config" ]; then
+          cp "$selected_config" "$out/opt/zapret/config"
         else
-          echo "proxy-suite: zapret config '${configName}' not found in curated package" >&2
+          echo "proxy-suite: zapret config '$requested_config' not found in curated package" >&2
           ls -la "$out/opt/zapret/configs" >&2 || true
           exit 1
         fi

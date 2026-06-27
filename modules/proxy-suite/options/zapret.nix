@@ -70,7 +70,11 @@ in
     configName = mkOption {
       type = types.str;
       default = "general(ALT)";
-      description = "zapret strategy preset name passed through to the generated zapret configuration.";
+      description = ''
+        zapret strategy preset name selected from the upstream configs
+        directory. Exact filenames are accepted, and names that differ only by
+        whitespace are treated as aliases.
+      '';
       example = "general(ALT)";
     };
 

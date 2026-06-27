@@ -1030,6 +1030,28 @@ let
   zapretSyncRules = mkRoutingRules zapretSyncFixture;
   zapretSyncBase = mkZapretBase zapretSyncFixture;
 
+  zapretSpacedConfigAliasFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        configName = "general(ALT12)";
+      };
+    }
+  ];
+  zapretSpacedConfigAliasBase = mkZapretBase zapretSpacedConfigAliasFixture;
+
+  zapretUnspacedConfigAliasFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        configName = "general (ALT)";
+      };
+    }
+  ];
+  zapretUnspacedConfigAliasBase = mkZapretBase zapretUnspacedConfigAliasFixture;
+
   zapretSyncNoExtraListsFixture = evalProxySuite [
     baseModule
     {
@@ -3545,6 +3567,8 @@ in
     ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-twitter.txt"' "${zapretSyncBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-instagram.txt"' "${zapretSyncBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncBase}/hostlists/list-soundcloud.txt"' "${zapretSyncBase}/config"
+    test -f "${zapretSpacedConfigAliasBase}/config"
+    test -f "${zapretUnspacedConfigAliasBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-twitter.txt"' "${zapretSyncNoExtraListsBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-instagram.txt"' "${zapretSyncNoExtraListsBase}/config"
     ! grep -F -- '--hostlist="${zapretSyncNoExtraListsBase}/hostlists/list-soundcloud.txt"' "${zapretSyncNoExtraListsBase}/config"
