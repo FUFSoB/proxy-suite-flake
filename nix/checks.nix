@@ -1184,6 +1184,32 @@ let
             nfqwsArgs = [ "--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6" ];
             enableDirectSync = false;
           }
+          {
+            name = "youtube-general";
+            defaultDomains = [ "youtube" ];
+            configName = "general";
+          }
+          {
+            name = "discord-alt12";
+            defaultDomains = [ "discord" ];
+            configName = "general (ALT12)";
+          }
+          {
+            name = "other";
+            defaultDomains = [ "other" ];
+            preset = "general";
+          }
+          {
+            name = "upstream-ips";
+            defaultIps = [ "all" ];
+            configName = "general";
+            enableDirectSync = false;
+          }
+          {
+            name = "explicit-ips";
+            ips = [ "203.0.113.0/24" ];
+            configName = "general";
+          }
         ];
       };
     }
@@ -1234,6 +1260,37 @@ let
           {
             name = "missing";
             domains = [ "missing.example" ];
+          }
+        ];
+      };
+    }
+  ];
+
+  conflictingZapretHostlistConfigAndArgs = mkBadFixture [
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [
+          {
+            name = "conflict";
+            defaultDomains = [ "youtube" ];
+            configName = "general";
+            nfqwsArgs = [ "--filter-tcp=443 --dpi-desync=fake" ];
+          }
+        ];
+      };
+    }
+  ];
+
+  configNameZapretHostlistWithoutFamily = mkBadFixture [
+    {
+      services.proxy-suite.zapret = {
+        enable = true;
+        hostlistRules = [
+          {
+            name = "missing-family";
+            domains = [ "example.com" ];
+            configName = "general";
           }
         ];
       };
@@ -2549,6 +2606,14 @@ let
       true
     )
     (
+      assert conflictingZapretHostlistConfigAndArgs.success == false;
+      true
+    )
+    (
+      assert configNameZapretHostlistWithoutFamily.success == false;
+      true
+    )
+    (
       assert tproxyWithFirewall.config.networking.firewall.enable;
       true
     )
@@ -2782,6 +2847,17 @@ let
     )
     (
       assert !(hasDirectDomain zapretHostlistRules "x.example");
+      true
+    )
+    (
+      assert hasDirectDomain zapretHostlistRules "youtube.com";
+      assert hasDirectDomain zapretHostlistRules "discord.com";
+      assert hasDirectDomain zapretHostlistRules "cloudflare-ech.com";
+      true
+    )
+    (
+      assert hasDirectIP zapretHostlistRules "203.0.113.0/24";
+      assert !(hasDirectIP zapretHostlistRules "1.1.1.0/24");
       true
     )
     (
@@ -3564,6 +3640,19 @@ in
     grep -F -- '--hostlist="${zapretHostlistBase}/hostlists/list-googlevideo.txt"' "${zapretHostlistBase}/config"
     grep -F -- '--hostlist="${zapretHostlistBase}/hostlists/list-example.txt"' "${zapretHostlistBase}/config"
     grep -F -- '--filter-tcp=443 --dpi-desync=fake,multisplit --hostlist="${zapretHostlistBase}/hostlists/list-example.txt" --hostlist-exclude="${zapretHostlistBase}/hostlists/list-exclude.txt" --hostlist-exclude="${zapretHostlistBase}/hostlists/list-exclude-user.txt" --ipset-exclude="${zapretHostlistBase}/hostlists/ipset-exclude.txt" --ipset-exclude="${zapretHostlistBase}/hostlists/ipset-exclude-user.txt" --new' "${zapretHostlistBase}/config"
+    grep -F 'youtube.com' "${zapretHostlistBase}/hostlists/list-youtube-general.txt"
+    grep -F 'googlevideo.com' "${zapretHostlistBase}/hostlists/list-youtube-general.txt"
+    grep -F 'discord.com' "${zapretHostlistBase}/hostlists/list-discord-alt12.txt"
+    grep -F 'discord.gg' "${zapretHostlistBase}/hostlists/list-discord-alt12.txt"
+    ! grep -F 'cloudflare-ech.com' "${zapretHostlistBase}/hostlists/list-discord-alt12.txt"
+    grep -F 'cloudflare-ech.com' "${zapretHostlistBase}/hostlists/list-other.txt"
+    ! grep -F 'discord.com' "${zapretHostlistBase}/hostlists/list-other.txt"
+    grep -F '1.1.1.0/24' "${zapretHostlistBase}/hostlists/ipset-upstream-ips.txt"
+    grep -F '203.0.113.0/24' "${zapretHostlistBase}/hostlists/ipset-explicit-ips.txt"
+    grep -F -- '--hostlist="${zapretHostlistBase}/hostlists/list-youtube-general.txt"' "${zapretHostlistBase}/config"
+    grep -F -- '--dpi-desync=multisplit --dpi-desync-split-seqovl=681' "${zapretHostlistBase}/config"
+    grep -F -- '--ipset="${zapretHostlistBase}/hostlists/ipset-upstream-ips.txt"' "${zapretHostlistBase}/config"
+    grep -F -- '--ipset="${zapretHostlistBase}/hostlists/ipset-explicit-ips.txt"' "${zapretHostlistBase}/config"
     touch "$out"
   '';
 }

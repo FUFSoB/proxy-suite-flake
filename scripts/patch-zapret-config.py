@@ -18,6 +18,11 @@ def _hostlist_remove_pattern(stem: str) -> str:
     return rf'\s+--hostlist=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
 
 
+def _ipset_remove_pattern(stem: str) -> str:
+    escaped = re.escape(stem)
+    return rf'\s+--ipset=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
+
+
 def _mk_family(match_stems: list[str], remove_stems: list[str]) -> dict:
     return {
         "match": [f"list-{s}.txt" for s in match_stems],
@@ -31,6 +36,13 @@ FAMILY_PATTERNS = {
     "instagram": _mk_family(["instagram"], ["instagram"]),
     "soundcloud": _mk_family(["soundcloud"], ["soundcloud"]),
     "twitter": _mk_family(["twitter"], ["twitter"]),
+}
+
+IPSET_PATTERNS = {
+    "all": {
+        "match": ["ipset-all.txt"],
+        "remove": [_ipset_remove_pattern("ipset-all")],
+    },
 }
 
 
@@ -48,6 +60,38 @@ def locate_nfqws_block(lines: list[str]) -> tuple[int, int]:
             return start, index
 
     raise ValueError("Could not find the end of the NFQWS_OPT block in zapret config")
+
+
+def config_name_key(name: str) -> str:
+    return re.sub(r"\s+", "", name)
+
+
+def resolve_config(configs_dir: Path, requested_config: str) -> Path:
+    selected_config = configs_dir / requested_config
+    if selected_config.is_file():
+        return selected_config
+
+    requested_key = config_name_key(requested_config)
+    matches = [
+        candidate
+        for candidate in configs_dir.iterdir()
+        if candidate.is_file() and config_name_key(candidate.name) == requested_key
+    ]
+
+    if len(matches) > 1:
+        matched = ", ".join(str(match) for match in matches)
+        raise ValueError(
+            f"zapret config '{requested_config}' is ambiguous after whitespace normalization: {matched}"
+        )
+    if not matches:
+        raise ValueError(f"zapret config '{requested_config}' not found")
+    return matches[0]
+
+
+def read_nfqws_lines(config_path: Path) -> list[str]:
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    start, end = locate_nfqws_block(lines)
+    return lines[start + 1 : end]
 
 
 def strip_trailing_new(line: str) -> str:
@@ -78,8 +122,29 @@ def _render_args(
             rendered = re.sub(pattern, "", rendered)
     else:
         rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
+    rendered = re.sub(r'\s+--ipset=(?:"[^"]+"|\S+)', "", rendered)
     rendered = normalize_spaces(rendered)
     rendered = f'{rendered} --hostlist="{hostlist_path}"'
+    rendered = add_standard_excludes(rendered, standard_excludes)
+    return f"{normalize_spaces(rendered)} --new"
+
+
+def _render_ipset_args(
+    line: str,
+    ipset_path: str,
+    standard_excludes: list[str],
+    *,
+    ipset_family: str | None = None,
+) -> str:
+    rendered = strip_trailing_new(line)
+    if ipset_family is not None:
+        for pattern in IPSET_PATTERNS[ipset_family]["remove"]:
+            rendered = re.sub(pattern, "", rendered)
+    else:
+        rendered = re.sub(r'\s+--ipset=(?:"[^"]+"|\S+)', "", rendered)
+    rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
+    rendered = normalize_spaces(rendered)
+    rendered = f'{rendered} --ipset="{ipset_path}"'
     rendered = add_standard_excludes(rendered, standard_excludes)
     return f"{normalize_spaces(rendered)} --new"
 
@@ -101,6 +166,23 @@ def render_custom_args(
     return _render_args(fragment, hostlist_path, standard_excludes)
 
 
+def render_ipset_clone(
+    line: str,
+    family: str,
+    ipset_path: str,
+    standard_excludes: list[str],
+) -> str:
+    return _render_ipset_args(line, ipset_path, standard_excludes, ipset_family=family)
+
+
+def render_custom_ipset_args(
+    fragment: str,
+    ipset_path: str,
+    standard_excludes: list[str],
+) -> str:
+    return _render_ipset_args(fragment, ipset_path, standard_excludes)
+
+
 def clone_family_lines(
     existing_lines: list[str],
     family: str,
@@ -118,6 +200,27 @@ def clone_family_lines(
         )
     return [
         render_preset_clone(line, family, hostlist_path, standard_excludes)
+        for line in matches
+    ]
+
+
+def clone_ipset_lines(
+    existing_lines: list[str],
+    family: str,
+    ipset_path: str,
+    standard_excludes: list[str],
+) -> list[str]:
+    matches = [
+        line
+        for line in existing_lines
+        if any(marker in line for marker in IPSET_PATTERNS[family]["match"])
+    ]
+    if not matches:
+        raise ValueError(
+            f"IP set family '{family}' is not present in the selected zapret config"
+        )
+    return [
+        render_ipset_clone(line, family, ipset_path, standard_excludes)
         for line in matches
     ]
 
@@ -156,6 +259,7 @@ def main() -> int:
     config_path = Path(args.config)
     spec_path = Path(args.spec)
     hostlists_dir = config_path.parent / "hostlists"
+    configs_dir = config_path.parent / "configs"
     standard_excludes = [
         f'--hostlist-exclude="{hostlists_dir / "list-exclude.txt"}"',
         f'--hostlist-exclude="{hostlists_dir / "list-exclude-user.txt"}"',
@@ -170,6 +274,18 @@ def main() -> int:
 
     start, end = locate_nfqws_block(lines)
     nfqws_lines = lines[start + 1 : end]
+    source_config_cache: dict[str, list[str]] = {}
+
+    def source_nfqws_lines(config_name: str | None) -> list[str]:
+        if not config_name:
+            return nfqws_lines
+
+        source_path = resolve_config(configs_dir, config_name)
+        cache_key = str(source_path)
+        if cache_key not in source_config_cache:
+            source_config_cache[cache_key] = read_nfqws_lines(source_path)
+        return source_config_cache[cache_key]
+
     generated_lines: list[str] = (
         activate_builtin_hostlists(nfqws_lines, hostlists_dir, standard_excludes)
         if include_extra_upstream_lists
@@ -178,17 +294,37 @@ def main() -> int:
 
     for entry in entries:
         hostlist_path = str(hostlists_dir / f'list-{entry["name"]}.txt')
-        preset = entry.get("preset")
-        if preset:
+        ipset_path = str(hostlists_dir / f'ipset-{entry["name"]}.txt')
+        entry_nfqws_lines = source_nfqws_lines(entry.get("configName"))
+        presets = entry.get("presets")
+        if presets is None:
+            preset = entry.get("preset")
+            presets = [preset] if preset else []
+        ipsets = entry.get("ipsets", [])
+        has_domains = entry.get("hasDomains", bool(presets))
+        has_ips = entry.get("hasIps", bool(ipsets))
+
+        for preset in presets:
             generated_lines.extend(
                 clone_family_lines(
-                    nfqws_lines, preset, hostlist_path, standard_excludes
+                    entry_nfqws_lines, preset, hostlist_path, standard_excludes
+                )
+            )
+        for ipset in ipsets:
+            generated_lines.extend(
+                clone_ipset_lines(
+                    entry_nfqws_lines, ipset, ipset_path, standard_excludes
                 )
             )
         for fragment in entry.get("nfqwsArgs", []):
-            generated_lines.append(
-                render_custom_args(fragment, hostlist_path, standard_excludes)
-            )
+            if has_domains:
+                generated_lines.append(
+                    render_custom_args(fragment, hostlist_path, standard_excludes)
+                )
+            if has_ips:
+                generated_lines.append(
+                    render_custom_ipset_args(fragment, ipset_path, standard_excludes)
+                )
 
     updated_lines = lines[:end] + generated_lines + lines[end:]
     config_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")

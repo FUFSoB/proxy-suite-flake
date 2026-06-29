@@ -14,6 +14,7 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = zapretCfg.perApp;
+  zapretDomainGroups = import ./zapret-domain-groups.nix { inherit lib zapret; };
 
   iptables = "${pkgs.iptables}/bin/iptables";
 
@@ -37,6 +38,16 @@ let
   };
 
   hostlistRuleNames = map (rule: rule.name) zapretCfg.hostlistRules;
+  effectiveHostlistRules = map (
+    rule:
+    rule
+    // {
+      domains = zapretDomainGroups.effectiveRuleDomains rule;
+      ips = zapretDomainGroups.effectiveRuleIps rule;
+      presets = zapretDomainGroups.effectiveRulePresets rule;
+      ipsets = zapretDomainGroups.effectiveRuleIpsetFamilies rule;
+    }
+  ) zapretCfg.hostlistRules;
 
   baseZapretPackage =
     let
@@ -58,10 +69,14 @@ let
       entries = map (rule: {
         inherit (rule)
           name
-          preset
+          configName
           nfqwsArgs
+          ipsets
+          presets
           ;
-      }) zapretCfg.hostlistRules;
+        hasDomains = rule.domains != [ ];
+        hasIps = rule.ips != [ ];
+      }) effectiveHostlistRules;
     }
   );
 
@@ -225,11 +240,17 @@ let
             domainsFile = pkgs.writeText "proxy-suite-zapret-hostlist-${rule.name}.txt" (
               lib.concatStringsSep "\n" (lib.unique rule.domains) + "\n"
             );
+            ipsetFile = pkgs.writeText "proxy-suite-zapret-ipset-${rule.name}.txt" (
+              lib.concatStringsSep "\n" (lib.unique rule.ips) + "\n"
+            );
           in
-          ''
+          lib.optionalString (rule.domains != [ ]) ''
             cp ${domainsFile} "$out/opt/zapret/hostlists/list-${rule.name}.txt"
           ''
-        ) zapretCfg.hostlistRules}
+          + lib.optionalString (rule.ips != [ ]) ''
+            cp ${ipsetFile} "$out/opt/zapret/hostlists/ipset-${rule.name}.txt"
+          ''
+        ) effectiveHostlistRules}
 
         ${patchConfigScript} --config "$out/opt/zapret/config" --spec ${hostlistRuleSpec}
 
@@ -352,14 +373,45 @@ in
       message = "proxy-suite: zapret.hostlistRules names must be unique";
     }
     {
-      assertion = builtins.all (rule: rule.domains != [ ]) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must define at least one domain";
+      assertion = builtins.all (
+        rule: zapretDomainGroups.effectiveRuleDomains rule != [ ] || zapretDomainGroups.effectiveRuleIps rule != [ ]
+      ) zapretCfg.hostlistRules;
+      message = "proxy-suite: each zapret.hostlistRules entry must define domains, defaultDomains, ips, or defaultIps";
     }
     {
       assertion = builtins.all (
-        rule: rule.preset != null || rule.nfqwsArgs != [ ]
+        rule:
+        rule.preset != null || rule.defaultDomains != [ ] || rule.ips != [ ] || rule.defaultIps != [ ] || rule.nfqwsArgs != [ ]
       ) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must set preset, nfqwsArgs, or both";
+      message = "proxy-suite: each zapret.hostlistRules entry must set preset, defaultDomains, ips/defaultIps, nfqwsArgs, or a valid configName source";
+    }
+    {
+      assertion = builtins.all (
+        rule:
+        zapretDomainGroups.effectiveRuleDomains rule == [ ]
+        || rule.preset != null
+        || rule.defaultDomains != [ ]
+        || rule.nfqwsArgs != [ ]
+      ) zapretCfg.hostlistRules;
+      message = "proxy-suite: zapret.hostlistRules entries with domains require preset, defaultDomains, or nfqwsArgs";
+    }
+    {
+      assertion = builtins.all (
+        rule: rule.preset != null || builtins.length rule.defaultDomains <= 1
+      ) zapretCfg.hostlistRules;
+      message = "proxy-suite: zapret.hostlistRules entries without preset may infer a rule family from only one defaultDomains entry; split groups into separate rules or set preset";
+    }
+    {
+      assertion = builtins.all (
+        rule: !(rule.configName != null && rule.nfqwsArgs != [ ])
+      ) zapretCfg.hostlistRules;
+      message = "proxy-suite: zapret.hostlistRules.*.configName cannot be used together with nfqwsArgs";
+    }
+    {
+      assertion = builtins.all (
+        rule: rule.configName == null || rule.preset != null || rule.defaultDomains != [ ] || rule.ips != [ ] || rule.defaultIps != [ ]
+      ) zapretCfg.hostlistRules;
+      message = "proxy-suite: zapret.hostlistRules.*.configName requires preset, defaultDomains, ips, or defaultIps";
     }
   ];
 

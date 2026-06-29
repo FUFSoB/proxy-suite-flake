@@ -149,30 +149,34 @@ in
       description = ''
         Additional named zapret hostlists with per-list DPI mitigation rules.
         Each entry generates hostlists/list-<name>.txt and can clone a built-in
-        zapret family, add custom NFQWS rule fragments, or both.
+        zapret family from the active config, clone it from another configName,
+        add custom NFQWS rule fragments, or combine these pieces.
 
-        Each entry must define at least one domain and at least one of preset
-        or nfqwsArgs.
+        defaultDomains provides built-in zapret-discord-youtube domain groups
+        such as "youtube" and "discord"; defaultIps provides upstream IP/CIDR
+        groups such as "all". configName is a higher-level
+        alternative to nfqwsArgs and cannot be used together with nfqwsArgs.
       '';
       example = [
         {
-          name = "googlevideo";
-          domains = [
-            "googlevideo.com"
-            "ggpht.com"
-          ];
-          preset = "google";
+          name = "youtube-alt9";
+          defaultDomains = [ "youtube" ];
+          configName = "general(ALT9)";
         }
         {
-          name = "example";
+          name = "discord-alt12";
+          defaultDomains = [ "discord" ];
+          configName = "general (ALT12)";
+        }
+        {
+          name = "custom-sites";
           domains = [
             "example.com"
-            "example.de"
+            "example.org"
           ];
+          ips = [ "203.0.113.0/24" ];
           preset = "general";
-          nfqwsArgs = [
-            "--filter-tcp=443 --dpi-desync=fake,multisplit"
-          ];
+          configName = "general (SIMPLE FAKE)";
         }
       ];
     };

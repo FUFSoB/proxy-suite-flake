@@ -12,6 +12,7 @@ let
   proxyCfg = derived.proxyCfg;
   zapretCfg = cfg.zapret;
   tgWsProxyCfg = cfg.tgWsProxy;
+  zapretDomainGroups = import ./zapret-domain-groups.nix { inherit lib zapret; };
 
   trim = lib.strings.trim;
   hasPrefix = lib.strings.hasPrefix;
@@ -57,7 +58,25 @@ let
   zapretCustomDomains =
     if syncZapretDirectDomains then
       lib.unique (
-        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.domains) zapretCfg.hostlistRules
+        lib.concatMap (
+          rule: lib.optionals rule.enableDirectSync (zapretDomainGroups.effectiveRuleDomains rule)
+        ) zapretCfg.hostlistRules
+      )
+    else
+      [ ];
+  zapretCustomUserIps =
+    if syncZapretDirectUserIps then
+      lib.unique (
+        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.ips) zapretCfg.hostlistRules
+      )
+    else
+      [ ];
+  zapretCustomDefaultIps =
+    if syncZapretDirectUpstreamIps then
+      lib.unique (
+        lib.concatMap (
+          rule: lib.optionals rule.enableDirectSync (zapretDomainGroups.expandDefaultIps rule.defaultIps)
+        ) zapretCfg.hostlistRules
       )
     else
       [ ];
@@ -82,7 +101,7 @@ let
       [ ];
   zapretDirectIps =
     if syncZapretDirectAnyIps then
-      subtractItems (lib.unique (zapretDefaultIps ++ zapretUserIps)) zapretExcludedIps
+      subtractItems (lib.unique (zapretDefaultIps ++ zapretUserIps ++ zapretCustomUserIps ++ zapretCustomDefaultIps)) zapretExcludedIps
     else
       [ ];
 

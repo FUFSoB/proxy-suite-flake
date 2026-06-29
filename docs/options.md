@@ -162,7 +162,11 @@ Update module option docs there instead of editing this file by hand.
     - [hostlistRules](#services-proxy-suite-zapret-hostlistrules)
       - item
         - [enableDirectSync](#services-proxy-suite-zapret-hostlistrules-enabledirectsync)
+        - [configName](#services-proxy-suite-zapret-hostlistrules-configname)
+        - [defaultDomains](#services-proxy-suite-zapret-hostlistrules-defaultdomains)
+        - [defaultIps](#services-proxy-suite-zapret-hostlistrules-defaultips)
         - [domains](#services-proxy-suite-zapret-hostlistrules-domains)
+        - [ips](#services-proxy-suite-zapret-hostlistrules-ips)
         - [name](#services-proxy-suite-zapret-hostlistrules-name)
         - [nfqwsArgs](#services-proxy-suite-zapret-hostlistrules-nfqwsargs)
         - [preset](#services-proxy-suite-zapret-hostlistrules-preset)
@@ -614,22 +618,29 @@ services.proxy-suite = {
     gameFilter = "null";
     hostlistRules = [
       {
-        domains = [
-          "googlevideo.com"
-          "ggpht.com"
+        configName = "general(ALT9)";
+        defaultDomains = [
+          "youtube"
         ];
-        name = "googlevideo";
-        preset = "google";
+        name = "youtube-alt9";
       }
       {
+        configName = "general (ALT12)";
+        defaultDomains = [
+          "discord"
+        ];
+        name = "discord-alt12";
+      }
+      {
+        configName = "general (SIMPLE FAKE)";
         domains = [
           "example.com"
-          "example.de"
+          "example.org"
         ];
-        name = "example";
-        nfqwsArgs = [
-          "--filter-tcp=443 --dpi-desync=fake,multisplit"
+        ips = [
+          "203.0.113.0/24"
         ];
+        name = "custom-sites";
         preset = "general";
       }
     ];
@@ -5055,10 +5066,13 @@ string
 
 Additional named zapret hostlists with per-list DPI mitigation rules\.
 Each entry generates hostlists/list-\<name>\.txt and can clone a built-in
-zapret family, add custom NFQWS rule fragments, or both\.
+zapret family from the active config, clone it from another configName,
+add custom NFQWS rule fragments, or combine these pieces\.
 
-Each entry must define at least one domain and at least one of preset
-or nfqwsArgs\.
+defaultDomains provides built-in zapret-discord-youtube domain groups
+such as “youtube” and “discord”; defaultIps provides upstream IP/CIDR
+groups such as “all”\. configName is a higher-level
+alternative to nfqwsArgs and cannot be used together with nfqwsArgs\.
 
 
 
@@ -5080,22 +5094,29 @@ list of (submodule)
 ```nix
 [
   {
-    domains = [
-      "googlevideo.com"
-      "ggpht.com"
+    configName = "general(ALT9)";
+    defaultDomains = [
+      "youtube"
     ];
-    name = "googlevideo";
-    preset = "google";
+    name = "youtube-alt9";
   }
   {
+    configName = "general (ALT12)";
+    defaultDomains = [
+      "discord"
+    ];
+    name = "discord-alt12";
+  }
+  {
+    configName = "general (SIMPLE FAKE)";
     domains = [
       "example.com"
-      "example.de"
+      "example.org"
     ];
-    name = "example";
-    nfqwsArgs = [
-      "--filter-tcp=443 --dpi-desync=fake,multisplit"
+    ips = [
+      "203.0.113.0/24"
     ];
+    name = "custom-sites";
     preset = "general";
   }
 ]
@@ -5132,13 +5153,133 @@ true
 
 
 
+<a id="services-proxy-suite-zapret-hostlistrules-configname"></a>
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.configName
+
+
+
+zapret config name to clone NFQWS rules from for this hostlist\.
+Names use the same matching rules as services\.proxy-suite\.zapret\.configName\.
+
+This is a higher-level alternative to nfqwsArgs and cannot be used
+together with nfqwsArgs\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"general(ALT9)"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-hostlistrules-defaultdomains"></a>
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.defaultDomains
+
+
+
+Built-in domain groups copied from zapret-discord-youtube hostlists\.
+These are expanded and combined with domains\.
+
+“youtube” uses the upstream Google/YouTube list\. “discord” uses
+Discord-related domains from the upstream general list\. “other” uses
+the non-Discord domains from the upstream general list\.
+
+When preset is unset, use one defaultDomains entry per rule so the
+module can infer a single rule family\. Split groups into separate
+rules when they need different strategies\.
+
+
+
+*Type:*
+list of (one of “youtube”, “discord”, “other”, “instagram”, “soundcloud”, “twitter”)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "youtube"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-hostlistrules-defaultips"></a>
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.defaultIps
+
+
+
+Built-in IP/CIDR groups copied from zapret-discord-youtube ipsets\.
+
+“all” uses the upstream ipset-all\.txt list\. The upstream bundle does
+not split this list by service, so site-specific defaults remain in
+defaultDomains\.
+
+
+
+*Type:*
+list of value “all” (singular enum)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "all"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
 <a id="services-proxy-suite-zapret-hostlistrules-domains"></a>
 ## services\.proxy-suite\.zapret\.hostlistRules\.\*\.domains
 
 
 
 Domains written into the generated custom zapret hostlist file\.
-Must be non-empty for every hostlistRules entry\.
+Can be combined with defaultDomains\.
 
 
 
@@ -5161,6 +5302,43 @@ list of string
 [
   "example.com"
   "example.de"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/zapret\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/zapret.nix)
+
+
+
+<a id="services-proxy-suite-zapret-hostlistrules-ips"></a>
+## services\.proxy-suite\.zapret\.hostlistRules\.\*\.ips
+
+
+
+IPs or CIDRs written into the generated custom zapret ipset file\.
+Can be combined with defaultIps\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "203.0.113.0/24"
+  "2001:db8::/32"
 ]
 ```
 
@@ -5203,7 +5381,7 @@ string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
 Additional NFQWS argument fragments for this hostlist\.
 The module injects --hostlist=… and trailing --new automatically\.
 
-Each hostlistRules entry must define preset, nfqwsArgs, or both\.
+This cannot be used together with configName\.
 
 
 
@@ -5238,8 +5416,12 @@ list of string
 
 
 
-Clone the active zapret config’s built-in NFQWS rule family for this
-hostlist\. Can be combined with nfqwsArgs for additional custom rules\.
+Clone this built-in NFQWS rule family for this hostlist\. When
+configName is set, the family is cloned from that zapret config;
+otherwise it is cloned from the active global zapret config\.
+
+When unset and defaultDomains is non-empty, rule families are
+inferred from defaultDomains\.
 
 
 

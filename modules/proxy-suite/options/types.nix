@@ -277,6 +277,19 @@ let
     "twitter"
   ];
 
+  zapretDefaultDomainType = types.enum [
+    "youtube"
+    "discord"
+    "other"
+    "instagram"
+    "soundcloud"
+    "twitter"
+  ];
+
+  zapretDefaultIpType = types.enum [
+    "all"
+  ];
+
   zapretHostlistRuleType = types.submodule {
     options = {
       name = mkOption {
@@ -293,7 +306,7 @@ let
         default = [ ];
         description = ''
           Domains written into the generated custom zapret hostlist file.
-          Must be non-empty for every hostlistRules entry.
+          Can be combined with defaultDomains.
         '';
         example = [
           "example.com"
@@ -301,14 +314,75 @@ let
         ];
       };
 
+      defaultDomains = mkOption {
+        type = types.listOf zapretDefaultDomainType;
+        default = [ ];
+        description = ''
+          Built-in domain groups copied from zapret-discord-youtube hostlists.
+          These are expanded and combined with domains.
+
+          "youtube" uses the upstream Google/YouTube list. "discord" uses
+          Discord-related domains from the upstream general list. "other" uses
+          the non-Discord domains from the upstream general list.
+
+          When preset is unset, use one defaultDomains entry per rule so the
+          module can infer a single rule family. Split groups into separate
+          rules when they need different strategies.
+        '';
+        example = [ "youtube" ];
+      };
+
+      ips = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          IPs or CIDRs written into the generated custom zapret ipset file.
+          Can be combined with defaultIps.
+        '';
+        example = [
+          "203.0.113.0/24"
+          "2001:db8::/32"
+        ];
+      };
+
+      defaultIps = mkOption {
+        type = types.listOf zapretDefaultIpType;
+        default = [ ];
+        description = ''
+          Built-in IP/CIDR groups copied from zapret-discord-youtube ipsets.
+
+          "all" uses the upstream ipset-all.txt list. The upstream bundle does
+          not split this list by service, so site-specific defaults remain in
+          defaultDomains.
+        '';
+        example = [ "all" ];
+      };
+
       preset = mkOption {
         type = types.nullOr zapretPresetType;
         default = null;
         description = ''
-          Clone the active zapret config's built-in NFQWS rule family for this
-          hostlist. Can be combined with nfqwsArgs for additional custom rules.
+          Clone this built-in NFQWS rule family for this hostlist. When
+          configName is set, the family is cloned from that zapret config;
+          otherwise it is cloned from the active global zapret config.
+
+          When unset and defaultDomains is non-empty, rule families are
+          inferred from defaultDomains.
         '';
         example = "google";
+      };
+
+      configName = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          zapret config name to clone NFQWS rules from for this hostlist.
+          Names use the same matching rules as services.proxy-suite.zapret.configName.
+
+          This is a higher-level alternative to nfqwsArgs and cannot be used
+          together with nfqwsArgs.
+        '';
+        example = "general(ALT9)";
       };
 
       nfqwsArgs = mkOption {
@@ -318,7 +392,7 @@ let
           Additional NFQWS argument fragments for this hostlist.
           The module injects --hostlist=... and trailing --new automatically.
 
-          Each hostlistRules entry must define preset, nfqwsArgs, or both.
+          This cannot be used together with configName.
         '';
         example = [
           "--filter-tcp=443 --dpi-desync=fake,multisplit"
@@ -386,6 +460,8 @@ in
     subscriptionType
     outboundType
     dnsUpstreamType
+    zapretDefaultDomainType
+    zapretDefaultIpType
     zapretPresetType
     zapretHostlistRuleType
     perAppRoutingProfileType
