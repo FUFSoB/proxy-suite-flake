@@ -700,7 +700,6 @@ let
         cfProxyFallback = false;
         fakeTlsDomain = "mask.example.com";
         proxyProtocol = true;
-        wsKeepalive = 0;
       };
     }
   ];
@@ -780,16 +779,6 @@ let
         enable = true;
         secretFile = "/run/secrets/tg-ws-proxy";
         logBackups = 0;
-      };
-    }
-  ];
-
-  tgInvalidWsKeepalive = mkBadFixture [
-    {
-      services.proxy-suite.tgWsProxy = {
-        enable = true;
-        secretFile = "/run/secrets/tg-ws-proxy";
-        wsKeepalive = -1;
       };
     }
   ];
@@ -2198,11 +2187,9 @@ let
       assert pkgs.lib.hasInfix "--no-cfproxy" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--fake-tls-domain=mask.example.com" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--proxy-protocol" tgAllOptionsStartScript;
-      assert pkgs.lib.hasInfix "--ws-keepalive=0" tgAllOptionsStartScript;
       assert tgInvalidBufKb.success == false;
       assert tgInvalidPoolSize.success == false;
       assert tgInvalidLogBackups.success == false;
-      assert tgInvalidWsKeepalive.success == false;
       true
     )
     (

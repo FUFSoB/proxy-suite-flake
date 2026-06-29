@@ -142,7 +142,6 @@ Update module option docs there instead of editing this file by hand.
     - [secret](#services-proxy-suite-tgwsproxy-secret)
     - [secretFile](#services-proxy-suite-tgwsproxy-secretfile)
     - [verbose](#services-proxy-suite-tgwsproxy-verbose)
-    - [wsKeepalive](#services-proxy-suite-tgwsproxy-wskeepalive)
   - tray
     - [enable](#services-proxy-suite-tray-enable)
     - [autostart](#services-proxy-suite-tray-autostart)
@@ -318,7 +317,6 @@ services.proxy-suite = {
     secret = null;
     secretFile = null;
     verbose = false;
-    wsKeepalive = 30.0;
   };
   tray = {
     autostart = true;
@@ -588,7 +586,6 @@ services.proxy-suite = {
     secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     secretFile = "/run/secrets/tg-ws-proxy-secret";
     verbose = true;
-    wsKeepalive = 15.0;
   };
   tray = {
     autostart = true;
@@ -4663,40 +4660,6 @@ false
 
 ```nix
 true
-```
-
-*Declared by:*
- - [modules/proxy-suite/options/other\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/other.nix)
-
-
-
-<a id="services-proxy-suite-tgwsproxy-wskeepalive"></a>
-## services\.proxy-suite\.tgWsProxy\.wsKeepalive
-
-
-
-Seconds between upstream WebSocket keepalive pings\.
-Set to 0 to disable keepalive pings\.
-
-
-
-*Type:*
-nonnegative integer or floating point number, meaning >=0
-
-
-
-*Default:*
-
-```nix
-30.0
-```
-
-
-
-*Example:*
-
-```nix
-15.0
 ```
 
 *Declared by:*

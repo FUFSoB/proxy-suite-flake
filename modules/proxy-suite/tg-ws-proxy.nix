@@ -44,7 +44,7 @@ let
       mkFlagArg (!t.cfProxyFallback) "--no-cfproxy"
     }${
       mkOptionalValueArg (t.fakeTlsDomain != null) "--fake-tls-domain" t.fakeTlsDomain
-    }${mkFlagArg t.proxyProtocol "--proxy-protocol"}${mkRawValueArg "--ws-keepalive" t.wsKeepalive}
+    }${mkFlagArg t.proxyProtocol "--proxy-protocol"}
     exec ${tgPkg}/bin/tg-ws-proxy "''${args[@]}"
   '';
 

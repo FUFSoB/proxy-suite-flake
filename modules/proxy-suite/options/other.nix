@@ -243,16 +243,6 @@ in
         example = true;
       };
 
-      wsKeepalive = mkOption {
-        type = types.numbers.nonnegative;
-        default = 30.0;
-        description = ''
-          Seconds between upstream WebSocket keepalive pings.
-          Set to 0 to disable keepalive pings.
-        '';
-        example = 15.0;
-      };
-
       bypassTransparentProxy = mkOption {
         type = types.bool;
         default = true;
