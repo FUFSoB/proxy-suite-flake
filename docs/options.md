@@ -5069,10 +5069,11 @@ Each entry generates hostlists/list-\<name>\.txt and can clone a built-in
 zapret family from the active config, clone it from another configName,
 add custom NFQWS rule fragments, or combine these pieces\.
 
-defaultDomains provides built-in zapret-discord-youtube domain groups
-such as “youtube” and “discord”; defaultIps provides upstream IP/CIDR
-groups such as “all”\. configName is a higher-level
-alternative to nfqwsArgs and cannot be used together with nfqwsArgs\.
+defaultDomains selects same-named upstream zapret-discord-youtube
+hostlists such as “general” and “google”, with the aliases “discord”
+and “youtube” for readability\. defaultIps provides upstream IP/CIDR
+groups such as “all”\. configName is a higher-level alternative to
+nfqwsArgs and cannot be used together with nfqwsArgs\.
 
 
 
@@ -5198,9 +5199,16 @@ null
 Built-in domain groups copied from zapret-discord-youtube hostlists\.
 These are expanded and combined with domains\.
 
-“youtube” uses the upstream Google/YouTube list\. “discord” uses
-Discord-related domains from the upstream general list\. “other” uses
-the non-Discord domains from the upstream general list\.
+Each value maps directly to the same-named upstream file:
+“general” uses list-general\.txt, “google” uses list-google\.txt,
+and the remaining values use their corresponding list-\<name>\.txt\.
+
+“discord” is an alias for “general”; “youtube” is an alias for
+“google”\.
+
+When “general” or “discord” is used together with configName, the
+module also clones the selected config’s Discord UDP voice rule
+(–filter-l7=discord,stun)\.
 
 When preset is unset, use one defaultDomains entry per rule so the
 module can infer a single rule family\. Split groups into separate
@@ -5209,7 +5217,7 @@ rules when they need different strategies\.
 
 
 *Type:*
-list of (one of “youtube”, “discord”, “other”, “instagram”, “soundcloud”, “twitter”)
+list of (one of “general”, “google”, “discord”, “youtube”, “instagram”, “soundcloud”, “twitter”)
 
 
 
@@ -5225,7 +5233,7 @@ list of (one of “youtube”, “discord”, “other”, “instagram”, “s
 
 ```nix
 [
-  "youtube"
+  "google"
 ]
 ```
 

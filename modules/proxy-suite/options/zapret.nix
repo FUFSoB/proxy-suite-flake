@@ -152,10 +152,11 @@ in
         zapret family from the active config, clone it from another configName,
         add custom NFQWS rule fragments, or combine these pieces.
 
-        defaultDomains provides built-in zapret-discord-youtube domain groups
-        such as "youtube" and "discord"; defaultIps provides upstream IP/CIDR
-        groups such as "all". configName is a higher-level
-        alternative to nfqwsArgs and cannot be used together with nfqwsArgs.
+        defaultDomains selects same-named upstream zapret-discord-youtube
+        hostlists such as "general" and "google", with the aliases "discord"
+        and "youtube" for readability. defaultIps provides upstream IP/CIDR
+        groups such as "all". configName is a higher-level alternative to
+        nfqwsArgs and cannot be used together with nfqwsArgs.
       '';
       example = [
         {

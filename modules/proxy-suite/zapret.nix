@@ -46,6 +46,7 @@ let
       ips = zapretDomainGroups.effectiveRuleIps rule;
       presets = zapretDomainGroups.effectiveRulePresets rule;
       ipsets = zapretDomainGroups.effectiveRuleIpsetFamilies rule;
+      protocols = zapretDomainGroups.effectiveRuleProtocolFamilies rule;
     }
   ) zapretCfg.hostlistRules;
 
@@ -73,6 +74,7 @@ let
           nfqwsArgs
           ipsets
           presets
+          protocols
           ;
         hasDomains = rule.domains != [ ];
         hasIps = rule.ips != [ ];

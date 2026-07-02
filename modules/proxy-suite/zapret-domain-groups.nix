@@ -6,7 +6,6 @@
 let
   trim = lib.strings.trim;
   hasPrefix = lib.strings.hasPrefix;
-  hasInfix = lib.strings.hasInfix;
   splitString = lib.strings.splitString;
 
   zapretSrc = if builtins.isAttrs zapret && zapret ? outPath then zapret.outPath else zapret;
@@ -21,21 +20,22 @@ let
 
   upstreamHostlist = file: parseListFile "${zapretSrc}/hostlists/${file}";
   generalDomains = upstreamHostlist "list-general.txt";
-  isDiscordDomain = domain: domain == "dis.gd" || hasInfix "discord" domain;
 
   domainGroups = {
+    general = generalDomains;
+    google = upstreamHostlist "list-google.txt";
+    discord = generalDomains;
     youtube = upstreamHostlist "list-google.txt";
-    discord = builtins.filter isDiscordDomain generalDomains;
-    other = builtins.filter (domain: !(isDiscordDomain domain)) generalDomains;
     instagram = upstreamHostlist "list-instagram.txt";
     soundcloud = upstreamHostlist "list-soundcloud.txt";
     twitter = upstreamHostlist "list-twitter.txt";
   };
 
   groupPresets = {
-    youtube = "google";
+    general = "general";
+    google = "google";
     discord = "general";
-    other = "general";
+    youtube = "google";
     instagram = "instagram";
     soundcloud = "soundcloud";
     twitter = "twitter";
@@ -43,6 +43,11 @@ let
 
   ipGroups = {
     all = upstreamHostlist "ipset-all.txt";
+  };
+
+  protocolGroups = {
+    general = [ "discord-voice" ];
+    discord = [ "discord-voice" ];
   };
 
   expandDefaultDomains =
@@ -76,12 +81,24 @@ let
   effectiveRuleIpsetFamilies =
     rule:
     lib.optional (effectiveRuleIps rule != [ ]) "all";
+
+  effectiveRuleProtocolFamilies =
+    rule:
+    lib.optionals (rule.configName != null) (
+      lib.unique (
+        lib.concatMap (
+          group:
+          if builtins.hasAttr group protocolGroups then protocolGroups.${group} else [ ]
+        ) rule.defaultDomains
+      )
+    );
 in
 {
   inherit
     domainGroups
     groupPresets
     ipGroups
+    protocolGroups
     expandDefaultDomains
     expandDefaultIps
     inferPresets
@@ -89,5 +106,6 @@ in
     effectiveRuleIps
     effectiveRulePresets
     effectiveRuleIpsetFamilies
+    effectiveRuleProtocolFamilies
     ;
 }

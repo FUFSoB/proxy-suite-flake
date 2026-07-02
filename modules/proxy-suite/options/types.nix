@@ -278,9 +278,10 @@ let
   ];
 
   zapretDefaultDomainType = types.enum [
-    "youtube"
+    "general"
+    "google"
     "discord"
-    "other"
+    "youtube"
     "instagram"
     "soundcloud"
     "twitter"
@@ -321,15 +322,22 @@ let
           Built-in domain groups copied from zapret-discord-youtube hostlists.
           These are expanded and combined with domains.
 
-          "youtube" uses the upstream Google/YouTube list. "discord" uses
-          Discord-related domains from the upstream general list. "other" uses
-          the non-Discord domains from the upstream general list.
+          Each value maps directly to the same-named upstream file:
+          "general" uses list-general.txt, "google" uses list-google.txt,
+          and the remaining values use their corresponding list-<name>.txt.
+
+          "discord" is an alias for "general"; "youtube" is an alias for
+          "google".
+
+          When "general" or "discord" is used together with configName, the
+          module also clones the selected config's Discord UDP voice rule
+          (--filter-l7=discord,stun).
 
           When preset is unset, use one defaultDomains entry per rule so the
           module can infer a single rule family. Split groups into separate
           rules when they need different strategies.
         '';
-        example = [ "youtube" ];
+        example = [ "google" ];
       };
 
       ips = mkOption {

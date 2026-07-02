@@ -45,6 +45,12 @@ IPSET_PATTERNS = {
     },
 }
 
+PROTOCOL_PATTERNS = {
+    "discord-voice": {
+        "match": ["--filter-l7=discord,stun"],
+    },
+}
+
 
 def locate_nfqws_block(lines: list[str]) -> tuple[int, int]:
     start = None
@@ -149,6 +155,10 @@ def _render_ipset_args(
     return f"{normalize_spaces(rendered)} --new"
 
 
+def render_protocol_clone(line: str) -> str:
+    return f"{normalize_spaces(strip_trailing_new(line))} --new"
+
+
 def render_preset_clone(
     line: str,
     family: str,
@@ -223,6 +233,19 @@ def clone_ipset_lines(
         render_ipset_clone(line, family, ipset_path, standard_excludes)
         for line in matches
     ]
+
+
+def clone_protocol_lines(existing_lines: list[str], family: str) -> list[str]:
+    matches = [
+        line
+        for line in existing_lines
+        if any(marker in line for marker in PROTOCOL_PATTERNS[family]["match"])
+    ]
+    if not matches:
+        raise ValueError(
+            f"Protocol family '{family}' is not present in the selected zapret config"
+        )
+    return [render_protocol_clone(line) for line in matches]
 
 
 def activate_builtin_hostlists(
@@ -301,6 +324,7 @@ def main() -> int:
             preset = entry.get("preset")
             presets = [preset] if preset else []
         ipsets = entry.get("ipsets", [])
+        protocols = entry.get("protocols", [])
         has_domains = entry.get("hasDomains", bool(presets))
         has_ips = entry.get("hasIps", bool(ipsets))
 
@@ -316,6 +340,8 @@ def main() -> int:
                     entry_nfqws_lines, ipset, ipset_path, standard_excludes
                 )
             )
+        for protocol in protocols:
+            generated_lines.extend(clone_protocol_lines(entry_nfqws_lines, protocol))
         for fragment in entry.get("nfqwsArgs", []):
             if has_domains:
                 generated_lines.append(
@@ -326,7 +352,7 @@ def main() -> int:
                     render_custom_ipset_args(fragment, ipset_path, standard_excludes)
                 )
 
-    updated_lines = lines[:end] + generated_lines + lines[end:]
+    updated_lines = lines[: start + 1] + generated_lines + lines[start + 1 :]
     config_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
     return 0
 
