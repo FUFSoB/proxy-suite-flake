@@ -30,33 +30,27 @@
         "zapret-flowseal": "zapret-flowseal"
       },
       "locked": {
-        "lastModified": 1782499723,
+        "lastModified": 1,
         "narHash": "sha256-Q9w9hxzimX0O0wqQTfMJk/tEIvRtYI7GclLHSQAatKY=",
-        "owner": "kartavkun",
-        "repo": "zapret-discord-youtube",
-        "rev": "0951ba541a3523b298c0e787ceec43883191cd58",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-discord-youtube.tar.gz"
       },
       "original": {
-        "owner": "kartavkun",
-        "repo": "zapret-discord-youtube",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-discord-youtube.tar.gz"
       }
     },
     "zapret-flowseal": {
       "flake": false,
       "locked": {
-        "lastModified": 1782227480,
+        "lastModified": 1,
         "narHash": "sha256-OJ14gttWLGVkwG4XR5LZdK2UOxMhIjwdrGo7x8YSiNE=",
-        "owner": "Flowseal",
-        "repo": "zapret-discord-youtube",
-        "rev": "d3aabff5d86b9be1cfbcb5b78a7a5b8354a2badb",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-flowseal.tar.gz"
       },
       "original": {
-        "owner": "Flowseal",
-        "repo": "zapret-discord-youtube",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-flowseal.tar.gz"
       }
     }
   },

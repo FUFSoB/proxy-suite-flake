@@ -1,11 +1,10 @@
 { pkgs }:
 
 let
-  src = pkgs.fetchFromGitHub {
-    owner = "Flowseal";
-    repo = "tg-ws-proxy";
-    rev = "v1.8.1";
-    hash = "sha256-9DPn+PQcQeVzupK4UosRqEuFpFBFXvBpVDEExbvyFlg=";
+  src = fetchTree {
+    type = "tarball";
+    url = "https://archive.org/download/zapret-tgws-nix-2026-07-10/tg-ws-proxy.tar.gz";
+    narHash = "sha256-9DPn+PQcQeVzupK4UosRqEuFpFBFXvBpVDEExbvyFlg=";
   };
 
   pythonEnv = pkgs.python3.withPackages (
