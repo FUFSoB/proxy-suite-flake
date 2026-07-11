@@ -71,15 +71,12 @@ let
       pkgs
       singBoxCfg
       proxyCfg
-      proxyEnabled
-      singBoxEnabled
       xrayEnabled
       hybridEnabled
       pureXrayEnabled
       activeBackend
       perAppRoutingCfg
       userControlCfg
-      perAppRoutingTun
       selectionMode
       collapseNamedOutbounds
       hasSubscriptions

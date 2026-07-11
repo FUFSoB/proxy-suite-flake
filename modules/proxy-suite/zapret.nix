@@ -1,4 +1,4 @@
-# zapret DPI bypass configuration + optional CIDR exemption from NFQUEUE
+# zapret DPI bypass services and optional CIDR exemption from NFQUEUE.
 {
   lib,
   pkgs,
@@ -14,311 +14,22 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = zapretCfg.perApp;
-  zapretDomainGroups = import ./zapret-domain-groups.nix { inherit lib zapret; };
-
-  iptables = "${pkgs.iptables}/bin/iptables";
-
-  runtimeDeps = lib.attrValues {
-    inherit (pkgs)
-      iptables
-      ipset
-      nftables
-      coreutils
-      gawk
-      curl
-      wget
-      bash
-      kmod
-      findutils
-      gnused
-      gnugrep
-      procps
-      util-linux
+  zapretPackages = import ./zapret/packages.nix {
+    inherit
+      lib
+      pkgs
+      cfg
+      zapret
       ;
   };
+  inherit (zapretPackages)
+    globalZapretPackage
+    perAppZapretPackage
+    globalZapretEnv
+    perAppZapretEnv
+    ;
 
-  hostlistRuleNames = map (rule: rule.name) zapretCfg.hostlistRules;
-  effectiveHostlistRules = map (
-    rule:
-    rule
-    // {
-      domains = zapretDomainGroups.effectiveRuleDomains rule;
-      ips = zapretDomainGroups.effectiveRuleIps rule;
-      presets = zapretDomainGroups.effectiveRulePresets rule;
-      ipsets = zapretDomainGroups.effectiveRuleIpsetFamilies rule;
-      protocols = zapretDomainGroups.effectiveRuleProtocolFamilies rule;
-    }
-  ) zapretCfg.hostlistRules;
-
-  baseZapretPackage =
-    let
-      upstreamPackages = zapret.packages.${pkgs.stdenv.hostPlatform.system};
-    in
-    if upstreamPackages ? zapret then upstreamPackages.zapret else upstreamPackages.default;
-  mkOptionalHostlistFile =
-    fileName: entries:
-    if entries != [ ] then pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n") else null;
-
-  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.listGeneral;
-  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.listExclude;
-  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" zapretCfg.ipsetAll;
-  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" zapretCfg.ipsetExclude;
-
-  hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
-    builtins.toJSON {
-      includeExtraUpstreamLists = zapretCfg.includeExtraUpstreamLists;
-      entries = map (rule: {
-        inherit (rule)
-          name
-          configName
-          nfqwsArgs
-          ipsets
-          presets
-          protocols
-          ;
-        hasDomains = rule.domains != [ ];
-        hasIps = rule.ips != [ ];
-      }) effectiveHostlistRules;
-    }
-  );
-
-  selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.configName;
-  patchConfigScriptSrc = builtins.path {
-    path = ../../scripts/patch-zapret-config.py;
-    name = "patch-zapret-config.py";
-  };
-  patchConfigScript = "${pkgs.python3}/bin/python3 ${patchConfigScriptSrc}";
-
-  mkGlobalBypassScript =
-    filterMark:
-    pkgs.writeText "proxy-suite-zapret-global-bypass.sh" ''
-      zapret_custom_firewall_nft() {
-        nft insert rule inet $ZAPRET_NFT_TABLE postrouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE postnat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prerouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-      }
-    '';
-
-  mkDerivedZapretPackage =
-    {
-      packageName,
-      pidDir,
-      configName ? zapretCfg.configName,
-      gameFilter ? zapretCfg.gameFilter,
-      forceDisableFilterMark ? false,
-      filterMark ? null,
-      qnum ? null,
-      modeFilter ? null,
-      desyncMark ? null,
-      desyncMarkPostnat ? null,
-      nftTable ? null,
-      customScript ? null,
-    }:
-    pkgs.runCommand packageName
-      {
-        nativeBuildInputs = with pkgs; [
-          coreutils
-          gnused
-          python3
-        ];
-      }
-      ''
-        set -euo pipefail
-
-        mkdir -p "$out"
-        cp -a ${baseZapretPackage}/. "$out/"
-        chmod -R u+w "$out/opt/zapret" "$out/bin"
-
-        find "$out/opt/zapret/configs" -type f -exec ${pkgs.gnused}/bin/sed -i \
-          -e 's|${baseZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
-          {} \;
-        find "$out/opt/zapret/hostlists" -type f -exec ${pkgs.gnused}/bin/sed -i \
-          -e 's|${baseZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
-          {} \;
-
-        requested_config=${lib.escapeShellArg configName}
-        configs_dir="$out/opt/zapret/configs"
-        selected_config="$configs_dir/$requested_config"
-
-        config_name_key() {
-          printf '%s' "$1" | tr -d '[:space:]'
-        }
-
-        if [ ! -f "$selected_config" ]; then
-          requested_key=$(config_name_key "$requested_config")
-          matched_config=""
-
-          for candidate in "$configs_dir"/*; do
-            [ -f "$candidate" ] || continue
-            candidate_name="''${candidate##*/}"
-
-            if [ "$(config_name_key "$candidate_name")" = "$requested_key" ]; then
-              if [ -n "$matched_config" ]; then
-                echo "proxy-suite: zapret config '$requested_config' is ambiguous after whitespace normalization" >&2
-                echo "proxy-suite: matched '$matched_config' and '$candidate'" >&2
-                exit 1
-              fi
-              matched_config="$candidate"
-            fi
-          done
-
-          if [ -n "$matched_config" ]; then
-            selected_config="$matched_config"
-          fi
-        fi
-
-        if [ -f "$selected_config" ]; then
-          cp "$selected_config" "$out/opt/zapret/config"
-        else
-          echo "proxy-suite: zapret config '$requested_config' not found in curated package" >&2
-          ls -la "$out/opt/zapret/configs" >&2 || true
-          exit 1
-        fi
-
-        ${pkgs.gnused}/bin/sed -i \
-          -e 's|${baseZapretPackage}/opt/zapret|'"$out"'/opt/zapret|g' \
-          "$out/opt/zapret/config"
-
-        ${pkgs.gnused}/bin/sed -i \
-          -e 's|^PIDDIR=.*$|PIDDIR=${pidDir}|' \
-          "$out/opt/zapret/init.d/sysv/functions"
-
-        append_list_file() {
-          local target="$1"
-          local extra_file="$2"
-          local tmp="$out/opt/zapret/hostlists/$target.tmp"
-          cat "$out/opt/zapret/hostlists/$target" > "$tmp"
-          ${pkgs.gnused}/bin/sed -i -e '$a\' "$tmp"
-          cat "$extra_file" >> "$tmp"
-          mv "$tmp" "$out/opt/zapret/hostlists/$target"
-        }
-
-        set_config_var() {
-          local key="$1"
-          local value="$2"
-          if grep -Eq "^[#[:space:]]*$key=" "$out/opt/zapret/config"; then
-            ${pkgs.gnused}/bin/sed -Ei "s|^[#[:space:]]*$key=.*$|$key=$value|" "$out/opt/zapret/config"
-          else
-            printf '\n%s=%s\n' "$key" "$value" >> "$out/opt/zapret/config"
-          fi
-        }
-
-        ${lib.concatMapStrings
-          (
-            { name, file }:
-            lib.optionalString (file != null) ''
-              append_list_file ${name} ${file}
-            ''
-          )
-          [
-            {
-              name = "list-general-user.txt";
-              file = listGeneralFile;
-            }
-            {
-              name = "list-exclude-user.txt";
-              file = listExcludeFile;
-            }
-            {
-              name = "ipset-all.txt";
-              file = ipsetAllFile;
-            }
-            {
-              name = "ipset-exclude-user.txt";
-              file = ipsetExcludeFile;
-            }
-          ]
-        }
-
-        rm -f "$out/opt/zapret/hostlists/.game_filter.enabled"
-        ${lib.optionalString (gameFilter != "null") ''
-          echo "${gameFilter}" > "$out/opt/zapret/hostlists/.game_filter.enabled"
-        ''}
-
-        ${lib.concatMapStrings (
-          rule:
-          let
-            domainsFile = pkgs.writeText "proxy-suite-zapret-hostlist-${rule.name}.txt" (
-              lib.concatStringsSep "\n" (lib.unique rule.domains) + "\n"
-            );
-            ipsetFile = pkgs.writeText "proxy-suite-zapret-ipset-${rule.name}.txt" (
-              lib.concatStringsSep "\n" (lib.unique rule.ips) + "\n"
-            );
-          in
-          lib.optionalString (rule.domains != [ ]) ''
-            cp ${domainsFile} "$out/opt/zapret/hostlists/list-${rule.name}.txt"
-          ''
-          + lib.optionalString (rule.ips != [ ]) ''
-            cp ${ipsetFile} "$out/opt/zapret/hostlists/ipset-${rule.name}.txt"
-          ''
-        ) effectiveHostlistRules}
-
-        ${patchConfigScript} --config "$out/opt/zapret/config" --spec ${hostlistRuleSpec}
-
-        ${lib.optionalString forceDisableFilterMark ''
-          set_config_var FILTER_MARK ""
-        ''}
-        ${lib.concatMapStrings
-          (
-            { var, value }:
-            lib.optionalString (value != null) ''
-              hex=$(printf '0x%x' ${toString value})
-              set_config_var ${var} "$hex"
-            ''
-          )
-          [
-            {
-              var = "FILTER_MARK";
-              value = filterMark;
-            }
-            {
-              var = "DESYNC_MARK";
-              value = desyncMark;
-            }
-            {
-              var = "DESYNC_MARK_POSTNAT";
-              value = desyncMarkPostnat;
-            }
-          ]
-        }
-        ${lib.optionalString (qnum != null) ''
-          set_config_var QNUM ${toString qnum}
-        ''}
-        ${lib.optionalString (modeFilter != null) ''
-          set_config_var MODE_FILTER ${modeFilter}
-        ''}
-        ${lib.optionalString (nftTable != null) ''
-          set_config_var ZAPRET_NFT_TABLE ${nftTable}
-        ''}
-
-        ${lib.optionalString (customScript != null) ''
-          mkdir -p "$out/opt/zapret/init.d/sysv/custom.d"
-          cp ${customScript} "$out/opt/zapret/init.d/sysv/custom.d/50-proxy-suite-custom.sh"
-          chmod +x "$out/opt/zapret/init.d/sysv/custom.d/50-proxy-suite-custom.sh"
-        ''}
-      '';
-
-  globalZapretPackage = mkDerivedZapretPackage {
-    packageName = "proxy-suite-zapret-${selectedConfigName}";
-    pidDir = "/run/proxy-suite-zapret";
-    gameFilter = zapretCfg.gameFilter;
-    forceDisableFilterMark = true;
-    customScript =
-      if perAppZapretCfg.enable then mkGlobalBypassScript (toString perAppZapretCfg.filterMark) else null;
-  };
-
-  perAppZapretPackage = mkDerivedZapretPackage {
-    packageName = "proxy-suite-per-app-zapret-${selectedConfigName}";
-    pidDir = "/run/proxy-suite-per-app-zapret";
-    gameFilter = "all";
-    filterMark = perAppZapretCfg.filterMark;
-    qnum = perAppZapretCfg.qnum;
-    modeFilter = "none";
-    desyncMark = 134217728;
-    desyncMarkPostnat = 67108864;
-    nftTable = "proxy_suite_per_app_zapret";
-  };
+  iptables = "${pkgs.iptables}/bin/iptables";
 
   zapretCommonPreStart = package: ''
     ${package}/opt/zapret/init.d/sysv/zapret stop || true
@@ -331,13 +42,6 @@ let
       ${pkgs.ipset}/bin/ipset create nozapret hash:net
     fi
   '';
-
-  mkZapretEnv = package: [
-    "ZAPRET_BASE=${package}/opt/zapret"
-    "PATH=${lib.makeBinPath runtimeDeps}"
-  ];
-  globalZapretEnv = mkZapretEnv globalZapretPackage;
-  perAppZapretEnv = mkZapretEnv perAppZapretPackage;
 
   perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-up" ''
     set -euo pipefail
@@ -369,53 +73,7 @@ let
   '') zapretCfg.cidrExemption.cidrs;
 in
 {
-  assertions = [
-    {
-      assertion = builtins.length hostlistRuleNames == builtins.length (lib.unique hostlistRuleNames);
-      message = "proxy-suite: zapret.hostlistRules names must be unique";
-    }
-    {
-      assertion = builtins.all (
-        rule: zapretDomainGroups.effectiveRuleDomains rule != [ ] || zapretDomainGroups.effectiveRuleIps rule != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must define domains, defaultDomains, ips, or defaultIps";
-    }
-    {
-      assertion = builtins.all (
-        rule:
-        rule.preset != null || rule.defaultDomains != [ ] || rule.ips != [ ] || rule.defaultIps != [ ] || rule.nfqwsArgs != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must set preset, defaultDomains, ips/defaultIps, nfqwsArgs, or a valid configName source";
-    }
-    {
-      assertion = builtins.all (
-        rule:
-        zapretDomainGroups.effectiveRuleDomains rule == [ ]
-        || rule.preset != null
-        || rule.defaultDomains != [ ]
-        || rule.nfqwsArgs != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules entries with domains require preset, defaultDomains, or nfqwsArgs";
-    }
-    {
-      assertion = builtins.all (
-        rule: rule.preset != null || builtins.length rule.defaultDomains <= 1
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules entries without preset may infer a rule family from only one defaultDomains entry; split groups into separate rules or set preset";
-    }
-    {
-      assertion = builtins.all (
-        rule: !(rule.configName != null && rule.nfqwsArgs != [ ])
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules.*.configName cannot be used together with nfqwsArgs";
-    }
-    {
-      assertion = builtins.all (
-        rule: rule.configName == null || rule.preset != null || rule.defaultDomains != [ ] || rule.ips != [ ] || rule.defaultIps != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules.*.configName requires preset, defaultDomains, ips, or defaultIps";
-    }
-  ];
+  assertions = zapretPackages.assertions;
 
   environment.systemPackages = lib.mkBefore (
     lib.optionals zapretCfg.enable [ globalZapretPackage ]

@@ -75,7 +75,7 @@ in
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
-      ExecStart = "${startScript}";
+      ExecStart = startScript;
       LoadCredential = lib.optional (t.secretFile != null) "tg_ws_proxy_secret:${t.secretFile}";
       Restart = "on-failure";
       RestartSec = 5;

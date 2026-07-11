@@ -15,21 +15,9 @@
 }:
 
 let
-  constants = derived.constants;
-  assertions = import ./service/assertions-lib.nix { inherit lib; };
-  inherit (assertions)
-    mkAssertion
-    requireEnabled
-    requireAvailable
-    uniqueValues
-    notEqualWhen
-    forbiddenValues
-    exactlyOneOf
-    ;
-
   inherit (derived)
+    constants
     proxyCfg
-    singBoxCfg
     proxyEnabled
     singBoxEnabled
     xrayEnabled
@@ -43,7 +31,27 @@ let
     perAppZapretCfg
     ;
 
-  globalTunAutoRouteTable = constants.tunAutoRouteTableIndex;
+  mkAssertion = assertion: message: { inherit assertion message; };
+  requireEnabled =
+    featureEnabled: dependencyEnabled: message:
+    mkAssertion (!featureEnabled || dependencyEnabled) message;
+  requireAvailable =
+    featureUsed: dependencyEnabled: message:
+    mkAssertion (!featureUsed || dependencyEnabled) message;
+  uniqueValues =
+    condition: values: message:
+    mkAssertion (!condition || builtins.length values == builtins.length (lib.unique values)) message;
+  exactlyOneOf =
+    condition: values: message:
+    mkAssertion (
+      !condition || builtins.length (builtins.filter (value: value != null) values) == 1
+    ) message;
+  notEqualWhen =
+    condition: left: right: message:
+    mkAssertion (!(condition && left == right)) message;
+  forbiddenValues =
+    condition: value: disallowed: message:
+    mkAssertion (!(condition && builtins.elem value disallowed)) message;
 
   featureAssertions = [
     (requireAvailable proxyCfg.singBox.enable proxyEnabled
@@ -144,6 +152,61 @@ let
     )
   ];
 
+  localProxyAuthCfg = proxyCfg.auth;
+  localProxyAuthUsed =
+    localProxyAuthCfg.username != null
+    || localProxyAuthCfg.password != null
+    || localProxyAuthCfg.passwordFile != null;
+  localProxyAuthAssertions = [
+    (mkAssertion (
+      !proxyEnabled || !localProxyAuthUsed || localProxyAuthCfg.username != null
+    ) "proxy-suite: proxy.auth requires username when password or passwordFile is set")
+    (exactlyOneOf (proxyEnabled && localProxyAuthUsed) [
+      localProxyAuthCfg.password
+      localProxyAuthCfg.passwordFile
+    ] "proxy-suite: proxy.auth requires exactly one of password or passwordFile")
+  ];
+
+  secretAssertions = [
+    (exactlyOneOf tgWsProxyCfg.enable [
+      tgWsProxyCfg.secret
+      tgWsProxyCfg.secretFile
+    ] "proxy-suite: tgWsProxy requires exactly one of secret or secretFile")
+  ];
+
+  outboundAssertions = lib.concatMap (ob: [
+    (exactlyOneOf proxyEnabled
+      [
+        ob.urlFile
+        ob.url
+        ob.singBoxJson
+        ob.xrayJson
+        ob.json
+      ]
+      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, xrayJson, or json"
+    )
+    (mkAssertion (
+      !singBoxEnabled || hybridEnabled || ob.xrayJson == null
+    ) "proxy-suite: outbound '${ob.tag}': xrayJson is only available with proxy.xray.enable = true")
+    (mkAssertion (!xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null))
+      "proxy-suite: outbound '${ob.tag}': singBoxJson/json are only available with proxy.singBox.enable = true"
+    )
+    (mkAssertion (
+      !(ob.backend == "xray") || xrayEnabled
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.xray.enable = true")
+    (mkAssertion (
+      !(ob.backend == "sing-box") || singBoxEnabled
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.singBox.enable = true")
+  ]) proxyCfg.outbounds;
+
+  subscriptionAssertions = lib.concatMap (sub: [
+    (exactlyOneOf proxyEnabled [
+      sub.urlFile
+      sub.url
+    ] "proxy-suite: subscription '${sub.tag}': set exactly one of urlFile or url")
+  ]) proxyCfg.subscriptions;
+
+  globalTunAutoRouteTable = constants.tunAutoRouteTableIndex;
   collisionAssertions = map (item: notEqualWhen item.condition item.left item.right item.message) [
     {
       condition = globalTun.enable && perAppRoutingTun.enable;
@@ -272,7 +335,6 @@ let
     67108864
     134217728
   ];
-
   positiveNumberAssertions =
     map (item: mkAssertion (!item.condition || item.value > 0) item.message)
       [
@@ -338,21 +400,6 @@ let
         }
       ];
 
-  localProxyAuthCfg = proxyCfg.auth;
-  localProxyAuthUsed =
-    localProxyAuthCfg.username != null
-    || localProxyAuthCfg.password != null
-    || localProxyAuthCfg.passwordFile != null;
-  localProxyAuthAssertions = [
-    (mkAssertion (
-      !proxyEnabled || !localProxyAuthUsed || localProxyAuthCfg.username != null
-    ) "proxy-suite: proxy.auth requires username when password or passwordFile is set")
-    (exactlyOneOf (proxyEnabled && localProxyAuthUsed) [
-      localProxyAuthCfg.password
-      localProxyAuthCfg.passwordFile
-    ] "proxy-suite: proxy.auth requires exactly one of password or passwordFile")
-  ];
-
   forbiddenValueAssertions =
     map (item: forbiddenValues item.condition item.value item.disallowed item.message)
       [
@@ -402,52 +449,13 @@ let
           message = "proxy-suite: tgWsProxy.routingMark must not use per-app-zapret internal desync mark bits";
         }
       ];
-
-  secretAssertions = [
-    (exactlyOneOf tgWsProxyCfg.enable [
-      tgWsProxyCfg.secret
-      tgWsProxyCfg.secretFile
-    ] "proxy-suite: tgWsProxy requires exactly one of secret or secretFile")
-  ];
-
-  outboundAssertions = lib.concatMap (ob: [
-    (exactlyOneOf proxyEnabled
-      [
-        ob.urlFile
-        ob.url
-        ob.singBoxJson
-        ob.xrayJson
-        ob.json
-      ]
-      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, xrayJson, or json"
-    )
-    (mkAssertion (
-      !singBoxEnabled || hybridEnabled || ob.xrayJson == null
-    ) "proxy-suite: outbound '${ob.tag}': xrayJson is only available with proxy.xray.enable = true")
-    (mkAssertion (!xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null))
-      "proxy-suite: outbound '${ob.tag}': singBoxJson/json are only available with proxy.singBox.enable = true"
-    )
-    (mkAssertion (
-      !(ob.backend == "xray") || xrayEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.xray.enable = true")
-    (mkAssertion (
-      !(ob.backend == "sing-box") || singBoxEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.singBox.enable = true")
-  ]) proxyCfg.outbounds;
-
-  subscriptionAssertions = lib.concatMap (sub: [
-    (exactlyOneOf proxyEnabled [
-      sub.urlFile
-      sub.url
-    ] "proxy-suite: subscription '${sub.tag}': set exactly one of urlFile or url")
-  ]) proxyCfg.subscriptions;
 in
 featureAssertions
 ++ perAppRoutingAssertions
-++ collisionAssertions
-++ positiveNumberAssertions
 ++ localProxyAuthAssertions
-++ forbiddenValueAssertions
 ++ secretAssertions
 ++ outboundAssertions
 ++ subscriptionAssertions
+++ collisionAssertions
+++ positiveNumberAssertions
+++ forbiddenValueAssertions

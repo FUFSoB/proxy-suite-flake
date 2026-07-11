@@ -24,11 +24,36 @@ let
   unwrapped = pkgs.writeShellScriptBin "proxy-ctl" (
     builtins.readFile ./proxy-ctl-lib.sh + "\n" + builtins.readFile ./proxy-ctl.sh
   );
+  wrapperEnv = {
+    CLASH_API = clashApi;
+    SELECTION = selection;
+    SUB_TAGS_FILE = toString subscriptionTagsFile;
+    SUB_CACHE_DIR = subscriptionCacheDir;
+    PER_APP_ROUTING_ENABLED = perAppRoutingEnabled;
+    PER_APP_ROUTING_PROXYCHAINS_ENABLED = perAppRoutingProxychainsEnabled;
+    PER_APP_ROUTING_TUN_ENABLED = perAppRoutingTunEnabled;
+    PER_APP_ROUTING_TPROXY_ENABLED = perAppRoutingTproxyEnabled;
+    PER_APP_ROUTING_ZAPRET_ENABLED = perAppRoutingZapretEnabled;
+    PER_APP_ROUTING_PROFILES_FILE = toString perAppRoutingProfilesFile;
+    PROXYCHAINS_CONFIG = toString proxychainsConfigFile;
+    PROXYCHAINS_QUIET_ARG = lib.removeSuffix " " proxychainsQuietArg;
+    ROUTE_MODE_STATE_FILE = routeModeStateFile;
+    DEFAULT_ROUTE_MODE = defaultRouteMode;
+  };
 in
 pkgs.symlinkJoin {
   name = "proxy-ctl";
   paths = [ unwrapped ];
   nativeBuildInputs = [ pkgs.makeWrapper ];
+  passthru.proxySuiteCheck = {
+    inherit
+      wrapperEnv
+      subscriptionTagsFile
+      perAppRoutingProfilesFile
+      proxychainsConfigFile
+      ;
+    script = unwrapped.drvAttrs.text;
+  };
   postBuild = ''
     wrapProgram "$out/bin/proxy-ctl" \
       --prefix PATH : "${
