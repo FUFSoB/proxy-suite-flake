@@ -4,12 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     zapret = {
-      url = "tarball+https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-discord-youtube.tar.gz";
+      url = "github:kartavkun/zapret-discord-youtube";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs."zapret-flowseal" = {
-        flake = false;
-        url = "tarball+https://archive.org/download/zapret-tgws-nix-2026-07-10/zapret-flowseal.tar.gz";
-      };
     };
   };
 
