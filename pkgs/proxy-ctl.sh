@@ -2,11 +2,17 @@ set -euo pipefail
 
 # Wrapped binary provides runtime config through env vars.
 SUB_TAGS_FILE="${SUB_TAGS_FILE:-}"
+AWG_PROFILES_FILE="${AWG_PROFILES_FILE:-}"
 PROXYCHAINS_QUIET_ARG="${PROXYCHAINS_QUIET_ARG:-}"
 SUB_TAGS=()
+AWG_PROFILES=()
 
 if [ -n "$SUB_TAGS_FILE" ] && [ -f "$SUB_TAGS_FILE" ]; then
   mapfile -t SUB_TAGS < <(jq -r '.[]' "$SUB_TAGS_FILE")
+fi
+
+if [ -n "$AWG_PROFILES_FILE" ] && [ -f "$AWG_PROFILES_FILE" ]; then
+  mapfile -t AWG_PROFILES < <(jq -r '.[]' "$AWG_PROFILES_FILE")
 fi
 
 cmd="${1:-status}"
@@ -31,6 +37,10 @@ case "$cmd" in
 
   tun)
     cmd_mode_toggle proxy-suite-tun on "${1:-}"
+    ;;
+
+  awg)
+    cmd_awg "$@"
     ;;
 
   route-mode)

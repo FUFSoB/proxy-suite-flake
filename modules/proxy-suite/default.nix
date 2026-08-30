@@ -47,7 +47,12 @@ in
           packages
           cfg
           ;
-        inherit (configs) tproxyFile tunFile perAppTunFile routeModeRulesFile;
+        inherit (configs)
+          tproxyFile
+          tunFile
+          perAppTunFile
+          routeModeRulesFile
+          ;
         inherit (nftr)
           nftablesRulesFile
           perAppTproxyRulesFile
@@ -76,6 +81,17 @@ in
             lib
             pkgs
             packages
+            cfg
+            ;
+        }
+      ))
+
+      (lib.mkIf cfg.amneziaWg.enable (
+        import ./amnezia-wg.nix {
+          inherit
+            config
+            lib
+            pkgs
             cfg
             ;
         }

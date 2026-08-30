@@ -33,10 +33,16 @@ let
     controlModuleSource = builtins.readFile ../modules/proxy-suite/service/control.nix;
   };
   moduleSuiteChecks = import ./checks/module-suite.nix { inherit pkgs checkLib; };
+  amneziaWgRuntime = import ./checks/amnezia-wg-runtime.nix {
+    inherit pkgs nixpkgs proxySuiteModule;
+  };
 in
 moduleSuiteChecks
 // {
   proxy-suite-tray-build = suitePkgs.proxy-suite-tray;
+}
+// pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+  amneziawg-runtime = amneziaWgRuntime;
 }
 // parserChecks
 // repoChecks

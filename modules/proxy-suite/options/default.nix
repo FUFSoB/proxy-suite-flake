@@ -3,6 +3,7 @@
 {
   imports = [
     ./other.nix
+    ./amnezia-wg.nix
     ./legacy-sing-box.nix
     ./sing-box.nix
     ./sing-box-outbounds.nix

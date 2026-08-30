@@ -14,6 +14,9 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = zapretCfg.perApp;
+  awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
+    builtins.attrNames cfg.amneziaWg.profiles
+  );
   zapretPackages = import ./zapret/packages.nix {
     inherit
       lib
@@ -84,6 +87,7 @@ in
     description = "zapret DPI bypass";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
+    conflicts = awgServiceNames;
     wantedBy = [ "multi-user.target" ];
     preStart = zapretCommonPreStart globalZapretPackage;
     runtimeDirectory = "proxy-suite-zapret";
@@ -102,7 +106,8 @@ in
     conflicts = [
       "proxy-suite-tproxy.service"
       "proxy-suite-tun.service"
-    ];
+    ]
+    ++ awgServiceNames;
     preStart = zapretCommonPreStart perAppZapretPackage;
     runtimeDirectory = "proxy-suite-per-app-zapret";
     execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
@@ -118,6 +123,7 @@ in
         description = "Exempt CIDRs from zapret NFQUEUE";
         after = [ "zapret-discord-youtube.service" ];
         wants = [ "zapret-discord-youtube.service" ];
+        conflicts = awgServiceNames;
         wantedBy = [ "multi-user.target" ];
         execStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
         execStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;

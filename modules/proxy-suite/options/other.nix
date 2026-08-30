@@ -70,7 +70,7 @@ let
 in
 {
   options.services.proxy-suite = {
-    enable = lib.mkEnableOption "proxy suite (proxy backend + zapret + tg-ws-proxy)";
+    enable = lib.mkEnableOption "proxy suite (proxy backend + AmneziaWG + zapret + tg-ws-proxy)";
   }
   // userControlOptions
   // trayOptions

@@ -55,6 +55,9 @@ let
   headBin = "${pkgs.coreutils}/bin/head";
   seqBin = "${pkgs.coreutils}/bin/seq";
   findBin = "${pkgs.findutils}/bin/find";
+  amneziaWgProfileNamesFile = pkgs.writeText "proxy-suite-awg-profiles.json" (
+    builtins.toJSON (builtins.attrNames cfg.amneziaWg.profiles)
+  );
 
   proxySuiteScriptsDir = ../../../scripts;
   parserScriptsPythonPath = proxySuiteScriptsDir;
@@ -138,6 +141,7 @@ let
       ;
     inherit (scripts) subscriptionTagsFile subscriptionCacheDir;
     inherit (scripts) routeModeStateFile;
+    inherit amneziaWgProfileNamesFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile
       proxychainsConfigFile
@@ -172,5 +176,6 @@ in
     scripts
     perAppRouting
     control
+    amneziaWgProfileNamesFile
     ;
 }

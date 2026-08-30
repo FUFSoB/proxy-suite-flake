@@ -87,6 +87,68 @@
         touch "$out"
       '';
 
+  proxy-ctl-amneziawg =
+    pkgs.runCommand "proxy-suite-proxy-ctl-amneziawg-check"
+      {
+        nativeBuildInputs = [
+          pkgs.bash
+          pkgs.coreutils
+          pkgs.gnugrep
+          pkgs.jq
+        ];
+      }
+      ''
+        proxy_ctl="$TMPDIR/proxy-ctl"
+        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
+        chmod +x "$proxy_ctl"
+
+        mkdir -p bin
+        cat > bin/systemctl <<'SH'
+        #!${pkgs.bash}/bin/bash
+        case "$1" in
+          cat) exit 0 ;;
+          is-active)
+            if [ "''${3:-''${2:-}}" = "proxy-suite-awg-home" ] || [ "''${2:-}" = "proxy-suite-awg-home" ]; then
+              if [ "''${2:-}" != "--quiet" ]; then
+                echo active
+              fi
+              exit 0
+            fi
+            if [ "''${2:-}" != "--quiet" ]; then
+              echo inactive
+            fi
+            exit 3
+            ;;
+          start|stop|restart)
+            printf '%s %s\n' "$1" "$2" >> "$SYSTEMCTL_LOG"
+            ;;
+        esac
+        SH
+        chmod +x bin/systemctl
+
+        printf '%s\n' '["home","work"]' > awg-profiles.json
+        export PATH="$PWD/bin:$PATH"
+        export SYSTEMCTL_LOG="$PWD/systemctl.log"
+        export AWG_PROFILES_FILE="$PWD/awg-profiles.json"
+
+        bash "$proxy_ctl" awg list > list-output
+        grep -q 'home.*active' list-output
+        grep -q 'work.*inactive' list-output
+        test "$(bash "$proxy_ctl" awg status)" = home
+        bash "$proxy_ctl" awg on work
+        bash "$proxy_ctl" awg off home
+        bash "$proxy_ctl" awg restart home
+        grep -q '^start proxy-suite-awg-work$' "$SYSTEMCTL_LOG"
+        grep -q '^stop proxy-suite-awg-home$' "$SYSTEMCTL_LOG"
+        grep -q '^restart proxy-suite-awg-home$' "$SYSTEMCTL_LOG"
+
+        if bash "$proxy_ctl" awg on missing 2> error-output; then
+          exit 1
+        fi
+        grep -q 'Unknown AmneziaWG profile' error-output
+        touch "$out"
+      '';
+
   readme-doc-source = builtins.seq (
     assert !(pkgs.lib.hasInfix "environment.systemPackages" readmeDocSource);
     assert !(pkgs.lib.hasInfix "packageByPattern" readmeDocSource);

@@ -14,6 +14,7 @@
   proxychainsConfigFile,
   proxychainsQuietArg,
   routeModeStateFile,
+  amneziaWgProfileNamesFile,
 }:
 {
   proxyCtl = packages.mkProxyCtl {
@@ -26,6 +27,7 @@
       proxychainsConfigFile
       proxychainsQuietArg
       routeModeStateFile
+      amneziaWgProfileNamesFile
       ;
     defaultRouteMode = if proxyCfg.proxyByDefault then "blacklist" else "whitelist";
     perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";

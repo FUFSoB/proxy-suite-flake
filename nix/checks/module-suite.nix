@@ -126,6 +126,16 @@ let
     inherit mkBadProxySuiteFixture mkFailingAssertions;
   };
 
+  amneziaWgChecks = import ./amnezia-wg.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      mkProxyCtlDerived
+      ;
+  };
+
   globalProxyModeChecks = import ./global-proxy-modes.nix {
     inherit
       pkgs
@@ -196,6 +206,7 @@ let
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions
+    ++ amneziaWgChecks.assertions
     ++ zapretChecks.assertions
     ++ globalProxyModeChecks.assertions
     ++ trayChecks.assertions

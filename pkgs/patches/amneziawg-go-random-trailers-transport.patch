@@ -1,0 +1,68 @@
+diff --git a/device/receive.go b/device/receive.go
+index d1901f8..8d709bf 100644
+--- a/device/receive.go
++++ b/device/receive.go
+@@ -124,8 +124,18 @@ func (device *Device) RoutineReceiveIncoming(
+ 				cip.XORKeyStream(typeHash, typeHash)
+ 			}
+ 
+-			// get message padding and type based on information from S1-S4 and H1-H4
+-			msgSize, msgType, padding := device.DeterminePacketTypeAndPadding(packet, typeHash)
++			// A transport packet can also match a ranged H1-H3 value when random
++			// handshake trailers are enabled. Prefer an H4 candidate only when its
++			// decrypted receiver index belongs to this device; otherwise retain the
++			// normal handshake classification. This avoids silently sending valid
++			// transport packets to the handshake queue where MAC1 rejects them.
++			msgSize, msgType, padding := 0, uint32(MessageUnknownType), uint32(0)
++			if transportPadding, ok := device.DetermineTransportCandidate(packet); ok {
++				msgSize, msgType, padding = MessageTransportSize, MessageTransportType, transportPadding
++			} else {
++				// get message padding and type based on information from S1-S4 and H1-H4
++				msgSize, msgType, padding = device.DeterminePacketTypeAndPadding(packet, typeHash)
++			}
+ 
+ 			packet = packet[padding:]
+ 			if msgType != MessageTransportType {
+@@ -590,6 +600,42 @@ func applyHash(dst, src, hash []byte) {
+ 	}
+ }
+ 
++// DetermineTransportCandidate recognizes transport packets before the ranged
++// handshake classifier. A range match by itself is ambiguous, so also require
++// the decrypted receiver index to identify a keypair owned by this device.
++func (device *Device) DetermineTransportCandidate(packet []byte) (uint32, bool) {
++	padding := device.paddings.transport.Load()
++	if len(packet) < int(padding)+MessageTransportSize {
++		return 0, false
++	}
++
++	header := make([]byte, MessageTransportHeaderSize)
++	copy(header, packet[padding:padding+MessageTransportHeaderSize])
++
++	cip, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize])
++	if err != nil {
++		return 0, false
++	}
++	if cip != nil {
++		cip.XORKeyStream(header, header)
++	}
++
++	transportHeader := device.headers.transport.Load()
++	if !transportHeader.Contains(binary.LittleEndian.Uint32(header[:4])) {
++		return 0, false
++	}
++
++	receiver := binary.LittleEndian.Uint32(
++		header[MessageTransportOffsetReceiver:MessageTransportOffsetCounter],
++	)
++	value := device.indexTable.Lookup(receiver)
++	if value.keypair == nil || value.peer == nil {
++		return 0, false
++	}
++
++	return padding, true
++}
++
+ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, typeHash []byte) (int, uint32, uint32) {
+ 	var headerBytes [4]byte
+ 	var padding uint32

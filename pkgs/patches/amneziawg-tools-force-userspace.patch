@@ -1,0 +1,17 @@
+diff --git a/wg-quick/linux.bash b/wg-quick/linux.bash
+index 20c820d..af0aef0 100755
+--- a/wg-quick/linux.bash
++++ b/wg-quick/linux.bash
+@@ -87,7 +87,11 @@ auto_su() {
+ 
+ add_if() {
+ 	local ret
+-	if ! cmd ip link add "$INTERFACE" type amneziawg; then
++	if [[ ${WG_QUICK_FORCE_USERSPACE_IMPLEMENTATION:-0} == 1 ]]; then
++		command -v "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" >/dev/null || exit 1
++		echo "[!] Using the userspace AmneziaWG implementation for this configuration." >&2
++		cmd "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" "$INTERFACE"
++	elif ! cmd ip link add "$INTERFACE" type amneziawg; then
+ 		ret=$?
+ 		[[ -e /sys/module/amneziawg ]] || ! command -v "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" >/dev/null && exit $ret
+ 		echo "[!] Missing WireGuard (Amnezia VPN) kernel module. Falling back to slow userspace implementation." >&2

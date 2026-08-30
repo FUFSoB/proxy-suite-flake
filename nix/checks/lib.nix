@@ -213,6 +213,7 @@ let
       profiles = builtins.fromJSON (generated.readDerivation metadata.perAppRoutingProfilesFile);
       subscriptionTags = builtins.fromJSON (generated.readDerivation metadata.subscriptionTagsFile);
       inherit (metadata) proxychainsConfigFile;
+      awgProfiles = builtins.fromJSON (generated.readDerivation metadata.amneziaWgProfileNamesFile);
     };
 in
 {

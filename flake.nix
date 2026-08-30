@@ -1,5 +1,5 @@
 {
-  description = "NixOS proxy suite - SingBox, XRay, zapret, tg-ws-proxy";
+  description = "NixOS proxy suite - SingBox, XRay, AmneziaWG 3.1, zapret, tg-ws-proxy";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -44,6 +44,8 @@
 
       overlays.default = final: prev: {
         inherit (import ./pkgs/default.nix { pkgs = final; })
+          amneziawg-tools
+          amneziawg-go
           mkProxyCtl
           mkProxySuiteTray
           mkTgWsProxy
@@ -87,6 +89,8 @@
         in
         {
           inherit (suitePkgs)
+            amneziawg-tools
+            amneziawg-go
             tg-ws-proxy
             proxy-suite-tray
             ;

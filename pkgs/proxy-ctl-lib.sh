@@ -7,6 +7,38 @@ ALL_SERVICES=(
   zapret-discord-youtube
 )
 
+_awg_service() {
+  printf 'proxy-suite-awg-%s' "$1"
+}
+
+_awg_profile_exists() {
+  local wanted="$1" profile
+  for profile in "${AWG_PROFILES[@]}"; do
+    if [ "$profile" = "$wanted" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+_require_awg_profile() {
+  local profile="$1"
+  if ! _awg_profile_exists "$profile"; then
+    echo "Unknown AmneziaWG profile: $profile" >&2
+    exit 1
+  fi
+}
+
+_active_awg_profiles() {
+  local profile service
+  for profile in "${AWG_PROFILES[@]}"; do
+    service="$(_awg_service "$profile")"
+    if _svc_active "$service"; then
+      printf '%s\n' "$profile"
+    fi
+  done
+}
+
 _usage() {
   local status="${1:-1}"
   echo "Usage: proxy-ctl <command> [args]"
@@ -17,6 +49,10 @@ _usage() {
   echo "  proxy on|off              enable/disable the proxy backend stack"
   echo "  tproxy on|off             enable/disable TProxy transparent mode"
   echo "  tun on|off                enable/disable TUN mode"
+  echo "  awg list|status [profile] list profiles or show AmneziaWG status"
+  echo "  awg on <profile>          start an AmneziaWG profile"
+  echo "  awg off [profile]         stop one or all active AmneziaWG profiles"
+  echo "  awg restart [profile]     restart one or all active AmneziaWG profiles"
   echo "  route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
   echo "                            set temporary routing override"
   echo "  zapret on|off             enable/disable zapret-discord-youtube"
@@ -139,6 +175,9 @@ _status_tray() {
   printf 'route_mode_available=%s\n' "$(_bool _svc_exists proxy-suite-socks)"
   printf 'route_mode=%s\n' "$(_route_mode_current)"
   printf 'default_route_mode=%s\n' "$(_route_mode_default)"
+  printf 'awg_available=%s\n' "$(_bool test "${#AWG_PROFILES[@]}" -gt 0)"
+  printf 'awg_active=%s\n' "$(_active_awg_profiles | head -n1)"
+  printf 'awg_profiles=%s\n' "$(IFS=,; echo "${AWG_PROFILES[*]}")"
 }
 
 _ensure_app_routing() {
@@ -246,6 +285,9 @@ cmd_status() {
   for svc in "${ALL_SERVICES[@]}"; do
     _svc_status "$svc"
   done
+  for profile in "${AWG_PROFILES[@]}"; do
+    _svc_status "$(_awg_service "$profile")"
+  done
   if _svc_exists proxy-suite-socks; then
     echo ""
     echo "routing:"
@@ -335,6 +377,80 @@ cmd_restart() {
       systemctl restart "$svc"
     fi
   done
+  local profile
+  for profile in "${AWG_PROFILES[@]}"; do
+    if _svc_active "$(_awg_service "$profile")"; then
+      systemctl restart "$(_awg_service "$profile")"
+    fi
+  done
+}
+
+cmd_awg() {
+  local action="${1:-list}" profile service active
+  shift || true
+
+  case "$action" in
+    list)
+      if [ "${#AWG_PROFILES[@]}" -eq 0 ]; then
+        echo "No AmneziaWG profiles configured."
+        return
+      fi
+      printf "  %-24s %s\n" "PROFILE" "STATUS"
+      for profile in "${AWG_PROFILES[@]}"; do
+        service="$(_awg_service "$profile")"
+        active="$(systemctl is-active "$service" 2>/dev/null || true)"
+        printf "  %-24s %s\n" "$profile" "${active:-unknown}"
+      done
+      ;;
+    status)
+      if [ "$#" -gt 0 ]; then
+        profile="$1"
+        _require_awg_profile "$profile"
+        systemctl is-active "$(_awg_service "$profile")"
+      else
+        _active_awg_profiles
+      fi
+      ;;
+    on)
+      profile="${1:?Usage: proxy-ctl awg on <profile>}"
+      _require_awg_profile "$profile"
+      systemctl start "$(_awg_service "$profile")"
+      ;;
+    off)
+      if [ "$#" -gt 0 ]; then
+        profile="$1"
+        _require_awg_profile "$profile"
+        systemctl stop "$(_awg_service "$profile")"
+      else
+        for profile in "${AWG_PROFILES[@]}"; do
+          service="$(_awg_service "$profile")"
+          if _svc_active "$service"; then
+            systemctl stop "$service"
+          fi
+        done
+      fi
+      ;;
+    restart)
+      if [ "$#" -gt 0 ]; then
+        profile="$1"
+        _require_awg_profile "$profile"
+        systemctl restart "$(_awg_service "$profile")"
+      else
+        active="$(_active_awg_profiles)"
+        if [ -z "$active" ]; then
+          echo "No AmneziaWG profile is active." >&2
+          exit 1
+        fi
+        while IFS= read -r profile; do
+          systemctl restart "$(_awg_service "$profile")"
+        done <<< "$active"
+      fi
+      ;;
+    *)
+      echo "Usage: proxy-ctl awg list|status [profile]|on <profile>|off [profile]|restart [profile]" >&2
+      exit 1
+      ;;
+  esac
 }
 
 cmd_outbounds() {

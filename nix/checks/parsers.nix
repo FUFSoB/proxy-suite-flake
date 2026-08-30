@@ -18,4 +18,13 @@
         python ${../../scripts/test-fetch-subscription.py}
         touch "$out"
       '';
+
+  amneziawg-config-parser =
+    pkgs.runCommand "amneziawg-config-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONPATH=${../../scripts}:$PYTHONPATH
+        python ${../../scripts/test-amneziawg-config.py}
+        touch "$out"
+      '';
 }

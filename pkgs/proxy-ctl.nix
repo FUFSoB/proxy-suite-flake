@@ -18,6 +18,7 @@
   proxychainsQuietArg,
   routeModeStateFile,
   defaultRouteMode,
+  amneziaWgProfileNamesFile,
 }:
 
 let
@@ -39,6 +40,7 @@ let
     PROXYCHAINS_QUIET_ARG = lib.removeSuffix " " proxychainsQuietArg;
     ROUTE_MODE_STATE_FILE = routeModeStateFile;
     DEFAULT_ROUTE_MODE = defaultRouteMode;
+    AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
   };
 in
 pkgs.symlinkJoin {
@@ -51,6 +53,7 @@ pkgs.symlinkJoin {
       subscriptionTagsFile
       perAppRoutingProfilesFile
       proxychainsConfigFile
+      amneziaWgProfileNamesFile
       ;
     script = unwrapped.drvAttrs.text;
   };
@@ -80,6 +83,7 @@ pkgs.symlinkJoin {
       --set PROXYCHAINS_CONFIG ${lib.escapeShellArg (toString proxychainsConfigFile)} \
       --set PROXYCHAINS_QUIET_ARG ${lib.escapeShellArg (lib.removeSuffix " " proxychainsQuietArg)} \
       --set ROUTE_MODE_STATE_FILE ${lib.escapeShellArg routeModeStateFile} \
-      --set DEFAULT_ROUTE_MODE ${lib.escapeShellArg defaultRouteMode}
+      --set DEFAULT_ROUTE_MODE ${lib.escapeShellArg defaultRouteMode} \
+      --set AWG_PROFILES_FILE ${lib.escapeShellArg (toString amneziaWgProfileNamesFile)}
   '';
 }

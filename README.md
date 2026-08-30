@@ -2,7 +2,7 @@
 
 Declarative proxy stack for NixOS.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), native [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) client tunnels, [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
 
 The goal is to replace GUI clients like v2rayN and throne – you configure your proxies in Nix, rebuild, and they just work as systemd services.
 
@@ -14,6 +14,7 @@ The goal is to replace GUI clients like v2rayN and throne – you configure your
 - **Backend choice** – use SingBox or XRay through the same `services.proxy-suite.proxy` option tree
 - **Transparent proxy (TProxy)** – redirect all system traffic through the active backend without configuring each app; start/stop on demand or autostart at boot
 - **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something, with optional boot-time autostart
+- **AmneziaWG profiles** – native AWG 1.x–3.x tunnels from `.conf`, self-contained `vpn://`, or declarative Nix configuration
 - **Per-app wrapping** – run selected apps through the local proxy with `proxy-ctl wrap <profile> -- <command>`, without enabling global TProxy or TUN
 - **Subscription URLs** – point at a v2rayN/Clash-format subscription endpoint; the module fetches, decodes, and imports all proxies automatically, with a periodic refresh timer
 - **Multiple outbounds** with automatic latency-based switching or manual selection
@@ -90,6 +91,21 @@ services.proxy-suite = {
     };
   };
 
+  # Native AmneziaWG profiles are independent of the SingBox/XRay backend.
+  # Only one AWG, TUN, or TProxy global tunnel can be active at once;
+  # zapret is mutually exclusive with AWG while its service is running.
+  amneziaWg = {
+    enable = true;
+    profiles.home = {
+      # Secret-managed exported .conf files are the simplest input.
+      configFile = "/run/secrets/home-amneziawg.conf";
+      autostart = false;
+    };
+
+    # Self-contained AmneziaVPN exports are supported too:
+    profiles.work.vpnFile = "/run/secrets/work-amnezia.vpn";
+  };
+
   zapret = {
     enable = true;
     perApp.enable = true;
@@ -140,6 +156,10 @@ Commands:
   proxy on|off              enable/disable the proxy backend stack
   tproxy on|off             enable/disable TProxy transparent mode
   tun on|off                enable/disable TUN mode
+  awg list|status [profile] list profiles or show AmneziaWG status
+  awg on <profile>          start an AmneziaWG profile
+  awg off [profile]         stop one or all active AmneziaWG profiles
+  awg restart [profile]     restart one or all active AmneziaWG profiles
   route-mode default|whitelist|blacklist|all-proxy|all-bypass|status
                             set temporary routing override
   zapret on|off             enable/disable zapret-discord-youtube

@@ -21,6 +21,7 @@ static GtkWidget *route_mode_item;
 static GtkWidget *route_mode_items[ROUTE_MODE_CHOICE_COUNT];
 static GtkWidget *tproxy_item;
 static GtkWidget *tun_item;
+static GtkWidget *awg_item;
 static GtkWidget *zapret_item;
 static GtkWidget *open_controls_item;
 static GtkWidget *controls_window;
@@ -29,12 +30,18 @@ static GtkWidget *controls_core_status_label;
 static GtkWidget *controls_route_mode_status_label;
 static GtkWidget *controls_route_mode_combo;
 static GtkWidget *controls_traffic_status_label;
+static GtkWidget *controls_awg_status_label;
+static GtkWidget *controls_awg_combo;
 static GtkWidget *controls_zapret_status_label;
 static GtkWidget *controls_proxy_button;
 static GtkWidget *controls_tproxy_button;
 static GtkWidget *controls_tun_button;
 static GtkWidget *controls_zapret_button;
 static gboolean updating_route_mode_widgets = FALSE;
+static gboolean updating_awg_widgets = FALSE;
+static gchar **awg_profile_names;
+static GtkWidget **awg_profile_items;
+static gsize awg_profile_count;
 
 typedef enum
 {
@@ -67,12 +74,15 @@ typedef struct
     gboolean socks_available;
     gboolean tproxy_available;
     gboolean tun_available;
+    gboolean awg_available;
     gboolean zapret_available;
     gboolean subscription_update_available;
     gboolean route_mode_available;
     gboolean socks;
     gboolean tproxy;
     gboolean tun;
+    gchar awg_active[64];
+    gchar awg_profiles[1024];
     gboolean zapret;
     RouteMode route_mode;
     RouteMode default_route_mode;
@@ -201,6 +211,17 @@ static gboolean run_proxy_ctl(const char *arg1, const char *arg2)
     return proxy_ctl_command(arg1, arg2, NULL);
 }
 
+static gboolean run_proxy_ctl3(const char *arg1, const char *arg2, const char *arg3)
+{
+    gchar *argv[] = {
+        (gchar *)PROXY_CTL_BIN,
+        (gchar *)arg1,
+        (gchar *)arg2,
+        (gchar *)arg3,
+        NULL};
+    return command_succeeds(argv);
+}
+
 static gboolean parse_proxy_ctl_bool(const char *value)
 {
     return value && strcmp(value, "true") == 0;
@@ -307,6 +328,18 @@ static ServiceState get_service_state(void)
         {
             state.tun = parse_proxy_ctl_bool(parts[1]);
         }
+        else if (strcmp(parts[0], "awg_available") == 0)
+        {
+            state.awg_available = parse_proxy_ctl_bool(parts[1]);
+        }
+        else if (strcmp(parts[0], "awg_active") == 0)
+        {
+            g_strlcpy(state.awg_active, parts[1], sizeof(state.awg_active));
+        }
+        else if (strcmp(parts[0], "awg_profiles") == 0)
+        {
+            g_strlcpy(state.awg_profiles, parts[1], sizeof(state.awg_profiles));
+        }
         else if (strcmp(parts[0], "zapret_available") == 0)
         {
             state.zapret_available = parse_proxy_ctl_bool(parts[1]);
@@ -343,6 +376,10 @@ static ServiceState get_service_state(void)
 
 static const char *traffic_mode_label(const ServiceState *state)
 {
+    if (state->awg_active[0] != '\0')
+    {
+        return "AmneziaWG tunnel enabled";
+    }
     if (state->tun)
     {
         return "TUN tunnel enabled";
@@ -408,13 +445,37 @@ static void sync_route_mode_widgets(RouteMode mode)
     updating_route_mode_widgets = FALSE;
 }
 
+static void sync_awg_widgets(const char *active_profile)
+{
+    updating_awg_widgets = TRUE;
+    if (awg_profile_items)
+    {
+        gtk_check_menu_item_set_active(
+            GTK_CHECK_MENU_ITEM(awg_profile_items[0]),
+            !active_profile || active_profile[0] == '\0');
+        for (gsize i = 0; i < awg_profile_count; ++i)
+        {
+            gtk_check_menu_item_set_active(
+                GTK_CHECK_MENU_ITEM(awg_profile_items[i + 1]),
+                active_profile && strcmp(active_profile, awg_profile_names[i]) == 0);
+        }
+    }
+    if (controls_awg_combo)
+    {
+        gtk_combo_box_set_active_id(
+            GTK_COMBO_BOX(controls_awg_combo),
+            active_profile && active_profile[0] != '\0' ? active_profile : "off");
+    }
+    updating_awg_widgets = FALSE;
+}
+
 static const char *indicator_label_text(const ServiceState *state)
 {
-    if (state->socks && (state->tproxy || state->tun) && state->zapret)
+    if (state->socks && (state->tproxy || state->tun || state->awg_active[0] != '\0') && state->zapret)
     {
         return "Proxy + traffic + zapret";
     }
-    if (state->socks && (state->tproxy || state->tun))
+    if (state->socks && (state->tproxy || state->tun || state->awg_active[0] != '\0'))
     {
         return "Proxy + traffic";
     }
@@ -425,6 +486,10 @@ static const char *indicator_label_text(const ServiceState *state)
     if (state->socks)
     {
         return "Proxy only";
+    }
+    if (state->awg_active[0] != '\0')
+    {
+        return "AmneziaWG";
     }
     if (state->zapret)
     {
@@ -500,6 +565,10 @@ static void update_status(void)
         {
             gtk_label_set_text(GTK_LABEL(controls_traffic_status_label), "[Traffic] Mode: Unknown");
         }
+        if (controls_awg_status_label)
+        {
+            gtk_label_set_text(GTK_LABEL(controls_awg_status_label), "[AmneziaWG] Profile: Unknown");
+        }
         if (controls_route_mode_status_label)
         {
             gtk_label_set_text(GTK_LABEL(controls_route_mode_status_label), "[Routing] Mode: Unknown");
@@ -526,11 +595,14 @@ static void update_status(void)
         state.socks ? "Running" : "Stopped");
     gchar *route_mode_text = g_strdup_printf("[Routing] Mode: %s", route_mode);
     gchar *traffic_text = g_strdup_printf("[Traffic] Mode: %s", traffic);
+    gchar *awg_text = g_strdup_printf(
+        "[AmneziaWG] Profile: %s",
+        state.awg_active[0] != '\0' ? state.awg_active : "Off");
     gchar *zapret_text = g_strdup_printf(
         "[Zapret] zapret-discord-youtube: %s",
         zapret);
 
-    if (state.tproxy || state.tun)
+    if (state.tproxy || state.tun || state.awg_active[0] != '\0')
     {
         app_indicator_set_icon(
             indicator,
@@ -582,6 +654,10 @@ static void update_status(void)
     {
         gtk_label_set_text(GTK_LABEL(controls_traffic_status_label), traffic_text);
     }
+    if (controls_awg_status_label)
+    {
+        gtk_label_set_text(GTK_LABEL(controls_awg_status_label), awg_text);
+    }
     if (controls_zapret_status_label)
     {
         gtk_label_set_text(GTK_LABEL(controls_zapret_status_label), zapret_text);
@@ -619,6 +695,15 @@ static void update_status(void)
         gtk_menu_item_set_label(GTK_MENU_ITEM(tun_item),
                                 state.tun ? "[Traffic] Stop TUN Mode" : "[Traffic] Start TUN Mode");
     }
+    if (awg_item)
+    {
+        gchar *label = g_strdup_printf(
+            "[Traffic] AmneziaWG: %s",
+            state.awg_active[0] != '\0' ? state.awg_active : "Off");
+        gtk_menu_item_set_label(GTK_MENU_ITEM(awg_item), label);
+        g_free(label);
+        sync_awg_widgets(state.awg_active);
+    }
     if (controls_tun_button)
     {
         gtk_button_set_label(GTK_BUTTON(controls_tun_button),
@@ -641,6 +726,7 @@ static void update_status(void)
     g_free(core_text);
     g_free(route_mode_text);
     g_free(traffic_text);
+    g_free(awg_text);
     g_free(zapret_text);
 }
 
@@ -729,6 +815,44 @@ static void on_tun_toggle(GtkWidget *item, gpointer data)
     {
         run_proxy_ctl("tun", "on");
     }
+    update_status();
+}
+
+static void set_awg_profile(const char *profile)
+{
+    if (profile && profile[0] != '\0' && strcmp(profile, "off") != 0)
+    {
+        run_proxy_ctl3("awg", "on", profile);
+    }
+    else
+    {
+        run_proxy_ctl("awg", "off");
+    }
+}
+
+static void on_awg_menu_toggled(GtkCheckMenuItem *item, gpointer data)
+{
+    if (updating_awg_widgets || !gtk_check_menu_item_get_active(item))
+    {
+        return;
+    }
+    set_awg_profile((const char *)data);
+    update_status();
+}
+
+static void on_awg_combo_changed(GtkComboBox *combo, gpointer data)
+{
+    (void)data;
+    if (updating_awg_widgets)
+    {
+        return;
+    }
+    const gchar *profile = gtk_combo_box_get_active_id(combo);
+    if (!profile)
+    {
+        return;
+    }
+    set_awg_profile(profile);
     update_status();
 }
 
@@ -867,6 +991,25 @@ static void build_controls_window(void)
         gtk_box_pack_start(GTK_BOX(traffic_box), controls_tun_button, FALSE, FALSE, 0);
     }
 
+    if (initial_state.awg_available)
+    {
+        controls_awg_status_label = gtk_label_new("[AmneziaWG] Profile: Off");
+        gtk_label_set_xalign(GTK_LABEL(controls_awg_status_label), 0.0f);
+        gtk_box_pack_start(GTK_BOX(traffic_box), controls_awg_status_label, FALSE, FALSE, 0);
+
+        controls_awg_combo = gtk_combo_box_text_new();
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(controls_awg_combo), "off", "AmneziaWG Off");
+        for (gsize i = 0; i < awg_profile_count; ++i)
+        {
+            gtk_combo_box_text_append(
+                GTK_COMBO_BOX_TEXT(controls_awg_combo),
+                awg_profile_names[i],
+                awg_profile_names[i]);
+        }
+        g_signal_connect(controls_awg_combo, "changed", G_CALLBACK(on_awg_combo_changed), NULL);
+        gtk_box_pack_start(GTK_BOX(traffic_box), controls_awg_combo, FALSE, FALSE, 0);
+    }
+
     if (initial_state.zapret_available)
     {
         GtkWidget *zapret_frame = gtk_frame_new("[Zapret] DPI bypass");
@@ -971,6 +1114,40 @@ static void build_menu(void)
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), tun_item);
     }
 
+
+    if (initial_state.awg_available)
+    {
+        awg_item = gtk_menu_item_new_with_label("[Traffic] AmneziaWG: Off");
+        GtkWidget *awg_menu = gtk_menu_new();
+        GSList *awg_group = NULL;
+        awg_profile_items = g_new0(GtkWidget *, awg_profile_count + 1);
+
+        awg_profile_items[0] = gtk_radio_menu_item_new_with_label(awg_group, "Off");
+        g_signal_connect(
+            awg_profile_items[0],
+            "toggled",
+            G_CALLBACK(on_awg_menu_toggled),
+            (gpointer)"");
+        gtk_menu_shell_append(GTK_MENU_SHELL(awg_menu), awg_profile_items[0]);
+        awg_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(awg_profile_items[0]));
+
+        for (gsize i = 0; i < awg_profile_count; ++i)
+        {
+            awg_profile_items[i + 1] = gtk_radio_menu_item_new_with_label(
+                awg_group,
+                awg_profile_names[i]);
+            g_signal_connect(
+                awg_profile_items[i + 1],
+                "toggled",
+                G_CALLBACK(on_awg_menu_toggled),
+                awg_profile_names[i]);
+            gtk_menu_shell_append(GTK_MENU_SHELL(awg_menu), awg_profile_items[i + 1]);
+            awg_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(awg_profile_items[i + 1]));
+        }
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(awg_item), awg_menu);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), awg_item);
+    }
+
     if (initial_state.zapret_available)
     {
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
@@ -1035,6 +1212,11 @@ int main(int argc, char *argv[])
     app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE);
 
     initial_state = get_service_state();
+    if (initial_state.awg_profiles[0] != '\0')
+    {
+        awg_profile_names = g_strsplit(initial_state.awg_profiles, ",", -1);
+        awg_profile_count = g_strv_length(awg_profile_names);
+    }
     build_menu();
     build_controls_window();
     app_indicator_set_menu(indicator, GTK_MENU(menu));
@@ -1045,5 +1227,7 @@ int main(int argc, char *argv[])
     g_timeout_add_seconds(POLL_INTERVAL, on_timer, NULL);
 
     gtk_main();
+    g_strfreev(awg_profile_names);
+    g_free(awg_profile_items);
     return 0;
 }
