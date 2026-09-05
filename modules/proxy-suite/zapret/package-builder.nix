@@ -14,14 +14,55 @@
 }:
 
 let
-  mkGlobalBypassScript =
-    filterMark:
-    pkgs.writeText "proxy-suite-zapret-global-bypass.sh" ''
+  mkBypassScript =
+    {
+      filterMark ? null,
+      tunInterfaces ? [ ],
+      scope ? "global",
+    }:
+    pkgs.writeText "proxy-suite-zapret-bypass.sh" ''
+      # Upstream presets can select iptables explicitly, in which case the nft
+      # hook below is never called. Use upstream helpers for idempotent start
+      # and stop, and distinct comments so each service owns its exemptions.
+      zapret_custom_firewall() {
+        local family rule_helper chain
+        for family in 4 6; do
+          if [ "$family" = 4 ]; then
+            [ "''${DISABLE_IPV4:-0}" != 1 ] || continue
+            rule_helper=ipt_add_del
+          else
+            [ "''${DISABLE_IPV6:-0}" != 1 ] || continue
+            rule_helper=ipt6_add_del
+          fi
+          ${lib.optionalString (filterMark != null) ''
+            for chain in POSTROUTING INPUT FORWARD; do
+              "$rule_helper" "$1" "$chain" -t mangle -m mark ! --mark 0/${filterMark} -m comment --comment "proxy-suite ${scope} per-app-zapret bypass" -j RETURN
+            done
+          ''}
+          ${lib.concatMapStrings (interface: ''
+            "$rule_helper" "$1" POSTROUTING -t mangle -o ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+            "$rule_helper" "$1" INPUT -t mangle -i ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+            "$rule_helper" "$1" FORWARD -t mangle -i ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+          '') tunInterfaces}
+        done
+        return 0
+      }
+
       zapret_custom_firewall_nft() {
-        nft insert rule inet $ZAPRET_NFT_TABLE postrouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE postnat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prerouting mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
-        nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and ${filterMark} != 0 return comment "proxy-suite per-app-zapret bypass"
+        ${lib.optionalString (filterMark != null) ''
+          nft insert rule inet $ZAPRET_NFT_TABLE postrouting mark and ${filterMark} != 0 return comment '"proxy-suite per-app-zapret bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE postnat mark and ${filterMark} != 0 return comment '"proxy-suite per-app-zapret bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE prerouting mark and ${filterMark} != 0 return comment '"proxy-suite per-app-zapret bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and ${filterMark} != 0 return comment '"proxy-suite per-app-zapret bypass"'
+        ''}
+        # Desync packets must reach the physical network, never a TUN userspace
+        # TCP stack: fake TLS payloads there can break the proxied handshake.
+        ${lib.concatMapStrings (interface: ''
+          nft insert rule inet $ZAPRET_NFT_TABLE postrouting oifname ${lib.escapeShellArg (builtins.toJSON interface)} return comment '"proxy-suite TUN bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE postnat oifname ${lib.escapeShellArg (builtins.toJSON interface)} return comment '"proxy-suite TUN bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE prerouting iifname ${lib.escapeShellArg (builtins.toJSON interface)} return comment '"proxy-suite TUN bypass"'
+          nft insert rule inet $ZAPRET_NFT_TABLE prenat iifname ${lib.escapeShellArg (builtins.toJSON interface)} return comment '"proxy-suite TUN bypass"'
+        '') tunInterfaces}
       }
     '';
 
@@ -227,6 +268,6 @@ in
 {
   inherit
     mkDerivedZapretPackage
-    mkGlobalBypassScript
+    mkBypassScript
     ;
 }

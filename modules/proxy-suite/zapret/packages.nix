@@ -9,6 +9,10 @@
 let
   zapretCfg = cfg.zapret;
   perAppZapretCfg = zapretCfg.perApp;
+  tunInterfaces = lib.unique (
+    lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
+    ++ lib.optional (cfg.proxy.enable && cfg.proxy.tun.perApp.enable) cfg.proxy.tun.perApp.interface
+  );
   zapretDomainGroups = import ../zapret-domain-groups.nix { inherit lib zapret; };
 
   runtimeDeps = lib.attrValues {
@@ -100,7 +104,7 @@ let
   };
   inherit (packageBuilder)
     mkDerivedZapretPackage
-    mkGlobalBypassScript
+    mkBypassScript
     ;
 
   globalZapretPackage = mkDerivedZapretPackage {
@@ -109,7 +113,13 @@ let
     gameFilter = zapretCfg.gameFilter;
     forceDisableFilterMark = true;
     customScript =
-      if perAppZapretCfg.enable then mkGlobalBypassScript (toString perAppZapretCfg.filterMark) else null;
+      if perAppZapretCfg.enable || tunInterfaces != [ ] then
+        mkBypassScript {
+          inherit tunInterfaces;
+          filterMark = if perAppZapretCfg.enable then toString perAppZapretCfg.filterMark else null;
+        }
+      else
+        null;
   };
 
   perAppZapretPackage = mkDerivedZapretPackage {
@@ -122,6 +132,14 @@ let
     desyncMark = 134217728;
     desyncMarkPostnat = 67108864;
     nftTable = "proxy_suite_per_app_zapret";
+    customScript =
+      if tunInterfaces != [ ] then
+        mkBypassScript {
+          inherit tunInterfaces;
+          scope = "per-app";
+        }
+      else
+        null;
   };
 
   mkZapretEnv = package: [
