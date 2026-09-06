@@ -14,7 +14,7 @@ Update module option docs there instead of editing this file by hand.
     - [enable](#services-proxy-suite-amneziawg-enable)
     - [kernelModulePackage](#services-proxy-suite-amneziawg-kernelmodulepackage)
     - [profiles](#services-proxy-suite-amneziawg-profiles)
-      - <name>
+      - `<name>`
         - [allowConfigHooks](#services-proxy-suite-amneziawg-profiles-name-allowconfighooks)
         - [autostart](#services-proxy-suite-amneziawg-profiles-name-autostart)
         - [configFile](#services-proxy-suite-amneziawg-profiles-name-configfile)
@@ -51,6 +51,7 @@ Update module option docs there instead of editing this file by hand.
             - [s2](#services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s2)
             - [s3](#services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s3)
             - [s4](#services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s4)
+          - [obfuscationFile](#services-proxy-suite-amneziawg-profiles-name-settings-obfuscationfile)
           - [peers](#services-proxy-suite-amneziawg-profiles-name-settings-peers)
             - item
               - [advancedSecurity](#services-proxy-suite-amneziawg-profiles-name-settings-peers-advancedsecurity)
@@ -1758,6 +1759,46 @@ null or (unsigned integer, meaning >=0)
 
 ```nix
 null
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/amnezia-wg\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/amnezia-wg.nix)
+
+
+
+<a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscationfile"></a>
+## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscationFile
+
+
+
+Runtime path to a partial JSON object using the same field names and
+value types as obfuscation, excluding headerProtectionKeyFile\.
+Values are combined with public obfuscation settings at service startup
+without putting the file contents in the Nix store\. Omitted or null
+fields are unset; duplicate JSON keys and fields set in both sources
+are rejected\. A file-provided headerProtectionKey also conflicts with
+obfuscation\.headerProtectionKeyFile\. Private and preshared keys use
+their existing file options\. Restart the profile after secret rotation\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/awg-obfuscation.json"
 ```
 
 *Declared by:*
@@ -3773,8 +3814,6 @@ list of string
 <a id="services-proxy-suite-proxy-routing-proxy-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.domains
 
-
-
 Domain suffixes to match in this routing rule\.
 Leave empty to skip domain-based matching for this rule entry\.
 
@@ -3809,6 +3848,8 @@ list of string
 
 <a id="services-proxy-suite-proxy-routing-proxy-geoips"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.geoips
+
+
 
 sing-geoip rule-set names to match in this routing rule\.
 Each name becomes a backend geoip rule-set reference\.

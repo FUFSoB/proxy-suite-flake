@@ -319,6 +319,102 @@ def _secret_value(inline: Any, path: Any, label: str) -> str:
     return value
 
 
+OBFUSCATION_UNSIGNED_FIELDS = {"jc", "jmin", "jmax", "s1", "s2", "s3", "s4"}
+OBFUSCATION_RANGE_FIELDS = {
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "contentPaddingAddition",
+    "rekeyAfterTime",
+    "rekeyTimeout",
+    "rejectAfterTime",
+    "keepaliveTimeout",
+    "maxHandshakeAttempts",
+}
+OBFUSCATION_STRING_FIELDS = {"i1", "i2", "i3", "i4", "i5", "headerProtectionKey"}
+OBFUSCATION_BOOLEAN_FIELDS = {"randomTrailers", "disableCookies"}
+
+
+def _unique_secret_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            # Even a key can contain secret input; do not echo it.
+            raise ConfigError("obfuscationFile contains duplicate JSON keys")
+        result[key] = value
+    return result
+
+
+def _reject_secret_constant(value: str) -> Any:
+    raise ConfigError("obfuscationFile contains an invalid JSON constant")
+
+
+def _merge_obfuscation(settings: dict[str, Any]) -> dict[str, Any]:
+    public = settings.get("obfuscation", {})
+    if not isinstance(public, dict):
+        raise ConfigError("obfuscation must be an object")
+    path = settings.get("obfuscationFile")
+    if path is None:
+        return public
+    try:
+        secret = json.loads(
+            _read_limited(str(path)),
+            object_pairs_hook=_unique_secret_object,
+            parse_constant=_reject_secret_constant,
+        )
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        # Decoder errors and OS exceptions can include input excerpts or paths.
+        message = (
+            str(exc) if isinstance(exc, ConfigError)
+            else "cannot read or decode obfuscationFile"
+        )
+        raise ConfigError(message) from None
+    if not isinstance(secret, dict):
+        raise ConfigError("obfuscationFile must contain a JSON object")
+
+    merged = dict(public)
+    known = (
+        OBFUSCATION_UNSIGNED_FIELDS | OBFUSCATION_RANGE_FIELDS
+        | OBFUSCATION_STRING_FIELDS | OBFUSCATION_BOOLEAN_FIELDS
+    )
+    for key, value in secret.items():
+        if key not in known:
+            raise ConfigError("obfuscationFile contains an unsupported field")
+        if value is None:
+            continue
+        if public.get(key) is not None or (
+            key == "headerProtectionKey" and public.get("headerProtectionKeyFile") is not None
+        ):
+            raise ConfigError(f"obfuscationFile field '{key}' has multiple sources")
+        unsigned = type(value) is int and value >= 0
+        if key in OBFUSCATION_UNSIGNED_FIELDS:
+            valid = unsigned
+        elif key in OBFUSCATION_RANGE_FIELDS:
+            valid = unsigned or (
+                isinstance(value, str)
+                and re.fullmatch(r"([0-9]+|[0-9]+-[0-9]+|\(off\))", value) is not None
+            )
+        elif key in OBFUSCATION_BOOLEAN_FIELDS:
+            valid = type(value) is bool
+        else:
+            valid = (
+                isinstance(value, str)
+                and bool(value.strip())
+                and value.splitlines() == [value]
+                and "\x00" not in value
+            )
+            if valid:
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError:
+                    valid = False
+        if not valid:
+            raise ConfigError(f"obfuscationFile field '{key}' has an invalid value")
+        merged[key] = value
+    return merged
+
+
 def render_settings(settings: dict[str, Any]) -> str:
     addresses = settings.get("addresses", [])
     peers = settings.get("peers", [])
@@ -346,9 +442,7 @@ def render_settings(settings: dict[str, Any]) -> str:
         if settings.get(source) is not None:
             lines.append(f"{target} = {settings[source]}")
 
-    obfuscation = settings.get("obfuscation", {})
-    if not isinstance(obfuscation, dict):
-        raise ConfigError("obfuscation must be an object")
+    obfuscation = _merge_obfuscation(settings)
     obfuscation_map = {
         "jc": "Jc",
         "jmin": "Jmin",

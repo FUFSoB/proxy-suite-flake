@@ -2,10 +2,13 @@
 
 import base64
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 from amneziawg_config import (
     ConfigError,
@@ -65,6 +68,139 @@ def encode_vpn(data, compressed=True):
 
 
 class AmneziaWgConfigTests(unittest.TestCase):
+    def secret_settings(self, path, **public):
+        return {
+            "addresses": ["10.8.0.2/32"],
+            "privateKey": "private",
+            "obfuscation": public,
+            "obfuscationFile": str(path),
+            "peers": [{"publicKey": "public", "allowedIPs": ["0.0.0.0/0"]}],
+        }
+
+    def test_partial_obfuscation_all_fields(self):
+        secret = {
+            "jc": 0, "jmin": 10, "jmax": 20,
+            "s1": 60, "s2": 90, "s3": 12, "s4": 16,
+            "h1": "100-200", "h2": 300, "h3": "400", "h4": "(off)",
+            "i1": "<b 0x1234>", "i2": "second", "i3": "third",
+            "i4": "fourth", "i5": "fifth", "headerProtectionKey": "header-secret",
+            "contentPaddingAddition": "8-16", "rekeyAfterTime": 120,
+            "rekeyTimeout": "5", "rejectAfterTime": "(off)",
+            "keepaliveTimeout": "10-20", "maxHandshakeAttempts": 10,
+            "randomTrailers": True, "disableCookies": False,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "secret.json"
+            path.write_text(json.dumps(secret))
+            settings = self.secret_settings(path)
+            config = prepare({"kind": "settings", "settings": settings})
+            for key, value in secret.items():
+                rendered = ("on" if value else "off") if type(value) is bool else str(value)
+                self.assertIn(f"{key[0].upper() + key[1:]} = {rendered}\n", config)
+            self.assertIn("MTU = 1280", config)
+            self.assertEqual(transport_implementation(config), "userspace")
+            settings["mtu"] = 1312
+            self.assertIn("MTU = 1312", prepare({"kind": "settings", "settings": settings}))
+            self.assertEqual(settings["obfuscation"], {})
+
+    def test_partial_obfuscation_merge_and_rotation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "secret.json"
+            settings = self.secret_settings(path, s1=60, s2=90, i1=None)
+            for secret in ({}, {"i1": None, "s1": None}, {"i1": "first"}, {"i1": "rotated"}):
+                with self.subTest(secret=secret):
+                    path.write_text(json.dumps(secret))
+                    config = render_settings(settings)
+                    self.assertIn("S1 = 60", config)
+                    self.assertIn("S2 = 90", config)
+                    if secret.get("i1"):
+                        self.assertIn(f"I1 = {secret['i1']}\n", config)
+                    else:
+                        self.assertNotIn("I1 =", config)
+            self.assertIsNone(settings["obfuscation"]["i1"])
+
+    def test_partial_obfuscation_conflicts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "secret.json"
+            for secret, public in [
+                ({"i1": "same"}, {"i1": "same"}),
+                ({"jc": 0}, {"jc": 0}),
+                ({"randomTrailers": False}, {"randomTrailers": False}),
+                ({"headerProtectionKey": "secret"}, {"headerProtectionKey": "inline"}),
+                ({"headerProtectionKey": "secret"}, {"headerProtectionKeyFile": "/missing"}),
+            ]:
+                with self.subTest(public=public):
+                    path.write_text(json.dumps(secret))
+                    with self.assertRaisesRegex(ConfigError, "multiple sources"):
+                        render_settings(self.secret_settings(path, **public))
+
+    def test_partial_obfuscation_rejects_invalid_values(self):
+        invalid = {
+            "jc": [-1, True, "5", 1.5, [], {}],
+            "h1": [-1, False, "1 - 2", "off", "1-2-3", "1\n", 1.5],
+            "randomTrailers": [0, 1, "on", "false", [], {}],
+            "i1": ["", " ", 42, True, [], {}, "secret\nPostUp = command",
+                   "secret\rPostUp = command", "secret\u2028PostUp = command",
+                   "secret\n", "secret\x00"],
+            "headerProtectionKey": ["", 42, "secret\nPostUp = command"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "secret.json"
+            for key, values in invalid.items():
+                for value in values:
+                    with self.subTest(key=key, value=value):
+                        path.write_text(json.dumps({key: value}))
+                        with self.assertRaisesRegex(ConfigError, "invalid value"):
+                            render_settings(self.secret_settings(path))
+
+    def test_partial_obfuscation_safe_cli_failures_preserve_output(self):
+        inputs = [
+            b'{"i1": "SECRET",}', b'{"i1": "SECRET", "i1": null}',
+            b'{"SECRET": null}', b'{"headerProtectionKeyFile": "SECRET"}',
+            b'{"privateKey": "SECRET"}', b'{"peers": []}', b'{"mtu": 1280}',
+            b'{"i1": "SECRET\\nPostUp = command"}', b'{"jc": NaN}',
+            b'{"i1": "SECRET\\ud800"}',
+            b'{"jc": Infinity}', b'{"i1": "SECRET\xff"}',
+            b'[]', b'null', b'"SECRET"', b'',
+            b'[' * 2000 + b'"SECRET"' + b']' * 2000,
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            path = directory / "secret.json"
+            output = directory / "runtime" / "awg.conf"
+            manifest = directory / "manifest.json"
+            manifest.write_text(json.dumps({"kind": "settings", "settings": self.secret_settings(path)}))
+            write_private(str(output), "previous config")
+            for data in inputs + [None]:
+                with self.subTest(data=data[:60] if data else data):
+                    if data is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(data)
+                    result = subprocess.run(
+                        [sys.executable, str(Path(__file__).with_name("amneziawg_config.py")),
+                         "--manifest", str(manifest), "--output", str(output)],
+                        capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("SECRET", result.stderr + result.stdout)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(output.read_text(), "previous config")
+                    self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(output.parent.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual(list(output.parent.iterdir()), [output])
+
+    def test_partial_obfuscation_unreadable_and_oversized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "secret.json"
+            path.write_text('{"i1": "SECRET"}')
+            with patch("amneziawg_config.MAX_INPUT_BYTES", 4):
+                with self.assertRaisesRegex(ConfigError, "exceeds"):
+                    render_settings(self.secret_settings(path))
+            with patch("amneziawg_config._read_limited", side_effect=PermissionError("SECRET")):
+                with self.assertRaisesRegex(ConfigError, "^cannot read or decode obfuscationFile$"):
+                    render_settings(self.secret_settings(path))
+
     def test_qcompress_vpn_link(self):
         data = decode_vpn_link(encode_vpn(vpn_data(("amnezia-awg", "awg", BASE_CONFIG))))
         config = extract_vpn_config(data)

@@ -232,6 +232,21 @@ let
         default = { };
         description = "AmneziaWG 1.x through 3.x obfuscation parameters.";
       };
+      obfuscationFile = mkOption {
+        type = optionalString;
+        default = null;
+        example = "/run/secrets/awg-obfuscation.json";
+        description = ''
+          Runtime path to a partial JSON object using the same field names and
+          value types as obfuscation, excluding headerProtectionKeyFile.
+          Values are combined with public obfuscation settings at service startup
+          without putting the file contents in the Nix store. Omitted or null
+          fields are unset; duplicate JSON keys and fields set in both sources
+          are rejected. A file-provided headerProtectionKey also conflicts with
+          obfuscation.headerProtectionKeyFile. Private and preshared keys use
+          their existing file options. Restart the profile after secret rotation.
+        '';
+      };
       peers = mkOption {
         type = types.listOf peerType;
         default = [ ];

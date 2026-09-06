@@ -217,6 +217,7 @@ let
 in
 {
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
+  amneziawg-secret-manifest = amneziaWgChecks.manifest;
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;

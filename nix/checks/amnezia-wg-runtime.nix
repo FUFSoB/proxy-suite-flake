@@ -31,14 +31,14 @@ let
         enable = true;
         amneziaWg = {
           enable = true;
-          kernelModulePackage =
-            if userspaceOnly then null else awgPackages.kernelModule pkgs.linuxPackages;
+          kernelModulePackage = if userspaceOnly then null else awgPackages.kernelModule pkgs.linuxPackages;
           profiles.test = {
             interfaceName = "awg-test";
             settings = {
               addresses = [ "10.23.42.2/32" ];
               privateKey = keys.peer1.privateKey;
-              inherit obfuscation;
+              obfuscation = { inherit (obfuscation) s1 s2; };
+              obfuscationFile = "/run/awg-obfuscation.json";
               peers = [
                 {
                   publicKey = keys.peer0.publicKey;
@@ -107,8 +107,16 @@ pkgs.testers.runNixOSTest {
     start_all()
     server.wait_for_unit("wg-quick-awg-server.service")
 
+    # Provision the partial secret after boot, outside the generated manifest.
+    for machine in (kernel, userspace):
+        machine.succeed("""umask 077; echo '${
+          builtins.toJSON { inherit (obfuscation) jc jmin jmax; }
+        }' > /run/awg-obfuscation.json""")
+
     with subtest("packaged kernel module"):
         kernel.succeed("systemctl start proxy-suite-awg-test.service")
+        kernel.succeed("test $(stat -c %a /run/proxy-suite-awg-test/awg-test.conf) = 600")
+        kernel.succeed("test $(stat -c %a /run/proxy-suite-awg-test) = 700")
         kernel.succeed("ip -d link show awg-test | grep -q amneziawg")
         kernel.succeed("ping -c 5 10.23.42.1")
         kernel.succeed("test $(awg show awg-test latest-handshakes | awk '{print $2}') -gt 0")
@@ -118,6 +126,8 @@ pkgs.testers.runNixOSTest {
     with subtest("automatic userspace fallback"):
         userspace.fail("modprobe -n amneziawg")
         userspace.succeed("systemctl start proxy-suite-awg-test.service")
+        userspace.succeed("test $(stat -c %a /run/proxy-suite-awg-test/awg-test.conf) = 600")
+        userspace.succeed("test $(stat -c %a /run/proxy-suite-awg-test) = 700")
         userspace.succeed("test -r /sys/class/net/awg-test/tun_flags")
         userspace.succeed("ping -c 5 10.23.42.1")
         userspace.succeed("test $(awg show awg-test latest-handshakes | awk '{print $2}') -gt 0")

@@ -93,6 +93,9 @@ pkgs.runCommand "proxy-suite-options.md" { } ''
       if (label == "*") {
         return "item"
       }
+      if (label ~ /^<.*>$/) {
+        return "`" label "`"
+      }
       return label
     }
 

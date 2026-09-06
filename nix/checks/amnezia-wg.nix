@@ -34,6 +34,7 @@ let
               settings = {
                 addresses = [ "10.8.0.2/32" ];
                 privateKeyFile = "/run/secrets/awg-private";
+                obfuscationFile = "/run/secrets/awg-obfuscation.json";
                 obfuscation = {
                   s1 = 12;
                   s2 = 12;
@@ -154,11 +155,33 @@ let
   withGlobalAwgBypassDown = generated.readDerivation withGlobalAwgService.serviceConfig.ExecStopPost;
 in
 {
+  manifest = pkgs.runCommand "amneziawg-secret-manifest-check" { } ''
+    ${pkgs.python3}/bin/python3 - <<'PY'
+    import json
+    import shlex
+    from pathlib import Path
+
+    prepare = Path("${builtins.head homeService.serviceConfig.ExecStartPre}").read_text()
+    args = shlex.split(prepare)
+    manifest = json.loads(Path(args[args.index("--manifest") + 1]).read_text())
+    assert manifest["kind"] == "settings"
+    assert manifest["settings"]["obfuscationFile"] == "/run/secrets/awg-obfuscation.json"
+    assert manifest["settings"]["obfuscation"]["s1"] == 12
+    assert manifest["settings"]["obfuscation"]["i1"] is None
+    PY
+    touch "$out"
+  '';
+
   assertions = [
     (
       assert !awgOnly.config.services.proxy-suite.proxy.enable;
       assert homeService.serviceConfig.RuntimeDirectoryMode == "0700";
       assert homeService.serviceConfig.UMask == "0077";
+      assert
+        awgOnly.config.services.proxy-suite.amneziaWg.profiles.home.settings.obfuscationFile
+        == "/run/secrets/awg-obfuscation.json";
+      assert
+        sourceFixture.config.services.proxy-suite.amneziaWg.profiles.nix.settings.obfuscationFile == null;
       assert builtins.elem "multi-user.target" homeService.wantedBy;
       assert builtins.elem "proxy-suite-awg-work.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-tun.service" homeService.conflicts;
