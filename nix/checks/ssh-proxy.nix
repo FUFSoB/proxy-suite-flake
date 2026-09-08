@@ -20,6 +20,7 @@ let
           user = "root";
           host = "ssh.example.com";
           asOutbound = true;
+          serviceUser = "proxy";
           identityFile = "/run/secrets/ssh-key";
           knownHostsFile = "/run/secrets/ssh-known-hosts";
           extraArgs = [
@@ -243,6 +244,10 @@ let
     )
     (
       assert pkgs.lib.hasInfix "ServerAliveInterval=30" sshStartScript;
+      true
+    )
+    (
+      assert sshService.serviceConfig.User == "proxy";
       true
     )
     (

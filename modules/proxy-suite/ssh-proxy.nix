@@ -38,6 +38,9 @@ in
       ExecStart = startScript;
       Restart = "on-failure";
       RestartSec = 5;
+    }
+    // lib.optionalAttrs (s.serviceUser != null) {
+      User = s.serviceUser;
     };
   };
 }

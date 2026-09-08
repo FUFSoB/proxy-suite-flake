@@ -17,6 +17,16 @@ in
       example = "root";
     };
 
+    serviceUser = mkOption {
+      type = types.nullOr (types.strMatching "[^[:space:]]+");
+      default = null;
+      description = ''
+        Unix user for the systemd SSH proxy service. Leave unset to use
+        systemd's default user.
+      '';
+      example = "proxy";
+    };
+
     host = mkOption {
       type = types.nullOr (types.strMatching "[^[:space:]]+");
       default = null;
@@ -42,9 +52,9 @@ in
 
     listenPort = mkOption {
       type = types.port;
-      default = 1085;
+      default = 1091;
       description = "Local port for the SSH-created SOCKS5 listener.";
-      example = 1085;
+      example = 1091;
     };
 
     identityFile = mkOption {

@@ -190,6 +190,7 @@ Update module option docs there instead of editing this file by hand.
     - [knownHostsFile](#services-proxy-suite-sshproxy-knownhostsfile)
     - [listenAddress](#services-proxy-suite-sshproxy-listenaddress)
     - [listenPort](#services-proxy-suite-sshproxy-listenport)
+    - [serviceUser](#services-proxy-suite-sshproxy-serviceuser)
     - [sshPort](#services-proxy-suite-sshproxy-sshport)
     - [strictHostKeyChecking](#services-proxy-suite-sshproxy-stricthostkeychecking)
     - [user](#services-proxy-suite-sshproxy-user)
@@ -387,7 +388,8 @@ services.proxy-suite = {
     identityFile = null;
     knownHostsFile = null;
     listenAddress = "127.0.0.1";
-    listenPort = 1085;
+    listenPort = 1091;
+    serviceUser = null;
     sshPort = 22;
     strictHostKeyChecking = "accept-new";
     user = null;
@@ -670,7 +672,8 @@ services.proxy-suite = {
     identityFile = "/run/secrets/proxy-suite-ssh-key";
     knownHostsFile = "/run/secrets/proxy-suite-ssh-known-hosts";
     listenAddress = "127.0.0.1";
-    listenPort = 1085;
+    listenPort = 1091;
+    serviceUser = "proxy";
     sshPort = 22;
     strictHostKeyChecking = "yes";
     user = "root";
@@ -5823,7 +5826,7 @@ Local port for the SSH-created SOCKS5 listener\.
 *Default:*
 
 ```nix
-1085
+1091
 ```
 
 
@@ -5831,7 +5834,41 @@ Local port for the SSH-created SOCKS5 listener\.
 *Example:*
 
 ```nix
-1085
+1091
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-serviceuser"></a>
+## services\.proxy-suite\.sshProxy\.serviceUser
+
+
+
+Unix user for the systemd SSH proxy service\. Leave unset to use
+systemd’s default user\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"proxy"
 ```
 
 *Declared by:*
