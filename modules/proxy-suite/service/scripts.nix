@@ -4,6 +4,7 @@
   pkgs,
   singBoxCfg,
   proxyCfg,
+  sshProxyCfg,
   xrayEnabled,
   hybridEnabled,
   pureXrayEnabled,
@@ -88,6 +89,7 @@ let
       pkgs
       singBoxCfg
       proxyCfg
+      sshProxyCfg
       pureXrayEnabled
       hybridEnabled
       collapseNamedOutbounds

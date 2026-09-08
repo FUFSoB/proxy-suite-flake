@@ -42,6 +42,8 @@ let
     invalidRoutingTargets
     collapseNamedOutbounds
     hasSubscriptions
+    sshProxyCfg
+    sshProxyOutboundEnabled
     ;
 
   # Tool paths – defined once here and passed into sub-modules as needed.
@@ -74,6 +76,7 @@ let
       pkgs
       singBoxCfg
       proxyCfg
+      sshProxyCfg
       xrayEnabled
       hybridEnabled
       pureXrayEnabled

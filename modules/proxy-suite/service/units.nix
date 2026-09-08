@@ -12,6 +12,7 @@
   perAppRoutingTproxy,
   perAppZapretEnabled,
   hasSubscriptions,
+  sshProxyOutboundEnabled,
   scripts,
   perAppRouting,
   routingScripts,
@@ -60,7 +61,10 @@ let
       name = serviceNames.socks;
       value = mkRestartingService {
         description = "${backendDescription} proxy client (SOCKS + TProxy-ready)";
-        after = [ "network-online.target" ];
+        after = [
+          "network-online.target"
+        ]
+        ++ lib.optional sshProxyOutboundEnabled "proxy-suite-ssh-proxy.service";
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startSocks;

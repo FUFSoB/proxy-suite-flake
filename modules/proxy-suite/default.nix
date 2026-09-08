@@ -86,6 +86,16 @@ in
         }
       ))
 
+      (lib.mkIf cfg.sshProxy.enable (
+        import ./ssh-proxy.nix {
+          inherit
+            lib
+            pkgs
+            cfg
+            ;
+        }
+      ))
+
       (lib.mkIf cfg.amneziaWg.enable (
         import ./amnezia-wg.nix {
           inherit

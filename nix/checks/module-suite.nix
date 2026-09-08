@@ -104,6 +104,17 @@ let
       ;
   };
 
+  sshProxyChecks = import ./ssh-proxy.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      baseModule
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      mkRoutingRules
+      ;
+  };
+
   perAppRoutingChecks = import ./per-app-routing.nix {
     inherit
       pkgs
@@ -203,6 +214,7 @@ let
     ]
     ++ coreProxyChecks.assertions
     ++ localProxyAuthChecks.assertions
+    ++ sshProxyChecks.assertions
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions

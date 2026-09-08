@@ -181,6 +181,18 @@ Update module option docs there instead of editing this file by hand.
     - xray
       - [enable](#services-proxy-suite-proxy-xray-enable)
       - [package](#services-proxy-suite-proxy-xray-package)
+  - sshProxy
+    - [enable](#services-proxy-suite-sshproxy-enable)
+    - [asOutbound](#services-proxy-suite-sshproxy-asoutbound)
+    - [extraArgs](#services-proxy-suite-sshproxy-extraargs)
+    - [host](#services-proxy-suite-sshproxy-host)
+    - [identityFile](#services-proxy-suite-sshproxy-identityfile)
+    - [knownHostsFile](#services-proxy-suite-sshproxy-knownhostsfile)
+    - [listenAddress](#services-proxy-suite-sshproxy-listenaddress)
+    - [listenPort](#services-proxy-suite-sshproxy-listenport)
+    - [sshPort](#services-proxy-suite-sshproxy-sshport)
+    - [strictHostKeyChecking](#services-proxy-suite-sshproxy-stricthostkeychecking)
+    - [user](#services-proxy-suite-sshproxy-user)
   - tgWsProxy
     - [enable](#services-proxy-suite-tgwsproxy-enable)
     - [bufKb](#services-proxy-suite-tgwsproxy-bufkb)
@@ -336,7 +348,7 @@ services.proxy-suite = {
         ];
         routeTable = 102;
       };
-      port = 1081;
+      port = 1085;
       proxyMark = 2;
       routeTable = 100;
     };
@@ -366,6 +378,19 @@ services.proxy-suite = {
       enable = false;
       package = pkgs.xray;
     };
+  };
+  sshProxy = {
+    asOutbound = false;
+    enable = false;
+    extraArgs = [ ];
+    host = null;
+    identityFile = null;
+    knownHostsFile = null;
+    listenAddress = "127.0.0.1";
+    listenPort = 1085;
+    sshPort = 22;
+    strictHostKeyChecking = "accept-new";
+    user = null;
   };
   tgWsProxy = {
     bufKb = 256;
@@ -602,7 +627,7 @@ services.proxy-suite = {
         ];
         routeTable = 102;
       };
-      port = 1081;
+      port = 1085;
       proxyMark = 2;
       routeTable = 100;
     };
@@ -633,6 +658,22 @@ services.proxy-suite = {
       enable = true;
       package = pkgs.xray;
     };
+  };
+  sshProxy = {
+    asOutbound = true;
+    enable = true;
+    extraArgs = [
+      "-o"
+      "ServerAliveInterval=30"
+    ];
+    host = "ssh.example.com";
+    identityFile = "/run/secrets/proxy-suite-ssh-key";
+    knownHostsFile = "/run/secrets/proxy-suite-ssh-known-hosts";
+    listenAddress = "127.0.0.1";
+    listenPort = 1085;
+    sshPort = 22;
+    strictHostKeyChecking = "yes";
+    user = "root";
   };
   tgWsProxy = {
     bufKb = 512;
@@ -4891,7 +4932,7 @@ TCP/UDP traffic to this port\.
 *Default:*
 
 ```nix
-1081
+1085
 ```
 
 
@@ -4899,7 +4940,7 @@ TCP/UDP traffic to this port\.
 *Example:*
 
 ```nix
-1081
+1085
 ```
 
 *Declared by:*
@@ -5524,6 +5565,377 @@ pkgs.xray
 
 *Declared by:*
  - [modules/proxy-suite/options/sing-box\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/sing-box.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-enable"></a>
+## services\.proxy-suite\.sshProxy\.enable
+
+
+
+Whether to enable SSH dynamic SOCKS5 proxy\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-asoutbound"></a>
+## services\.proxy-suite\.sshProxy\.asOutbound
+
+
+
+Add the local SSH SOCKS5 listener as a proxy-suite outbound tagged
+“ssh-proxy”\. Requires proxy\.enable and an active SingBox or XRay
+backend\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-extraargs"></a>
+## services\.proxy-suite\.sshProxy\.extraArgs
+
+
+
+Additional arguments passed to OpenSSH before the destination\.
+This can be used for options such as jump hosts or agent forwarding\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "-o"
+  "ServerAliveInterval=30"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-host"></a>
+## services\.proxy-suite\.sshProxy\.host
+
+
+
+SSH server hostname or address\. Required when sshProxy\.enable is true\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"ssh.example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-identityfile"></a>
+## services\.proxy-suite\.sshProxy\.identityFile
+
+
+
+Runtime path to the SSH private key\. Leave unset to use the SSH agent
+or OpenSSH’s normal identity-file lookup\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-suite-ssh-key"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-knownhostsfile"></a>
+## services\.proxy-suite\.sshProxy\.knownHostsFile
+
+
+
+Optional runtime path to the known-hosts file passed to OpenSSH\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-suite-ssh-known-hosts"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-listenaddress"></a>
+## services\.proxy-suite\.sshProxy\.listenAddress
+
+
+
+Local address for the SSH-created SOCKS5 listener\.
+
+
+
+*Type:*
+string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+"127.0.0.1"
+```
+
+
+
+*Example:*
+
+```nix
+"127.0.0.1"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-listenport"></a>
+## services\.proxy-suite\.sshProxy\.listenPort
+
+
+
+Local port for the SSH-created SOCKS5 listener\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+1085
+```
+
+
+
+*Example:*
+
+```nix
+1085
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-sshport"></a>
+## services\.proxy-suite\.sshProxy\.sshPort
+
+
+
+Remote SSH server port\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+22
+```
+
+
+
+*Example:*
+
+```nix
+22
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-stricthostkeychecking"></a>
+## services\.proxy-suite\.sshProxy\.strictHostKeyChecking
+
+
+
+OpenSSH host-key verification policy\. Use “yes” with pinned
+knownHostsFile contents for strict verification\.
+
+
+
+*Type:*
+one of “yes”, “accept-new”, “no”
+
+
+
+*Default:*
+
+```nix
+"accept-new"
+```
+
+
+
+*Example:*
+
+```nix
+"yes"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-user"></a>
+## services\.proxy-suite\.sshProxy\.user
+
+
+
+SSH login user\. Required when sshProxy\.enable is true\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"root"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
 
 
 
@@ -7051,8 +7463,6 @@ list of string
 
 <a id="services-proxy-suite-zapret-ipsetexclude"></a>
 ## services\.proxy-suite\.zapret\.ipsetExclude
-
-
 
 IPs/CIDRs to exclude from zapret’s ipset\.
 Also excluded from zapret-derived proxy direct IP routing when

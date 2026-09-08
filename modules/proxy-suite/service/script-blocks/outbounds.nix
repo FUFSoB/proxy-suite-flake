@@ -4,6 +4,7 @@
   pkgs,
   singBoxCfg,
   proxyCfg,
+  sshProxyCfg,
   pureXrayEnabled,
   hybridEnabled,
   collapseNamedOutbounds,
@@ -19,6 +20,8 @@
 }:
 
 let
+  sshProxyTag = "ssh-proxy";
+
   rawOutboundJson =
     ob: tag: routingMark:
     let
@@ -163,6 +166,47 @@ let
           fi
         '';
 
+  mkSshProxyOutboundBlock =
+    routingMark:
+    let
+      singBoxOutbound = {
+        type = "socks";
+        tag = sshProxyTag;
+        server = sshProxyCfg.listenAddress;
+        server_port = sshProxyCfg.listenPort;
+        version = "5";
+      }
+      // lib.optionalAttrs (routingMark != null) {
+        routing_mark = routingMark;
+      };
+      xrayOutbound = {
+        protocol = "socks";
+        tag = sshProxyTag;
+        settings = {
+          address = sshProxyCfg.listenAddress;
+          port = sshProxyCfg.listenPort;
+        };
+      }
+      // lib.optionalAttrs (routingMark != null) {
+        streamSettings.sockopt.mark = routingMark;
+      };
+      outbound = if pureXrayEnabled then xrayOutbound else singBoxOutbound;
+      outboundJson = builtins.toJSON outbound;
+      jsonFile = pkgs.writeText "proxy-suite-ob-ssh-proxy-${backend}.json" outboundJson;
+    in
+    if hybridEnabled then
+      ''
+        # outbound: ${sshProxyTag} (SSH SOCKS5)
+        OB_JSON=$(cat "${jsonFile}")
+        _proxy_suite_add_sing_box_ob "$OB_JSON"
+      ''
+    else
+      ''
+        # outbound: ${sshProxyTag} (SSH SOCKS5)
+        OB_JSON=$(cat "${jsonFile}")
+        OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+      '';
+
   mkBackendOutboundBlock = if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock;
 
   requireOutboundsBlock = ''
@@ -185,6 +229,8 @@ let
         sub: mkSubscriptionBlock sub routingMark
       ) proxyCfg.subscriptions;
 
+      sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
+
       wrapperBlock =
         if pureXrayEnabled && selectionMode == "urltest" then
           ''
@@ -194,13 +240,15 @@ let
             fi
           ''
         else if collapseNamedOutbounds then
-          lib.optionalString (proxyCfg.outbounds == [ ] && proxyCfg.subscriptions != [ ]) ''
-            FIRST_TAG=$(${jq} -r 'if length > 0 then .[0].tag else "" end' <<< "$OUTBOUNDS_JSON")
-            if [ -n "$FIRST_TAG" ]; then
-              OUTBOUNDS_JSON=$(${jq} --arg t "$FIRST_TAG" \
-                'map(if .tag == $t then .tag = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
-            fi
-          ''
+          lib.optionalString
+            (proxyCfg.outbounds == [ ] && (proxyCfg.subscriptions != [ ] || sshProxyCfg.asOutbound))
+            ''
+              FIRST_TAG=$(${jq} -r 'if length > 0 then .[0].tag else "" end' <<< "$OUTBOUNDS_JSON")
+              if [ -n "$FIRST_TAG" ]; then
+                OUTBOUNDS_JSON=$(${jq} --arg t "$FIRST_TAG" \
+                  'map(if .tag == $t then .tag = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
+              fi
+            ''
         else if selectionMode == "selector" then
           ''
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
@@ -223,7 +271,7 @@ let
             OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
           '';
     in
-    outboundBlocks + subscriptionBlocks + requireOutboundsBlock + wrapperBlock;
+    outboundBlocks + subscriptionBlocks + sshProxyBlock + requireOutboundsBlock + wrapperBlock;
 in
 {
   inherit mkOutboundScript rawOutboundJson;

@@ -3,6 +3,7 @@
 {
   imports = [
     ./other.nix
+    ./ssh-proxy.nix
     ./amnezia-wg.nix
     ./legacy-sing-box.nix
     ./sing-box.nix

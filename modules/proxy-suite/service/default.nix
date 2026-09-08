@@ -60,7 +60,9 @@ let
     userControlEnabled
     perAppZapretEnabled
     hasSubscriptions
+    sshProxyOutboundEnabled
     outboundTags
+    effectiveOutboundTags
     subscriptionTags
     invalidRoutingTargets
     builtinTags
@@ -96,6 +98,7 @@ let
       perAppRoutingTproxy
       perAppZapretEnabled
       hasSubscriptions
+      sshProxyOutboundEnabled
       scripts
       perAppRouting
       routingScripts
@@ -153,6 +156,7 @@ in
     inherit
       builtinTags
       outboundTags
+      effectiveOutboundTags
       subscriptionTags
       invalidRoutingTargets
       ;

@@ -5,6 +5,7 @@
   tgWsProxyCfg,
   builtinTags,
   outboundTags,
+  effectiveOutboundTags ? outboundTags,
   subscriptionTags,
   invalidRoutingTargets,
   effectivePerAppRoutingProfileNames,
@@ -63,16 +64,24 @@ let
     (mkAssertion (!proxyEnabled || proxyCfg.singBox.enable || proxyCfg.xray.enable)
       "proxy-suite: at least one of proxy.singBox.enable or proxy.xray.enable must be true when proxy.enable = true"
     )
-    (requireAvailable proxyEnabled (
-      proxyCfg.outbounds != [ ] || proxyCfg.subscriptions != [ ]
+    (requireAvailable proxyEnabled (derived.hasAvailableOutbounds
     ) "proxy-suite: at least one outbound or subscription is required when proxy.enable = true")
-    (uniqueValues proxyEnabled outboundTags "proxy-suite: outbound tags must be unique")
+    (uniqueValues proxyEnabled effectiveOutboundTags "proxy-suite: outbound tags must be unique")
     (uniqueValues proxyEnabled subscriptionTags
       "proxy-suite: subscription tags must be unique because they are used as cache keys and outbound tag prefixes"
     )
     (mkAssertion (
-      !proxyEnabled || builtins.all (tag: !builtins.elem tag builtinTags) outboundTags
+      !proxyEnabled || builtins.all (tag: !builtins.elem tag builtinTags) effectiveOutboundTags
     ) "proxy-suite: outbound tags must not use reserved names: proxy, direct, block")
+    (requireEnabled cfg.sshProxy.asOutbound cfg.sshProxy.enable
+      "proxy-suite: sshProxy.asOutbound requires sshProxy.enable = true"
+    )
+    (requireEnabled cfg.sshProxy.asOutbound proxyEnabled
+      "proxy-suite: sshProxy.asOutbound requires proxy.enable = true"
+    )
+    (mkAssertion (
+      !cfg.sshProxy.enable || (cfg.sshProxy.user != null && cfg.sshProxy.host != null)
+    ) "proxy-suite: sshProxy.user and sshProxy.host are required when sshProxy.enable = true")
     (mkAssertion (!proxyEnabled || invalidRoutingTargets == [ ])
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )

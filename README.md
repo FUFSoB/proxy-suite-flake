@@ -23,6 +23,7 @@ The goal is to replace GUI clients like v2rayN and throne – you configure your
 - **`proxy-ctl`** – control script for managing services, switching outbounds, and following logs
 - **DPI bypass** via zapret – handles YouTube, Discord, and other sites defined by the project
 - **Telegram proxy** – running local MTProto WebSocket proxy using tg-ws-proxy
+- **SSH SOCKS5 proxy** – create a local SOCKS5 listener from an SSH connection
 
 ---
 
@@ -89,6 +90,17 @@ services.proxy-suite = {
       autostart = false;
       perApp.enable = true;
     };
+  };
+
+  # Optional SSH dynamic SOCKS5 proxy. Set asOutbound = true to make the
+  # local SSH SOCKS listener available as an ordinary proxy outbound.
+  sshProxy = {
+    enable = true;
+    user = "root";
+    host = "ssh.example.com";
+    asOutbound = false;
+    identityFile = "/run/secrets/proxy-suite-ssh-key";
+    knownHostsFile = "/run/secrets/proxy-suite-ssh-known-hosts";
   };
 
   # Native AmneziaWG profiles are independent of the SingBox/XRay backend.

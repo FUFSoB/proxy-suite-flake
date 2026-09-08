@@ -36,6 +36,9 @@ let
   perAppRoutingTproxy = proxyCfg.tproxy.perApp;
   perAppZapretCfg = cfg.zapret.perApp;
   userControlCfg = cfg.userControl;
+  sshProxyCfg = cfg.sshProxy;
+  sshProxyOutboundTag = "ssh-proxy";
+  sshProxyOutboundEnabled = sshProxyCfg.enable && sshProxyCfg.asOutbound;
 
   selectionMode = proxyCfg.selection;
   builtinTags = [
@@ -44,10 +47,12 @@ let
     "block"
   ];
   outboundTags = map (ob: ob.tag) proxyCfg.outbounds;
+  effectiveOutboundTags = outboundTags ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
 
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
+  hasAvailableOutbounds = hasStaticOutbounds || hasSubscriptions || sshProxyOutboundEnabled;
   collapseNamedOutbounds = selectionMode == "first";
   clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
@@ -79,7 +84,7 @@ let
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
       builtins.filter (
-        rule: !builtins.elem rule.outbound (builtinTags ++ outboundTags)
+        rule: !builtins.elem rule.outbound (builtinTags ++ effectiveOutboundTags)
       ) proxyCfg.routing.rules
     )
   );
@@ -105,13 +110,18 @@ in
     perAppZapretEnabled
     userControlCfg
     userControlEnabled
+    sshProxyCfg
+    sshProxyOutboundTag
+    sshProxyOutboundEnabled
     constants
     selectionMode
     builtinTags
     outboundTags
+    effectiveOutboundTags
     subscriptionTags
     hasStaticOutbounds
     hasSubscriptions
+    hasAvailableOutbounds
     collapseNamedOutbounds
     clashApiEnabled
     invalidRoutingTargets

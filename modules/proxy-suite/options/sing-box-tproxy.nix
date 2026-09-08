@@ -20,13 +20,13 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 1081;
+      default = 1085;
       description = ''
         Local listen port for the proxy backend's TProxy inbound.
         nftables redirection created by proxy-suite-tproxy sends intercepted
         TCP/UDP traffic to this port.
       '';
-      example = 1081;
+      example = 1085;
     };
 
     fwmark = mkOption {
