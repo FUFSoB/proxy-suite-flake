@@ -103,6 +103,14 @@ let
       [ ];
 in
 {
+  # The zapret-derived portion on its own. proxyInbounds routes these to the
+  # direct outbound so the host's own zapret handles the DPI bypass for inbound
+  # clients, instead of paying for a proxy hop it does not need.
+  zapretDirect = {
+    domains = zapretDirectDomains;
+    ips = zapretDirectIps;
+  };
+
   direct = {
     domains = lib.unique (r.direct.domains ++ zapretDirectDomains);
     ips = lib.unique (r.direct.ips ++ zapretDirectIps);

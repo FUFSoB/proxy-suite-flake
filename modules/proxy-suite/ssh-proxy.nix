@@ -16,6 +16,9 @@ let
           -N
           -o BatchMode=yes
           -o ExitOnForwardFailure=yes
+          -o ServerAliveInterval=15
+          -o ServerAliveCountMax=3
+          -o ConnectTimeout=10
           -o StrictHostKeyChecking=${lib.escapeShellArg s.strictHostKeyChecking}
           -D ${lib.escapeShellArg "${s.listenAddress}:${toString s.listenPort}"}
         )
@@ -34,10 +37,17 @@ in
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
+    # Restart=always plus a server that refuses connections would otherwise hit
+    # the default 5-starts-in-10s limit and stay failed.
+    startLimitIntervalSec = 0;
     serviceConfig = {
       ExecStart = startScript;
-      Restart = "on-failure";
+      # `ssh -N` exits 0 when the server closes the connection cleanly, which
+      # under on-failure left the tunnel down for good.
+      Restart = "always";
       RestartSec = 5;
+      # One fd per forwarded channel; the 1024 default is low for a relay.
+      LimitNOFILE = 65536;
     }
     // lib.optionalAttrs (s.serviceUser != null) {
       User = s.serviceUser;

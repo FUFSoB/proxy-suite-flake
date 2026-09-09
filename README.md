@@ -24,6 +24,7 @@ The goal is to replace GUI clients like v2rayN and throne – you configure your
 - **DPI bypass** via zapret – handles YouTube, Discord, and other sites defined by the project
 - **Telegram proxy** – running local MTProto WebSocket proxy using tg-ws-proxy
 - **SSH SOCKS5 proxy** – create a local SOCKS5 listener from an SSH connection
+- **Server inbounds** – accept connections *from* outside over vless (REALITY), vmess, trojan, shadowsocks, socks, or http; relay them through your outbounds or exit directly, with share links and QR codes for clients
 
 ---
 
@@ -92,15 +93,15 @@ services.proxy-suite = {
     };
   };
 
-  # Optional SSH dynamic SOCKS5 proxy. Set asOutbound = true to make the
-  # local SSH SOCKS listener available as an ordinary proxy outbound.
+  # Optional SSH tunnel. Set asOutbound = true to make it an ordinary proxy
+  # outbound tagged "ssh-proxy".
   sshProxy = {
     enable = true;
     user = "root";
     host = "ssh.example.com";
     asOutbound = false;
     identityFile = "/run/secrets/proxy-suite-ssh-key";
-    knownHostsFile = "/run/secrets/proxy-suite-ssh-known-hosts";
+    hostKeyFile = "/run/secrets/proxy-suite-ssh-known-hosts";
   };
 
   # Native AmneziaWG profiles are independent of the SingBox/XRay backend.
@@ -168,6 +169,7 @@ Commands:
   proxy on|off              enable/disable the proxy backend stack
   tproxy on|off             enable/disable TProxy transparent mode
   tun on|off                enable/disable TUN mode
+  ssh on|off                enable/disable the SSH SOCKS5 proxy
   awg list|status [profile] list profiles or show AmneziaWG status
   awg on <profile>          start an AmneziaWG profile
   awg off [profile]         stop one or all active AmneziaWG profiles
@@ -183,5 +185,8 @@ Commands:
   wrap <profile> -- <cmd>   run a command via a perAppRouting profile
   subscription list         show subscriptions, cache age, and proxy count
   subscription update       force-refresh all subscription caches and restart active proxy services
+  inbounds [list]           list server inbounds and their state
+  inbounds link <tag> [user] print the client share link for an inbound
+  inbounds qr <tag> [user]   print the client share link as a QR code
 ```
 <!-- proxy-ctl-help:end -->

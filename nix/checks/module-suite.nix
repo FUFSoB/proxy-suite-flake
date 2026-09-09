@@ -11,6 +11,8 @@ let
     mkTProxyConfig
     mkTunConfig
     mkPerAppTunConfig
+    mkInboundsConfig
+    mkInboundsSpec
     mkTProxyNftRules
     mkPerAppZapretNftRules
     mkPerAppUserRules
@@ -115,6 +117,16 @@ let
       ;
   };
 
+  proxyInboundsChecks = import ./proxy-inbounds.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      baseModule
+      mkInboundsConfig
+      mkInboundsSpec
+      ;
+  };
+
   perAppRoutingChecks = import ./per-app-routing.nix {
     inherit
       pkgs
@@ -215,6 +227,7 @@ let
     ++ coreProxyChecks.assertions
     ++ localProxyAuthChecks.assertions
     ++ sshProxyChecks.assertions
+    ++ proxyInboundsChecks.assertions
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions

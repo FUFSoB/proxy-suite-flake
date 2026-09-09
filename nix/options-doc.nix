@@ -24,6 +24,11 @@ let
   sanitizeConfigForDocs =
     config:
     builtins.removeAttrs config [ "singBox" ]
+    // lib.optionalAttrs ((config.proxyInbounds or { }) ? package) {
+      proxyInbounds = config.proxyInbounds // {
+        package = xrayPackagePlaceholder;
+      };
+    }
     // {
       proxy = (config.proxy or { }) // {
         singBox =

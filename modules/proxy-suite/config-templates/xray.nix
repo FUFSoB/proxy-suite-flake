@@ -256,6 +256,10 @@ let
     // lib.optionalAttrs enableTunFakeDns { fakedns = fakeDnsPools; };
 in
 {
+  # Reused by the server-side inbound template, which builds a different config
+  # shape out of the same backend primitives.
+  inherit mkDnsServer;
+
   tproxy = mkConfig {
     enableMixed = true;
     enableTProxy = true;

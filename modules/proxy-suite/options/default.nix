@@ -4,6 +4,7 @@
   imports = [
     ./other.nix
     ./ssh-proxy.nix
+    ./proxy-inbounds.nix
     ./amnezia-wg.nix
     ./legacy-sing-box.nix
     ./sing-box.nix

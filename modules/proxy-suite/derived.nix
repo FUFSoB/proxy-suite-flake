@@ -39,6 +39,61 @@ let
   sshProxyCfg = cfg.sshProxy;
   sshProxyOutboundTag = "ssh-proxy";
   sshProxyOutboundEnabled = sshProxyCfg.enable && sshProxyCfg.asOutbound;
+  # Only sing-box has a native `ssh` outbound. XRay has none, so it keeps the
+  # OpenSSH `ssh -D` unit and its local SOCKS listener -- as does a standalone
+  # tunnel that is not wired in as an outbound at all.
+  sshProxyNativeOutbound = sshProxyOutboundEnabled && !pureXrayEnabled;
+  sshProxyUnitEnabled = sshProxyCfg.enable && !sshProxyNativeOutbound;
+
+  proxyInboundsCfg = cfg.proxyInbounds;
+  proxyInboundsEnabled = proxyInboundsCfg.enable;
+
+  # Listener attrset flattened to a list with `via` resolved against the
+  # tree-wide default. Everything downstream (rules, spec, firewall) uses this.
+  proxyInbounds = lib.mapAttrsToList (tag: listener: {
+    inherit tag listener;
+    via = if listener.via == null then proxyInboundsCfg.via else listener.via;
+  }) proxyInboundsCfg.listeners;
+
+  # "direct" and "block" are self-contained; "proxy" chains through the client
+  # stack's local SOCKS listener, so it needs the client side to be running.
+  proxyInboundsNeedLocalProxy = lib.any (ib: ib.via == "proxy") proxyInbounds;
+
+  # Any other via names a static outbound, which is rendered into the inbound
+  # service's own config so it stays pinned regardless of the client's
+  # selection. Only referenced outbounds are built, so an unused (or
+  # sing-box-only) one never has to be XRay-representable.
+  proxyInboundViaTags = lib.unique (
+    builtins.filter (via: !builtins.elem via builtinTags) (map (ib: ib.via) proxyInbounds)
+  );
+  proxyInboundViaOutbounds = builtins.filter (
+    ob: builtins.elem ob.tag proxyInboundViaTags
+  ) proxyCfg.outbounds;
+
+  proxyInboundUdpTypes = [
+    "shadowsocks"
+    "socks"
+  ];
+  proxyInboundPorts = lib.unique (map (ib: ib.listener.port) proxyInbounds);
+  # A loopback-bound listener is reached through something else on this host (an
+  # nginx vhost, say), so opening its port would expose the endpoint that
+  # arrangement exists to hide.
+  proxyInboundsPublic = builtins.filter (
+    ib:
+    !builtins.elem ib.listener.listenAddress [
+      "127.0.0.1"
+      "::1"
+    ]
+  ) proxyInbounds;
+  proxyInboundFirewallPorts = lib.unique (map (ib: ib.listener.port) proxyInboundsPublic);
+  # A raw-JSON listener could serve anything, so open both protocols for it.
+  proxyInboundFirewallUdpPorts = lib.unique (
+    map (ib: ib.listener.port) (
+      builtins.filter (
+        ib: ib.listener.type == null || builtins.elem ib.listener.type proxyInboundUdpTypes
+      ) proxyInboundsPublic
+    )
+  );
 
   selectionMode = proxyCfg.selection;
   builtinTags = [
@@ -81,6 +136,9 @@ let
     };
   };
 
+  # Subscription tags are deliberately not accepted: they only exist at runtime.
+  invalidInboundViaTargets = builtins.filter (tag: !builtins.elem tag outboundTags) proxyInboundViaTags;
+
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
       builtins.filter (
@@ -113,6 +171,18 @@ in
     sshProxyCfg
     sshProxyOutboundTag
     sshProxyOutboundEnabled
+    sshProxyNativeOutbound
+    sshProxyUnitEnabled
+    proxyInboundsCfg
+    proxyInboundsEnabled
+    proxyInbounds
+    proxyInboundsNeedLocalProxy
+    proxyInboundViaTags
+    proxyInboundViaOutbounds
+    invalidInboundViaTargets
+    proxyInboundPorts
+    proxyInboundFirewallPorts
+    proxyInboundFirewallUdpPorts
     constants
     selectionMode
     builtinTags

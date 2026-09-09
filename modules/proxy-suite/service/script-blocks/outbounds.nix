@@ -22,6 +22,15 @@
 let
   sshProxyTag = "ssh-proxy";
 
+  # sing-box domain-strategy names mapped onto XRay's sockopt.domainStrategy.
+  # XRay's "UseIPv4v6" means "IPv4 first, fall back to IPv6", i.e. prefer_ipv4.
+  xrayDomainStrategies = {
+    prefer_ipv4 = "UseIPv4v6";
+    prefer_ipv6 = "UseIPv6v4";
+    ipv4_only = "UseIPv4";
+    ipv6_only = "UseIPv6";
+  };
+
   rawOutboundJson =
     ob: tag: routingMark:
     let
@@ -169,16 +178,33 @@ let
   mkSshProxyOutboundBlock =
     routingMark:
     let
+      # sing-box dials SSH itself, so there is no OpenSSH unit and no local
+      # SOCKS5 hop. It resolves destinations natively, which is why this shape
+      # takes no domainStrategy.
       singBoxOutbound = {
-        type = "socks";
+        type = "ssh";
         tag = sshProxyTag;
-        server = sshProxyCfg.listenAddress;
-        server_port = sshProxyCfg.listenPort;
-        version = "5";
+        server = sshProxyCfg.host;
+        server_port = sshProxyCfg.sshPort;
+        user = sshProxyCfg.user;
+      }
+      // lib.optionalAttrs (sshProxyCfg.identityFile != null) {
+        private_key_path = sshProxyCfg.identityFile;
+      }
+      // lib.optionalAttrs (sshProxyCfg.hostKey != [ ]) {
+        host_key = sshProxyCfg.hostKey;
       }
       // lib.optionalAttrs (routingMark != null) {
         routing_mark = routingMark;
       };
+      # XRay has no SSH outbound, so it proxies through the listener the
+      # OpenSSH unit creates. sockopt.domainStrategy is what makes XRay resolve
+      # destinations here instead of handing the domain to the remote sshd.
+      xraySockopt =
+        lib.optionalAttrs (routingMark != null) { mark = routingMark; }
+        // lib.optionalAttrs (sshProxyCfg.domainStrategy != null) {
+          domainStrategy = xrayDomainStrategies.${sshProxyCfg.domainStrategy};
+        };
       xrayOutbound = {
         protocol = "socks";
         tag = sshProxyTag;
@@ -187,23 +213,45 @@ let
           port = sshProxyCfg.listenPort;
         };
       }
-      // lib.optionalAttrs (routingMark != null) {
-        streamSettings.sockopt.mark = routingMark;
+      // lib.optionalAttrs (xraySockopt != { }) {
+        streamSettings.sockopt = xraySockopt;
       };
       outbound = if pureXrayEnabled then xrayOutbound else singBoxOutbound;
       outboundJson = builtins.toJSON outbound;
       jsonFile = pkgs.writeText "proxy-suite-ob-ssh-proxy-${backend}.json" outboundJson;
+
+      # Host keys come from a known-hosts file at start time so the file stays
+      # out of the Nix store. ssh-keygen -F also resolves hashed entries.
+      knownHostsTarget =
+        if sshProxyCfg.sshPort == 22 then
+          sshProxyCfg.host
+        else
+          "[${sshProxyCfg.host}]:${toString sshProxyCfg.sshPort}";
+      hostKeyFileBlock =
+        lib.optionalString (!pureXrayEnabled && sshProxyCfg.hostKeyFile != null)
+          ''
+            SSH_HOST_KEYS=$(${pkgs.openssh}/bin/ssh-keygen -F ${lib.escapeShellArg knownHostsTarget} \
+              -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} \
+              | ${jq} -R -s '[splits("\n")] | map(select(length > 0 and (startswith("#") | not))) | map(sub("^\\S+\\s+"; ""))')
+            if [ "$(${jq} 'length' <<< "$SSH_HOST_KEYS")" -eq 0 ]; then
+              echo "proxy-suite: no host keys for ${knownHostsTarget} in ${sshProxyCfg.hostKeyFile}" >&2
+              exit 1
+            fi
+            OB_JSON=$(${jq} --argjson hk "$SSH_HOST_KEYS" '.host_key = $hk' <<< "$OB_JSON")
+          '';
     in
     if hybridEnabled then
       ''
-        # outbound: ${sshProxyTag} (SSH SOCKS5)
+        # outbound: ${sshProxyTag} (${if pureXrayEnabled then "OpenSSH SOCKS5 listener" else "native SSH"})
         OB_JSON=$(cat "${jsonFile}")
+        ${hostKeyFileBlock}
         _proxy_suite_add_sing_box_ob "$OB_JSON"
       ''
     else
       ''
-        # outbound: ${sshProxyTag} (SSH SOCKS5)
+        # outbound: ${sshProxyTag} (${if pureXrayEnabled then "OpenSSH SOCKS5 listener" else "native SSH"})
         OB_JSON=$(cat "${jsonFile}")
+        ${hostKeyFileBlock}
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       '';
 

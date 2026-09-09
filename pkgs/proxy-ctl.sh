@@ -39,6 +39,10 @@ case "$cmd" in
     cmd_mode_toggle proxy-suite-tun on "${1:-}"
     ;;
 
+  ssh)
+    cmd_mode_toggle proxy-suite-ssh-proxy on "${1:-}" ssh
+    ;;
+
   awg)
     cmd_awg "$@"
     ;;
@@ -75,6 +79,10 @@ case "$cmd" in
 
   wrap)
     cmd_wrap "$@"
+    ;;
+
+  inbounds)
+    cmd_inbounds "$@"
     ;;
 
   subscription)

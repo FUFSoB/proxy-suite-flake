@@ -13,6 +13,7 @@ let
   cfg = config.services.proxy-suite;
   packages = import ../../pkgs/default.nix { inherit pkgs; };
   nftr = import ./nftables.nix { inherit lib pkgs cfg; };
+  derived = import ./derived.nix { inherit lib cfg; };
 in
 {
   imports = [
@@ -52,6 +53,8 @@ in
           tunFile
           perAppTunFile
           routeModeRulesFile
+          proxyInboundsFile
+          proxyInboundsSpecFile
           ;
         inherit (nftr)
           nftablesRulesFile
@@ -86,7 +89,9 @@ in
         }
       ))
 
-      (lib.mkIf cfg.sshProxy.enable (
+      # SingBox dials SSH natively, so it needs no OpenSSH unit. XRay has no SSH
+      # outbound, and a standalone tunnel has no backend at all, so both keep it.
+      (lib.mkIf derived.sshProxyUnitEnabled (
         import ./ssh-proxy.nix {
           inherit
             lib

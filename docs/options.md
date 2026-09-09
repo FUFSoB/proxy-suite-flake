@@ -181,11 +181,59 @@ Update module option docs there instead of editing this file by hand.
     - xray
       - [enable](#services-proxy-suite-proxy-xray-enable)
       - [package](#services-proxy-suite-proxy-xray-package)
+  - proxyInbounds
+    - [enable](#services-proxy-suite-proxyinbounds-enable)
+    - [package](#services-proxy-suite-proxyinbounds-package)
+    - [blockPrivate](#services-proxy-suite-proxyinbounds-blockprivate)
+    - [blockRu](#services-proxy-suite-proxyinbounds-blockru)
+    - [listeners](#services-proxy-suite-proxyinbounds-listeners)
+      - `<name>`
+        - [flow](#services-proxy-suite-proxyinbounds-listeners-name-flow)
+        - [jsonFile](#services-proxy-suite-proxyinbounds-listeners-name-jsonfile)
+        - [listenAddress](#services-proxy-suite-proxyinbounds-listeners-name-listenaddress)
+        - [method](#services-proxy-suite-proxyinbounds-listeners-name-method)
+        - [port](#services-proxy-suite-proxyinbounds-listeners-name-port)
+        - [reality](#services-proxy-suite-proxyinbounds-listeners-name-reality)
+          - [enable](#services-proxy-suite-proxyinbounds-listeners-name-reality-enable)
+          - [dest](#services-proxy-suite-proxyinbounds-listeners-name-reality-dest)
+          - [privateKey](#services-proxy-suite-proxyinbounds-listeners-name-reality-privatekey)
+          - [privateKeyFile](#services-proxy-suite-proxyinbounds-listeners-name-reality-privatekeyfile)
+          - [publicKey](#services-proxy-suite-proxyinbounds-listeners-name-reality-publickey)
+          - [serverNames](#services-proxy-suite-proxyinbounds-listeners-name-reality-servernames)
+          - [shortIds](#services-proxy-suite-proxyinbounds-listeners-name-reality-shortids)
+        - [tls](#services-proxy-suite-proxyinbounds-listeners-name-tls)
+          - [enable](#services-proxy-suite-proxyinbounds-listeners-name-tls-enable)
+          - [certificateFile](#services-proxy-suite-proxyinbounds-listeners-name-tls-certificatefile)
+          - [keyFile](#services-proxy-suite-proxyinbounds-listeners-name-tls-keyfile)
+          - [serverName](#services-proxy-suite-proxyinbounds-listeners-name-tls-servername)
+        - [transport](#services-proxy-suite-proxyinbounds-listeners-name-transport)
+          - [host](#services-proxy-suite-proxyinbounds-listeners-name-transport-host)
+          - [path](#services-proxy-suite-proxyinbounds-listeners-name-transport-path)
+          - [serviceName](#services-proxy-suite-proxyinbounds-listeners-name-transport-servicename)
+          - [type](#services-proxy-suite-proxyinbounds-listeners-name-transport-type)
+        - [type](#services-proxy-suite-proxyinbounds-listeners-name-type)
+        - [users](#services-proxy-suite-proxyinbounds-listeners-name-users)
+          - item
+            - [name](#services-proxy-suite-proxyinbounds-listeners-name-users-name)
+            - [password](#services-proxy-suite-proxyinbounds-listeners-name-users-password)
+            - [passwordFile](#services-proxy-suite-proxyinbounds-listeners-name-users-passwordfile)
+            - [uuid](#services-proxy-suite-proxyinbounds-listeners-name-users-uuid)
+            - [uuidFile](#services-proxy-suite-proxyinbounds-listeners-name-users-uuidfile)
+        - [via](#services-proxy-suite-proxyinbounds-listeners-name-via)
+        - [xrayJson](#services-proxy-suite-proxyinbounds-listeners-name-xrayjson)
+    - [openFirewall](#services-proxy-suite-proxyinbounds-openfirewall)
+    - [serverAddress](#services-proxy-suite-proxyinbounds-serveraddress)
+    - [shareLinks](#services-proxy-suite-proxyinbounds-sharelinks)
+    - [via](#services-proxy-suite-proxyinbounds-via)
+    - [zapretDirect](#services-proxy-suite-proxyinbounds-zapretdirect)
   - sshProxy
     - [enable](#services-proxy-suite-sshproxy-enable)
     - [asOutbound](#services-proxy-suite-sshproxy-asoutbound)
+    - [domainStrategy](#services-proxy-suite-sshproxy-domainstrategy)
     - [extraArgs](#services-proxy-suite-sshproxy-extraargs)
     - [host](#services-proxy-suite-sshproxy-host)
+    - [hostKey](#services-proxy-suite-sshproxy-hostkey)
+    - [hostKeyFile](#services-proxy-suite-sshproxy-hostkeyfile)
     - [identityFile](#services-proxy-suite-sshproxy-identityfile)
     - [knownHostsFile](#services-proxy-suite-sshproxy-knownhostsfile)
     - [listenAddress](#services-proxy-suite-sshproxy-listenaddress)
@@ -380,11 +428,26 @@ services.proxy-suite = {
       package = pkgs.xray;
     };
   };
+  proxyInbounds = {
+    blockPrivate = true;
+    blockRu = true;
+    enable = false;
+    listeners = { };
+    openFirewall = true;
+    package = pkgs.xray;
+    serverAddress = null;
+    shareLinks = true;
+    via = "proxy";
+    zapretDirect = true;
+  };
   sshProxy = {
     asOutbound = false;
+    domainStrategy = null;
     enable = false;
     extraArgs = [ ];
     host = null;
+    hostKey = [ ];
+    hostKeyFile = null;
     identityFile = null;
     knownHostsFile = null;
     listenAddress = "127.0.0.1";
@@ -661,14 +724,51 @@ services.proxy-suite = {
       package = pkgs.xray;
     };
   };
+  proxyInbounds = {
+    blockPrivate = false;
+    blockRu = false;
+    enable = true;
+    listeners = {
+      _type = "literalExpression";
+      text = ''
+        {
+          vless-reality = {
+            type = "vless";
+            port = 443;
+            users = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+            flow = "xtls-rprx-vision";
+            reality = {
+              enable = true;
+              dest = "www.microsoft.com:443";
+              serverNames = [ "www.microsoft.com" ];
+              privateKeyFile = "/run/secrets/proxy-inbound-reality-key";
+              publicKey = "jNXH...";
+              shortIds = [ "0123abcd" ];
+            };
+          };
+        }
+      '';
+    };
+    openFirewall = false;
+    package = pkgs.xray;
+    serverAddress = "vpn.example.com";
+    shareLinks = false;
+    via = "direct";
+    zapretDirect = false;
+  };
   sshProxy = {
     asOutbound = true;
+    domainStrategy = "prefer_ipv4";
     enable = true;
     extraArgs = [
       "-o"
       "ServerAliveInterval=30"
     ];
     host = "ssh.example.com";
+    hostKey = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."
+    ];
+    hostKeyFile = "/root/.ssh/known_hosts";
     identityFile = "/run/secrets/proxy-suite-ssh-key";
     knownHostsFile = "/run/secrets/proxy-suite-ssh-known-hosts";
     listenAddress = "127.0.0.1";
@@ -5571,6 +5671,1519 @@ pkgs.xray
 
 
 
+<a id="services-proxy-suite-proxyinbounds-enable"></a>
+## services\.proxy-suite\.proxyInbounds\.enable
+
+
+
+Whether to enable server-side proxy inbounds (accept connections from outside)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-package"></a>
+## services\.proxy-suite\.proxyInbounds\.package
+
+
+
+XRay package serving the inbounds\.
+
+This is independent of proxy\.xray\.package: the inbound service always
+runs XRay, whichever backend the client side uses, and works with
+proxy\.enable = false\.
+
+
+
+*Type:*
+package
+
+
+
+*Default:*
+
+```nix
+pkgs.xray
+```
+
+
+
+*Example:*
+
+```nix
+pkgs.xray
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-blockprivate"></a>
+## services\.proxy-suite\.proxyInbounds\.blockPrivate
+
+
+
+Send traffic destined for private and loopback addresses to the block
+outbound\.
+
+On by default: without it, anyone holding an inbound credential can
+reach the server’s LAN, its localhost services, and the local proxy
+ports of proxy-suite itself\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-blockru"></a>
+## services\.proxy-suite\.proxyInbounds\.blockRu
+
+
+
+Send traffic destined for Russian domains and IP ranges
+(“category-ru” geosite, “ru” geoip) to the block outbound\.
+
+On by default: a relay whose whole point is leaving the RKN-filtered
+network has no reason to carry traffic back into it, and it keeps the
+server out of the way of domestic services that geo-check\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners
+
+
+
+Named inbound listeners\. The attribute name becomes the inbound tag
+used in routing rules and in ` proxy-ctl inbounds `\.
+
+
+
+*Type:*
+attribute set of (submodule)
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  vless-reality = {
+    type = "vless";
+    port = 443;
+    users = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+    flow = "xtls-rprx-vision";
+    reality = {
+      enable = true;
+      dest = "www.microsoft.com:443";
+      serverNames = [ "www.microsoft.com" ];
+      privateKeyFile = "/run/secrets/proxy-inbound-reality-key";
+      publicKey = "jNXH...";
+      shortIds = [ "0123abcd" ];
+    };
+  };
+}
+
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-flow"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.flow
+
+
+
+VLESS flow control\. “xtls-rprx-vision” is the usual pairing with
+REALITY on the “raw” transport; it is not valid over ws, grpc,
+httpupgrade, or xhttp\.
+
+
+
+*Type:*
+null or value “xtls-rprx-vision” (singular enum)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"xtls-rprx-vision"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-jsonfile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.jsonFile
+
+
+
+Runtime path to a file containing a complete XRay inbound object as
+JSON\. Read at service start time, so the whole inbound including its
+credentials can be rendered by a secret manager and never lands in
+the Nix store\. The tag field is overridden by the listener name\.
+
+No share link is generated for listeners defined this way\.
+
+Set exactly one of type, xrayJson, or jsonFile for each listener\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-inbound-vless.json"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-listenaddress"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.listenAddress
+
+
+
+Address this listener binds\. The default accepts both IPv4 and IPv6
+connections from anywhere\.
+
+
+
+*Type:*
+string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+"::"
+```
+
+
+
+*Example:*
+
+```nix
+"0.0.0.0"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-method"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.method
+
+
+
+Shadowsocks cipher\. Ignored by other protocols\.
+
+The 2022 ciphers require a base64 pre-shared key of the matching
+length as the password, not a passphrase\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"2022-blake3-aes-128-gcm"
+```
+
+
+
+*Example:*
+
+```nix
+"aes-128-gcm"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-port"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.port
+
+
+
+Port this listener binds\. Opened in the firewall automatically unless
+proxyInbounds\.openFirewall is disabled\.
+
+
+
+*Type:*
+16 bit unsigned integer; between 0 and 65535 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+443
+```
+
+
+
+*Example:*
+
+```nix
+443
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality
+
+
+
+REALITY settings for this listener\. Mutually exclusive with tls\.
+
+
+
+*Type:*
+submodule
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-enable"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.enable
+
+
+
+Enable REALITY on this listener\. Mutually exclusive with tls\.enable\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-dest"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.dest
+
+
+
+Real TLS server that unauthenticated probes are proxied to\. Must be a
+host:port that serves TLS 1\.3 with HTTP/2\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"www.microsoft.com:443"
+```
+
+
+
+*Example:*
+
+```nix
+"www.microsoft.com:443"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-privatekey"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.privateKey
+
+
+
+Literal REALITY x25519 private key\.
+
+This value is embedded in the Nix store\. Prefer privateKeyFile\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"gG1Yz..."
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-privatekeyfile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.privateKeyFile
+
+
+
+Runtime path to the REALITY x25519 private key, as produced by
+` xray x25519 `\. Read at service start time; never lands in the Nix
+store\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-inbound-reality-key"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-publickey"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.publicKey
+
+
+
+REALITY x25519 public key matching privateKeyFile, as printed
+alongside it by ` xray x25519 `\. Not a secret: clients need it, and it
+is what generated share links carry as ` pbk `\.
+
+Required when proxyInbounds\.shareLinks is enabled\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"jNXH..."
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-servernames"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.serverNames
+
+
+
+SNI values accepted by this listener\. These must be names the dest
+server actually serves\. The first entry is used in share links\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "www.microsoft.com"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-reality-shortids"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.reality\.shortIds
+
+
+
+Accepted REALITY short IDs (hex, up to 16 characters)\. The default
+accepts the empty short ID\. The first entry is used in share links\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[
+  ""
+]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "0123abcd"
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-tls"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.tls
+
+
+
+TLS termination settings for this listener\. Mutually exclusive with
+reality\.
+
+
+
+*Type:*
+submodule
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-tls-enable"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.tls\.enable
+
+
+
+Terminate TLS on this listener\. Mutually exclusive with reality\.
+
+Always on for trojan listeners regardless of this setting\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-tls-certificatefile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.tls\.certificateFile
+
+
+
+Runtime path to the PEM certificate chain\. Compose with
+security\.acme to keep it renewed\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/var/lib/acme/example.com/fullchain.pem"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-tls-keyfile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.tls\.keyFile
+
+
+
+Runtime path to the PEM private key matching certificateFile\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/var/lib/acme/example.com/key.pem"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-tls-servername"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.tls\.serverName
+
+
+
+SNI advertised in generated share links\. Defaults to
+proxyInbounds\.serverAddress when unset\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-transport"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.transport
+
+
+
+Stream transport settings for this listener\.
+
+
+
+*Type:*
+submodule
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-transport-host"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.transport\.host
+
+
+
+Expected Host header for the “ws”, “httpupgrade”, and “xhttp”
+transports\. Leave null to accept any host\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"cdn.example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-transport-path"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.transport\.path
+
+
+
+Request path for the “ws”, “httpupgrade”, and “xhttp” transports\.
+Ignored by the other transports\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"/"
+```
+
+
+
+*Example:*
+
+```nix
+"/download"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-transport-servicename"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.transport\.serviceName
+
+
+
+gRPC service name for the “grpc” transport\. Ignored otherwise\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+""
+```
+
+
+
+*Example:*
+
+```nix
+"GunService"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-transport-type"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.transport\.type
+
+
+
+Stream transport for this listener\. “raw” is plain TCP and is what
+REALITY setups normally use\.
+
+
+
+*Type:*
+one of “raw”, “ws”, “grpc”, “httpupgrade”, “xhttp”
+
+
+
+*Default:*
+
+```nix
+"raw"
+```
+
+
+
+*Example:*
+
+```nix
+"ws"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-type"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.type
+
+
+
+Proxy protocol served by this listener\.
+
+Set exactly one of type, xrayJson, or jsonFile for each listener\.
+
+
+
+*Type:*
+null or one of “vless”, “vmess”, “trojan”, “shadowsocks”, “socks”, “http”
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"vless"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users
+
+
+
+Accounts accepted by this listener\. vless and vmess use uuid/uuidFile;
+trojan, shadowsocks, socks, and http use password/passwordFile\.
+
+A share link is generated for the first user of each listener\.
+
+
+
+*Type:*
+list of (submodule)
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  {
+    uuidFile = "/run/secrets/proxy-inbound-uuid";
+  }
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users-name"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users\.\*\.name
+
+
+
+Optional label for this account\. Used as the share-link fragment so
+clients show a readable server name, and as the XRay user email\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+""
+```
+
+
+
+*Example:*
+
+```nix
+"phone"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users-password"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users\.\*\.password
+
+
+
+Literal password for trojan, shadowsocks, socks, and http listeners\.
+
+This value is embedded in the Nix store\. Prefer passwordFile for real
+credentials\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"hunter2"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users-passwordfile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users\.\*\.passwordFile
+
+
+
+Runtime path to a file containing the account password\.
+The file is read at service start time and never lands in the Nix store\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-inbound-password"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users-uuid"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users\.\*\.uuid
+
+
+
+Literal UUID for vless/vmess accounts\.
+
+This value is embedded in the Nix store\. Prefer uuidFile for real
+credentials\.
+
+Set exactly one of uuid or uuidFile for vless and vmess listeners\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"b831381d-6324-4d53-ad4f-8cda48b30811"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-users-uuidfile"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.users\.\*\.uuidFile
+
+
+
+Runtime path to a file containing the account UUID\.
+Intended for use with secret managers (sops-nix, agenix, etc\.)\.
+The file is read at service start time and never lands in the Nix store\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-inbound-uuid"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-via"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.via
+
+
+
+Egress for traffic arriving on this listener: “proxy” (out through
+the local proxy stack, following its current selection), a
+proxy\.outbounds tag (pinned to that specific server), “direct” (out
+from this machine), or “block”\.
+
+Give two listeners two different tags to have them leave through two
+different servers\.
+
+Leave null to inherit proxyInbounds\.via\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"nl-vps"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-listeners-name-xrayjson"></a>
+## services\.proxy-suite\.proxyInbounds\.listeners\.\<name>\.xrayJson
+
+
+
+Raw XRay inbound configuration as a Nix attribute set, for protocols
+or options the typed fields do not cover\. Embedded into the config at
+build time, so avoid putting credentials here; use jsonFile instead\.
+The tag field is overridden by the listener name\.
+
+Set exactly one of type, xrayJson, or jsonFile for each listener\.
+
+
+
+*Type:*
+null or (attribute set)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+{
+  protocol = "dokodemo-door";
+  settings = {
+    address = "127.0.0.1";
+    port = 8080;
+  };
+}
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-openfirewall"></a>
+## services\.proxy-suite\.proxyInbounds\.openFirewall
+
+
+
+Add every listener port to networking\.firewall\. Disable to manage the
+firewall yourself\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-serveraddress"></a>
+## services\.proxy-suite\.proxyInbounds\.serverAddress
+
+
+
+Public hostname or address clients connect to\. Used for generated share
+links only; it does not affect what the listeners bind\.
+
+Leave null to detect the machine’s uplink IPv4 address at service start
+time\. Set it explicitly when the server is behind NAT or reached by a
+domain name\.
+
+
+
+*Type:*
+null or string matching the pattern \[^\[:space:]]+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"vpn.example.com"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-sharelinks"></a>
+## services\.proxy-suite\.proxyInbounds\.shareLinks
+
+
+
+Write client share links to /run/proxy-suite-inbounds/links\.json at
+service start, for ` proxy-ctl inbounds link ` and
+` proxy-ctl inbounds qr `\.
+
+The file is readable by root and the userControl group only, because
+the links carry the listener credentials\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-via"></a>
+## services\.proxy-suite\.proxyInbounds\.via
+
+
+
+Default egress for traffic arriving on the inbounds\. Individual
+listeners can override it with their own via option, which is how two
+listeners can leave through two different servers\.
+
+ - “proxy”: chain out through the local proxy stack, so the machine
+   relays rather than exits\. Requires proxy\.enable\. The inbound service
+   hands traffic to the SOCKS listener on proxy\.listenAddress, so it
+   follows whatever the client side is currently doing: the selected
+   outbound, subscriptions, urltest, and ` proxy-ctl select ` all apply,
+   with no second copy of that machinery\.
+ - A proxy\.outbounds tag: pin this traffic to that specific server,
+   independently of what the client side has selected\. The outbound is
+   built into the inbound service’s own config, so it must be one XRay
+   can represent (a url/urlFile entry, or xrayJson)\. Subscription
+   proxies cannot be named here, because their tags only exist at
+   runtime; use “proxy” to reach those\.
+ - “direct”: leave from this machine, making it a plain exit node\. Needs
+   no client-side proxy configuration at all\.
+ - “block”: drop the traffic\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"proxy"
+```
+
+
+
+*Example:*
+
+```nix
+"direct"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
+<a id="services-proxy-suite-proxyinbounds-zapretdirect"></a>
+## services\.proxy-suite\.proxyInbounds\.zapretDirect
+
+
+
+Route zapret’s hostlist domains and IPs to the direct outbound instead
+of through the proxy, so this host’s own zapret unblocks them for
+inbound clients\.
+
+Has no effect unless zapret\.enable and zapret\.syncDirectRouting are on:
+the rules are built from the same hostlists that already feed
+routing\.direct on the client side, so they are empty when zapret is not
+running here\.
+
+On by default because a zapret host is by definition inside the filtered
+network, and paying for a proxy hop to reach something zapret already
+unblocks locally is pure latency\. Only applies to listeners using the
+default via; an explicit per-listener via still wins\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+
+
+*Example:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/proxy-inbounds\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/proxy-inbounds.nix)
+
+
+
 <a id="services-proxy-suite-sshproxy-enable"></a>
 ## services\.proxy-suite\.sshProxy\.enable
 
@@ -5609,9 +7222,15 @@ true
 
 
 
-Add the local SSH SOCKS5 listener as a proxy-suite outbound tagged
-“ssh-proxy”\. Requires proxy\.enable and an active SingBox or XRay
-backend\.
+Add the SSH tunnel as a proxy-suite outbound tagged “ssh-proxy”\.
+Requires proxy\.enable and an active SingBox or XRay backend\.
+
+How the tunnel is built depends on the backend\. SingBox and hybrid
+backends dial SSH natively, with no systemd unit and no local SOCKS5
+listener\. XRay has no SSH outbound, so it keeps the OpenSSH ` ssh -D `
+unit and proxies through its local SOCKS5 listener\. With
+asOutbound = false the OpenSSH unit is always used, since the tunnel is
+then a standalone listener the backends know nothing about\.
 
 
 
@@ -5639,6 +7258,52 @@ true
 
 
 
+<a id="services-proxy-suite-sshproxy-domainstrategy"></a>
+## services\.proxy-suite\.sshProxy\.domainStrategy
+
+
+
+Resolve destination domains locally before sending them through the
+SSH SOCKS5 proxy, so the remote SSH server never has to resolve them\.
+Null preserves the backend’s default behavior\.
+
+Only applies to the XRay backend, which reaches the tunnel through the
+local SOCKS5 listener and maps this onto the outbound’s
+` sockopt.domainStrategy `\. SingBox and hybrid backends dial SSH natively
+and resolve destinations themselves, so this option is ignored there\.
+
+Note that local resolution hands the remote server an address chosen by
+*this* machine’s DNS\. For anycast or geo-steered CDNs that address can
+be unreachable from the remote network, which surfaces as connection
+timeouts rather than as a DNS error\. Prefer fixing DNS on the remote
+server if you have access to it\.
+
+
+
+*Type:*
+null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"prefer_ipv4"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
 <a id="services-proxy-suite-sshproxy-extraargs"></a>
 ## services\.proxy-suite\.sshProxy\.extraArgs
 
@@ -5646,6 +7311,10 @@ true
 
 Additional arguments passed to OpenSSH before the destination\.
 This can be used for options such as jump hosts or agent forwarding\.
+
+OpenSSH path only: ignored when a SingBox or hybrid backend dials SSH
+natively\. Keepalive, connect-timeout and restart behavior are already
+set by the module, so they do not need to be repeated here\.
 
 
 
@@ -5709,6 +7378,99 @@ null
 
 
 
+<a id="services-proxy-suite-sshproxy-hostkey"></a>
+## services\.proxy-suite\.sshProxy\.hostKey
+
+
+
+Accepted SSH host public keys, in ` authorized_keys ` one-line form\.
+Used by the sing-box backend, which verifies host keys by value rather
+than against a known-hosts file\.
+
+List **every** key the server offers, not just one\. The host key
+algorithm is negotiated, so pinning a single key fails the handshake
+outright whenever the server picks a different algorithm\. Get the full
+set with ` ssh-keyscan -p PORT HOST `, or from an existing known-hosts
+entry with ` ssh-keygen -F '[HOST]:PORT' `\.
+
+Leaving this empty accepts **any** host key, which allows a
+machine-in-the-middle on the tunnel\. Set it whenever sshProxy\.asOutbound
+is used with a SingBox or hybrid backend\.
+
+Ignored by the XRay backend and by a standalone tunnel, which use
+knownHostsFile and strictHostKeyChecking instead\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."
+]
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
+<a id="services-proxy-suite-sshproxy-hostkeyfile"></a>
+## services\.proxy-suite\.sshProxy\.hostKeyFile
+
+
+
+Runtime path to a known-hosts file to read the accepted host keys from,
+instead of listing them inline in sshProxy\.hostKey\. Every key recorded
+there for ` host:sshPort ` is accepted, so a single known-hosts file stays
+the one source of truth\. Hashed known-hosts files work\.
+
+Read when the service starts, not at evaluation time, so the file never
+enters the Nix store\. Set either this or sshProxy\.hostKey; if both are
+set the file wins\.
+
+Used by the sing-box backend\. The XRay backend and a standalone tunnel
+pass knownHostsFile to OpenSSH instead\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/root/.ssh/known_hosts"
+```
+
+*Declared by:*
+ - [modules/proxy-suite/options/ssh-proxy\.nix](https://github.com/FUFSoB/proxy-suite-flake/blob/main/modules/proxy-suite/options/ssh-proxy.nix)
+
+
+
 <a id="services-proxy-suite-sshproxy-identityfile"></a>
 ## services\.proxy-suite\.sshProxy\.identityFile
 
@@ -5750,6 +7512,9 @@ null
 
 Optional runtime path to the known-hosts file passed to OpenSSH\.
 
+OpenSSH path only\. A SingBox or hybrid backend verifies host keys with
+sshProxy\.hostKey instead\.
+
 
 
 *Type:*
@@ -5782,6 +7547,9 @@ null
 
 
 Local address for the SSH-created SOCKS5 listener\.
+
+OpenSSH path only: a SingBox or hybrid backend dials SSH natively and
+creates no local listener\.
 
 
 
@@ -5816,6 +7584,9 @@ string matching the pattern \[^\[:space:]]+
 
 Local port for the SSH-created SOCKS5 listener\.
 
+OpenSSH path only: a SingBox or hybrid backend dials SSH natively and
+creates no local listener\.
+
 
 
 *Type:*
@@ -5849,6 +7620,9 @@ Local port for the SSH-created SOCKS5 listener\.
 
 Unix user for the systemd SSH proxy service\. Leave unset to use
 systemd’s default user\.
+
+OpenSSH path only: ignored when a SingBox or hybrid backend dials SSH
+natively and no separate unit is created\.
 
 
 
@@ -5916,6 +7690,9 @@ Remote SSH server port\.
 
 OpenSSH host-key verification policy\. Use “yes” with pinned
 knownHostsFile contents for strict verification\.
+
+OpenSSH path only\. A SingBox or hybrid backend verifies host keys with
+sshProxy\.hostKey instead\.
 
 
 
@@ -7500,6 +9277,8 @@ list of string
 
 <a id="services-proxy-suite-zapret-ipsetexclude"></a>
 ## services\.proxy-suite\.zapret\.ipsetExclude
+
+
 
 IPs/CIDRs to exclude from zapret’s ipset\.
 Also excluded from zapret-derived proxy direct IP routing when

@@ -15,6 +15,7 @@ let
       pureXrayEnabled = true;
       singBoxCfg = null;
       proxyCfg = null;
+      sshProxyCfg = null;
       hybridEnabled = null;
       collapseNamedOutbounds = null;
       selectionMode = null;

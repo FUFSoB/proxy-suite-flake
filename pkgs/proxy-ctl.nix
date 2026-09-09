@@ -19,6 +19,8 @@
   routeModeStateFile,
   defaultRouteMode,
   amneziaWgProfileNamesFile,
+  inboundsEnabled,
+  inboundsLinksFile,
 }:
 
 let
@@ -41,6 +43,8 @@ let
     ROUTE_MODE_STATE_FILE = routeModeStateFile;
     DEFAULT_ROUTE_MODE = defaultRouteMode;
     AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
+    INBOUNDS_ENABLED = inboundsEnabled;
+    INBOUNDS_LINKS_FILE = inboundsLinksFile;
   };
 in
 pkgs.symlinkJoin {
@@ -67,6 +71,7 @@ pkgs.symlinkJoin {
           pkgs.gnugrep
           pkgs.jq
           pkgs.proxychains-ng
+          pkgs.qrencode
           pkgs.systemd
         ]
       }" \
@@ -84,6 +89,8 @@ pkgs.symlinkJoin {
       --set PROXYCHAINS_QUIET_ARG ${lib.escapeShellArg (lib.removeSuffix " " proxychainsQuietArg)} \
       --set ROUTE_MODE_STATE_FILE ${lib.escapeShellArg routeModeStateFile} \
       --set DEFAULT_ROUTE_MODE ${lib.escapeShellArg defaultRouteMode} \
-      --set AWG_PROFILES_FILE ${lib.escapeShellArg (toString amneziaWgProfileNamesFile)}
+      --set AWG_PROFILES_FILE ${lib.escapeShellArg (toString amneziaWgProfileNamesFile)} \
+      --set INBOUNDS_ENABLED ${lib.escapeShellArg inboundsEnabled} \
+      --set INBOUNDS_LINKS_FILE ${lib.escapeShellArg inboundsLinksFile}
   '';
 }

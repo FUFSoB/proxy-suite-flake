@@ -9,6 +9,8 @@
   tunFile,
   perAppTunFile,
   routeModeRulesFile,
+  proxyInboundsFile,
+  proxyInboundsSpecFile,
   nftablesRulesFile,
   perAppTproxyRulesFile,
   perAppZapretRulesFile,
@@ -28,6 +30,8 @@ let
       tunFile
       perAppTunFile
       routeModeRulesFile
+      proxyInboundsFile
+      proxyInboundsSpecFile
       perAppTunChainFile
       perAppTproxyRulesFile
       perAppZapretRulesFile
@@ -61,6 +65,11 @@ let
     perAppZapretEnabled
     hasSubscriptions
     sshProxyOutboundEnabled
+    sshProxyUnitEnabled
+    proxyInboundsEnabled
+    proxyInboundsNeedLocalProxy
+    proxyInboundFirewallPorts
+    proxyInboundFirewallUdpPorts
     outboundTags
     effectiveOutboundTags
     subscriptionTags
@@ -99,6 +108,9 @@ let
       perAppZapretEnabled
       hasSubscriptions
       sshProxyOutboundEnabled
+      sshProxyUnitEnabled
+      proxyInboundsEnabled
+      proxyInboundsNeedLocalProxy
       scripts
       perAppRouting
       routingScripts
@@ -123,6 +135,12 @@ in
     || perAppRoutingTproxy.enable
     || perAppZapretEnabled
   ) (lib.mkDefault true);
+
+  # Inbound listeners are reached from outside, so their ports have to be open.
+  networking.firewall = lib.mkIf (proxyInboundsEnabled && cfg.proxyInbounds.openFirewall) {
+    allowedTCPPorts = proxyInboundFirewallPorts;
+    allowedUDPPorts = proxyInboundFirewallUdpPorts;
+  };
 
   users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {
     "${userControlCfg.group}" = { };

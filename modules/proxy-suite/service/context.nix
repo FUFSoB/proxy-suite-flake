@@ -8,6 +8,8 @@
   tunFile,
   perAppTunFile,
   routeModeRulesFile,
+  proxyInboundsFile,
+  proxyInboundsSpecFile,
   perAppTunChainFile,
   perAppTproxyRulesFile,
   perAppZapretRulesFile,
@@ -44,6 +46,12 @@ let
     hasSubscriptions
     sshProxyCfg
     sshProxyOutboundEnabled
+    sshProxyUnitEnabled
+    proxyInboundsCfg
+    proxyInboundsEnabled
+    proxyInboundsNeedLocalProxy
+    proxyInboundViaOutbounds
+    userControlEnabled
     ;
 
   # Tool paths – defined once here and passed into sub-modules as needed.
@@ -64,7 +72,10 @@ let
   proxySuiteScriptsDir = ../../../scripts;
   parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
+  buildInboundPy = "${proxySuiteScriptsDir}/build-inbound.py";
   fetchSubscriptionPy = "${proxySuiteScriptsDir}/fetch-subscription.py";
+
+  builders = import ./builders.nix { inherit lib pkgs; };
 
   polkit = import ./polkit.nix {
     inherit lib cfg userControlCfg;
@@ -95,6 +106,7 @@ let
       xray
       parserScriptsPythonPath
       buildOutboundPy
+      buildInboundPy
       fetchSubscriptionPy
       ;
     inherit
@@ -102,6 +114,15 @@ let
       tunFile
       perAppTunFile
       routeModeRulesFile
+      proxyInboundsFile
+      proxyInboundsSpecFile
+      ;
+    inherit
+      proxyInboundsCfg
+      proxyInboundsNeedLocalProxy
+      proxyInboundViaOutbounds
+      userControlEnabled
+      builders
       ;
   };
 
@@ -144,6 +165,8 @@ let
       ;
     inherit (scripts) subscriptionTagsFile subscriptionCacheDir;
     inherit (scripts) routeModeStateFile;
+    inherit proxyInboundsEnabled;
+    inherit (scripts) proxyInboundsLinksFile;
     inherit amneziaWgProfileNamesFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile

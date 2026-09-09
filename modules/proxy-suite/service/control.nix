@@ -15,6 +15,8 @@
   proxychainsQuietArg,
   routeModeStateFile,
   amneziaWgProfileNamesFile,
+  proxyInboundsEnabled,
+  proxyInboundsLinksFile,
 }:
 {
   proxyCtl = packages.mkProxyCtl {
@@ -35,5 +37,7 @@
     perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";
     perAppRoutingTproxyEnabled = if perAppRoutingTproxy.enable then "1" else "0";
     perAppRoutingZapretEnabled = if perAppZapretCfg.enable then "1" else "0";
+    inboundsEnabled = if proxyInboundsEnabled then "1" else "0";
+    inboundsLinksFile = proxyInboundsLinksFile;
   };
 }

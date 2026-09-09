@@ -2,6 +2,8 @@ ALL_SERVICES=(
   proxy-suite-socks
   proxy-suite-tproxy
   proxy-suite-tun
+  proxy-suite-inbounds
+  proxy-suite-ssh-proxy
   proxy-suite-tg-ws-proxy
   proxy-suite-zapret-vm-exempt
   zapret-discord-youtube
@@ -49,6 +51,7 @@ _usage() {
   echo "  proxy on|off              enable/disable the proxy backend stack"
   echo "  tproxy on|off             enable/disable TProxy transparent mode"
   echo "  tun on|off                enable/disable TUN mode"
+  echo "  ssh on|off                enable/disable the SSH SOCKS5 proxy"
   echo "  awg list|status [profile] list profiles or show AmneziaWG status"
   echo "  awg on <profile>          start an AmneziaWG profile"
   echo "  awg off [profile]         stop one or all active AmneziaWG profiles"
@@ -64,6 +67,9 @@ _usage() {
   echo "  wrap <profile> -- <cmd>   run a command via a perAppRouting profile"
   echo "  subscription list         show subscriptions, cache age, and proxy count"
   echo "  subscription update       force-refresh all subscription caches and restart active proxy services"
+  echo "  inbounds [list]           list server inbounds and their state"
+  echo "  inbounds link <tag> [user] print the client share link for an inbound"
+  echo "  inbounds qr <tag> [user]   print the client share link as a QR code"
   exit "$status"
 }
 
@@ -363,6 +369,8 @@ cmd_route_mode() {
 RESTART_SERVICES=(
   proxy-suite-tproxy
   proxy-suite-tun
+  proxy-suite-inbounds
+  proxy-suite-ssh-proxy
   proxy-suite-tg-ws-proxy
   zapret-discord-youtube
 )
@@ -597,6 +605,76 @@ cmd_subscription() {
       ;;
     *)
       echo "Usage: proxy-ctl subscription list|update"
+      exit 1
+      ;;
+  esac
+}
+
+_ensure_inbounds() {
+  if [ "${INBOUNDS_ENABLED:-0}" != "1" ]; then
+    echo "proxyInbounds is not enabled in services.proxy-suite.proxyInbounds."
+    exit 1
+  fi
+}
+
+# Links carry listener credentials, so the file is root/group-only. Say so
+# rather than leaking a bare permission error.
+_inbound_links() {
+  if [ ! -f "$INBOUNDS_LINKS_FILE" ]; then
+    echo "No share links available. Is proxy-suite-inbounds running, and is proxyInbounds.shareLinks enabled?" >&2
+    exit 1
+  fi
+  if [ ! -r "$INBOUNDS_LINKS_FILE" ]; then
+    echo "Share links are not readable by this user. Enable userControl, or run as root." >&2
+    exit 1
+  fi
+  cat "$INBOUNDS_LINKS_FILE"
+}
+
+_inbound_link_for() {
+  local tag="$1" user="${2:-}" matches count
+  matches="$(_inbound_links | jq -c --arg tag "$tag" --arg user "$user" '[.[] | select(.tag == $tag) | select($user == "" or .user == $user)]')"
+  count="$(jq 'length' <<< "$matches")"
+  if [ "$count" -eq 0 ]; then
+    echo "Unknown inbound, or no share link for it: $tag" >&2
+    exit 1
+  fi
+  if [ "$count" -ne 1 ]; then
+    echo "Multiple users match '$tag'; specify one of:" >&2
+    jq -r '.[].user' <<< "$matches" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  jq -r '.[0].link' <<< "$matches"
+}
+
+cmd_inbounds() {
+  _ensure_inbounds
+  case "${1:-list}" in
+    list)
+      echo "proxy-suite inbounds:"
+      printf "  %-24s %-16s %-14s %-8s %s\n" TAG USER TYPE PORT STATE
+      local state
+      state="$(systemctl is-active proxy-suite-inbounds 2>/dev/null || true)"
+      _inbound_links \
+        | jq -r --arg state "$state" '.[] | "\(.tag)\t\(.user)\t\(.type)\t\(.port)\t\($state)"' \
+        | awk -F'\t' '{printf "  %-24s %-16s %-14s %-8s %s\n", $1, $2, $3, $4, $5}'
+      ;;
+    link)
+      if [ -z "${2:-}" ]; then
+        echo "Usage: proxy-ctl inbounds link <tag> [user]" >&2
+        exit 1
+      fi
+      _inbound_link_for "$2" "${3:-}"
+      ;;
+    qr)
+      if [ -z "${2:-}" ]; then
+        echo "Usage: proxy-ctl inbounds qr <tag> [user]" >&2
+        exit 1
+      fi
+      _inbound_link_for "$2" "${3:-}" | qrencode -t ANSIUTF8
+      ;;
+    *)
+      echo "Usage: proxy-ctl inbounds [list|link <tag> [user]|qr <tag> [user]]" >&2
       exit 1
       ;;
   esac

@@ -19,6 +19,7 @@ let
       ;
   };
   inherit (zapretDirect) direct;
+  zapretDirectRules = zapretDirect.zapretDirect;
 
   customRuleCategory =
     outbound:
@@ -105,6 +106,7 @@ in
 {
   inherit
     direct
+    zapretDirectRules
     geositeRuleSets
     geoIPRuleSets
     singBoxRoutingRules

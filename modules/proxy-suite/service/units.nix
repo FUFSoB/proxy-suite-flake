@@ -13,6 +13,9 @@
   perAppZapretEnabled,
   hasSubscriptions,
   sshProxyOutboundEnabled,
+  sshProxyUnitEnabled,
+  proxyInboundsEnabled,
+  proxyInboundsNeedLocalProxy,
   scripts,
   perAppRouting,
   routingScripts,
@@ -41,6 +44,7 @@ let
     perAppTproxy = "proxy-suite-per-app-tproxy";
     perAppZapret = "proxy-suite-per-app-zapret";
     subscriptionUpdate = "proxy-suite-subscription-update";
+    inbounds = "proxy-suite-inbounds";
   };
 
   backendDescription =
@@ -61,15 +65,41 @@ let
       name = serviceNames.socks;
       value = mkRestartingService {
         description = "${backendDescription} proxy client (SOCKS + TProxy-ready)";
+        # Only the XRay backend proxies through the OpenSSH unit's listener;
+        # SingBox dials SSH inside its own process and needs no ordering.
         after = [
           "network-online.target"
         ]
-        ++ lib.optional sshProxyOutboundEnabled "proxy-suite-ssh-proxy.service";
-        wants = [ "network-online.target" ];
+        ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service";
+        wants = [
+          "network-online.target"
+        ]
+        ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service";
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
         stateDirectory = "proxy-suite";
+      };
+    }
+    {
+      enable = proxyInboundsEnabled;
+      name = serviceNames.inbounds;
+      value = mkRestartingService {
+        description = "XRay server inbounds (accept connections from outside)";
+        after = [
+          "network-online.target"
+        ]
+        # Relayed traffic leaves through the client stack's SOCKS listener, so
+        # start after it. Not `requires`: the listeners should keep serving
+        # direct-routed traffic even if the client stack is down.
+        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service";
+        wants = [
+          "network-online.target"
+        ]
+        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service";
+        wantedBy = [ "multi-user.target" ];
+        execStart = scripts.startInbounds;
+        runtimeDirectory = serviceNames.inbounds;
       };
     }
     {

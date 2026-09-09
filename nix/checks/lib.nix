@@ -44,6 +44,8 @@ let
   mkTProxyConfig = fixture: mkProxyConfig fixture "tproxyFile";
   mkTunConfig = fixture: mkProxyConfig fixture "tunFile";
   mkPerAppTunConfig = fixture: mkProxyConfig fixture "perAppTunFile";
+  mkInboundsConfig = fixture: mkProxyConfig fixture "proxyInboundsFile";
+  mkInboundsSpec = fixture: mkProxyConfig fixture "proxyInboundsSpecFile";
   mkTProxyNftRules =
     fixture:
     let
@@ -227,6 +229,8 @@ in
     mkTProxyConfig
     mkTunConfig
     mkPerAppTunConfig
+    mkInboundsConfig
+    mkInboundsSpec
     mkTProxyNftRules
     mkPerAppZapretNftRules
     mkPerAppUserRules

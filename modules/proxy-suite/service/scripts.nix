@@ -26,6 +26,14 @@
   tunFile,
   perAppTunFile,
   routeModeRulesFile,
+  proxyInboundsCfg,
+  proxyInboundsNeedLocalProxy,
+  proxyInboundViaOutbounds,
+  userControlEnabled,
+  buildInboundPy,
+  proxyInboundsFile,
+  proxyInboundsSpecFile,
+  builders,
 }:
 
 let
@@ -157,6 +165,32 @@ let
   };
   inherit (startScripts) startSocks startTun startPerAppTun;
 
+  proxyInboundsScripts = import ./proxy-inbounds-scripts.nix {
+    inherit
+      lib
+      pkgs
+      proxyCfg
+      proxyInboundsCfg
+      proxyInboundsNeedLocalProxy
+      proxyInboundViaOutbounds
+      userControlCfg
+      userControlEnabled
+      localProxyAuth
+      localProxyAuthEnabled
+      localProxyAuthPasswordSource
+      jq
+      python3
+      parserScriptsPythonPath
+      buildInboundPy
+      buildOutboundPy
+      proxyInboundsFile
+      proxyInboundsSpecFile
+      builders
+      ;
+  };
+  inherit (proxyInboundsScripts) startInbounds;
+  proxyInboundsLinksFile = proxyInboundsScripts.linksFile;
+
   controlScripts = import ./control-scripts.nix {
     inherit
       lib
@@ -175,8 +209,9 @@ let
 
 in
 {
-  inherit startSocks startTun startPerAppTun;
+  inherit startSocks startTun startPerAppTun startInbounds;
   inherit
+    proxyInboundsLinksFile
     routeModeStateFile
     setRouteModeScript
     subscriptionUpdateScript
