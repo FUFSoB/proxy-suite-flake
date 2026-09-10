@@ -53,6 +53,50 @@ class BuildOutboundTests(unittest.TestCase):
             ob["streamSettings"]["realitySettings"]["spiderX"], "/-/en/gp/bestsellers"
         )
 
+    def test_vless_raw_transport_is_tcp(self):
+        # XRay renamed the tcp network to "raw"; it is still plain TCP.
+        ob = run_parser(
+            "vless://uuid@example.com:443?type=raw&security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com"
+        )
+        self.assertNotIn("transport", ob)
+
+    def test_at_sign_in_query_does_not_eat_the_host(self):
+        ob = run_parser(
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey"
+            "&fp=chrome&sni=cdn.example.com&Telegram=@somechannel,@somechannel"
+        )
+        self.assertEqual(ob["server"], "example.com")
+        self.assertEqual(ob["server_port"], 443)
+
+    def test_trailing_path_is_not_part_of_the_port(self):
+        ob = run_parser(
+            "vless://uuid@example.com:23576/?type=tcp&security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com"
+        )
+        self.assertEqual(ob["server_port"], 23576)
+
+    def test_reality_empty_fingerprint_falls_back_to_chrome(self):
+        # sing-box's REALITY client refuses to start without a uTLS block.
+        ob = run_parser(
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=&sni=cdn.example.com"
+        )
+        self.assertEqual(ob["tls"]["utls"]["fingerprint"], "chrome")
+
+    def test_xray_only_fingerprint_rejected_for_sing_box(self):
+        url = (
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey"
+            "&fp=unsafe&sni=cdn.example.com"
+        )
+        with self.assertRaises(ValueError):
+            run_parser(url)
+        self.assertEqual(
+            run_xray_parser(url)["streamSettings"]["realitySettings"]["fingerprint"],
+            "unsafe",
+        )
+
+    def test_reality_without_pbk_is_rejected_clearly(self):
+        with self.assertRaisesRegex(ValueError, "pbk"):
+            run_parser("vless://uuid@example.com:443?security=reality&type=tcp")
+
     def test_vless_httpupgrade_transport(self):
         ob = run_parser(
             "vless://uuid@example.com:443?type=httpupgrade&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fupgrade"

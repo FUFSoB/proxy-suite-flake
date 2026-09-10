@@ -96,6 +96,18 @@ in
       true
     )
 
+    # The fetcher's stdout has to land in the cache file. A newline between the
+    # pipeline and the redirect closes the pipeline, leaving a bare redirect
+    # that truncates the cache to zero bytes while the JSON goes to the journal.
+    (
+      assert pkgs.lib.hasInfix ''--tag-prefix community > "$CACHE_FILE.tmp"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix
+        ''--tag-prefix community > "/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp"''
+        subscriptionOnlyUpdateScript;
+      true
+    )
+
     # Invalid cache files are ignored and refreshed.
     (
       assert pkgs.lib.hasInfix "_proxy_suite_valid_subscription_cache()" subscriptionOnlyStartScript;

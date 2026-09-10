@@ -238,7 +238,10 @@ def decode_subscription(data: bytes) -> list[str]:
 
 
 def slugify_tag(remark: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9_-]", "-", remark)
+    # \w is Unicode-aware: non-Latin remarks (e.g. Cyrillic country names) keep
+    # their letters instead of collapsing to a bare "proxy" tag. Tags only ever
+    # reach JSON configs and the Clash API, both UTF-8 safe.
+    slug = re.sub(r"[^\w-]", "-", remark)
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
     return slug[:60] or "proxy"
 

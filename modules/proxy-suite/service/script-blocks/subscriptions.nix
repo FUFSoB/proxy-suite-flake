@@ -33,7 +33,10 @@ let
     let
       urlSource = mkSubscriptionUrlSource sub;
     in
-    ''
+    # Both call sites append their own `> "$CACHE_FILE.tmp"`, so this must not
+    # end in a newline: that would close the pipeline and turn the redirect
+    # into a separate command that just truncates the cache to zero bytes.
+    lib.removeSuffix "\n" ''
       printf '%s' "$(cat "${urlSource}")" \
         | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} ${subscriptionBackendArg} --tag-prefix ${lib.escapeShellArg sub.tag}
     '';

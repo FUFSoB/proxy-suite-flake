@@ -8,6 +8,7 @@ import urllib.parse
 SUPPORTED_VLESS_TRANSPORTS = {
     "",
     "tcp",
+    "raw",
     "ws",
     "grpc",
     "h2",
@@ -38,11 +39,13 @@ def _split_host_port(hostpart: str) -> tuple[str, str]:
 def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     rest = url[len(f"{scheme}://") :]
     rest, _, _ = rest.partition("#")
-    if "@" in rest:
-        userinfo, _, rest = rest.rpartition("@")
-    else:
-        userinfo = ""
-    hostpart, _, query = rest.partition("?")
+    # Split the query off before the userinfo: share links routinely carry '@'
+    # inside their parameters (Telegram=@handle, path=/x/?@channel), and an
+    # rpartition over the whole string swallows the host along with the userinfo.
+    authority, _, query = rest.partition("?")
+    userinfo, _, hostpart = authority.rpartition("@")
+    # "host:443/?type=tcp" – a trailing path is not part of the port.
+    hostpart, _, _ = hostpart.partition("/")
     host, port = _split_host_port(hostpart)
     return userinfo, host, port, _qs(query)
 
@@ -68,7 +71,7 @@ def _mk_transport(
 ) -> "dict | None":
     normalized = transport_type.lower()
 
-    if normalized in ("", "tcp"):
+    if normalized in ("", "tcp", "raw"):
         return None
     if normalized == "ws":
         return {
@@ -114,11 +117,41 @@ def _mk_transport(
     return None
 
 
+def _require(params: dict, name: str, security: str) -> str:
+    if name not in params:
+        raise ValueError(f"{security} link is missing the '{name}' parameter")
+    return params[name]
+
+
+# sing-box's uTLS build refuses to start on a fingerprint it does not know, so
+# one bad share link would otherwise take the whole config down with it. XRay's
+# set is larger (it has "unsafe"), so only an explicitly-XRay entry skips this.
+SING_BOX_FINGERPRINTS = {
+    "chrome",
+    "firefox",
+    "edge",
+    "safari",
+    "360",
+    "qq",
+    "ios",
+    "android",
+    "random",
+    "randomized",
+}
+
+
 def _mk_tls(
-    server_name: str, fp: "str | None" = None, alpn: "str | None" = None
+    server_name: str,
+    fp: "str | None" = None,
+    alpn: "str | None" = None,
+    backend: str = "sing-box",
 ) -> dict:
     tls: dict = {"enabled": True, "server_name": server_name}
     if fp:
+        if backend != "xray" and fp not in SING_BOX_FINGERPRINTS:
+            raise ValueError(
+                f"unsupported uTLS fingerprint '{fp}': sing-box would refuse to start"
+            )
         tls["utls"] = {"enabled": True, "fingerprint": fp}
     if alpn:
         tls["alpn"] = alpn.split(",")
@@ -163,17 +196,24 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     }
 
     if security == "reality":
-        ob["tls"] = _mk_tls(params.get("sni", host), fp=params.get("fp", "chrome"))
+        ob["tls"] = _mk_tls(
+            params.get("sni", host),
+            fp=params.get("fp") or "chrome",
+            backend=backend,
+        )
         ob["tls"]["reality"] = {
             "enabled": True,
-            "public_key": params["pbk"],
+            "public_key": _require(params, "pbk", "reality"),
             "short_id": params.get("sid", ""),
         }
         if backend == "xray" and params.get("spx"):
             ob["tls"]["reality"]["spider_x"] = params["spx"]
     elif security == "tls":
         ob["tls"] = _mk_tls(
-            params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
+            params.get("sni", host),
+            fp=params.get("fp"),
+            alpn=params.get("alpn"),
+            backend=backend,
         )
         if backend == "xray" and "ech" in params:
             ob["tls"]["ech_config_list"] = urllib.parse.unquote(params["ech"])

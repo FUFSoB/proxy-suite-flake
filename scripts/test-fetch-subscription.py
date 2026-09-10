@@ -68,6 +68,19 @@ class FetchSubscriptionTests(unittest.TestCase):
 
         self.assertRegex(tag, r"^[a-zA-Z0-9_/\-]+$")
 
+    def test_non_latin_remark_kept_in_tag(self):
+        # Flag emoji + Cyrillic remarks must stay distinguishable, not all
+        # collapse to the "proxy" fallback.
+        payload = _make_b64_payload(
+            VLESS_URI + "#\U0001F1E9\U0001F1EA \u0413\u0435\u0440\u043c\u0430\u043d\u0438\u044f",
+            SS_URI + "#\U0001F1EF\U0001F1F5 \u042f\u043f\u043e\u043d\u0438\u044f",
+        )
+        obs = run_fetcher(payload, tag_prefix="sub")
+        self.assertEqual(
+            [ob["tag"] for ob in obs],
+            ["sub-\u0413\u0435\u0440\u043c\u0430\u043d\u0438\u044f", "sub-\u042f\u043f\u043e\u043d\u0438\u044f"],
+        )
+
     def test_tag_deduplication(self):
         # Two entries with the same remark → distinct tags
         uri1 = VLESS_URI + "#Server"
