@@ -53,6 +53,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [tcp](#services-proxy-suite-zapret-zapret2-ports-tcp)
       - [udp](#services-proxy-suite-zapret-zapret2-ports-udp)
     - [profiles](#services-proxy-suite-zapret-zapret2-profiles)
+    - [strategySource](#services-proxy-suite-zapret-zapret2-strategysource)
 
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
@@ -542,6 +543,8 @@ list of string
 Learn blocked hosts: after failThreshold failures (retransmissions, early RST, DPI
 redirect, one-sided UDP) a host joins /var/lib/proxy-suite/zapret2/zapret-hosts-auto\.txt\.
 Off, only zapret2\.domains and ` proxy-ctl zapret auto add ` are acted on\.
+The thresholds below also fill whichever of them a profile’s strategy rotation
+(circular) leaves unset; its own fails and time are kept\.
 
 *Type:*
 boolean
@@ -687,7 +690,7 @@ positive integer, meaning >0
 <a id="services-proxy-suite-zapret-zapret2-blobs"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.blobs
 
-Fake payloads by name (blob=\<name>): a file in zapret2’s files/fake, or an absolute path\.
+Fake payloads by name (blob=\<name>) on top of those of strategySource: a file in zapret2’s files/fake, or an absolute path\.
 
 *Type:*
 attribute set of string
@@ -695,10 +698,7 @@ attribute set of string
 *Default:*
 
 ```nix
-{
-  quic_initial = "quic_initial_www_google_com.bin";
-  tls_clienthello = "tls_clienthello_www_google_com.bin";
-}
+{ }
 ```
 
 *Example:*
@@ -770,73 +770,57 @@ false
 <a id="services-proxy-suite-zapret-zapret2-ports-tcp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.tcp
 
-TCP ports sent to NFQUEUE\. Must cover every port a profile filters on\.
+TCP ports sent to NFQUEUE\. Must cover every port a profile filters on\. null uses the ports of strategySource\.
 
 *Type:*
-string
+null or string
 
 *Default:*
 
 ```nix
-"80,443,1984,2053,2083,2087,2096,5222,8443"
+null
+```
+
+*Example:*
+
+```nix
+"80,443"
 ```
 
 <a id="services-proxy-suite-zapret-zapret2-ports-udp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.udp
 
-UDP ports sent to NFQUEUE\. Must cover every port a profile filters on\.
+UDP ports sent to NFQUEUE\. Must cover every port a profile filters on\. null uses the ports of strategySource\.
 
 *Type:*
-string
+null or string
 
 *Default:*
 
 ```nix
-"443,590-600,1400,3478-3481,5349,19294-19344,49152-65535"
+null
+```
+
+*Example:*
+
+```nix
+"443"
 ```
 
 <a id="services-proxy-suite-zapret-zapret2-profiles"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.profiles
 
-nfqws2 profiles, joined with --new; first match wins\. \<HOSTLIST> expands to the hostlist
-arguments, \<HOSTLIST_NOAUTO> to the same without learning\. --qnum, --fwmark and --lua-init
-are added automatically\.
+nfqws2 profiles replacing those of strategySource, joined with --new; first match wins\.
+\<HOSTLIST> expands to the hostlist arguments, \<HOSTLIST_NOAUTO> to the same without
+learning\. --qnum, --fwmark and --lua-init are added automatically\. null uses the profiles of strategySource\.
 
 *Type:*
-list of string
+null or (list of string)
 
 *Default:*
 
 ```nix
-[
-  ''
-    --filter-tcp=443,80,1984,5222 --filter-l7=http,tls,mtproto <HOSTLIST>
-    --payload=tls_client_hello,mtproto_initial
-    --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-    --lua-desync=fake:blob=tls_clienthello:tls_mod=rnd,dupsid,sni=fonts.google.com:tcp_seq=10000:strategy=1
-    --lua-desync=multisplit:pos=1,midsld:seqovl=1:seqovl_pattern=tls_clienthello:tcp_ts_up:strategy=1
-    --lua-desync=fake:blob=0x00000000:tcp_ack=-66000:tls_mod=rnd,dupsid,sni=www.google.com:repeats=2:strategy=2
-    --lua-desync=multisplit:pos=1,midsld:strategy=2
-    --lua-desync=hostfakesplit:host=ozon.ru:midhost=host-2:seqovl=sniext+3:seqovl_pattern=tls_clienthello:badsum:tcp_md5:tcp_ts_up:strategy=3
-    --lua-desync=hostfakesplit:tcp_md5:tcp_ts_up:strategy=3
-    --payload=http_req
-    --lua-desync=http_methodeol:badsum
-  ''
-  ''
-    --filter-udp=443 --filter-l7=quic <HOSTLIST_NOAUTO>
-    --payload=quic_initial
-    --lua-desync=fake:blob=quic_initial:repeats=11
-  ''
-  ''
-    --filter-udp=590-600,1400,3478-3481,5349,19294-19344,49152-65535
-    --filter-l7=wireguard,stun,discord,mtproto,unknown
-    --out-range=<n2
-    --payload=wireguard_initiation,wireguard_response,wireguard_cookie,stun,discord_ip_discovery,mtproto_initial,unknown
-    --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-    --lua-desync=fake:repeats=6:strategy=1
-    --lua-desync=fake:blob=quic_initial:repeats=6:strategy=2
-  ''
-]
+null
 ```
 
 *Example:*
@@ -845,4 +829,31 @@ list of string
 [
   "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
 ]
+```
+
+<a id="services-proxy-suite-zapret-zapret2-strategysource"></a>
+## services\.proxy-suite\.zapret\.zapret2\.strategySource
+
+Where profiles, blobs and ports come from; both are pinned flake inputs\.
+“nfqws2-keenetic”: its nfqws2\.conf strategies with its user and exclude lists\.
+“z2k”: z2k’s own config generator, run at build time: per-category rotation pools
+(general, YouTube, googlevideo, QUIC, Discord), its failure detectors and fake-TTL
+hook, its blobs, whitelist and hostlists, including the ~125k-domain RKN list
+(about 15 MB more RSS per nfqws2 process)\.
+Either way each host’s working strategy is remembered across restarts in
+/var/lib/proxy-suite/zapret2/circular/state\.tsv\.
+
+*Type:*
+one of “nfqws2-keenetic”, “z2k”
+
+*Default:*
+
+```nix
+"nfqws2-keenetic"
+```
+
+*Example:*
+
+```nix
+"z2k"
 ```

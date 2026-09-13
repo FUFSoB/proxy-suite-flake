@@ -7,6 +7,14 @@
       url = "github:kartavkun/zapret-discord-youtube";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nfqws2-keenetic = {
+      url = "github:nfqws/nfqws2-keenetic";
+      flake = false;
+    };
+    z2k = {
+      url = "github:necronicle/z2k/z2k-enhanced";
+      flake = false;
+    };
   };
 
   outputs =
@@ -14,6 +22,8 @@
       self,
       nixpkgs,
       zapret,
+      nfqws2-keenetic,
+      z2k,
     }:
     let
       systems = [
@@ -22,7 +32,14 @@
       ];
       forAll = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: import nixpkgs { inherit system; };
-      proxySuiteModule = import ./modules/proxy-suite { inherit zapret nixpkgs; };
+      proxySuiteModule = import ./modules/proxy-suite {
+        inherit
+          zapret
+          nixpkgs
+          nfqws2-keenetic
+          z2k
+          ;
+      };
       mkOptionsDoc = import ./nix/options-doc.nix {
         inherit nixpkgs pkgsFor proxySuiteModule;
       };

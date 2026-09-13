@@ -8,50 +8,36 @@ let
       type = types.ints.positive;
       inherit default description;
     };
-
-  # Ported from nfqws2-keenetic. `circular` rotates strategy=1/2/3 per
-  # second-level domain whenever the failure detector fires.
-  defaultProfiles = [
-    ''
-      --filter-tcp=443,80,1984,5222 --filter-l7=http,tls,mtproto <HOSTLIST>
-      --payload=tls_client_hello,mtproto_initial
-      --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-      --lua-desync=fake:blob=tls_clienthello:tls_mod=rnd,dupsid,sni=fonts.google.com:tcp_seq=10000:strategy=1
-      --lua-desync=multisplit:pos=1,midsld:seqovl=1:seqovl_pattern=tls_clienthello:tcp_ts_up:strategy=1
-      --lua-desync=fake:blob=0x00000000:tcp_ack=-66000:tls_mod=rnd,dupsid,sni=www.google.com:repeats=2:strategy=2
-      --lua-desync=multisplit:pos=1,midsld:strategy=2
-      --lua-desync=hostfakesplit:host=ozon.ru:midhost=host-2:seqovl=sniext+3:seqovl_pattern=tls_clienthello:badsum:tcp_md5:tcp_ts_up:strategy=3
-      --lua-desync=hostfakesplit:tcp_md5:tcp_ts_up:strategy=3
-      --payload=http_req
-      --lua-desync=http_methodeol:badsum
-    ''
-    # QUIC reads the learned list but never adds to it: browsers retry over TCP.
-    ''
-      --filter-udp=443 --filter-l7=quic <HOSTLIST_NOAUTO>
-      --payload=quic_initial
-      --lua-desync=fake:blob=quic_initial:repeats=11
-    ''
-    # No hostlist: these protocols carry no SNI.
-    ''
-      --filter-udp=590-600,1400,3478-3481,5349,19294-19344,49152-65535
-      --filter-l7=wireguard,stun,discord,mtproto,unknown
-      --out-range=<n2
-      --payload=wireguard_initiation,wireguard_response,wireguard_cookie,stun,discord_ip_discovery,mtproto_initial,unknown
-      --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-      --lua-desync=fake:repeats=6:strategy=1
-      --lua-desync=fake:blob=quic_initial:repeats=6:strategy=2
-    ''
-  ];
+  fromSource = what: "null uses the ${what} of strategySource.";
 in
 {
   options.services.proxy-suite.zapret.zapret2 = {
-    profiles = mkOption {
-      type = types.listOf types.str;
-      default = defaultProfiles;
+    strategySource = mkOption {
+      type = types.enum [
+        "nfqws2-keenetic"
+        "z2k"
+      ];
+      default = "nfqws2-keenetic";
       description = ''
-        nfqws2 profiles, joined with --new; first match wins. <HOSTLIST> expands to the hostlist
-        arguments, <HOSTLIST_NOAUTO> to the same without learning. --qnum, --fwmark and --lua-init
-        are added automatically.
+        Where profiles, blobs and ports come from; both are pinned flake inputs.
+        "nfqws2-keenetic": its nfqws2.conf strategies with its user and exclude lists.
+        "z2k": z2k's own config generator, run at build time: per-category rotation pools
+        (general, YouTube, googlevideo, QUIC, Discord), its failure detectors and fake-TTL
+        hook, its blobs, whitelist and hostlists, including the ~125k-domain RKN list
+        (about 15 MB more RSS per nfqws2 process).
+        Either way each host's working strategy is remembered across restarts in
+        /var/lib/proxy-suite/zapret2/circular/state.tsv.
+      '';
+      example = "z2k";
+    };
+
+    profiles = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = null;
+      description = ''
+        nfqws2 profiles replacing those of strategySource, joined with --new; first match wins.
+        <HOSTLIST> expands to the hostlist arguments, <HOSTLIST_NOAUTO> to the same without
+        learning. --qnum, --fwmark and --lua-init are added automatically. ${fromSource "profiles"}
       '';
       example = [
         "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
@@ -60,11 +46,8 @@ in
 
     blobs = mkOption {
       type = types.attrsOf types.str;
-      default = {
-        tls_clienthello = "tls_clienthello_www_google_com.bin";
-        quic_initial = "quic_initial_www_google_com.bin";
-      };
-      description = "Fake payloads by name (blob=<name>): a file in zapret2's files/fake, or an absolute path.";
+      default = { };
+      description = "Fake payloads by name (blob=<name>) on top of those of strategySource: a file in zapret2's files/fake, or an absolute path.";
       example = {
         tls_clienthello = "/etc/proxy-suite/my_clienthello.bin";
       };
@@ -86,15 +69,17 @@ in
 
     ports = {
       tcp = mkOption {
-        type = types.str;
-        default = "80,443,1984,2053,2083,2087,2096,5222,8443";
-        description = "TCP ports sent to NFQUEUE. Must cover every port a profile filters on.";
+        type = types.nullOr types.str;
+        default = null;
+        description = "TCP ports sent to NFQUEUE. Must cover every port a profile filters on. ${fromSource "ports"}";
+        example = "80,443";
       };
 
       udp = mkOption {
-        type = types.str;
-        default = "443,590-600,1400,3478-3481,5349,19294-19344,49152-65535";
-        description = "UDP ports sent to NFQUEUE. Must cover every port a profile filters on.";
+        type = types.nullOr types.str;
+        default = null;
+        description = "UDP ports sent to NFQUEUE. Must cover every port a profile filters on. ${fromSource "ports"}";
+        example = "443";
       };
     };
 
@@ -111,6 +96,8 @@ in
           Learn blocked hosts: after failThreshold failures (retransmissions, early RST, DPI
           redirect, one-sided UDP) a host joins /var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt.
           Off, only zapret2.domains and `proxy-ctl zapret auto add` are acted on.
+          The thresholds below also fill whichever of them a profile's strategy rotation
+          (circular) leaves unset; its own fails and time are kept.
         '';
       };
 

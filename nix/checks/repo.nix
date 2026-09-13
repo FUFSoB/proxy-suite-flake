@@ -215,6 +215,7 @@
         nativeBuildInputs = [
           pkgs.bash
           pkgs.coreutils
+          pkgs.gawk
           pkgs.gnugrep
         ];
       }
@@ -247,8 +248,17 @@
         # The lists stay readable by unprivileged proxy-ctl after a rewrite.
         test "$(stat -c %a "$state/zapret-hosts-user.txt")" = 644
 
+        # Forgetting a host also drops the strategy remembered for its apex.
+        mkdir -p "$state/circular"
+        printf '# key\thost\tstrategy\tts\tmode\tsni\nrkn_tcp\tyoutube.com\t3\t1\tauto\t\nrkn_tcp\tother.example\t2\t1\tauto\t\nyt_tcp\tyoutube.com\t5\t1\tauto\t\n' > "$state/circular/state.tsv"
+        run forget www.youtube.com > /dev/null
+        ! grep -q 'youtube.com' "$state/circular/state.tsv"
+        grep -q 'other.example' "$state/circular/state.tsv"
+        grep -q '^# key' "$state/circular/state.tsv"
+
         run clear > /dev/null
         run list | grep -q 'No hostnames learned'
+        test ! -s "$state/circular/state.tsv"
 
         # Without the zapret2 engine there is nothing to inspect.
         ! env ZAPRET_AUTO_ENABLED=0 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret auto list

@@ -50,7 +50,7 @@ A group without a verb shows its status or list.
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
-  zapret auto clear                      forget every learned host (sudo)
+  zapret auto clear                      forget learned hosts and strategies (sudo)
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
@@ -1095,8 +1095,23 @@ _zapret_auto_edit() {
   fi
 }
 
+# Remembered strategies are keyed by the domain circular rotates on (usually the
+# apex); z2k-state-persist.lua applies external deletions live.
+_zapret_strategy_drop() {
+  local file domain="$1" tmp
+  file=$(_zapret_auto_file circular/state.tsv)
+  [ -s "$file" ] || return 0
+  tmp=$(mktemp "$file.XXXXXX" 2>/dev/null) || _die "Cannot write $file - re-run with sudo."
+  awk -F'\t' -v d="$domain" '/^#/ || ($2 != d && substr(d, length(d) - length($2)) != "." $2)' "$file" >"$tmp"
+  chmod 0644 "$tmp"
+  if ! mv "$tmp" "$file"; then
+    rm -f "$tmp"
+    _die "Cannot replace $file - re-run with sudo."
+  fi
+}
+
 cmd_zapret_auto() {
-  local verb="${1:-list}" domain="${2:-}" auto user exclude
+  local verb="${1:-list}" domain="${2:-}" auto user exclude state
   [ "${ZAPRET_AUTO_ENABLED:-0}" = 1 ] || _die "Learned hostlists need zapret.engine = \"zapret2\"."
   auto=$(_zapret_auto_file zapret-hosts-auto.txt)
   user=$(_zapret_auto_file zapret-hosts-user.txt)
@@ -1117,16 +1132,22 @@ cmd_zapret_auto() {
       ;;
     forget)
       _zapret_auto_edit "$auto" "$domain" drop
+      _zapret_strategy_drop "$domain"
       echo "Forgot $domain. It is learned again if it keeps failing; 'exclude' prevents that."
       ;;
     exclude)
       _zapret_auto_edit "$auto" "$domain" drop
+      _zapret_strategy_drop "$domain"
       _zapret_auto_edit "$exclude" "$domain" add
       echo "Excluded $domain. It is no longer touched or learned."
       ;;
     clear)
       : >"$auto" 2>/dev/null || _die "Cannot write $auto - re-run with sudo."
-      echo "Cleared the learned hostlist."
+      state=$(_zapret_auto_file circular/state.tsv)
+      if [ -e "$state" ]; then
+        : >"$state" 2>/dev/null || _die "Cannot write $state - re-run with sudo."
+      fi
+      echo "Cleared learned hosts and remembered strategies."
       ;;
     *) _usage "zapret auto [list|add|forget|exclude|clear]" ;;
   esac

@@ -1,7 +1,12 @@
 # Factory function – receives the zapret flake and this flake's own nixpkgs,
 # returns a NixOS module. This lets consumers add a single flake input and get
 # everything transitively.
-{ zapret, nixpkgs }:
+{
+  zapret,
+  nixpkgs,
+  nfqws2-keenetic,
+  z2k,
+}:
 
 {
   config,
@@ -103,6 +108,7 @@ in
               packages
               ;
             inherit (nftr) perAppZapretRulesFile nft;
+            zapret2Sources = { inherit nfqws2-keenetic z2k; };
           }
         ))
 

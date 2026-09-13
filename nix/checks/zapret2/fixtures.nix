@@ -58,4 +58,9 @@ in
     enable = true;
     zapret2.autoHostlist.enable = false;
   };
+
+  zapret2Z2k = mkZapret2 {
+    enable = true;
+    zapret2.strategySource = "z2k";
+  };
 }

@@ -124,7 +124,7 @@ A group without a verb shows its status or list.
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
-  zapret auto clear                      forget every learned host (sudo)
+  zapret auto clear                      forget learned hosts and strategies (sudo)
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]

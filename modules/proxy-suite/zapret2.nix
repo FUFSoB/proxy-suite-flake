@@ -4,6 +4,7 @@
   pkgs,
   cfg,
   packages,
+  zapret2Sources,
   perAppZapretRulesFile,
   nft,
 }:
@@ -25,6 +26,7 @@ let
       pkgs
       cfg
       packages
+      zapret2Sources
       ;
   };
 
@@ -69,7 +71,7 @@ let
   # nfqws2 and proxy-ctl expect the list files to exist.
   mkPreStart = ''
     ${lib.getExe' pkgs.kmod "modprobe"} nfnetlink_queue 2>/dev/null || true
-    install -d -m 0755 ${runtime.stateDir}
+    install -d -m 0755 ${runtime.stateDir} ${runtime.circularStateDir}
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
   '';
 

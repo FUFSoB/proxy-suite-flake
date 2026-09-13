@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "nfqws2-keenetic": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789144514,
+        "narHash": "sha256-G+LvvXDqzYm8SOXNc3N+HIzvD9DR3J+WT+HHDdmjB0Y=",
+        "owner": "nfqws",
+        "repo": "nfqws2-keenetic",
+        "rev": "fa22c177b340e73d8b8a94b295af20e0228c4c22",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nfqws",
+        "repo": "nfqws2-keenetic",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1788614874,
@@ -18,8 +34,27 @@
     },
     "root": {
       "inputs": {
+        "nfqws2-keenetic": "nfqws2-keenetic",
         "nixpkgs": "nixpkgs",
+        "z2k": "z2k",
         "zapret": "zapret"
+      }
+    },
+    "z2k": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789186266,
+        "narHash": "sha256-d9gg7s66P3pkN7d4l72ryaGC9Ayoqg4tbHaoDNbDTT4=",
+        "owner": "necronicle",
+        "repo": "z2k",
+        "rev": "7beb9754d65a2cafd9c1d26d382bcb61d453d5b3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "necronicle",
+        "ref": "z2k-enhanced",
+        "repo": "z2k",
+        "type": "github"
       }
     },
     "zapret": {

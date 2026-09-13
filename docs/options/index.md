@@ -287,46 +287,16 @@ services.proxy-suite = {
         udpIn = 1;
         udpOut = 4;
       };
-      blobs = {
-        quic_initial = "quic_initial_www_google_com.bin";
-        tls_clienthello = "tls_clienthello_www_google_com.bin";
-      };
+      blobs = { };
       domains = [ ];
       excludeDomains = [ ];
       ipv6 = false;
       ports = {
-        tcp = "80,443,1984,2053,2083,2087,2096,5222,8443";
-        udp = "443,590-600,1400,3478-3481,5349,19294-19344,49152-65535";
+        tcp = null;
+        udp = null;
       };
-      profiles = [
-        ''
-          --filter-tcp=443,80,1984,5222 --filter-l7=http,tls,mtproto <HOSTLIST>
-          --payload=tls_client_hello,mtproto_initial
-          --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-          --lua-desync=fake:blob=tls_clienthello:tls_mod=rnd,dupsid,sni=fonts.google.com:tcp_seq=10000:strategy=1
-          --lua-desync=multisplit:pos=1,midsld:seqovl=1:seqovl_pattern=tls_clienthello:tcp_ts_up:strategy=1
-          --lua-desync=fake:blob=0x00000000:tcp_ack=-66000:tls_mod=rnd,dupsid,sni=www.google.com:repeats=2:strategy=2
-          --lua-desync=multisplit:pos=1,midsld:strategy=2
-          --lua-desync=hostfakesplit:host=ozon.ru:midhost=host-2:seqovl=sniext+3:seqovl_pattern=tls_clienthello:badsum:tcp_md5:tcp_ts_up:strategy=3
-          --lua-desync=hostfakesplit:tcp_md5:tcp_ts_up:strategy=3
-          --payload=http_req
-          --lua-desync=http_methodeol:badsum
-        ''
-        ''
-          --filter-udp=443 --filter-l7=quic <HOSTLIST_NOAUTO>
-          --payload=quic_initial
-          --lua-desync=fake:blob=quic_initial:repeats=11
-        ''
-        ''
-          --filter-udp=590-600,1400,3478-3481,5349,19294-19344,49152-65535
-          --filter-l7=wireguard,stun,discord,mtproto,unknown
-          --out-range=<n2
-          --payload=wireguard_initiation,wireguard_response,wireguard_cookie,stun,discord_ip_discovery,mtproto_initial,unknown
-          --lua-desync=circular:fails=2:time=300:retrans=3:nld=2
-          --lua-desync=fake:repeats=6:strategy=1
-          --lua-desync=fake:blob=quic_initial:repeats=6:strategy=2
-        ''
-      ];
+      profiles = null;
+      strategySource = "nfqws2-keenetic";
     };
   };
 };
