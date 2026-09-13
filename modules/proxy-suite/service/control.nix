@@ -7,7 +7,10 @@
   perAppRoutingTun,
   perAppRoutingTproxy,
   perAppZapretCfg,
+  zapretEngine,
+  constants,
   selectionMode,
+  userControlCfg,
   subscriptionTagsFile,
   subscriptionCacheDir,
   perAppRoutingProfilesFile,
@@ -17,6 +20,8 @@
   amneziaWgProfileNamesFile,
   proxyInboundsEnabled,
   proxyInboundsLinksFile,
+  proxyInboundsSubscriptionsFile,
+  proxyInboundsSubscriptionsBaseUrl,
 }:
 {
   proxyCtl = packages.mkProxyCtl {
@@ -31,13 +36,29 @@
       routeModeStateFile
       amneziaWgProfileNamesFile
       ;
-    defaultRouteMode = if proxyCfg.proxyByDefault then "blacklist" else "whitelist";
+    defaultRouteMode = if (proxyCfg.routing.default == "proxy") then "blacklist" else "whitelist";
     perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";
     perAppRoutingProxychainsEnabled = if perAppRoutingCfg.proxychains.enable then "1" else "0";
     perAppRoutingTunEnabled = if perAppRoutingTun.enable then "1" else "0";
     perAppRoutingTproxyEnabled = if perAppRoutingTproxy.enable then "1" else "0";
     perAppRoutingZapretEnabled = if perAppZapretCfg.enable then "1" else "0";
+    zapretAutoEnabled = if zapretEngine == "zapret2" then "1" else "0";
+    zapretStateDir = constants.zapret2StateDir;
+    priorityOutboundFile = constants.priorityOutboundFile;
+    outboundInventoryFile = constants.outboundInventoryFile;
+    runtimeOutboundsDir = constants.runtimeOutboundsDir;
+    runtimeSubscriptionsDir = constants.runtimeSubscriptionsDir;
+    userControlGroup = userControlCfg.group;
     inboundsEnabled = if proxyInboundsEnabled then "1" else "0";
     inboundsLinksFile = proxyInboundsLinksFile;
+    inboundsStatsFile = constants.inboundStatsFile;
+    inboundsSubscriptionsFile = proxyInboundsSubscriptionsFile;
+    inboundsSubscriptionsBaseUrl =
+      if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
+    autoProxyEnabled = if proxyCfg.autoProxy.enable then "1" else "0";
+    autoProxyStateDir = constants.autoProxyStateDir;
+    localProxyUrl = "http://${
+      if proxyCfg.listener.address == "0.0.0.0" then "127.0.0.1" else proxyCfg.listener.address
+    }:${toString proxyCfg.listener.port}";
   };
 }

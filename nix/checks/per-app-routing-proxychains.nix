@@ -50,18 +50,14 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy = {
-          tun.perApp.enable = true;
-          tproxy.perApp.enable = true;
-        };
-        zapret = {
-          enable = true;
-          perApp.enable = true;
-        };
+        zapret.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = false;
           proxychains.enable = true;
+          tun.enable = true;
+          tproxy.enable = true;
+          zapret.enable = true;
         };
       };
     }
@@ -102,12 +98,12 @@ in
 
     # -- perAppRouting: proxy-ctl script embeds wrap/apps commands --
     (
-      assert pkgs.lib.hasInfix "help)" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "show this help message" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "enable/disable the proxy backend stack" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "restart active global proxy-suite services"
+      assert pkgs.lib.hasInfix "help | -h | --help)" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "Usage: proxy-ctl <group>" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "local proxy backend" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "restart active services"
         perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "wrap <profile> -- <cmd>" perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "apps run <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true
     )

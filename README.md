@@ -1,50 +1,34 @@
 # proxy-suite-flake
 
-Declarative proxy stack for NixOS.
+Declarative proxy stack for NixOS, built for dealing with Roskomnadzor and the usual Russian ISP nonsense. Configure it in Nix, rebuild, and it runs as systemd services.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), native [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) client tunnels, [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Built specifically for dealing with Roskomnadzor (RKN) and the usual Russian ISP nonsense.
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2) and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy).
 
-The goal is to replace GUI clients like v2rayN and throne – you configure your proxies in Nix, rebuild, and they just work as systemd services.
+## Features
 
----
-
-## What it gives you
-
-- **SOCKS5/HTTP proxy** on `127.0.0.1:1080` when `proxy.enable = true`
-- **Backend choice** – use SingBox or XRay through the same `services.proxy-suite.proxy` option tree
-- **Transparent proxy (TProxy)** – redirect all system traffic through the active backend without configuring each app; start/stop on demand or autostart at boot
-- **TUN mode** – full tunnel via a virtual network interface; useful when TProxy doesn't cover something, with optional boot-time autostart
-- **AmneziaWG profiles** – native AWG 1.x–3.x tunnels from `.conf`, self-contained `vpn://`, or declarative Nix configuration
-- **Per-app wrapping** – run selected apps through the local proxy with `proxy-ctl wrap <profile> -- <command>`, without enabling global TProxy or TUN
-- **Subscription URLs** – point at a v2rayN/Clash-format subscription endpoint; the module fetches, decodes, and imports all proxies automatically, with a periodic refresh timer
-- **Multiple outbounds** with automatic latency-based switching or manual selection
-- **Per-outbound routing** – route specific domains, IPs, or geo sets to specific servers
-- **Protocol support**: vless (Reality, TLS), vmess, trojan, shadowsocks, hysteria2, socks5, socks4, http/https proxy; SingBox also supports TUIC v5, while XRay supports XHTTP/ECH share links
-- **`proxy-ctl`** – control script for managing services, switching outbounds, and following logs
-- **DPI bypass** via zapret – handles YouTube, Discord, and other sites defined by the project
-- **Telegram proxy** – running local MTProto WebSocket proxy using tg-ws-proxy
-- **SSH SOCKS5 proxy** – create a local SOCKS5 listener from an SSH connection
-- **Server inbounds** – accept connections *from* outside over vless (REALITY), vmess, trojan, shadowsocks, socks, or http; relay them through your outbounds or exit directly, with share links and QR codes for clients
-
----
+- Local SOCKS5/HTTP proxy on `127.0.0.1:1080`, backed by sing-box, XRay, or both
+- Global TProxy or TUN mode, on demand or at boot
+- Per-app routing: `proxy-ctl apps run <profile> -- <cmd>` through proxychains, a per-app TUN/TProxy, or zapret
+- Outbounds from URLs, raw JSON or subscriptions; manual or latency-based selection; per-outbound routing
+- vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC on sing-box, XHTTP/ECH on XRay
+- autoProxy: finds which exit reaches a blocked site and routes it there
+- zapret DPI bypass, including zapret2, which learns blocked sites at runtime
+- AmneziaWG 1.x–3.x tunnels from `.conf`, `vpn://`, or Nix
+- Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
+- Server inbounds with share links, QR codes, per-user subscriptions and traffic stats
+- A tray indicator and the `proxy-ctl` CLI
 
 ## Setup
-
-Add to your flake inputs:
 
 ```nix
 inputs.proxy-suite.url = "github:FUFSoB/proxy-suite-flake";
 ```
 
-No need to add zapret separately – it comes along as a transitive input.
-
-Add the module to your NixOS configuration:
-
 ```nix
 modules = [ inputs.proxy-suite.nixosModules.default ];
 ```
 
-Feature-complete starter config:
+Starter config:
 
 ```nix
 services.proxy-suite = {
@@ -52,96 +36,51 @@ services.proxy-suite = {
 
   proxy = {
     enable = true;
-    singBox.enable = true;
-    # Or use XRay instead:
-    # xray.enable = true;
+    backend = "sing-box"; # or "xray", or "hybrid"
 
-    port = 1080;
+    # url ends up in the Nix store; use urlFile for real secrets.
+    outbounds = [ { tag = "nl-vps"; url = "hy2://password@example.com:443?sni=example.com"; } ];
+    subscriptions = [ { tag = "main-sub"; urlFile = "/run/secrets/sub-url"; } ];
+    selection = "urltest"; # Default is "first", without any complex selector
 
-    # Individual proxy example
-    outbounds = [
-      {
-        tag = "nl-vps";
-        # Inline url is convenient for testing, but ends up in the Nix store.
-        # For real use, prefer urlFile with a url file.
-        url = "hy2://password@example.com:443?sni=example.com";
-      }
-    ];
-
-    # Subscription example
-    subscriptions = [
-      {
-        tag = "main-sub";
-        # urlFile is also available to keep the URL out of the Nix store.
-        url = "https://example.com/subscription-list.txt";
-      }
-    ];
-    # Automatic switching of outbound based on latency.
-    # Default is "first", which just uses the first one in the list.
-    selection = "urltest";
-
-    # Keep both available; autostart only one global tunnel.
-    tproxy = {
-      enable = true;
-      autostart = false;
-      perApp.enable = true;
-    };
-    tun = {
-      enable = true;
-      autostart = false;
-      perApp.enable = true;
-    };
-  };
-
-  # Optional SSH tunnel. Set asOutbound = true to make it an ordinary proxy
-  # outbound tagged "ssh-proxy".
-  sshProxy = {
-    enable = true;
-    user = "root";
-    host = "ssh.example.com";
-    asOutbound = false;
-    identityFile = "/run/secrets/proxy-suite-ssh-key";
-    hostKeyFile = "/run/secrets/proxy-suite-ssh-known-hosts";
-  };
-
-  # Native AmneziaWG profiles are independent of the SingBox/XRay backend.
-  # Only one AWG, TUN, or TProxy global tunnel can be active at once;
-  # zapret is mutually exclusive with AWG while its service is running.
-  amneziaWg = {
-    enable = true;
-    profiles.home = {
-      # Secret-managed exported .conf files are the simplest input.
-      configFile = "/run/secrets/home-amneziawg.conf";
-      autostart = false;
-    };
-
-    # Self-contained AmneziaVPN exports are supported too:
-    profiles.work.vpnFile = "/run/secrets/work-amnezia.vpn";
-  };
-
-  zapret = {
-    enable = true;
-    perApp.enable = true;
+    tproxy.enable = true;
+    tun.enable = true;
   };
 
   perAppRouting = {
     enable = true;
     createDefaultProfiles = true;
     proxychains.enable = true;
+    tun.enable = true;
+    tproxy.enable = true;
+    zapret.enable = true;
   };
 
-  tray = {
+  zapret.enable = true;
+
+  sshProxy = {
     enable = true;
-    autostart = true;
+    server = {
+      user = "root";
+      host = "ssh.example.com";
+    };
+    identityFile = "/run/secrets/proxy-suite-ssh-key";
+    hostKeyFile = "/run/secrets/proxy-suite-ssh-known-hosts";
+  };
+
+  # Only one AWG, TUN or TProxy global tunnel runs at a time.
+  amneziaWg = {
+    enable = true;
+    profiles.home.configFile = "/run/secrets/home-amneziawg.conf";
+    profiles.work.vpnFile = "/run/secrets/work-amnezia.vpn";
   };
 
   tgWsProxy = {
     enable = true;
-    port = 1443;
-    # Inline secret is convenient for testing, but ends up in the Nix store.
-    # For real use, prefer secretFile with a secret file.
-    secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    secretFile = "/run/secrets/tg-ws-proxy-secret";
   };
+
+  tray.enable = true;
 };
 ```
 
@@ -149,44 +88,55 @@ services.proxy-suite = {
 
 ## Options
 
-To see options and documentation, check out the [options reference](./docs/options.md).
-
-Options and generated README help are refreshed with `nix run .#update-docs`.
-
----
+See the [options reference](./docs/options/index.md), one page per option group. Regenerate it and the help below with `nix run .#update-docs`.
 
 ## `proxy-ctl help`
 
-Generated from current `proxy-ctl help` output.
-
 <!-- proxy-ctl-help:start -->
 ```text
-Usage: proxy-ctl <command> [args]
+Usage: proxy-ctl <group> [verb] [args]
+A group without a verb shows its status or list.
 
-Commands:
-  help                      show this help message
-  status [--tray]           show status of all proxy-suite services
-  proxy on|off              enable/disable the proxy backend stack
-  tproxy on|off             enable/disable TProxy transparent mode
-  tun on|off                enable/disable TUN mode
-  ssh on|off                enable/disable the SSH SOCKS5 proxy
-  awg list|status [profile] list profiles or show AmneziaWG status
-  awg on <profile>          start an AmneziaWG profile
-  awg off [profile]         stop one or all active AmneziaWG profiles
-  awg restart [profile]     restart one or all active AmneziaWG profiles
-  route-mode default|whitelist|blacklist|all-proxy|all-bypass|status
-                            set temporary routing override
-  zapret on|off             enable/disable zapret-discord-youtube
-  restart                   restart active global proxy-suite services
-  logs [service]            follow service logs  (default: proxy-suite-socks)
-  outbounds                 list outbounds and current selection
-  select <tag>              switch to a specific outbound  (selector mode)
-  apps                      list configured per-app routing profiles
-  wrap <profile> -- <cmd>   run a command via a perAppRouting profile
-  subscription list         show subscriptions, cache age, and proxy count
-  subscription update       force-refresh all subscription caches and restart active proxy services
-  inbounds [list]           list server inbounds and their state
-  inbounds link <tag> [user] print the client share link for an inbound
-  inbounds qr <tag> [user]   print the client share link as a QR code
+  status [--tray]                        services and routing mode
+  restart                                restart active services
+  logs [unit]                            follow logs (default: every proxy-suite unit)
+  where <domain>                         how this host is routed right now
+
+  proxy [status|on|off]                  local proxy backend
+  proxy outbounds [list]                 outbounds, where each came from, and the pick
+  proxy outbounds add <tag> <url>        add an outbound at runtime
+  proxy outbounds rm <tag>               remove a runtime outbound
+  proxy select [<tag>|auto]              pin the priority outbound (no tag: pick from a menu)
+  proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
+                                         show or override the routing mode
+  proxy subs [list|update]               subscription caches; update refetches them
+  proxy subs add <tag> <url>             add a subscription at runtime
+  proxy subs rm <tag>                    remove a runtime subscription
+  proxy tun [status|on|off]              global TUN mode
+  proxy tproxy [status|on|off]           global TProxy mode
+  proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
+  proxy auto probe <domain>[/path] [--json] [--exits a,b | --via tag]
+                                         find an exit that reaches a domain
+  proxy auto learn <domain>              probe now and route it if an exit works (sudo)
+  proxy auto queue [count]               destinations waiting to be probed (sudo, or userControl)
+
+  zapret [status|on|off]                 DPI bypass
+  zapret auto [list]                     hosts zapret2 learned as blocked
+  zapret auto add|forget|exclude <domain>
+                                         pin, forget, or never learn a host (sudo)
+  zapret auto clear                      forget every learned host (sudo)
+
+  awg [list]                             AmneziaWG profiles and their state
+  awg on <profile> | off [profile] | restart [profile]
+
+  ssh [status|on|off]                    SSH SOCKS5 tunnel
+
+  apps [list]                            per-app routing profiles
+  apps run <profile> -- <cmd> [args]     run a command through a profile
+
+  inbounds [list]                        server inbounds
+  inbounds link <tag> [user] [--qr]      client share link
+  inbounds sub [user] [--qr]             subscription users, or one user's URL
+  inbounds stats [days]                  traffic per user (sudo, or userControl)
 ```
 <!-- proxy-ctl-help:end -->

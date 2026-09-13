@@ -70,8 +70,8 @@ let
     {
       packageName,
       pidDir,
-      configName ? zapretCfg.configName,
-      gameFilter ? zapretCfg.gameFilter,
+      configName ? zapretCfg.zapret-discord-youtube.configName,
+      gameFilter ? zapretCfg.zapret-discord-youtube.gameFilter,
       forceDisableFilterMark ? false,
       filterMark ? null,
       qnum ? null,

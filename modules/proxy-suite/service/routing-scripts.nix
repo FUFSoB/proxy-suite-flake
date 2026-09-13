@@ -117,7 +117,7 @@ in
 
     # SingBox normally removes these on graceful shutdown, but stale
     # auto_route/auto_redirect state leaves the host routing through a dead TUN
-    # interface after `proxy-ctl tun off` or an unclean service stop.
+    # interface after `proxy-ctl proxy tun off` or an unclean service stop.
     ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "sing-box"; }}
     ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
     ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}

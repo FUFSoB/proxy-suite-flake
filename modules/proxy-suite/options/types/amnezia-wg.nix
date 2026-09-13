@@ -304,11 +304,5 @@ let
   );
 in
 {
-  inherit
-    profileType
-    settingsType
-    peerType
-    obfuscationType
-    rangeValue
-    ;
+  inherit profileType;
 }

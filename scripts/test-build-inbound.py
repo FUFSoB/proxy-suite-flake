@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import urllib.parse
 
-from proxy_inbound import build_inbounds, build_share_link, render_xray_inbound
+from proxy_inbound import build_inbounds, build_share_link, render_xray_inbound, subscription_token
 from proxy_parsing import build_outbound
 
 
@@ -367,6 +367,56 @@ class BuildInboundsTests(unittest.TestCase):
         # Without it in the link the client picks a mode on its own, which is
         # what breaks XHTTP behind an HTTP/1.1 reverse proxy.
         self.assertEqual(link_params(build_share_link(spec, "vpn.example.com"))["mode"], "packet-up")
+
+    def test_alpn_reaches_the_inbound_and_the_link(self):
+        spec = listener(
+            transport={"type": "xhttp", "path": "/h3", "host": None, "mode": None, "serviceName": ""},
+            tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None, "alpn": ["h3"]},
+        )
+        # h3 alone is what makes XRay serve the listener as HTTP/3, on UDP.
+        self.assertEqual(render_xray_inbound(spec)["streamSettings"]["tlsSettings"]["alpn"], ["h3"])
+        # A client left to its own ALPN offers h2 and http/1.1 and never gets in.
+        self.assertEqual(link_params(build_share_link(spec, "vpn.example.com"))["alpn"], "h3")
+        plain = listener(tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None})
+        self.assertNotIn("alpn", render_xray_inbound(plain)["streamSettings"]["tlsSettings"])
+        self.assertNotIn("alpn", link_params(build_share_link(plain, "vpn.example.com")))
+
+    def test_subscriptions_gather_each_users_links(self):
+        def users(uuid_a):
+            return [
+                {"name": "fufsob", "uuid": uuid_a, "password": None, "passwordFile": None},
+                {"name": "teri", "uuid": "uuid-teri", "password": None, "passwordFile": None},
+            ]
+
+        def spec(uuid_a="uuid-fufsob", share=True):
+            return {
+                "serverAddress": "vpn.example.com",
+                "shareLinks": share,
+                "listeners": [
+                    listener(tag="ws", users=users(uuid_a)),
+                    listener(tag="h3", port=8443, users=users(uuid_a)),
+                ],
+            }
+
+        result = build_inbounds(spec(), "vpn.example.com")
+        subs = {s["user"]: s for s in result["subscriptions"]}
+        self.assertEqual(sorted(subs), ["fufsob", "teri"])
+        # Every listener's link for that user, as clients import them.
+        body = base64.b64decode(subs["fufsob"]["body"]).decode()
+        self.assertEqual(
+            body.split("\n"),
+            [entry["link"] for entry in result["links"] if entry["user"] == "fufsob"],
+        )
+        self.assertEqual(len(body.split("\n")), 2)
+        # Stable while the credentials are, rotated with them, never shared.
+        token = subs["fufsob"]["token"]
+        self.assertRegex(token, "^[0-9a-f]{32}$")
+        self.assertEqual(token, subscription_token("fufsob", ["uuid-fufsob"]))
+        self.assertNotEqual(token, subs["teri"]["token"])
+        rotated = build_inbounds(spec(uuid_a="uuid-new"), "vpn.example.com")["subscriptions"]
+        self.assertNotEqual(token, next(s["token"] for s in rotated if s["user"] == "fufsob"))
+        # No links, nothing to subscribe to.
+        self.assertEqual(build_inbounds(spec(share=False), "vpn.example.com")["subscriptions"], [])
 
     def test_share_port_overrides_the_bound_port(self):
         spec = {

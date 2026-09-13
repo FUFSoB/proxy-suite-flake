@@ -22,7 +22,7 @@
       ];
       forAll = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: import nixpkgs { inherit system; };
-      proxySuiteModule = import ./modules/proxy-suite { inherit zapret; };
+      proxySuiteModule = import ./modules/proxy-suite { inherit zapret nixpkgs; };
       mkOptionsDoc = import ./nix/options-doc.nix {
         inherit nixpkgs pkgsFor proxySuiteModule;
       };
@@ -51,6 +51,7 @@
           mkTgWsProxy
           tg-ws-proxy
           proxy-suite-tray
+          zapret2
           ;
       };
 
@@ -79,10 +80,12 @@
               options_output_path="$(nix build --no-link --print-out-paths "''${repo_root}#optionsDoc")"
               readme_output_path="$(nix build --no-link --print-out-paths "''${repo_root}#readmeDoc")"
 
-              install -Dm644 "''${options_output_path}" "''${repo_root}/docs/options.md"
+              mkdir -p "''${repo_root}/docs"
+              rm -rf "''${repo_root}/docs/options"
+              cp -r --no-preserve=mode,ownership "''${options_output_path}" "''${repo_root}/docs/options"
               install -Dm644 "''${readme_output_path}" "''${repo_root}/README.md"
 
-              echo "updated ''${repo_root}/docs/options.md"
+              echo "updated ''${repo_root}/docs/options/"
               echo "updated ''${repo_root}/README.md"
             '';
           };
@@ -93,7 +96,9 @@
             amneziawg-go
             tg-ws-proxy
             proxy-suite-tray
+            zapret2
             ;
+          xray = import ./pkgs/xray.nix { inherit pkgs; };
           optionsDoc = mkOptionsDoc system;
           readmeDoc = mkReadmeDoc system;
           update-docs = updateDocs;

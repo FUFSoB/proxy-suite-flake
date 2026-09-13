@@ -10,6 +10,7 @@
 let
   fixtures = import ./hybrid-backend/fixtures.nix {
     inherit
+      pkgs
       evalProxySuite
       mkTProxyConfig
       mkTunConfig
@@ -54,8 +55,7 @@ in
           ) hybridTproxyConfig.route.rules
         );
       in
-      assert hybridFixture.config.services.proxy-suite.proxy.singBox.enable;
-      assert hybridFixture.config.services.proxy-suite.proxy.xray.enable;
+      assert hybridFixture.config.services.proxy-suite.proxy.backend == "hybrid";
       assert hybridTproxyConfig ? route;
       assert !(hybridTproxyConfig ? routing);
       assert dnsBridgeInbound.type == "direct";

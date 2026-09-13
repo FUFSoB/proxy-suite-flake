@@ -1,12 +1,12 @@
 # sing-box routing rules and local rule-set definitions.
 {
   lib,
-  pkgs,
   r,
   direct,
   tgWsProxyCfg,
   customRules,
   customRuleCategory,
+  geodata,
 }:
 
 let
@@ -47,8 +47,8 @@ let
     path = "${pkg}/share/sing-box/rule-set/${kind}-${name}.srs";
   };
 
-  geositeRuleSets = map (mkRuleSet "geosite" pkgs.sing-geosite) allGeositeNames;
-  geoIPRuleSets = map (mkRuleSet "geoip" pkgs.sing-geoip) allGeoIPNames;
+  geositeRuleSets = map (mkRuleSet "geosite" geodata.singBox.geosite) allGeositeNames;
+  geoIPRuleSets = map (mkRuleSet "geoip" geodata.singBox.geoip) allGeoIPNames;
 
   commonRules = [
     {

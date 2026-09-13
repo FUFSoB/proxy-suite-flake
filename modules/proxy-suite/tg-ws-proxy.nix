@@ -27,8 +27,8 @@ let
   );
   startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''
     args=(
-      --port=${toString t.port}
-      --host=${lib.escapeShellArg t.host}
+      --port=${toString t.listener.port}
+      --host=${lib.escapeShellArg t.listener.address}
     )
     ${
       if t.secretFile != null then
@@ -36,12 +36,12 @@ let
       else
         "args+=(--secret=${lib.escapeShellArg t.secret})"
     }
-    ${dcArgs}${mkFlagArg t.verbose "--verbose"}${
-      mkOptionalValueArg (t.logFile != null) "--log-file" t.logFile
-    }${lib.optionalString (t.logFile != null) (mkRawValueArg "--log-max-mb" t.logMaxMb)}${
-      lib.optionalString (t.logFile != null) (mkRawValueArg "--log-backups" t.logBackups)
-    }${mkRawValueArg "--buf-kb" t.bufKb}${mkRawValueArg "--pool-size" t.poolSize}${mkRepeatedValueArgs "--cfproxy-domain" t.cfProxyDomains}${mkRepeatedValueArgs "--cfproxy-worker-domain" t.cfProxyWorkerDomains}${
-      mkFlagArg (!t.cfProxyFallback) "--no-cfproxy"
+    ${dcArgs}${mkFlagArg t.log.verbose "--verbose"}${
+      mkOptionalValueArg (t.log.file != null) "--log-file" t.log.file
+    }${lib.optionalString (t.log.file != null) (mkRawValueArg "--log-max-mb" t.log.maxSizeMiB)}${
+      lib.optionalString (t.log.file != null) (mkRawValueArg "--log-backups" t.log.keep)
+    }${mkRawValueArg "--buf-kb" t.bufferKiB}${mkRawValueArg "--pool-size" t.poolSize}${mkRepeatedValueArgs "--cfproxy-domain" t.cloudflare.domains}${mkRepeatedValueArgs "--cfproxy-worker-domain" t.cloudflare.workerDomains}${
+      mkFlagArg (!t.cloudflare.fallback) "--no-cfproxy"
     }${
       mkOptionalValueArg (t.fakeTlsDomain != null) "--fake-tls-domain" t.fakeTlsDomain
     }${mkFlagArg t.proxyProtocol "--proxy-protocol"}
@@ -53,8 +53,8 @@ let
 
     add_bypass_rule() {
       local family="$1"
-      while ${ip} "$family" rule del pref ${toString bypassRulePriority} fwmark ${toString t.routingMark} lookup main 2>/dev/null; do :; done
-      ${ip} "$family" rule add pref ${toString bypassRulePriority} fwmark ${toString t.routingMark} lookup main 2>/dev/null || true
+      while ${ip} "$family" rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done
+      ${ip} "$family" rule add pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null || true
     }
 
     add_bypass_rule -4
@@ -64,8 +64,8 @@ let
   bypassDownScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-bypass-down" ''
     set +e
 
-    while ${ip} -4 rule del pref ${toString bypassRulePriority} fwmark ${toString t.routingMark} lookup main 2>/dev/null; do :; done
-    while ${ip} -6 rule del pref ${toString bypassRulePriority} fwmark ${toString t.routingMark} lookup main 2>/dev/null; do :; done
+    while ${ip} -4 rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done
+    while ${ip} -6 rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done
   '';
 in
 {
@@ -83,7 +83,7 @@ in
     // lib.optionalAttrs transparentBypassEnabled {
       ExecStartPre = bypassUpScript;
       ExecStopPost = bypassDownScript;
-      SocketMark = toString t.routingMark;
+      SocketMark = toString t.fwmark;
     };
   };
 }

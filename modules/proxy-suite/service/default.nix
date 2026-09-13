@@ -63,7 +63,6 @@ let
     userControlCfg
     userControlEnabled
     perAppZapretEnabled
-    hasSubscriptions
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
     proxyInboundsEnabled
@@ -106,7 +105,6 @@ let
       perAppRoutingTun
       perAppRoutingTproxy
       perAppZapretEnabled
-      hasSubscriptions
       sshProxyOutboundEnabled
       sshProxyUnitEnabled
       proxyInboundsEnabled
@@ -115,6 +113,7 @@ let
       perAppRouting
       routingScripts
       ;
+    inherit (cfg) geodata;
   };
   inherit (serviceUnits)
     localProxyAuthEnabled
@@ -122,72 +121,108 @@ let
     userServiceEntries
     timerEntries
     ;
-in
-{
-  environment.systemPackages = [ control.proxyCtl ];
-
-  # nftables must be on for transparent routing backends. Global TUN uses
-  # SingBox auto_redirect programs an `inet sing-box` nftables table.
-  networking.nftables.enable = lib.mkIf (
-    globalTun.enable
-    || globalTproxy.enable
-    || perAppRoutingTun.enable
-    || perAppRoutingTproxy.enable
-    || perAppZapretEnabled
-  ) (lib.mkDefault true);
-
-  # Inbound listeners are reached from outside, so their ports have to be open.
-  networking.firewall = lib.mkIf (proxyInboundsEnabled && cfg.proxyInbounds.openFirewall) {
-    allowedTCPPorts = proxyInboundFirewallPorts;
-    allowedUDPPorts = proxyInboundFirewallUdpPorts;
-  };
-
-  users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {
-    "${userControlCfg.group}" = { };
-  };
-
-  security.polkit.enable = lib.mkIf (cfg.enable && userControlEnabled) true;
-  security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (
-    lib.mkAfter ''
-      polkit.addRule(function(action, subject) {
-        if (!subject.isInGroup("${userControlCfg.group}")) {
-          return null;
-        }
-
-        if (action.id !== "org.freedesktop.systemd1.manage-units") {
-          return null;
-        }
-
-        var unit = action.lookup("unit");
-        ${polkit.userControlPolkitRules}
-
-        return null;
-      });
-    ''
+  # autoProxy shells out to the built proxy-ctl, which only exists in this
+  # scope, so its units are merged in here rather than alongside the other
+  # feature modules in ../default.nix.
+  autoProxyUnits = lib.mkIf cfg.proxy.autoProxy.enable (
+    import ../autoproxy.nix {
+      inherit lib pkgs cfg;
+      inherit (control) proxyCtl;
+      inherit (constants) autoProxyStateDir;
+    }
   );
+in
+lib.mkMerge [
+  autoProxyUnits
+  {
+    environment.systemPackages = [ control.proxyCtl ];
 
-  systemd.user.services = mkNamedUnits userServiceEntries;
+    # nftables must be on for transparent routing backends. Global TUN uses
+    # SingBox auto_redirect programs an `inet sing-box` nftables table.
+    networking.nftables.enable = lib.mkIf (
+      globalTun.enable
+      || globalTproxy.enable
+      || perAppRoutingTun.enable
+      || perAppRoutingTproxy.enable
+      || perAppZapretEnabled
+    ) (lib.mkDefault true);
 
-  assertions = import ../service-assertions.nix {
-    inherit lib cfg derived;
-    tgWsProxyCfg = cfg.tgWsProxy;
-    inherit
-      builtinTags
-      outboundTags
-      effectiveOutboundTags
-      subscriptionTags
-      invalidRoutingTargets
-      ;
-    inherit (perAppRouting)
-      effectivePerAppRoutingProfileNames
-      hasProxychainsProfiles
-      hasTunProfiles
-      hasTproxyProfiles
-      hasZapretProfiles
-      ;
-  };
+    # Inbound listeners are reached from outside, so their ports have to be open.
+    networking.firewall = lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
+      allowedTCPPorts = proxyInboundFirewallPorts;
+      allowedUDPPorts = proxyInboundFirewallUdpPorts;
+    };
 
-  systemd.services = mkNamedUnits systemServiceEntries;
+    users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {
+      "${userControlCfg.group}" = { };
+    };
 
-  systemd.timers = mkNamedUnits timerEntries;
-}
+    security.polkit.enable = lib.mkIf (cfg.enable && userControlEnabled) true;
+    security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (
+      lib.mkAfter ''
+        polkit.addRule(function(action, subject) {
+          if (!subject.isInGroup("${userControlCfg.group}")) {
+            return null;
+          }
+
+          if (action.id !== "org.freedesktop.systemd1.manage-units") {
+            return null;
+          }
+
+          var unit = action.lookup("unit");
+          ${polkit.userControlPolkitRules}
+
+          return null;
+        });
+      ''
+    );
+
+    # Spool dirs for outbounds and subscriptions added at runtime. Setgid so the
+    # files proxy-ctl drops here inherit the group; without userControl only root
+    # writes them. tmpfiles rather than the start scripts, so the group can add an
+    # outbound before the proxy has ever run.
+    systemd.tmpfiles.rules = lib.mkIf (cfg.enable && proxyEnabled) (
+      map
+        (
+          dir:
+          "d ${dir} ${
+            if userControlEnabled then "2770 root ${userControlCfg.group}" else "0700 root root"
+          } -"
+        )
+        [
+          constants.runtimeOutboundsDir
+          constants.runtimeSubscriptionsDir
+        ]
+    );
+
+    systemd.user.services = mkNamedUnits userServiceEntries;
+
+    assertions = import ../service-assertions.nix {
+      inherit lib cfg derived;
+      tgWsProxyCfg = cfg.tgWsProxy;
+      inherit
+        builtinTags
+        outboundTags
+        effectiveOutboundTags
+        subscriptionTags
+        invalidRoutingTargets
+        ;
+      inherit (perAppRouting)
+        effectivePerAppRoutingProfileNames
+        hasProxychainsProfiles
+        hasTunProfiles
+        hasTproxyProfiles
+        hasZapretProfiles
+        ;
+    };
+
+    warnings = lib.optional (proxyEnabled && !derived.hasAvailableOutbounds) (
+      "proxy-suite: no outbounds or subscriptions are declared; the proxy will not start"
+      + " until one is added with `proxy-ctl proxy outbounds add`"
+    );
+
+    systemd.services = mkNamedUnits systemServiceEntries;
+
+    systemd.timers = mkNamedUnits timerEntries;
+  }
+]

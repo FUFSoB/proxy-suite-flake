@@ -1,4 +1,5 @@
 {
+  pkgs,
   evalProxySuite,
   mkTProxyConfig,
   mkTunConfig,
@@ -14,8 +15,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
-        xray.enable = true;
+        backend = "hybrid";
         selection = "selector";
         outbounds = [
           {
@@ -29,8 +29,8 @@ let
         ];
         tproxy.enable = true;
         tun.enable = true;
-        tun.perApp.enable = true;
       };
+      perAppRouting.tun.enable = true;
     };
   };
   hybridFixture = evalProxySuite [ hybridModule ];
@@ -48,6 +48,8 @@ let
   hybridBackendJqFilter =
     import ../../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
+        lib = pkgs.lib;
+        proxyInboundsGuardPrivate = false;
         pureXrayEnabled = false;
         selectionMode = hybridFixture.config.services.proxy-suite.proxy.selection;
       };
@@ -59,8 +61,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
-          xray.enable = true;
+          backend = "hybrid";
           outbounds = [
             {
               tag = "raw-xray";
@@ -85,8 +86,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
-          xray.enable = true;
+          backend = "hybrid";
           subscriptions = [
             {
               tag = "community";

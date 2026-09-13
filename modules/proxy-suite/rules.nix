@@ -71,13 +71,13 @@ let
   singBoxRules = import ./rules/sing-box.nix {
     inherit
       lib
-      pkgs
       r
       direct
       tgWsProxyCfg
       customRules
       customRuleCategory
       ;
+    inherit (cfg) geodata;
   };
   inherit (singBoxRules)
     geositeRuleSets

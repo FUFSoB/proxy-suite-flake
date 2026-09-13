@@ -33,7 +33,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "primary";
@@ -58,7 +58,7 @@ let
   ruDisabledFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.proxy.routing.enableRuDirect = false;
+      services.proxy-suite.proxy.routing.directRu = false;
     }
   ];
   ruDisabledRules = mkRoutingRules ruDisabledFixture;
@@ -68,7 +68,7 @@ let
     baseModule
     {
       services.proxy-suite.proxy.routing = {
-        enableRuDirect = false;
+        directRu = false;
         direct.geosites = [ "category-ru" ];
       };
     }
@@ -99,7 +99,7 @@ let
   proxyDirectConfig = mkTProxyConfig (evalProxySuite [
     baseModule
     {
-      services.proxy-suite.proxy.proxyByDefault = false;
+      services.proxy-suite.proxy.routing.default = "direct";
     }
   ]);
 
@@ -110,7 +110,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "test-proxy";
@@ -121,8 +121,8 @@ let
           urlTest = {
             url = "https://telegram.org";
             interval = "1m";
+            tolerance = 100;
           };
-          singBox.urlTest.tolerance = 100;
         };
       };
     }
@@ -146,7 +146,7 @@ let
           enable = true;
           proxy = {
             enable = true;
-            singBox.enable = true;
+            backend = "sing-box";
           };
         };
       }

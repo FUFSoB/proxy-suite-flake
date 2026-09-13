@@ -27,8 +27,9 @@ in
 {
   assertions = [
     (
-      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/xray/xray-sub.json"''
+      assert pkgs.lib.hasInfix ''SUB_CACHE_DIR="/var/lib/proxy-suite/subscriptions/xray"''
         xraySubscriptionStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_load_subscription xray-sub" xraySubscriptionStartScript;
       assert pkgs.lib.hasInfix "--backend xray" xraySubscriptionStartScript;
       true
     )

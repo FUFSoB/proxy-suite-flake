@@ -1,6 +1,8 @@
 {
+  lib,
   pureXrayEnabled,
   selectionMode,
+  proxyInboundsGuardPrivate,
 }:
 
 if pureXrayEnabled then
@@ -95,4 +97,21 @@ else
           | .dns.final = $dns_final
           | if $clear_dns_rules then .dns.rules = [] else . end
         else . end
+      # autoProxy rules, after the route-mode replace so no mode drops them: pins first
+      # (they only match their own listener), learned rules last before final, so
+      # explicit rules win. All [] when off.
+      | .inbounds += $probe_inbounds
+      | .route.rule_set = ((.route.rule_set // []) + $autoproxy_rule_sets)
+      | .route.rules = ($probe_pin_rules + .route.rules + $autoproxy_rules)
+  ''
+  + lib.optionalString proxyInboundsGuardPrivate ''
+    # inbounds.routing.blockPrivate, enforced here because the listener passes names unresolved.
+    # Last, so only traffic falling through to a direct final is resolved. Local mixed-
+    # in clients lose names that resolve private.
+    | if (.route.final // "direct") == "direct" then
+        .route.rules += [
+          {inbound: ["mixed-in"], action: "resolve"},
+          {inbound: ["mixed-in"], ip_is_private: true, action: "reject"}
+        ]
+      else . end
   ''

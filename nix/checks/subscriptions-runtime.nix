@@ -67,9 +67,37 @@ in
       true
     )
 
-    # selection=first renames the first subscription outbound to "proxy".
+    # selection=first renames the pinned outbound - or the first one, absent a
+    # pin - to "proxy" at start, rather than collapsing at eval time.
     (
-      assert builtins.match ".*proxy.*" subscriptionFirstSelectionStartScript != null;
+      assert pkgs.lib.hasInfix ''PROXY_TAG="$PRIORITY_OUTBOUND"'' subscriptionFirstSelectionStartScript;
+      assert
+        pkgs.lib.hasInfix ''map(if .tag == $t then .tag = "proxy" else . end)''
+          subscriptionFirstSelectionStartScript;
+      true
+    )
+
+    # The pin is read from state, and one that names nothing is dropped.
+    (
+      assert
+        pkgs.lib.hasInfix "/var/lib/proxy-suite/priority-outbound" subscriptionOnlyStartScript;
+      assert
+        pkgs.lib.hasInfix "pinned outbound '$PRIORITY_OUTBOUND' is not available"
+          subscriptionOnlyStartScript;
+      true
+    )
+
+    # proxy-ctl reads the inventory the start script leaves behind.
+    (
+      assert pkgs.lib.hasInfix ''> "$RUNTIME_DIR/outbounds.json"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''chmod 644 "$RUNTIME_DIR/outbounds.json"'' subscriptionOnlyStartScript;
+      true
+    )
+
+    # Outbounds added at runtime share the URL path with the declared ones.
+    (
+      assert pkgs.lib.hasInfix "_proxy_suite_runtime_outbounds" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_add_url_outbound" subscriptionWithStaticStartScript;
       true
     )
 
@@ -85,26 +113,36 @@ in
       true
     )
 
-    # Generated cache paths use the raw validated tag, not shell-escaped quotes.
+    # Cache paths are built from the tag argument, so a tag never reaches the
+    # filename shell-quoted.
     (
-      assert pkgs.lib.hasInfix ''CACHE_FILE="/var/lib/proxy-suite/subscriptions/sing-box/community.json"''
+      assert pkgs.lib.hasInfix ''SUB_CACHE_DIR="/var/lib/proxy-suite/subscriptions/sing-box"''
         subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp"
-        subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''cache="$SUB_CACHE_DIR/$1.json"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''cache="$SUB_CACHE_DIR/$1.json"'' subscriptionOnlyUpdateScript;
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyStartScript);
       assert !(pkgs.lib.hasInfix "subscriptions/'community'.json" subscriptionOnlyUpdateScript);
       true
     )
 
-    # The fetcher's stdout has to land in the cache file. A newline between the
-    # pipeline and the redirect closes the pipeline, leaving a bare redirect
-    # that truncates the cache to zero bytes while the JSON goes to the journal.
+    # Declared and runtime subscriptions both go through the same two entry
+    # points, with the tag passed raw.
     (
-      assert pkgs.lib.hasInfix ''--tag-prefix community > "$CACHE_FILE.tmp"''
+      assert pkgs.lib.hasInfix "_proxy_suite_load_subscription community "
         subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix
-        ''--tag-prefix community > "/var/lib/proxy-suite/subscriptions/sing-box/community.json.tmp"''
+      assert pkgs.lib.hasInfix "_proxy_suite_fetch_subscription community "
         subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''_proxy_suite_load_subscription "$RUNTIME_SUB_TAG"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''_proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG"''
+        subscriptionOnlyUpdateScript;
+      true
+    )
+
+    # The fetcher's output must land in the cache, not after a stray newline.
+    (
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" > "$cache.tmp"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" > "$cache.tmp"'' subscriptionOnlyUpdateScript;
       true
     )
 
@@ -133,13 +171,36 @@ in
       true
     )
 
-    # No update service or timer exists without subscriptions.
+    # The update service and timer exist whenever the proxy does, because a
+    # subscription can be added at runtime after the rebuild.
     (
-      assert !(minimal.config.systemd.services ? "proxy-suite-subscription-update");
+      assert minimal.config.systemd.services ? "proxy-suite-subscription-update";
       true
     )
     (
-      assert !(minimal.config.systemd.timers ? "proxy-suite-subscription-update");
+      assert minimal.config.systemd.timers ? "proxy-suite-subscription-update";
+      true
+    )
+
+    # Runtime spool dirs are group-writable and setgid, so proxy-ctl needs no sudo.
+    (
+      assert
+        builtins.any (
+          rule: builtins.match "d /var/lib/proxy-suite/outbounds\\.d 2770 root .*" rule != null
+        ) minimal.config.systemd.tmpfiles.rules;
+      assert
+        builtins.any (
+          rule: builtins.match "d /var/lib/proxy-suite/subscriptions\\.d 2770 root .*" rule != null
+        ) minimal.config.systemd.tmpfiles.rules;
+      true
+    )
+
+    # Both kinds of subscription go through one loader, and the runtime spool is
+    # walked at start and on refresh.
+    (
+      assert pkgs.lib.hasInfix "_proxy_suite_load_subscription" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_runtime_subscriptions" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_runtime_subscriptions" subscriptionOnlyUpdateScript;
       true
     )
   ];

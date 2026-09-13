@@ -32,9 +32,12 @@
 
 let
   inherit (constants)
+    autoProxyStateDir
     xrayDnsBridgePorts
     xraySidecarBasePorts
     ;
+
+  autoProxyRender = import ../autoproxy-render.nix { inherit pkgs; };
 
   routeModeBlacklistTail =
     if pureXrayEnabled then
@@ -119,8 +122,8 @@ let
       printf '%s\n' 'tcp_connect_time_out 8000'
       printf '\n%s\n' '[ProxyList]'
       printf 'socks5 %s %s %s %s\n' \
-        ${lib.escapeShellArg proxyCfg.listenAddress} \
-        ${lib.escapeShellArg (toString proxyCfg.port)} \
+        ${lib.escapeShellArg proxyCfg.listener.address} \
+        ${lib.escapeShellArg (toString proxyCfg.listener.port)} \
         ${lib.escapeShellArg localProxyAuth.username} \
         "$LOCAL_PROXY_PASSWORD"
     } > "${runtimeProxychainsConfig}"
@@ -139,6 +142,7 @@ let
       xrayTunDnsRuntime ? false,
       xraySidecarBasePort ? xraySidecarBasePorts.socks,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
+      enableAutoProxy ? false,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
@@ -190,8 +194,52 @@ let
       ${mkOutboundScript routingMark}
       ${lib.optionalString hybridEnabled "_proxy_suite_write_xray_sidecar_config"}
 
+      # autoProxy: a loopback listener and a learned rule-set per exit, generated here
+      # because subscription tags only exist at runtime.
+      PROBE_INBOUNDS_JSON='[]'
+      PROBE_PIN_RULES_JSON='[]'
+      AUTOPROXY_RULE_SETS_JSON='[]'
+      AUTOPROXY_RULES_JSON='[]'
+      ${lib.optionalString enableAutoProxy ''
+        AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
+        install -d -m 0750 "$AUTOPROXY_DIR"
+        [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
+
+        # direct is always exit 0; state is keyed by tag, so shifting indices are
+        # harmless.
+        PROBE_EXITS_JSON=$(${jq} -c \
+          --argjson max ${toString proxyCfg.autoProxy.maxExits} \
+          --argjson base ${toString proxyCfg.autoProxy.probeBasePort} \
+          --arg dir "$AUTOPROXY_DIR" '
+          (["direct"] + map(select(. != "direct")))[0:$max]
+          | to_entries
+          | map({i: .key, tag: .value, port: ($base + .key),
+                 rule_set: ("autoproxy-" + (.key | tostring)),
+                 path: ($dir + "/rs-" + (.key | tostring) + ".json")})
+        ' <<< "$EXIT_TAGS_JSON")
+        printf '%s\n' "$PROBE_EXITS_JSON" > "$RUNTIME_DIR/probe-exits.json"
+        # proxy-ctl reads it unprivileged; it holds tags and loopback ports only.
+        chmod 644 "$RUNTIME_DIR/probe-exits.json"
+        ${autoProxyRender} "$RUNTIME_DIR/probe-exits.json" "$AUTOPROXY_DIR/state.json"
+
+        PROBE_INBOUNDS_JSON=$(${jq} -c 'map({type: "mixed", tag: ("probe-in-" + (.i | tostring)),
+          listen: "127.0.0.1", listen_port: .port})' <<< "$PROBE_EXITS_JSON")
+        PROBE_PIN_RULES_JSON=$(${jq} -c 'map({inbound: ["probe-in-" + (.i | tostring)],
+          outbound: .tag})' <<< "$PROBE_EXITS_JSON")
+        AUTOPROXY_RULE_SETS_JSON=$(${jq} -c 'map({type: "local", format: "source",
+          tag: .rule_set, path: .path})' <<< "$PROBE_EXITS_JSON")
+        # all-bypass means everything direct; learned exits must not override it.
+        if [ "$ROUTE_MODE" != all-bypass ]; then
+          AUTOPROXY_RULES_JSON=$(${jq} -c 'map({rule_set: [.rule_set], outbound: .tag})' <<< "$PROBE_EXITS_JSON")
+        fi
+      ''}
+
       ${jq} \
         --argjson obs "$OUTBOUNDS_JSON" \
+        --argjson probe_inbounds "$PROBE_INBOUNDS_JSON" \
+        --argjson probe_pin_rules "$PROBE_PIN_RULES_JSON" \
+        --argjson autoproxy_rule_sets "$AUTOPROXY_RULE_SETS_JSON" \
+        --argjson autoproxy_rules "$AUTOPROXY_RULES_JSON" \
         --argjson auth_enabled ${if enableLocalProxyAuth then "true" else "false"} \
         --arg user ${if enableLocalProxyAuth then lib.escapeShellArg localProxyAuth.username else "''"} \
         --arg password ${if enableLocalProxyAuth then "\"$LOCAL_PROXY_PASSWORD\"" else "''"} \
@@ -259,6 +307,8 @@ let
     enableLocalProxyAuth = localProxyAuthEnabled;
     xraySidecarBasePort = xraySidecarBasePorts.socks;
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
+    # Only the socks unit: relayed traffic reaches it, and the prober needs one home.
+    enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
   };
 
   startTun = mkStartScript {

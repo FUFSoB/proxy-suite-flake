@@ -13,7 +13,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           subscriptions = [
             {
               tag = "community";
@@ -41,7 +41,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "own-vps";
@@ -71,7 +71,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           subscriptions = [
             {
               tag = "community";
@@ -94,16 +94,18 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           subscriptions = [
             {
               tag = "community";
               url = "https://example.com/sub/token";
             }
           ];
-          tun.perApp.enable = true;
         };
-        perAppRouting.enable = true;
+        perAppRouting = {
+          enable = true;
+          tun.enable = true;
+        };
       };
     }
   ];

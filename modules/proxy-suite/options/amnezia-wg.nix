@@ -11,7 +11,7 @@ let
     mkOption
     types
     ;
-  awgTypes = import ./types/amnezia-wg.nix { inherit lib; };
+  t = import ./types.nix { inherit lib; };
   awgPackages = import ../../../pkgs/amneziawg.nix { inherit pkgs; };
 in
 {
@@ -37,7 +37,7 @@ in
     };
 
     profiles = mkOption {
-      type = types.attrsOf awgTypes.profileType;
+      type = types.attrsOf t.profileType;
       default = { };
       description = "Named AmneziaWG client profiles. Only one global profile can be active.";
     };

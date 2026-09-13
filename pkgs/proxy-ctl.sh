@@ -1,95 +1,45 @@
 set -euo pipefail
 
-# Wrapped binary provides runtime config through env vars.
-SUB_TAGS_FILE="${SUB_TAGS_FILE:-}"
-AWG_PROFILES_FILE="${AWG_PROFILES_FILE:-}"
 PROXYCHAINS_QUIET_ARG="${PROXYCHAINS_QUIET_ARG:-}"
 SUB_TAGS=()
 AWG_PROFILES=()
-
-if [ -n "$SUB_TAGS_FILE" ] && [ -f "$SUB_TAGS_FILE" ]; then
+if [ -f "${SUB_TAGS_FILE:-}" ]; then
   mapfile -t SUB_TAGS < <(jq -r '.[]' "$SUB_TAGS_FILE")
 fi
-
-if [ -n "$AWG_PROFILES_FILE" ] && [ -f "$AWG_PROFILES_FILE" ]; then
+if [ -f "${AWG_PROFILES_FILE:-}" ]; then
   mapfile -t AWG_PROFILES < <(jq -r '.[]' "$AWG_PROFILES_FILE")
 fi
+
+# Old spellings: still accepted, not in the help.
+case "${1:-}" in
+  tun | tproxy | outbounds | select) set -- proxy "$@" ;;
+  route-mode) shift; set -- proxy mode "$@" ;;
+  subscription) shift; set -- proxy subs "$@" ;;
+  wrap) shift; set -- apps run "$@" ;;
+esac
 
 cmd="${1:-status}"
 shift || true
 
 case "$cmd" in
-  help)
-    _usage 0
-    ;;
-
-  status)
-    cmd_status "$@"
-    ;;
-
-  proxy)
-    cmd_proxy "$@"
-    ;;
-
-  tproxy)
-    cmd_mode_toggle proxy-suite-tproxy on "${1:-}"
-    ;;
-
-  tun)
-    cmd_mode_toggle proxy-suite-tun on "${1:-}"
-    ;;
-
-  ssh)
-    cmd_mode_toggle proxy-suite-ssh-proxy on "${1:-}" ssh
-    ;;
-
-  awg)
-    cmd_awg "$@"
-    ;;
-
-  route-mode)
-    cmd_route_mode "$@"
-    ;;
-
-  zapret)
-    cmd_zapret "$@"
-    ;;
-
-  restart)
-    cmd_restart
-    ;;
-
+  help | -h | --help) _help ;;
+  status) cmd_status "$@" ;;
+  restart) cmd_restart ;;
   logs)
-    svc="${1:-proxy-suite-socks}"
-    shift || true
-    exec journalctl -fu "$svc" "$@"
+    if [ "$#" -gt 0 ]; then exec journalctl -fu "$@"; fi
+    # journalctl takes unit globs, so the default needs no unit list of its own.
+    exec journalctl -f -u 'proxy-suite-*' -u zapret-discord-youtube
     ;;
-
-  outbounds)
-    cmd_outbounds
-    ;;
-
-  select)
-    cmd_select "$@"
-    ;;
-
-  apps)
-    cmd_apps
-    ;;
-
-  wrap)
-    cmd_wrap "$@"
-    ;;
-
-  inbounds)
-    cmd_inbounds "$@"
-    ;;
-
-  subscription)
-    cmd_subscription "$@"
-    ;;
-
+  proxy) cmd_proxy "$@" ;;
+  zapret) cmd_zapret "$@" ;;
+  awg) cmd_awg "$@" ;;
+  ssh) _toggle proxy-suite-ssh-proxy ssh "$@" ;;
+  apps) cmd_apps "$@" ;;
+  inbounds) cmd_inbounds "$@" ;;
+  where) cmd_where "$@" ;;
+  __complete) cmd_complete "$@" ;;
   *)
-    _usage 1
+    _help >&2
+    exit 1
     ;;
 esac

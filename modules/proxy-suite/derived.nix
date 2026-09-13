@@ -6,63 +6,66 @@
 let
   proxyCfg = cfg.proxy;
   singBoxCfg = proxyCfg // {
-    enable = proxyCfg.enable && proxyCfg.singBox.enable;
+    enable = singBoxEnabled;
     package = proxyCfg.singBox.package;
     clashApiPort = proxyCfg.singBox.clashApiPort;
-    urlTest = proxyCfg.urlTest // {
-      tolerance = proxyCfg.singBox.urlTest.tolerance;
-    };
   };
   xrayCfg = proxyCfg.xray;
   proxyEnabled = proxyCfg.enable;
-  singBoxEnabled = proxyCfg.enable && proxyCfg.singBox.enable;
-  xrayEnabled = proxyCfg.enable && proxyCfg.xray.enable;
-  hybridEnabled = singBoxEnabled && xrayEnabled;
-  pureSingBoxEnabled = singBoxEnabled && !xrayEnabled;
-  pureXrayEnabled = xrayEnabled && !singBoxEnabled;
-  activeBackend =
-    if hybridEnabled then
-      "hybrid"
-    else if pureXrayEnabled then
-      "xray"
-    else if pureSingBoxEnabled then
-      "sing-box"
-    else
-      null;
+  # "hybrid" runs both; the pure* flags are what backend-specific code branches on.
+  singBoxEnabled = proxyEnabled && proxyCfg.backend != "xray";
+  xrayEnabled = proxyEnabled && proxyCfg.backend != "sing-box";
+  hybridEnabled = proxyEnabled && proxyCfg.backend == "hybrid";
+  pureSingBoxEnabled = proxyEnabled && proxyCfg.backend == "sing-box";
+  pureXrayEnabled = proxyEnabled && proxyCfg.backend == "xray";
+  activeBackend = if proxyEnabled then proxyCfg.backend else null;
   perAppRoutingCfg = cfg.perAppRouting;
   globalTun = proxyCfg.tun;
   globalTproxy = proxyCfg.tproxy;
-  perAppRoutingTun = proxyCfg.tun.perApp;
-  perAppRoutingTproxy = proxyCfg.tproxy.perApp;
-  perAppZapretCfg = cfg.zapret.perApp;
+  perAppRoutingTun = cfg.perAppRouting.tun;
+  perAppRoutingTproxy = cfg.perAppRouting.tproxy;
+  zapretCfg = cfg.zapret;
+  zapretEngine = cfg.zapret.engine;
+  perAppZapretCfg = cfg.perAppRouting.zapret;
   userControlCfg = cfg.userControl;
   sshProxyCfg = cfg.sshProxy;
   sshProxyOutboundTag = "ssh-proxy";
   sshProxyOutboundEnabled = sshProxyCfg.enable && sshProxyCfg.asOutbound;
-  # Only sing-box has a native `ssh` outbound. XRay has none, so it keeps the
-  # OpenSSH `ssh -D` unit and its local SOCKS listener -- as does a standalone
-  # tunnel that is not wired in as an outbound at all.
+  # Only sing-box dials SSH natively; XRay and standalone tunnels use the OpenSSH unit.
   sshProxyNativeOutbound = sshProxyOutboundEnabled && !pureXrayEnabled;
   sshProxyUnitEnabled = sshProxyCfg.enable && !sshProxyNativeOutbound;
 
-  proxyInboundsCfg = cfg.proxyInbounds;
+  proxyInboundsCfg = cfg.inbounds;
   proxyInboundsEnabled = proxyInboundsCfg.enable;
 
-  # Listener attrset flattened to a list with `via` resolved against the
-  # tree-wide default. Everything downstream (rules, spec, firewall) uses this.
+  # Listeners as a list, with `via` resolved against the default.
   proxyInbounds = lib.mapAttrsToList (tag: listener: {
     inherit tag listener;
-    via = if listener.via == null then proxyInboundsCfg.via else listener.via;
+    via = if listener.via == null then proxyInboundsCfg.routing.via else listener.via;
   }) proxyInboundsCfg.listeners;
 
-  # "direct" and "block" are self-contained; "proxy" chains through the client
-  # stack's local SOCKS listener, so it needs the client side to be running.
-  proxyInboundsNeedLocalProxy = lib.any (ib: ib.via == "proxy") proxyInbounds;
+  # Whether any listener or inbounds.routing.proxy exception relays through the local SOCKS
+  # listener.
+  proxyInboundsNeedLocalProxy =
+    lib.any (ib: ib.via == "proxy") proxyInbounds
+    || lib.any (field: proxyInboundsCfg.routing.proxy.${field} != [ ]) [
+      "domains"
+      "ips"
+      "geosites"
+      "geoips"
+    ];
 
-  # Any other via names a static outbound, which is rendered into the inbound
-  # service's own config so it stays pinned regardless of the client's
-  # selection. Only referenced outbounds are built, so an unused (or
-  # sing-box-only) one never has to be XRay-representable.
+  # Names pass unresolved unless XRay dials itself (a direct listener, or pure XRay).
+  proxyInboundsResolveInSingBox =
+    !pureXrayEnabled && !lib.any (ib: ib.via == "direct") proxyInbounds;
+
+  proxyInboundsGuardPrivate =
+    proxyInboundsEnabled
+    && proxyInboundsCfg.routing.blockPrivate
+    && proxyInboundsNeedLocalProxy
+    && proxyInboundsResolveInSingBox;
+
+  # Other vias name static outbounds, rendered into the inbound service's own config.
   proxyInboundViaTags = lib.unique (
     builtins.filter (via: !builtins.elem via builtinTags) (map (ib: ib.via) proxyInbounds)
   );
@@ -75,22 +78,30 @@ let
     "socks"
   ];
   proxyInboundPorts = lib.unique (map (ib: ib.listener.port) proxyInbounds);
-  # A loopback-bound listener is reached through something else on this host (an
-  # nginx vhost, say), so opening its port would expose the endpoint that
-  # arrangement exists to hide.
+  # Loopback listeners are fronted locally; their ports stay closed.
   proxyInboundsPublic = builtins.filter (
     ib:
-    !builtins.elem ib.listener.listenAddress [
+    !builtins.elem ib.listener.address [
       "127.0.0.1"
       "::1"
     ]
   ) proxyInbounds;
-  proxyInboundFirewallPorts = lib.unique (map (ib: ib.listener.port) proxyInboundsPublic);
+  # h3-only xhttp listeners are UDP-only, leaving the TCP port to a web server.
+  proxyInboundIsH3Only =
+    l: l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
+  proxyInboundFirewallPorts = lib.unique (
+    map (ib: ib.listener.port) (
+      builtins.filter (ib: !proxyInboundIsH3Only ib.listener) proxyInboundsPublic
+    )
+  );
   # A raw-JSON listener could serve anything, so open both protocols for it.
   proxyInboundFirewallUdpPorts = lib.unique (
     map (ib: ib.listener.port) (
       builtins.filter (
-        ib: ib.listener.type == null || builtins.elem ib.listener.type proxyInboundUdpTypes
+        ib:
+        ib.listener.type == null
+        || builtins.elem ib.listener.type proxyInboundUdpTypes
+        || proxyInboundIsH3Only ib.listener
       ) proxyInboundsPublic
     )
   );
@@ -111,8 +122,32 @@ let
   collapseNamedOutbounds = selectionMode == "first";
   clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
-  userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
+  userControlEnabled = userControlCfg.allow != [ ];
   constants = {
+    zapret2StateDir = "/var/lib/proxy-suite/zapret2";
+
+    # NFQUEUE of the global zapret instance, per engine. Both are the engine's own
+    # default, which proxy-suite never overrides; the per-app instance opens a
+    # second queue and must not land on this one.
+    zapretGlobalQnum = {
+      zapret-discord-youtube = 200;
+      zapret2 = 300;
+    };
+
+    autoProxyStateDir = "/var/lib/proxy-suite/autoproxy";
+
+    # Runtime outbound control. The spool dirs hold one proxy URL per file and are
+    # group-writable when userControl is on, so proxy-ctl edits them without sudo;
+    # the pin outlives a reboot, unlike the per-boot route-mode override.
+    priorityOutboundFile = "/var/lib/proxy-suite/priority-outbound";
+    runtimeOutboundsDir = "/var/lib/proxy-suite/outbounds.d";
+    runtimeSubscriptionsDir = "/var/lib/proxy-suite/subscriptions.d";
+    # Written by every backend start script; proxy-ctl reads the socks copy.
+    outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
+
+    inboundStatsApiPort = 18536;
+    inboundStatsFile = "/var/lib/proxy-suite/inbound-stats.json";
+
     tunAutoRouteTableIndex = 2022;
     tunAutoRouteRulePriority = 9000;
     xrayTunPerAppTproxyRulePriority = 8996;
@@ -164,6 +199,8 @@ in
     globalTproxy
     perAppRoutingTun
     perAppRoutingTproxy
+    zapretCfg
+    zapretEngine
     perAppZapretCfg
     perAppZapretEnabled
     userControlCfg
@@ -177,6 +214,8 @@ in
     proxyInboundsEnabled
     proxyInbounds
     proxyInboundsNeedLocalProxy
+    proxyInboundsResolveInSingBox
+    proxyInboundsGuardPrivate
     proxyInboundViaTags
     proxyInboundViaOutbounds
     invalidInboundViaTargets

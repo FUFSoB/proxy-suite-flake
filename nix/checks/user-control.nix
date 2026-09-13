@@ -9,10 +9,10 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy.tun.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
+          tun.enable = true;
         };
       };
     }
@@ -22,10 +22,7 @@ let
   userControlGlobalOnlyFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.userControl = {
-        global.enable = true;
-        perApp.enable = false;
-      };
+      services.proxy-suite.userControl.allow = [ "global" ];
     }
   ];
   userControlGlobalOnlyPolkitConfig = userControlGlobalOnlyFixture.config.security.polkit.extraConfig;
@@ -34,15 +31,12 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy.tun.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
+          tun.enable = true;
         };
-        userControl = {
-          global.enable = false;
-          perApp.enable = true;
-        };
+        userControl.allow = [ "perApp" ];
       };
     }
   ];
@@ -51,12 +45,30 @@ let
   userControlDisabledFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.userControl = {
-        global.enable = false;
-        perApp.enable = false;
-      };
+      services.proxy-suite.userControl.allow = [ ];
     }
   ];
+
+  # Every unit declaring the autoProxy state directory must carry the group, or
+  # the next start chowns it back and `proxy auto list|queue` loses its read.
+  mkAutoProxyFixture =
+    extra:
+    evalProxySuite [
+      baseModule
+      {
+        services.proxy-suite = {
+          proxy.autoProxy.enable = true;
+        }
+        // extra;
+      }
+    ];
+  autoProxyGroups =
+    fixture:
+    map (unit: fixture.config.systemd.services.${unit}.serviceConfig.Group or null) [
+      "proxy-suite-autoproxy"
+      "proxy-suite-autoproxy-learn"
+      "proxy-suite-autoproxy-sample"
+    ];
 in
 {
   assertions = [
@@ -97,6 +109,33 @@ in
       assert
         builtins.match ".*unit === \"zapret-discord-youtube\\.service\".*" userControlPerAppOnlyPolkitConfig
         == null;
+      true
+    )
+
+    # -- userControl: the autoProxy state directory is group-owned, and only then --
+    (
+      assert
+        autoProxyGroups (mkAutoProxyFixture { }) == [
+          "proxy-suite"
+          "proxy-suite"
+          "proxy-suite"
+        ];
+      assert
+        autoProxyGroups (mkAutoProxyFixture {
+          userControl.group = "vpnops";
+        }) == [
+          "vpnops"
+          "vpnops"
+          "vpnops"
+        ];
+      assert
+        autoProxyGroups (mkAutoProxyFixture {
+          userControl.allow = [ ];
+        }) == [
+          null
+          null
+          null
+        ];
       true
     )
 

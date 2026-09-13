@@ -6,15 +6,15 @@
 }:
 
 let
-  userControlEnabled = userControlCfg.global.enable || userControlCfg.perApp.enable;
+  userControlEnabled = userControlCfg.allow != [ ];
 
   userControlPolkitRules =
-    lib.optionalString userControlCfg.perApp.enable ''
+    lib.optionalString (builtins.elem "perApp" userControlCfg.allow) ''
       if (unit.indexOf("proxy-suite-per-app-") === 0) {
         return polkit.Result.YES;
       }
     ''
-    + lib.optionalString userControlCfg.global.enable ''
+    + lib.optionalString (builtins.elem "global" userControlCfg.allow) ''
       if ((unit.indexOf("proxy-suite-") === 0 &&
            unit.indexOf("proxy-suite-per-app-") !== 0) ||
           unit === "zapret-discord-youtube.service") {

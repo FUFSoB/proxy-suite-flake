@@ -48,7 +48,7 @@
       }
     ]
 
-    # route=tun requires proxy.tun.perApp.enable.
+    # route=tun requires perAppRouting.tun.enable.
     [
       {
         services.proxy-suite.perAppRouting = {
@@ -67,11 +67,11 @@
     [
       {
         services.proxy-suite = {
-          proxy = {
-            enable = false;
-            tun.perApp.enable = true;
+          proxy.enable = false;
+          perAppRouting = {
+            enable = true;
+            tun.enable = true;
           };
-          perAppRouting.enable = true;
         };
       }
     ]
@@ -92,7 +92,7 @@
       }
     ]
 
-    # route=tproxy requires proxy.tproxy.perApp.enable.
+    # route=tproxy requires perAppRouting.tproxy.enable.
     [
       {
         services.proxy-suite.perAppRouting = {
@@ -111,11 +111,11 @@
     [
       {
         services.proxy-suite = {
-          proxy = {
-            enable = false;
-            tproxy.perApp.enable = true;
+          proxy.enable = false;
+          perAppRouting = {
+            enable = true;
+            tproxy.enable = true;
           };
-          perAppRouting.enable = true;
         };
       }
     ]
@@ -136,7 +136,7 @@
       }
     ]
 
-    # route=zapret requires zapret.perApp.enable.
+    # route=zapret requires perAppRouting.zapret.enable.
     [
       {
         services.proxy-suite = {

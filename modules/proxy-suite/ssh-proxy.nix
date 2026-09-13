@@ -7,7 +7,7 @@
 
 let
   s = cfg.sshProxy;
-  destination = if s.user == null then s.host else "${s.user}@${s.host}";
+  destination = if s.server.user == null then s.server.host else "${s.server.user}@${s.server.host}";
   extraArgs = lib.concatMapStrings (arg: "    args+=(${lib.escapeShellArg arg})\n") s.extraArgs;
   startScript = pkgs.writeShellScript "proxy-suite-ssh-proxy-start" ''
         set -euo pipefail
@@ -20,9 +20,9 @@ let
           -o ServerAliveCountMax=3
           -o ConnectTimeout=10
           -o StrictHostKeyChecking=${lib.escapeShellArg s.strictHostKeyChecking}
-          -D ${lib.escapeShellArg "${s.listenAddress}:${toString s.listenPort}"}
+          -D ${lib.escapeShellArg "${s.listener.address}:${toString s.listener.port}"}
         )
-        ${lib.optionalString (s.sshPort != 22) "args+=(-p ${toString s.sshPort})"}
+        ${lib.optionalString (s.server.port != 22) "args+=(-p ${toString s.server.port})"}
         ${lib.optionalString (s.identityFile != null) "args+=(-i ${lib.escapeShellArg s.identityFile})"}
         ${lib.optionalString (
           s.knownHostsFile != null

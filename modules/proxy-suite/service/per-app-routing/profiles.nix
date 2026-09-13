@@ -44,7 +44,7 @@ let
     ) defaultPerAppRoutingProfiles;
   effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
 
-  localProxyAuth = proxyCfg.auth;
+  localProxyAuth = proxyCfg.listener.auth;
   localProxyAuthEnabled =
     localProxyAuth.username != null
     && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
@@ -65,7 +65,7 @@ let
         tcp_connect_time_out 8000
 
         [ProxyList]
-        socks5 ${proxyCfg.listenAddress} ${toString proxyCfg.port}
+        socks5 ${proxyCfg.listener.address} ${toString proxyCfg.listener.port}
       '';
   proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 

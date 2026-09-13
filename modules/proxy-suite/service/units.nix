@@ -11,7 +11,6 @@
   perAppRoutingTun,
   perAppRoutingTproxy,
   perAppZapretEnabled,
-  hasSubscriptions,
   sshProxyOutboundEnabled,
   sshProxyUnitEnabled,
   proxyInboundsEnabled,
@@ -19,6 +18,7 @@
   scripts,
   perAppRouting,
   routingScripts,
+  geodata,
 }:
 
 let
@@ -45,6 +45,7 @@ let
     perAppZapret = "proxy-suite-per-app-zapret";
     subscriptionUpdate = "proxy-suite-subscription-update";
     inbounds = "proxy-suite-inbounds";
+    inboundStats = "proxy-suite-inbound-stats";
   };
 
   backendDescription =
@@ -56,8 +57,13 @@ let
       "sing-box";
 
   localProxyAuthEnabled =
-    proxyCfg.auth.username != null
-    && (proxyCfg.auth.password != null || proxyCfg.auth.passwordFile != null);
+    proxyCfg.listener.auth.username != null
+    && (proxyCfg.listener.auth.password != null || proxyCfg.listener.auth.passwordFile != null);
+
+  # XRay finds geoip.dat/geosite.dat through this; sing-box ignores it.
+  xrayAssetEnv = lib.optionalAttrs (geodata.xray.assets != null) {
+    Environment = [ "XRAY_LOCATION_ASSET=${geodata.xray.assets}/share/v2ray" ];
+  };
 
   systemServiceEntries = [
     {
@@ -65,8 +71,7 @@ let
       name = serviceNames.socks;
       value = mkRestartingService {
         description = "${backendDescription} proxy client (SOCKS + TProxy-ready)";
-        # Only the XRay backend proxies through the OpenSSH unit's listener;
-        # SingBox dials SSH inside its own process and needs no ordering.
+        # Only XRay goes through the OpenSSH unit's listener.
         after = [
           "network-online.target"
         ]
@@ -79,6 +84,7 @@ let
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
         stateDirectory = "proxy-suite";
+        extraServiceConfig = xrayAssetEnv;
       };
     }
     {
@@ -89,9 +95,8 @@ let
         after = [
           "network-online.target"
         ]
-        # Relayed traffic leaves through the client stack's SOCKS listener, so
-        # start after it. Not `requires`: the listeners should keep serving
-        # direct-routed traffic even if the client stack is down.
+        # After the client stack, but not `requires`: direct listeners keep serving
+        # without it.
         ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service";
         wants = [
           "network-online.target"
@@ -100,6 +105,19 @@ let
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startInbounds;
         runtimeDirectory = serviceNames.inbounds;
+        extraServiceConfig = xrayAssetEnv;
+      };
+    }
+    {
+      enable = proxyInboundsEnabled;
+      name = serviceNames.inboundStats;
+      value = mkOneshotService {
+        description = "proxy-suite - add up per-user traffic through the inbounds";
+        after = [ "${serviceNames.inbounds}.service" ];
+        execStart = scripts.collectInboundStats;
+        stateDirectory = "proxy-suite";
+        # Run by a timer: a unit left "active" would never be started again.
+        extraServiceConfig.RemainAfterExit = false;
       };
     }
     {
@@ -111,7 +129,7 @@ let
           "network.target"
           "${serviceNames.socks}.service"
         ];
-        wantedBy = lib.optionals globalTproxy.autostart [ "multi-user.target" ];
+        wantedBy = lib.optionals (proxyCfg.autostart == "tproxy") [ "multi-user.target" ];
         requires = [ "${serviceNames.socks}.service" ];
         conflicts = [
           "${serviceNames.tun}.service"
@@ -128,7 +146,7 @@ let
         description = "${backendDescription} TUN proxy client";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
-        wantedBy = lib.optionals globalTun.autostart [ "multi-user.target" ];
+        wantedBy = lib.optionals (proxyCfg.autostart == "tun") [ "multi-user.target" ];
         conflicts = [ "${serviceNames.tproxy}.service" ];
         execStartPre = tunCleanupScript;
         execStart = scripts.startTun;
@@ -202,7 +220,8 @@ let
       };
     }
     {
-      enable = proxyEnabled && hasSubscriptions;
+      # Not gated on hasSubscriptions: runtime subscriptions need refreshing too.
+      enable = proxyEnabled;
       name = serviceNames.subscriptionUpdate;
       value = mkOneshotService {
         description = "Refresh proxy-suite subscription caches";
@@ -218,6 +237,26 @@ let
       value = mkOneshotService {
         description = "Set proxy-suite route mode to %i";
         execStart = "${scripts.setRouteModeScript} %i";
+        extraServiceConfig.RemainAfterExit = false;
+      };
+    }
+    {
+      enable = proxyEnabled;
+      name = "proxy-suite-outbound-select@";
+      value = mkOneshotService {
+        description = "Pin the proxy-suite priority outbound to %i";
+        execStart = "${scripts.setPriorityOutboundScript} %i";
+        stateDirectory = "proxy-suite";
+        extraServiceConfig.RemainAfterExit = false;
+      };
+    }
+    {
+      enable = proxyEnabled;
+      name = "proxy-suite-outbound-reload";
+      value = mkOneshotService {
+        description = "Apply proxy-suite outbounds and subscriptions added at runtime";
+        execStart = scripts.reloadOutboundsScript;
+        stateDirectory = "proxy-suite";
         extraServiceConfig.RemainAfterExit = false;
       };
     }
@@ -243,14 +282,28 @@ let
 
   timerEntries = [
     {
-      enable = proxyEnabled && hasSubscriptions;
+      enable = proxyEnabled;
       name = serviceNames.subscriptionUpdate;
       value = {
         description = "Periodic proxy-suite subscription refresh";
         wantedBy = [ "timers.target" ];
         timerConfig = {
-          OnBootSec = "5m";
+          # OnActiveSec, not OnBootSec: see the autoProxy timer.
+          OnActiveSec = "5m";
           OnUnitActiveSec = proxyCfg.subscriptionUpdateInterval;
+        };
+      };
+    }
+    {
+      enable = proxyInboundsEnabled;
+      name = serviceNames.inboundStats;
+      value = {
+        description = "proxy-suite per-user inbound traffic collection";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          # OnActiveSec, not OnBootSec: see the autoProxy timer.
+          OnActiveSec = "5m";
+          OnUnitActiveSec = "5m";
         };
       };
     }

@@ -13,7 +13,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           inherit subscriptions;
         };
       };

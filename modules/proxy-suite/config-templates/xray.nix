@@ -42,7 +42,7 @@ let
 
   mkTunDnsConfig =
     {
-      preferRemote ? proxyCfg.proxyByDefault,
+      preferRemote ? (proxyCfg.routing.default == "proxy"),
     }:
     let
       primaryTag = if preferRemote then "remote" else "local";
@@ -143,8 +143,8 @@ let
     }:
     let
       tunDnsServers = [
-        (if proxyCfg.proxyByDefault then proxyCfg.dns.remote.address else proxyCfg.dns.local.address)
-        (if proxyCfg.proxyByDefault then proxyCfg.dns.local.address else proxyCfg.dns.remote.address)
+        (if (proxyCfg.routing.default == "proxy") then proxyCfg.dns.remote.address else proxyCfg.dns.local.address)
+        (if (proxyCfg.routing.default == "proxy") then proxyCfg.dns.local.address else proxyCfg.dns.remote.address)
       ];
       tunSniffing = mkSniffing { fakeDnsOnly = enableTunFakeDns; };
       dnsConfig =
@@ -178,7 +178,7 @@ let
           tunDnsHijackRule
         ]
         ++ rules.xrayRoutingRules
-        ++ [ (finalRule (if proxyCfg.proxyByDefault then "proxy" else "direct")) ];
+        ++ [ (finalRule (if (proxyCfg.routing.default == "proxy") then "proxy" else "direct")) ];
     in
     {
       log.loglevel = "warning";
@@ -187,12 +187,12 @@ let
         lib.optional enableMixed {
           tag = "mixed-in";
           protocol = "socks";
-          listen = proxyCfg.listenAddress;
-          port = proxyCfg.port;
+          listen = proxyCfg.listener.address;
+          port = proxyCfg.listener.port;
           settings = {
             auth = "noauth";
             udp = true;
-            ip = proxyCfg.listenAddress;
+            ip = proxyCfg.listener.address;
           };
           sniffing = standardSniffing;
         }

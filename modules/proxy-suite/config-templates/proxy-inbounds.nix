@@ -1,6 +1,5 @@
-# Build-time XRay configuration template for the server-side inbound service.
-# Inbounds and proxy outbounds are both injected at service start time, so no
-# credential reaches the Nix store.
+# XRay config template for the inbound service. Inbounds and pinned outbounds
+# are injected at start, so no credential reaches the Nix store.
 {
   lib,
   derived,
@@ -9,23 +8,25 @@
 }:
 
 let
-  inherit (derived) proxyCfg proxyInboundsCfg proxyInboundsNeedLocalProxy;
+  inherit (derived)
+    proxyCfg
+    proxyInboundsNeedLocalProxy
+    proxyInboundsResolveInSingBox
+    ;
 
-  # Relaying goes through the client stack's SOCKS listener rather than a second
-  # copy of the outbound machinery, so the inbound service always follows the
-  # currently selected outbound. Connect over loopback when the listener is on a
-  # wildcard address.
   localProxyAddress =
-    if builtins.elem proxyCfg.listenAddress [
-      "0.0.0.0"
-      "::"
-      ""
-    ] then
+    if
+      builtins.elem proxyCfg.listener.address [
+        "0.0.0.0"
+        "::"
+        ""
+      ]
+    then
       "127.0.0.1"
     else
-      proxyCfg.listenAddress;
+      proxyCfg.listener.address;
 
-  # Credentials, when the local proxy has them, are injected at start time.
+  # The client stack's SOCKS listener; credentials are injected at start.
   localProxyOutbound = lib.optional proxyInboundsNeedLocalProxy {
     protocol = "socks";
     tag = "proxy";
@@ -33,7 +34,7 @@ let
       servers = [
         {
           address = localProxyAddress;
-          port = proxyCfg.port;
+          port = proxyCfg.listener.port;
         }
       ];
     };
@@ -47,8 +48,19 @@ in
     (mkDnsServer "local" proxyCfg.dns.local)
   ];
 
-  # Filled in at start time from the listener spec.
   inbounds = [ ];
+
+  # Per-user counters for proxy-suite-inbound-stats, on loopback only.
+  stats = { };
+  api = {
+    tag = "api";
+    listen = "127.0.0.1:${toString derived.constants.inboundStatsApiPort}";
+    services = [ "StatsService" ];
+  };
+  policy.levels."0" = {
+    statsUserUplink = true;
+    statsUserDownlink = true;
+  };
 
   outbounds = localProxyOutbound ++ [
     {
@@ -64,7 +76,11 @@ in
   ];
 
   routing = {
-    domainStrategy = "IPIfNonMatch";
+    # AsIs where sing-box dials: resolving here made every new site wait on a
+    # lookup through the proxy, and sing-box enforces blockPrivate after its
+    # own. Where XRay dials itself it must resolve, and IPOnDemand: under
+    # IPIfNonMatch the network-only final rule matches names unresolved.
+    domainStrategy = if proxyInboundsResolveInSingBox then "AsIs" else "IPOnDemand";
     domainMatcher = "hybrid";
     rules = inboundRules.xrayInboundRules;
   };

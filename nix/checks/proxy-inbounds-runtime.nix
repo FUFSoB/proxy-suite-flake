@@ -36,10 +36,10 @@ pkgs.testers.runNixOSTest {
         services.proxy-suite = {
           enable = true;
           proxy.enable = false;
-          proxyInbounds = {
+          inbounds = {
             enable = true;
             inherit serverAddress;
-            via = "direct";
+            routing.via = "direct";
             openFirewall = true;
             listeners.vless-in = {
               type = "vless";
@@ -79,8 +79,8 @@ pkgs.testers.runNixOSTest {
           enable = true;
           proxy = {
             enable = true;
-            xray.enable = true;
-            port = 1080;
+            backend = "xray";
+            listener.port = 1080;
             outbounds = [
               {
                 tag = "server";
@@ -106,7 +106,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"ss-in\" and .port == 8388)' {cfg}")
         # Credentials live only in the runtime config, never in the store.
         server.succeed(f"test $(stat -c %a {cfg}) = 600")
-        server.fail(f"grep -r '${uuid}' /nix/store/*proxy-suite-inbounds-*.json")
+        server.fail("grep -r '${uuid}' /nix/store/*proxy-suite-inbounds-*.json")
 
     with subtest("safety rules are present and ordered first"):
         cfg = "/run/proxy-suite-inbounds/config.json"
@@ -138,7 +138,7 @@ pkgs.testers.runNixOSTest {
         assert link.startswith("vless://${uuid}@${serverAddress}:8443"), link
         assert "#tester" in link, link
         server.succeed("proxy-ctl inbounds | grep -q vless-in")
-        server.succeed("proxy-ctl inbounds qr vless-in | head -c 1")
+        server.succeed("proxy-ctl inbounds link vless-in --qr | head -c 1")
         server.succeed("proxy-ctl status | grep -q proxy-suite-inbounds")
 
     with subtest("a listener keeps serving after a restart"):

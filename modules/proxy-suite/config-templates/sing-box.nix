@@ -52,7 +52,7 @@ let
           rule_set = map (s: "geosite-${s}") direct.geosites;
           server = "local";
         };
-      final = if proxyCfg.proxyByDefault then "remote" else "local";
+      final = if (proxyCfg.routing.default == "proxy") then "remote" else "local";
     };
 
   xrayDnsBridgeHijackRule = {
@@ -105,8 +105,8 @@ let
         ++ lib.optional enableMixed {
           type = "mixed";
           tag = "mixed-in";
-          listen = proxyCfg.listenAddress;
-          listen_port = proxyCfg.port;
+          listen = proxyCfg.listener.address;
+          listen_port = proxyCfg.listener.port;
         }
         ++ lib.optional enableTProxy {
           type = "tproxy";
@@ -150,7 +150,7 @@ let
         default_domain_resolver = "local";
         rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
         rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
-        final = if proxyCfg.proxyByDefault then "proxy" else "direct";
+        final = if (proxyCfg.routing.default == "proxy") then "proxy" else "direct";
       }
       // lib.optionalAttrs (enableTun && tunAutoRoute) {
         auto_detect_interface = true;

@@ -43,7 +43,7 @@
       in
       assert cfg.url == "https://www.gstatic.com/generate_204";
       assert cfg.interval == "3m";
-      assert minimal.config.services.proxy-suite.proxy.singBox.urlTest.tolerance == 50;
+      assert minimal.config.services.proxy-suite.proxy.urlTest.tolerance == 50;
       true
     )
 

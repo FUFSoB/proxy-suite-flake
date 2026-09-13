@@ -15,7 +15,7 @@ let
   localProxyAuthFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.proxy.auth = {
+      services.proxy-suite.proxy.listener.auth = {
         username = "local-user";
         password = "local-pass";
       };
@@ -27,7 +27,9 @@ let
   localProxyAuthBackendJqFilter =
     import ../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
+        lib = pkgs.lib;
         pureXrayEnabled = false;
+        proxyInboundsGuardPrivate = false;
         selectionMode = localProxyAuthFixture.config.services.proxy-suite.proxy.selection;
       };
 
@@ -35,7 +37,7 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy.auth = {
+        proxy.listener.auth = {
           username = "local-user";
           passwordFile = "/run/secrets/local-proxy-password";
         };
@@ -62,16 +64,16 @@ let
   invalidLocalProxyAuthAssertions = mkFailingAssertions mkBadFixture [
     # Auth requires both username and a password source.
     [
-      { services.proxy-suite.proxy.auth.username = "local-user"; }
+      { services.proxy-suite.proxy.listener.auth.username = "local-user"; }
     ]
     [
-      { services.proxy-suite.proxy.auth.password = "local-pass"; }
+      { services.proxy-suite.proxy.listener.auth.password = "local-pass"; }
     ]
 
     # Inline password and passwordFile are mutually exclusive.
     [
       {
-        services.proxy-suite.proxy.auth = {
+        services.proxy-suite.proxy.listener.auth = {
           username = "local-user";
           password = "local-pass";
           passwordFile = "/run/secrets/local-proxy-password";

@@ -1,6 +1,7 @@
-# Factory function – receives the zapret flake, returns a NixOS module.
-# This lets consumers add a single flake input and get everything transitively.
-{ zapret }:
+# Factory function – receives the zapret flake and this flake's own nixpkgs,
+# returns a NixOS module. This lets consumers add a single flake input and get
+# everything transitively.
+{ zapret, nixpkgs }:
 
 {
   config,
@@ -20,100 +21,42 @@ in
     ./options
   ];
 
-  config = lib.mkIf cfg.enable (
-    let
-      rules = import ./rules.nix {
-        inherit
-          lib
-          pkgs
-          cfg
-          zapret
-          ;
-      };
-      configs = import ./config.nix {
-        inherit
-          lib
-          pkgs
-          cfg
-          rules
-          ;
-      };
-    in
-    lib.mkMerge [
-      (import ./service {
-        inherit
-          config
-          lib
-          pkgs
-          packages
-          cfg
-          ;
-        inherit (configs)
-          tproxyFile
-          tunFile
-          perAppTunFile
-          routeModeRulesFile
-          proxyInboundsFile
-          proxyInboundsSpecFile
-          ;
-        inherit (nftr)
-          nftablesRulesFile
-          perAppTproxyRulesFile
-          perAppZapretRulesFile
-          perAppTunChainFile
-          ip
-          nft
-          ;
-      })
+  config = lib.mkMerge [
+    {
+      # xray and sing-box default to this flake's own nixpkgs (redirect it
+      # with inputs.nixpkgs.follows), not the system's: a stable release lags
+      # both by months, and current xray needs a newer Go than stable ships.
+      _module.args.proxySuiteUpstream =
+        let
+          upstream = nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+        in
+        {
+          xray = import ../../pkgs/xray.nix { pkgs = upstream; };
+          inherit (upstream) sing-box;
+        };
+    }
 
-      (lib.mkIf (cfg.zapret.enable || cfg.zapret.perApp.enable) (
-        import ./zapret.nix {
+    (lib.mkIf cfg.enable (
+      let
+        rules = import ./rules.nix {
           inherit
             lib
             pkgs
             cfg
             zapret
             ;
-          inherit (nftr) perAppZapretRulesFile nft;
-        }
-      ))
-
-      (lib.mkIf cfg.tgWsProxy.enable (
-        import ./tg-ws-proxy.nix {
-          inherit
-            lib
-            pkgs
-            packages
-            cfg
-            ;
-        }
-      ))
-
-      # SingBox dials SSH natively, so it needs no OpenSSH unit. XRay has no SSH
-      # outbound, and a standalone tunnel has no backend at all, so both keep it.
-      (lib.mkIf derived.sshProxyUnitEnabled (
-        import ./ssh-proxy.nix {
+        };
+        configs = import ./config.nix {
           inherit
             lib
             pkgs
             cfg
+            rules
             ;
-        }
-      ))
-
-      (lib.mkIf cfg.amneziaWg.enable (
-        import ./amnezia-wg.nix {
-          inherit
-            config
-            lib
-            pkgs
-            cfg
-            ;
-        }
-      ))
-
-      (lib.mkIf cfg.tray.enable (
-        import ./tray.nix {
+        };
+      in
+      lib.mkMerge [
+        (import ./service {
           inherit
             config
             lib
@@ -121,8 +64,94 @@ in
             packages
             cfg
             ;
-        }
-      ))
-    ]
-  );
+          inherit (configs)
+            tproxyFile
+            tunFile
+            perAppTunFile
+            routeModeRulesFile
+            proxyInboundsFile
+            proxyInboundsSpecFile
+            ;
+          inherit (nftr)
+            nftablesRulesFile
+            perAppTproxyRulesFile
+            perAppZapretRulesFile
+            perAppTunChainFile
+            ip
+            nft
+            ;
+        })
+
+        (lib.mkIf (cfg.zapret.engine == "zapret-discord-youtube" && (cfg.zapret.enable || cfg.perAppRouting.zapret.enable)) (
+          import ./zapret.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              zapret
+              ;
+            inherit (nftr) perAppZapretRulesFile nft;
+          }
+        ))
+
+        (lib.mkIf (cfg.zapret.engine == "zapret2" && (cfg.zapret.enable || cfg.perAppRouting.zapret.enable)) (
+          import ./zapret2.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              packages
+              ;
+            inherit (nftr) perAppZapretRulesFile nft;
+          }
+        ))
+
+        (lib.mkIf cfg.tgWsProxy.enable (
+          import ./tg-ws-proxy.nix {
+            inherit
+              lib
+              pkgs
+              packages
+              cfg
+              ;
+          }
+        ))
+
+        # SingBox dials SSH natively, so it needs no OpenSSH unit. XRay has no SSH
+        # outbound, and a standalone tunnel has no backend at all, so both keep it.
+        (lib.mkIf derived.sshProxyUnitEnabled (
+          import ./ssh-proxy.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              ;
+          }
+        ))
+
+        (lib.mkIf cfg.amneziaWg.enable (
+          import ./amnezia-wg.nix {
+            inherit
+              config
+              lib
+              pkgs
+              cfg
+              ;
+          }
+        ))
+
+        (lib.mkIf cfg.tray.enable (
+          import ./tray.nix {
+            inherit
+              config
+              lib
+              pkgs
+              packages
+              cfg
+              ;
+          }
+        ))
+      ]
+    ))
+  ];
 }

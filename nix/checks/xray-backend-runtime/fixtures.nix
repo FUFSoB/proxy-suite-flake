@@ -16,7 +16,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        xray.enable = true;
+        backend = "xray";
         selection = "urltest";
         outbounds = [
           {
@@ -34,15 +34,13 @@ let
           block.domains = [ "block.example" ];
         };
         tproxy.enable = true;
-        tproxy.perApp.enable = true;
-        tun = {
-          enable = true;
-          perApp.enable = true;
-        };
+        tun.enable = true;
       };
       perAppRouting = {
         enable = true;
         createDefaultProfiles = true;
+        tun.enable = true;
+        tproxy.enable = true;
       };
     };
   };
@@ -81,6 +79,8 @@ let
   xrayBackendJqFilter =
     import ../../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
+        lib = pkgs.lib;
+        proxyInboundsGuardPrivate = false;
         pureXrayEnabled = true;
         selectionMode = xrayFixture.config.services.proxy-suite.proxy.selection;
       };

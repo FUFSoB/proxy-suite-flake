@@ -13,7 +13,7 @@ let
     {
       services.proxy-suite.zapret = {
         enable = true;
-        hostlistRules = [
+        zapret-discord-youtube.hostlistRules = [
           {
             name = "googlevideo";
             domains = [
@@ -81,7 +81,7 @@ let
       {
         services.proxy-suite.zapret = {
           enable = true;
-          hostlistRules = [
+          zapret-discord-youtube.hostlistRules = [
             {
               name = "dup";
               domains = [ "one.example" ];
@@ -100,7 +100,7 @@ let
       {
         services.proxy-suite.zapret = {
           enable = true;
-          hostlistRules = [
+          zapret-discord-youtube.hostlistRules = [
             {
               name = "empty";
               domains = [ ];
@@ -114,7 +114,7 @@ let
       {
         services.proxy-suite.zapret = {
           enable = true;
-          hostlistRules = [
+          zapret-discord-youtube.hostlistRules = [
             {
               name = "missing";
               domains = [ "missing.example" ];
@@ -127,7 +127,7 @@ let
       {
         services.proxy-suite.zapret = {
           enable = true;
-          hostlistRules = [
+          zapret-discord-youtube.hostlistRules = [
             {
               name = "conflict";
               defaultDomains = [ "google" ];
@@ -142,7 +142,7 @@ let
       {
         services.proxy-suite.zapret = {
           enable = true;
-          hostlistRules = [
+          zapret-discord-youtube.hostlistRules = [
             {
               name = "missing-family";
               domains = [ "example.com" ];

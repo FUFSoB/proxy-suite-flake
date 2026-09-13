@@ -1,19 +1,24 @@
-# All option declarations for services.proxy-suite, split by feature area.
-{ ... }:
+{ lib, ... }:
 {
   imports = [
-    ./other.nix
-    ./ssh-proxy.nix
-    ./proxy-inbounds.nix
-    ./amnezia-wg.nix
-    ./legacy-sing-box.nix
-    ./sing-box.nix
-    ./sing-box-outbounds.nix
-    ./sing-box-dns.nix
-    ./sing-box-tun.nix
-    ./sing-box-tproxy.nix
-    ./sing-box-routing.nix
+    ./removed.nix
+    ./proxy.nix
+    ./proxy-outbounds.nix
+    ./proxy-dns.nix
+    ./proxy-routing.nix
+    ./proxy-tun.nix
+    ./proxy-tproxy.nix
+    ./inbounds.nix
     ./per-app-routing.nix
     ./zapret.nix
+    ./zapret2.nix
+    ./amnezia-wg.nix
+    ./ssh-proxy.nix
+    ./tg-ws-proxy.nix
+    ./geodata.nix
+    ./tray.nix
+    ./user-control.nix
   ];
+
+  options.services.proxy-suite.enable = lib.mkEnableOption "proxy-suite";
 }

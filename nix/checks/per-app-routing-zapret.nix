@@ -16,14 +16,12 @@ let
     baseModule
     {
       services.proxy-suite = {
-        zapret = {
-          enable = true;
-          perApp.enable = true;
-        };
+        zapret.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
           proxychains.enable = true;
+          zapret.enable = true;
         };
       };
     }
@@ -44,14 +42,12 @@ let
     baseModule
     {
       services.proxy-suite = {
-        zapret = {
-          enable = false;
-          perApp.enable = true;
-        };
+        zapret.enable = false;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
           proxychains.enable = true;
+          zapret.enable = true;
         };
       };
     }
@@ -69,11 +65,13 @@ let
           proxy.tun = {
             enable = true;
             interface = "test-global0";
-            perApp.enable = true;
-            perApp.interface = "test-app0";
+          };
+          perAppRouting.tun = {
+            enable = true;
+            interface = "test-app0";
           };
           zapret.enable = true;
-          zapret.perApp.enable = perAppZapret;
+          perAppRouting.zapret.enable = perAppZapret;
         };
       }
     ];

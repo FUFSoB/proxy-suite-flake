@@ -1,12 +1,16 @@
 # Subscription cache and outbound-loading script fragments.
+#
+# Everything is emitted as shell functions taking a tag and a file holding the
+# subscription URL, so a subscription declared in Nix and one added at runtime
+# under `subscriptions.d/` go through exactly the same code.
 {
   lib,
   pkgs,
   proxyCfg,
-  hasSubscriptions,
   hybridEnabled,
   mainBackend,
   backend,
+  runtimeSubscriptionsDir,
   jq,
   python3,
   parserScriptsPythonPath,
@@ -19,8 +23,6 @@ let
   subscriptionBackendArg = "--backend ${subscriptionBackend}";
   subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/${backend}";
 
-  mkSubscriptionCacheFile = sub: "${subscriptionCacheDir}/${sub.tag}.json";
-
   mkSubscriptionUrlSource =
     sub:
     if sub.urlFile != null then
@@ -28,20 +30,12 @@ let
     else
       pkgs.writeText "proxy-suite-sub-url-${sub.tag}" sub.url;
 
-  mkSubscriptionFetchCommand =
-    sub:
-    let
-      urlSource = mkSubscriptionUrlSource sub;
-    in
-    # Both call sites append their own `> "$CACHE_FILE.tmp"`, so this must not
-    # end in a newline: that would close the pipeline and turn the redirect
-    # into a separate command that just truncates the cache to zero bytes.
-    lib.removeSuffix "\n" ''
-      printf '%s' "$(cat "${urlSource}")" \
-        | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} ${subscriptionBackendArg} --tag-prefix ${lib.escapeShellArg sub.tag}
-    '';
+  # Defined in every script that touches a cache: the start scripts and the
+  # update unit.
+  subscriptionCacheHelpersBlock = ''
+    SUB_CACHE_DIR="${subscriptionCacheDir}"
+    RUNTIME_SUBS_DIR="${runtimeSubscriptionsDir}"
 
-  subscriptionCacheHelpersBlock = lib.optionalString hasSubscriptions ''
     _proxy_suite_valid_subscription_cache() {
       [ -s "$1" ] && ${jq} -e ${
         lib.escapeShellArg (
@@ -71,76 +65,121 @@ let
         echo "proxy-suite: warning: removed invalid subscription cache for '$tag'" >&2
       fi
     }
+
+    # $1 tag, $2 file holding the subscription URL. Writes the cache atomically.
+    _proxy_suite_fetch_subscription() {
+      local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json"
+      mkdir -p "$SUB_CACHE_DIR"
+      if printf '%s' "$(cat "$src")" \
+        | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} \
+            ${subscriptionBackendArg} --tag-prefix "$tag" > "$cache.tmp"; then
+        _proxy_suite_commit_subscription_cache "$cache.tmp" "$cache" "$tag"
+        return
+      fi
+      rm -f "$cache.tmp"
+      echo "proxy-suite: failed to update subscription '$tag'" >&2
+      return 1
+    }
+
+    # Every runtime subscription, as "<tag>\t<url file>" lines.
+    _proxy_suite_runtime_subscriptions() {
+      local f tag
+      [ -d "$RUNTIME_SUBS_DIR" ] || return 0
+      for f in "$RUNTIME_SUBS_DIR"/*.url; do
+        [ -e "$f" ] || continue
+        tag="''${f##*/}"
+        tag="''${tag%.url}"
+        printf '%s\t%s\n' "$tag" "$f"
+      done
+    }
   '';
 
-  mkSubscriptionBlock =
-    sub: routingMark:
+  # Merging a cache into OUTBOUNDS_JSON needs the routing mark, which differs per
+  # start script, so this one is emitted separately from the cache helpers.
+  mkSubscriptionLoadHelperBlock =
+    routingMark:
     let
-      cacheFile = mkSubscriptionCacheFile sub;
       markFilter = routingMarkJq routingMark;
-    in
-    ''
-      # subscription: ${sub.tag}
-      CACHE_DIR="${subscriptionCacheDir}"
-      CACHE_FILE="${cacheFile}"
-      _proxy_suite_drop_invalid_subscription_cache "$CACHE_FILE" ${lib.escapeShellArg sub.tag}
-      if [ ! -f "$CACHE_FILE" ]; then
-        mkdir -p "$CACHE_DIR"
-        if ${mkSubscriptionFetchCommand sub} > "$CACHE_FILE.tmp"; then
-          _proxy_suite_commit_subscription_cache "$CACHE_FILE.tmp" "$CACHE_FILE" ${lib.escapeShellArg sub.tag} || true
-        else
-          rm -f "$CACHE_FILE.tmp"
-          echo "proxy-suite: warning: could not fetch subscription '${sub.tag}'" >&2
-        fi
-      fi
-      ${
+      subVar = if hybridEnabled then "SUB_SING_BOX_JSON" else "SUB_JSON";
+      # Plain string concatenation: "$" next to an interpolation is exactly the
+      # spot where an indented string's escaping bites.
+      markBlock = lib.optionalString (routingMark != null) (
+        subVar + "=$(${jq} 'map(.${markFilter})' <<< \"$" + subVar + "\")\n"
+      );
+      mergeBlock =
         if hybridEnabled then
           ''
-            if [ -f "$CACHE_FILE" ]; then
-              SUB_SING_BOX_JSON=$(${jq} -c '.singBox' "$CACHE_FILE")
-              ${
-                lib.optionalString (routingMark != null) ''
-                  SUB_SING_BOX_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_SING_BOX_JSON")
-                ''
-              }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_SING_BOX_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
-              while IFS= read -r SUB_XRAY_OB; do
-                SUB_XRAY_TAG="$(${jq} -r '.tag' <<< "$SUB_XRAY_OB")"
-                _proxy_suite_add_xray_sidecar_ob "$SUB_XRAY_OB" "$SUB_XRAY_TAG"
-              done < <(${jq} -c '.xray[]' "$CACHE_FILE")
-            fi
+            SUB_SING_BOX_JSON=$(${jq} -c '.singBox' "$cache")
+            ${markBlock}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_SING_BOX_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+            while IFS= read -r SUB_XRAY_OB; do
+              SUB_XRAY_TAG="$(${jq} -r '.tag' <<< "$SUB_XRAY_OB")"
+              _proxy_suite_add_xray_sidecar_ob "$SUB_XRAY_OB" "$SUB_XRAY_TAG"
+            done < <(${jq} -c '.xray[]' "$cache")
           ''
         else
           ''
-            if [ -f "$CACHE_FILE" ]; then
-              SUB_JSON=$(cat "$CACHE_FILE")
-              ${
-                lib.optionalString (routingMark != null) ''
-                  SUB_JSON=$(${jq} 'map(.${markFilter})' <<< "$SUB_JSON")
-                ''
-              }OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
-            fi
-          ''
+            SUB_JSON=$(cat "$cache")
+            ${markBlock}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+          '';
+    in
+    ''
+      # $1 tag, $2 file holding the subscription URL. Fetches on a cold cache and
+      # merges whatever is cached; a subscription that cannot be fetched is a
+      # warning, never a failed start.
+      _proxy_suite_load_subscription() {
+        local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" before after
+        _proxy_suite_drop_invalid_subscription_cache "$cache" "$tag"
+        if [ ! -f "$cache" ]; then
+          _proxy_suite_fetch_subscription "$tag" "$src" \
+            || echo "proxy-suite: warning: could not fetch subscription '$tag'" >&2
+        fi
+        [ -f "$cache" ] || return 0
+        before=$(${jq} 'length' <<< "$OUTBOUNDS_JSON")
+        ${mergeBlock}
+        after=$(${jq} 'length' <<< "$OUTBOUNDS_JSON")
+        _proxy_suite_record_outbound_source "sub:$tag" "$before" "$after"
       }
     '';
 
+  mkSubscriptionBlock =
+    sub: _routingMark:
+    ''
+      # subscription: ${sub.tag}
+      _proxy_suite_load_subscription ${lib.escapeShellArg sub.tag} ${
+        lib.escapeShellArg (mkSubscriptionUrlSource sub)
+      }
+    '';
+
+  runtimeSubscriptionsBlock = ''
+    # subscriptions added at runtime
+    while IFS=$'\t' read -r RUNTIME_SUB_TAG RUNTIME_SUB_SRC; do
+      [ -n "$RUNTIME_SUB_TAG" ] || continue
+      _proxy_suite_load_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"
+    done < <(_proxy_suite_runtime_subscriptions)
+  '';
+
   mkSubscriptionFetchBlock =
     sub:
-    let
-      cacheFile = mkSubscriptionCacheFile sub;
-    in
     ''
-      if ${mkSubscriptionFetchCommand sub} > "${cacheFile}.tmp"; then
-        if _proxy_suite_commit_subscription_cache "${cacheFile}.tmp" "${cacheFile}" ${lib.escapeShellArg sub.tag}; then
-          echo "Updated subscription: ${sub.tag}"
-        else
-          FAILED=1
-        fi
+      if _proxy_suite_fetch_subscription ${lib.escapeShellArg sub.tag} ${
+        lib.escapeShellArg (mkSubscriptionUrlSource sub)
+      }; then
+        echo "Updated subscription: ${sub.tag}"
       else
-        rm -f "${cacheFile}.tmp"
-        echo "proxy-suite: failed to update subscription '${sub.tag}'" >&2
         FAILED=1
       fi
     '';
+
+  runtimeSubscriptionsFetchBlock = ''
+    while IFS=$'\t' read -r RUNTIME_SUB_TAG RUNTIME_SUB_SRC; do
+      [ -n "$RUNTIME_SUB_TAG" ] || continue
+      if _proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"; then
+        echo "Updated subscription: $RUNTIME_SUB_TAG"
+      else
+        FAILED=1
+      fi
+    done < <(_proxy_suite_runtime_subscriptions)
+  '';
 
   subscriptionTagsFile = pkgs.writeText "proxy-suite-subscription-tags.json" (
     builtins.toJSON (map (sub: sub.tag) proxyCfg.subscriptions)
@@ -150,8 +189,11 @@ in
   inherit
     subscriptionCacheDir
     subscriptionCacheHelpersBlock
+    mkSubscriptionLoadHelperBlock
     mkSubscriptionBlock
+    runtimeSubscriptionsBlock
     mkSubscriptionFetchBlock
+    runtimeSubscriptionsFetchBlock
     subscriptionTagsFile
     ;
 }

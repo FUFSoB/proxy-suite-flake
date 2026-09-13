@@ -753,11 +753,11 @@ static void on_tproxy_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.tproxy)
     {
-        run_proxy_ctl("tproxy", "off");
+        run_proxy_ctl3("proxy", "tproxy", "off");
     }
     else
     {
-        run_proxy_ctl("tproxy", "on");
+        run_proxy_ctl3("proxy", "tproxy", "on");
     }
     update_status();
 }
@@ -774,7 +774,7 @@ static void on_route_mode_menu_toggled(GtkCheckMenuItem *item, gpointer data)
     {
         return;
     }
-    run_proxy_ctl("route-mode", mode);
+    run_proxy_ctl3("proxy", "mode", mode);
     update_status();
 }
 
@@ -798,7 +798,7 @@ static void on_route_mode_combo_changed(GtkComboBox *combo, gpointer data)
     {
         return;
     }
-    run_proxy_ctl("route-mode", mode);
+    run_proxy_ctl3("proxy", "mode", mode);
     update_status();
 }
 
@@ -809,11 +809,11 @@ static void on_tun_toggle(GtkWidget *item, gpointer data)
     ServiceState state = get_service_state();
     if (state.tun)
     {
-        run_proxy_ctl("tun", "off");
+        run_proxy_ctl3("proxy", "tun", "off");
     }
     else
     {
-        run_proxy_ctl("tun", "on");
+        run_proxy_ctl3("proxy", "tun", "on");
     }
     update_status();
 }
@@ -884,7 +884,7 @@ static void on_subscription_update(GtkWidget *item, gpointer data)
 {
     (void)item;
     (void)data;
-    run_proxy_ctl("subscription", "update");
+    run_proxy_ctl3("proxy", "subs", "update");
 }
 
 static void on_open_controls(GtkWidget *item, gpointer data)

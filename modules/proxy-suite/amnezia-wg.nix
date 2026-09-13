@@ -62,9 +62,7 @@ let
   configTool = ../../scripts/amneziawg_config.py;
   runtimeDir = name: "/run/${serviceName name}";
   runtimeConfig = name: profile: "${runtimeDir name}/${profile.interfaceName}.conf";
-  # Keep proxy backend sockets (which already carry proxyMark) out of AWG's
-  # default-route policy table. This priority sits ahead of the global TUN
-  # rules while leaving the per-app rules at 8996/8997 untouched.
+  # Keep proxy backend sockets (proxyMark) out of AWG's default-route table.
   proxyBypassRulePriority = 8998;
 
   mkService =
@@ -89,10 +87,8 @@ let
           if ! ${pkgs.iproute2}/bin/ip "$family" rule add \
             pref ${toString proxyBypassRulePriority} \
             fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; then
-            # IPv4 is required: without this rule the proxy backend itself is
-            # captured by AWG's default-route table and HTTP_PROXY clients can
-            # hang or recurse.  IPv6 is best-effort for hosts without IPv6
-            # policy-routing support.
+            # IPv4 is required, or the proxy backend is captured by AWG; IPv6 is best-
+            # effort.
             if [ "$family" = "-4" ]; then
               echo "proxy-suite: unable to install the AWG proxy-backend bypass rule" >&2
               return 1
@@ -120,8 +116,8 @@ let
           set +e
           ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath}
 
-          # If the userspace control socket died, awg-quick cannot discover its
-          # fwmark. Remove only routing/firewall state tied to this interface.
+          # Without the control socket awg-quick cannot find its fwmark; clean up this
+          # interface only.
           for family in -4 -6; do
             had_table=0
             for table in $(${pkgs.iproute2}/bin/ip "$family" route show table all 2>/dev/null \
@@ -150,9 +146,8 @@ let
 
         implementation="$(${pkgs.python3}/bin/python3 ${configTool} \
           --transport-implementation ${lib.escapeShellArg configPath})"
-        # The official 3.1.20260812 kernel module silently drops transport
-        # packets for RandomTrailers with ranged H1-H3. The bundled userspace
-        # build carries the receive-path repair until upstream publishes it.
+        # The 3.1.20260812 kernel module drops RandomTrailers packets with ranged H1-H3;
+        # userspace carries the fix.
         if [[ "$implementation" == userspace ]]; then
           WG_QUICK_FORCE_USERSPACE_IMPLEMENTATION=1 \
             WG_QUICK_USERSPACE_IMPLEMENTATION=${awgCfg.userspacePackage}/bin/amneziawg-go \
@@ -182,10 +177,8 @@ let
     in
     {
       description = "proxy-suite AmneziaWG client profile ${name}";
-      # When the normal proxy stack is enabled, bring its local HTTP/SOCKS
-      # listener up before installing AWG's default-route policy.  This keeps
-      # applications using HTTP_PROXY/HTTPS_PROXY (for example Codex) from
-      # racing the proxy backend during boot or an explicit `awg on`.
+      # Start the local proxy before AWG takes the default route, so HTTP_PROXY clients
+      # do not race it.
       after = [
         "network-online.target"
         "zapret-discord-youtube.service"
@@ -285,10 +278,7 @@ let
 
   interfaceNames = map (name: profiles.${name}.interfaceName) profileNames;
   autostartProfiles = builtins.filter (name: profiles.${name}.autostart) profileNames;
-  globalAutostartCount =
-    builtins.length autostartProfiles
-    + (if cfg.proxy.tun.autostart then 1 else 0)
-    + (if cfg.proxy.tproxy.autostart then 1 else 0);
+  globalAutostartCount = builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
 in
 {
   environment.systemPackages = [
@@ -337,9 +327,9 @@ in
     }
     {
       assertion =
-        !cfg.proxy.tun.perApp.enable
-        || builtins.all (interface: interface != cfg.proxy.tun.perApp.interface) interfaceNames;
-      message = "proxy-suite: AmneziaWG interfaces must differ from proxy.tun.perApp.interface";
+        !cfg.perAppRouting.tun.enable
+        || builtins.all (interface: interface != cfg.perAppRouting.tun.interface) interfaceNames;
+      message = "proxy-suite: AmneziaWG interfaces must differ from perAppRouting.tun.interface";
     }
   ];
 }

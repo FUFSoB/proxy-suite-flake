@@ -1,8 +1,5 @@
-# Startup script for the server-side inbound service.
-#
-# Much smaller than the client start script: no route-mode, no TUN/TProxy, no
-# hybrid sidecar. It renders the listeners (reading their secrets), merges them
-# into the build-time template, and hands the result to XRay.
+# Start script of the inbound service: renders the listeners with their secrets into the
+# template and runs XRay.
 {
   lib,
   pkgs,
@@ -23,16 +20,16 @@
   proxyInboundsFile,
   proxyInboundsSpecFile,
   builders,
+  constants,
 }:
 
 let
   runtimeDir = "/run/proxy-suite-inbounds";
   linksFile = "${runtimeDir}/links.json";
-  # This service's own package, not the client backend's.
+  subscriptionsFile = "${runtimeDir}/subscriptions.json";
+  subsCfg = proxyInboundsCfg.subscriptions;
   xray = "${proxyInboundsCfg.package}/bin/xray";
 
-  # Only the local proxy needs credentials injected; the listeners' own secrets
-  # are resolved by build-inbound.py.
   needsLocalProxyAuth = proxyInboundsNeedLocalProxy && localProxyAuthEnabled;
 
   serverAddressBlock =
@@ -43,17 +40,15 @@ let
         ${builders.mkDefaultUplinkIPv4Source {
           ip = "${pkgs.iproute2}/bin/ip";
           awk = "${pkgs.gawk}/bin/awk";
-          errorMessage = "proxy-suite: could not determine this host's uplink address for inbound share links; set proxyInbounds.serverAddress";
+          errorMessage = "proxy-suite: could not determine this host's uplink address for inbound share links; set inbounds.serverAddress";
         }}
         SERVER_ADDRESS="$uplink_addr"
       ''
     else
       ''SERVER_ADDRESS=""'';
 
-  # Outbounds a listener pins itself to with `via = "<tag>"`. Rendered here, at
-  # start time, so a urlFile's contents stay out of the Nix store. Subscriptions
-  # are deliberately not duplicated into this service: their cache is refreshed
-  # for the client backend only, and `via = "proxy"` already reaches them.
+  # Outbounds pinned with `via = "<tag>"`, rendered at start so urlFile contents stay
+  # out of the store.
   mkViaOutboundBlock =
     ob:
     let
@@ -86,14 +81,34 @@ let
 
   viaOutboundsBlock = lib.concatMapStrings mkViaOutboundBlock proxyInboundViaOutbounds;
 
-  # Share links carry the listener credentials, so they are no more public than
-  # the config itself.
   writeLinksBlock = lib.optionalString proxyInboundsCfg.shareLinks ''
     ${jq} -c '.links' <<< "$RENDERED" > "${linksFile}"
     ${lib.optionalString userControlEnabled ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${linksFile}"
     ''}
     chmod ${if userControlEnabled then "640" else "600"} "${linksFile}"
+  '';
+
+  # One file per user for the web server, plus a token index for proxy-ctl. Filled aside
+  # and swapped in whole; a missing group leaves them root-only.
+  writeSubscriptionsBlock = lib.optionalString (proxyInboundsCfg.shareLinks && subsCfg.enable) ''
+    SUB_DIR="${runtimeDir}/subscriptions"
+    rm -rf "$SUB_DIR.new"
+    mkdir -m 0750 "$SUB_DIR.new"
+    ${jq} -r '.subscriptions[] | "\(.token)\t\(.body)"' <<< "$RENDERED" |
+      while IFS=$'\t' read -r token body; do
+        printf '%s' "$body" > "$SUB_DIR.new/$token"
+      done
+    chmod -R u=rwX,g=rX,o= "$SUB_DIR.new"
+    ${pkgs.coreutils}/bin/chgrp -R ${lib.escapeShellArg subsCfg.group} "$SUB_DIR.new" ||
+      echo "proxy-suite: group ${subsCfg.group} cannot be given the subscriptions; they stay root-only" >&2
+    rm -rf "$SUB_DIR"
+    mv "$SUB_DIR.new" "$SUB_DIR"
+    ${jq} -c '[.subscriptions[] | {user, token}]' <<< "$RENDERED" > "${subscriptionsFile}"
+    ${lib.optionalString userControlEnabled ''
+      ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${subscriptionsFile}"
+    ''}
+    chmod ${if userControlEnabled then "640" else "600"} "${subscriptionsFile}"
   '';
 
   startInbounds = pkgs.writeShellScript "proxy-suite-start-inbounds" ''
@@ -133,10 +148,42 @@ let
     chmod 600 "$RUNTIME_DIR/config.json"
 
     ${writeLinksBlock}
+    ${writeSubscriptionsBlock}
 
     exec ${xray} run -c "$RUNTIME_DIR/config.json"
   '';
+
+  # Adds XRay's per-user counters to the daily totals, read and reset in one call.
+  # ponytail: a restart of the inbounds loses what was counted since the last run, at
+  # most one timer interval; collect from ExecStop if that matters.
+  collectInboundStats = pkgs.writeShellScript "proxy-suite-inbound-stats" ''
+    set -euo pipefail
+    file=${lib.escapeShellArg constants.inboundStatsFile}
+    if ! reading=$(${xray} api statsquery --server=127.0.0.1:${toString constants.inboundStatsApiPort} \
+      -pattern 'user>>>' -reset 2> /dev/null); then
+      echo "the inbounds' stats API is not answering; nothing collected"
+      exit 0
+    fi
+    [ -n "$reading" ] || reading='{}'
+    [ -s "$file" ] || echo '{}' > "$file"
+    tmp=$(${pkgs.coreutils}/bin/mktemp "$file.XXXXXX")
+    ${jq} --argjson q "$reading" \
+      --arg day "$(${pkgs.coreutils}/bin/date +%F)" \
+      --argjson now "$(${pkgs.coreutils}/bin/date +%s)" \
+      -f ${../inbound-stats-add.jq} "$file" > "$tmp"
+    ${lib.optionalString userControlEnabled ''
+      ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$tmp" ||
+        echo "proxy-suite: group ${userControlCfg.group} cannot read the stats; they stay root-only" >&2
+    ''}
+    chmod ${if userControlEnabled then "640" else "600"} "$tmp"
+    mv -f "$tmp" "$file"
+  '';
 in
 {
-  inherit startInbounds linksFile;
+  inherit
+    startInbounds
+    collectInboundStats
+    linksFile
+    subscriptionsFile
+    ;
 }

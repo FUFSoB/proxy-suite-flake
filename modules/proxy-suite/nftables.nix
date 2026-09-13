@@ -8,13 +8,13 @@
 let
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
-  perAppTun = proxyCfg.tun.perApp;
-  perAppTproxy = proxyCfg.tproxy.perApp;
-  zapretApp = cfg.zapret.perApp;
+  perAppTun = cfg.perAppRouting.tun;
+  perAppTproxy = cfg.perAppRouting.tproxy;
+  zapretApp = cfg.perAppRouting.zapret;
   tgWsProxyCfg = cfg.tgWsProxy;
   tgWsProxyBypassEnabled = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
   tgWsProxyBypassMarkLine = lib.optionalString tgWsProxyBypassEnabled ''
-                  meta mark ${toString tgWsProxyCfg.routingMark} return
+                  meta mark ${toString tgWsProxyCfg.fwmark} return
   '';
 
   # Shared across all three nftables rule files that do IPv4 routing.

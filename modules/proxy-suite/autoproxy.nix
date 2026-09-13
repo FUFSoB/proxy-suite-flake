@@ -1,0 +1,418 @@
+# autoProxy: probes the destinations the inbound listener dials through each
+# exit in turn and remembers the first exit that gets content. The probe itself
+# is `proxy-ctl proxy auto probe --json`, so every verdict is reproducible by hand.
+{
+  lib,
+  pkgs,
+  cfg,
+  proxyCtl,
+  autoProxyStateDir,
+}:
+
+let
+  apCfg = cfg.proxy.autoProxy;
+  render = import ./autoproxy-render.nix { inherit pkgs; };
+
+  bin = lib.makeBinPath [
+    pkgs.coreutils
+    pkgs.curl
+    pkgs.gawk
+    pkgs.gnugrep
+    pkgs.gnused
+    pkgs.jq
+    pkgs.systemd
+    pkgs.util-linux
+    proxyCtl
+  ];
+
+  excludePattern = lib.concatStringsSep "|" (map lib.escapeRegex apCfg.exclude);
+
+  # Sets $clash_api (empty when the API is off) and $clash_auth (curl args).
+  clashApiBlock = ''
+    socks_config="$(dirname "$index")/config.json"
+    clash_api=$(jq -r '.experimental.clash_api.external_controller // empty' "$socks_config" 2>/dev/null || true)
+    clash_secret=$(jq -r '.experimental.clash_api.secret // empty' "$socks_config" 2>/dev/null || true)
+    clash_auth=()
+    [ -z "$clash_secret" ] || clash_auth=(-H "Authorization: Bearer $clash_secret")
+  '';
+
+  sampler = pkgs.writeShellScript "proxy-suite-autoproxy-sample" ''
+    set -euo pipefail
+    export PATH=${bin}
+    state_dir=''${AUTOPROXY_STATE_DIR:-${lib.escapeShellArg autoProxyStateDir}}
+    index=''${PROBE_EXITS_FILE:-/run/proxy-suite-socks/probe-exits.json}
+    ${clashApiBlock}
+    if [ -z "$clash_api" ]; then
+      echo "sing-box has no Clash API (selection = \"first\"?); nothing to sample"
+      exit 0
+    fi
+    install -d -m 0750 "$state_dir"
+
+    # Eleven snapshots a second apart: ten one-second deltas per connection.
+    lines=$(
+      for i in $(seq 0 10); do
+        [ "$i" -eq 0 ] || sleep 1
+        curl -sS --noproxy '*' --max-time 1 "''${clash_auth[@]}" "http://$clash_api/connections" 2>/dev/null ||
+          echo '{}'
+      done | jq -s -r --argjson min ${toString (300 * 1024)} \
+        --argjson below ${toString (apCfg.slowBelowKiBps * 1024)} -f ${./autoproxy-slow-sample.jq} || true
+    )
+    [ -z "$lines" ] || printf '%s\n' "$lines" >> "$state_dir/samples"
+  '';
+
+  runner = pkgs.writeShellScript "proxy-suite-autoproxy-run" ''
+    set -euo pipefail
+    export PATH=${bin}
+
+    # --requests-only: just the `proxy-ctl proxy auto learn` requests.
+    mode=''${1:-full}
+
+    # Overridable to rehearse a run against a scratch copy; the units never set them.
+    state_dir=''${AUTOPROXY_STATE_DIR:-${lib.escapeShellArg autoProxyStateDir}}
+    export PROBE_EXITS_FILE=''${PROBE_EXITS_FILE:-/run/proxy-suite-socks/probe-exits.json}
+    index=$PROBE_EXITS_FILE
+    state="$state_dir/state.json"
+    requests="$state_dir/requests"
+    now=$(date +%s)
+    ttl=$(( ${toString apCfg.ttlDays} * 86400 ))
+
+    if [ ! -r "$index" ]; then
+      echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
+      exit 0
+    fi
+    install -d -m 0750 "$state_dir"
+
+    # Timer runs and learn requests take turns on the state.
+    exec 9> "$state_dir/lock"
+    flock 9
+
+    # Leftovers of a run that died partway; taken requests go back in line.
+    rm -f "$state_dir/verdicts.json" "$state_dir/proxied-domains.txt" "$state".?????? "$state_dir/samples.taking"
+    if [ -e "$requests.taking" ]; then
+      cat "$requests.taking" >> "$requests"
+      rm -f "$requests.taking"
+    fi
+
+    if [ -e "$state" ] && ! jq -e 'type == "object"' "$state" > /dev/null 2>&1; then
+      echo "$state is unreadable; set aside as $state.broken, starting fresh" >&2
+      mv -f "$state" "$state.broken"
+    fi
+    [ -s "$state" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$state"
+
+    # Written aside and renamed, so a killed run never truncates the state.
+    update() {
+      local tmp
+      tmp=$(mktemp "$state.XXXXXX")
+      if ! jq "$@" "$state" > "$tmp"; then
+        rm -f "$tmp"
+        echo "could not update $state; it is left as it was" >&2
+        return 1
+      fi
+      # mktemp makes it 0600; the state dir is 0750, so group-readable is enough.
+      chmod 0640 "$tmp"
+      mv -f "$tmp" "$state"
+    }
+
+    # $1 registrable domain, $2 host probed, $3 probe JSON. Routes apply to the
+    # whole domain (geo-blocks are drawn around sites); other verdicts only to
+    # the host probed.
+    record() {
+      update --arg d "$1" --arg h "$2" --argjson r "$3" --argjson now "$now" '
+        (if $r.verdict == "destination" then
+          .domains[$d] = {verdict: "destination", exit: $r.exit, host: $h,
+                          path: ($r.path // "/"), at: $now}
+        else . end)
+        | .hosts[$h] = {
+            domain: $d,
+            verdict: ($r.verdict // "error"),
+            exit: (if $r.verdict == "destination" then $r.exit else null end),
+            at: $now
+          }
+        | del(.backlog[$h])'
+    }
+
+    # Prefixes each host line with "registrable-domain<TAB>".
+    # ponytail: last two labels, or three under a short list of two-label
+    # suffixes. Switch to the Public Suffix List if a domain gets merged wrongly.
+    to_reg() {
+      awk -F'\t' '
+        BEGIN {
+          n = split("co.uk org.uk ac.uk gov.uk com.au net.au org.au co.jp ne.jp or.jp com.br com.tr co.kr com.cn com.hk co.in co.za com.ua com.mx co.nz", s, " ")
+          for (i = 1; i <= n; i++) two[s[i]] = 1
+        }
+        {
+          n = split($1, l, ".")
+          if (n < 2) next
+          k = (n >= 3 && (l[n - 1] "." l[n]) in two) ? l[n - 2] "." l[n - 1] "." l[n] : l[n - 1] "." l[n]
+          print k "\t" $0
+        }'
+    }
+
+    # The pinned direct listener, since TUN/TProxy capture --noproxy too.
+    direct_url=$(jq -r '.[0] | "http://127.0.0.1:\(.port)"' "$index")
+
+    # --- 1. verdicts are about this host's address; drop them if it changed ---
+    egress=$(curl -sS -f --proxy "$direct_url" --max-time 10 https://api.ipify.org 2>/dev/null || true)
+    # An error page or a captive portal must not pass for a new address: anything
+    # that is not one discards every verdict this host learned.
+    [[ "$egress" =~ ^[0-9a-fA-F.:]+$ ]] || egress=""
+    if [ -n "$egress" ] && [ "$(jq -r '.egress // ""' "$state")" != "$egress" ]; then
+      echo "egress is now $egress; discarding everything learned for the old address"
+      update --arg e "$egress" \
+        '{egress: $e, domains: {}, hosts: {}, exits: {}, backlog: (.backlog // {}), lastRun: (.lastRun // 0)}'
+    fi
+
+    # --- 2. which network (AS) each exit leaves from, once per TTL ---
+    while IFS=$'\t' read -r tag port; do
+      at=$(jq -r --arg t "$tag" '.exits[$t].at // 0' "$state")
+      [ $(( now - at )) -ge "$ttl" ] || continue
+      info=$(curl -sS --proxy "http://127.0.0.1:$port" --max-time 10 https://ipinfo.io/json 2>/dev/null || true)
+      ip=$(jq -r '.ip // empty' <<<"$info" 2>/dev/null || true)
+      asn=$(jq -r '(.org // "") | split(" ")[0]' <<<"$info" 2>/dev/null || true)
+      [ -n "$ip" ] || continue
+      update --arg t "$tag" --arg ip "$ip" --arg asn "$asn" --argjson now "$now" \
+        '.exits[$t] = {ip: $ip, asn: $asn, at: $now}'
+    done < <(jq -r '.[] | "\(.tag)\t\(.port)"' "$index")
+
+    # Round 1: one exit per AS. Round 2, only if all refused: the rest.
+    rounds=$(jq -c --slurpfile s "$state" '
+      [.[1:][] | {tag, asn: ($s[0].exits[.tag].asn // "")}]
+      | reduce .[] as $e ({seen: {}, r1: [], r2: []};
+          if $e.asn == "" or (.seen[$e.asn] | not)
+          then .r1 += [$e.tag] | .seen[$e.asn] = true
+          else .r2 += [$e.tag] end)
+      | {r1: (.r1 | join(",")), r2: (.r2 | join(","))}' "$index")
+    round1=$(jq -r .r1 <<<"$rounds")
+    round2=$(jq -r .r2 <<<"$rounds")
+
+    walk() {
+      local out verdict
+      out=$(proxy-ctl proxy auto probe --json --exits "$round1" "$1" 2>/dev/null || echo '{}')
+      verdict=$(jq -r '.verdict // "error"' <<<"$out")
+      if { [ "$verdict" = both-fail ] || [ "$verdict" = unreachable ]; } && [ -n "$round2" ]; then
+        out=$(proxy-ctl proxy auto probe --json --exits "$round2" "$1" 2>/dev/null || echo '{}')
+      fi
+      printf '%s' "$out"
+    }
+
+    # Route changes take effect immediately, not at the end of the run.
+    publish() { ${render} "$index" "$state"; }
+
+    requeue=()
+    if [ "$mode" = full ]; then
+      # --- 3. re-check remembered exits, once per TTL ---
+      # Probed routes only; slowness routes are judged by the sampler (4b).
+      while IFS=$'\t' read -r dom host exit; do
+        out=$(proxy-ctl proxy auto probe --json --exits "$exit" "$host" 2>/dev/null || echo '{}')
+        verdict=$(jq -r '.verdict // "error"' <<<"$out")
+        if [ "$verdict" = destination ] && [ "$(jq -r '.exit // ""' <<<"$out")" = "$exit" ]; then
+          update --arg d "$dom" --argjson now "$now" '.domains[$d].at = $now'
+        elif [ "$verdict" = ok ]; then
+          echo "recheck $dom: reachable directly now, dropping $exit"
+          update --arg d "$dom" 'del(.domains[$d])'
+          record "$dom" "$host" "$out"
+          publish
+        else
+          echo "recheck $dom: $exit no longer works ($verdict), walking again"
+          update --arg d "$dom" 'del(.domains[$d])'
+          publish
+          requeue+=("$dom"$'\t'"$host")
+        fi
+      done < <(jq -r --argjson now "$now" --argjson every "$ttl" '
+        .domains | to_entries[]
+        | select(.value.verdict == "destination" and ($now - .value.at) >= $every)
+        | "\(.key)\t\(.value.host)\t\(.value.exit)"' "$state")
+
+      # --- 4. what clients dialled since the last run, counted per host ---
+      # Hit counts accumulate in a backlog that survives between runs.
+      last=$(jq -r '.lastRun // 0' "$state")
+      if [ "$last" -gt 0 ]; then since="@$last"; else since="-${apCfg.interval}"; fi
+      dialled=$(
+        journalctl -u proxy-suite-inbounds --since "$since" --no-pager -o cat 2>/dev/null |
+          sed -n 's/.* accepted tcp:\([a-zA-Z0-9._-]*\):[0-9]*.*/\1/p' |
+          grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' |
+          ${lib.optionalString (excludePattern != "") "grep -vE '(^|\\.)(${excludePattern})$' |"}
+          to_reg || true
+      )
+      counts=$(
+        printf '%s\n' "$dialled" |
+          awk -F'\t' 'NF == 2 { n[$2]++; d[$2] = $1 } END { for (h in n) print h "\t" d[h] "\t" n[h] }' |
+          jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
+            | {key: .[0], value: {domain: .[1], hits: (.[2] | tonumber)}}) | from_entries'
+      )
+      # Skipped: hosts of an already routed domain, hosts judged within the TTL.
+      # Dropped: entries older than the TTL, and those a route now covers.
+      update --argjson c "$counts" --argjson now "$now" --argjson ttl "$ttl" '
+        . as $s
+        | .lastRun = $now
+        | .backlog = (reduce ($c | to_entries[]) as $e (($s.backlog // {});
+            if ($s.domains[$e.value.domain].exit != null)
+               or ((($s.hosts[$e.key].at // 0) + $ttl) > $now)
+            then .
+            else .[$e.key] = {
+              domain: $e.value.domain,
+              hits: ((.[$e.key].hits // 0) + $e.value.hits),
+              first: (.[$e.key].first // $now)
+            } end))
+        | .backlog |= with_entries(select(.value.first + $ttl > $now
+            and $s.domains[.value.domain].exit == null))'
+
+      # --- 4b. what the sampler saw crawl (see autoproxy-slow-judge.jq) ---
+      if [ -s "$state_dir/samples" ]; then
+        mv -f "$state_dir/samples" "$state_dir/samples.taking"
+        obs=$(
+          grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}'$'\t' "$state_dir/samples.taking" |
+            ${lib.optionalString (excludePattern != "") "grep -vE '(^|\\.)(${excludePattern})'$'\\t' |"}
+            to_reg |
+            jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
+              | {d: .[0], h: .[1], exit: .[2], slow: (.[3] == "slow"), peak: (.[4] | tonumber)})' ||
+            echo '[]'
+        )
+        rm -f "$state_dir/samples.taking"
+        before=$(jq -c '.domains' "$state")
+        update --argjson o "$obs" --argjson now "$now" --argjson ttl "$ttl" --argjson hits 3 \
+          -f ${./autoproxy-slow-judge.jq}
+
+        # Each crawling destination gets the next exit, in probe order, that
+        # answers it as well as direct does (`probe --via`). None left: it
+        # stays direct for a TTL.
+        while IFS=$'\t' read -r dom host tried; do
+          was=''${tried##*,}
+          via=""
+          while IFS= read -r tag; do
+            [[ ",$tried," != *",$tag,"* ]] || continue
+            tried="''${tried:+$tried,}$tag"
+            if [ "$(proxy-ctl proxy auto probe --json --via "$tag" "$host" < /dev/null 2>/dev/null |
+              jq -r '.verdict // ""' 2>/dev/null)" = ok ]; then
+              via=$tag
+              break
+            fi
+          done < <(jq -r '.[1:][] | .tag' "$index")
+          if [ -n "$via" ]; then
+            echo "slow $dom: crawls ''${was:+via $was}''${was:-directly}, routed via $via"
+            update --arg d "$dom" --arg h "$host" --arg e "$via" --arg tried "$tried" --argjson now "$now" '
+              .domains[$d] = {verdict: "slow", exit: $e, host: $h, at: $now, tried: ($tried | split(","))}
+              | del(.slowWant[$d])'
+          else
+            echo "slow $dom: crawls ''${was:+via $was}''${was:-directly}, and no other exit reaches it; left direct"
+            update --arg d "$dom" --argjson until $(( now + ttl )) '.slowSkip[$d] = $until | del(.slowWant[$d])'
+          fi
+        done < <(jq -r '(.slowWant // {}) | to_entries[]
+          | "\(.key)\t\(.value.host)\t\(.value.tried | join(","))"' "$state")
+
+        [ "$(jq -c '.domains' "$state")" = "$before" ] || publish
+      fi
+    fi
+
+    # --- 5. probe: requests (uncapped), then broken routes, then the backlog ---
+    asked=()
+    if [ -s "$requests" ]; then
+      mv -f "$requests" "$requests.taking"
+      mapfile -t asked < <(grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' "$requests.taking" | to_reg || true)
+      rm -f "$requests.taking"
+    fi
+    backlog=()
+    if [ "$mode" = full ]; then
+      mapfile -t backlog < <(jq -r --argjson now "$now" --argjson ttl "$ttl" '
+        . as $s | (.backlog // {}) | to_entries
+        | map(select(($s.domains[.value.domain].exit == null)
+            and ((($s.hosts[.key].at // 0) + $ttl) <= $now)))
+        | sort_by(-.value.hits) | .[] | "\(.value.domain)\t\(.key)"' "$state")
+    fi
+
+    declare -A seen routed
+    probe_row() {
+      local dom=''${1%%$'\t'*} host=''${1#*$'\t'} out
+      { [ -z "''${seen[$host]:-}" ] && [ -z "''${routed[$dom]:-}" ]; } || return 1
+      seen[$host]=1
+      out=$(walk "$host")
+      # A probe that failed to run is no verdict; the host is probed again.
+      if [ "$(jq -r '.verdict // "error"' <<<"$out")" = error ]; then
+        echo "probe $host -> error, not recorded"
+        return 0
+      fi
+      record "$dom" "$host" "$out"
+      if [ "$(jq -r '.verdict // ""' <<<"$out")" = destination ]; then
+        routed[$dom]=1
+        publish
+      fi
+      # A censor verdict names an exit that got through, but zapret owns it.
+      echo "probe $host -> $(jq -r '(.verdict // "error") + (if .verdict == "destination" then " via " + .exit
+        elif .exit then " (" + .exit + " reaches it; left to zapret)" else "" end)' <<<"$out")"
+    }
+
+    for row in "''${asked[@]}"; do probe_row "$row" || true; done
+
+    probed=0
+    for row in "''${requeue[@]}" "''${backlog[@]}"; do
+      [ "$probed" -lt ${toString apCfg.probesPerRun} ] || break
+      if probe_row "$row"; then probed=$(( probed + 1 )); fi
+    done
+    echo "probed ''${#asked[@]} requested and $probed queued host(s); $(jq '(.backlog // {}) | length' "$state") still waiting"
+
+    # sing-box reloads the rewritten rule-sets itself.
+    ${render} "$index" "$state"
+  '';
+
+  # Group: `proxy-ctl proxy auto list|queue` reads state.json. Set on every unit that
+  # declares the directory - systemd re-applies the ownership on each start.
+  stateDirConfig = {
+    StateDirectory = "proxy-suite/autoproxy";
+    StateDirectoryMode = "0750";
+  }
+  // lib.optionalAttrs (cfg.userControl.allow != [ ]) { Group = cfg.userControl.group; };
+
+  mkUnit = description: args: {
+    inherit description;
+    after = [
+      "proxy-suite-socks.service"
+      "proxy-suite-inbounds.service"
+    ];
+    wants = [ "proxy-suite-socks.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${runner}${args}";
+    }
+    // stateDirConfig;
+  };
+in
+{
+  systemd.services.proxy-suite-autoproxy =
+    mkUnit "proxy-suite - find the exit that reaches each destination, and remember it" "";
+
+  systemd.services.proxy-suite-autoproxy-learn =
+    mkUnit "proxy-suite - probe the destinations asked for with proxy-ctl proxy auto learn" " --requests-only";
+
+  systemd.services.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
+    description = "proxy-suite - watch live transfers for destinations that crawl directly";
+    after = [ "proxy-suite-socks.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${sampler}";
+    }
+    // stateDirConfig;
+  };
+
+  systemd.timers.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
+    description = "proxy-suite autoProxy transfer sampling";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnActiveSec = "1m";
+      OnUnitActiveSec = "1m";
+      AccuracySec = "5s";
+    };
+  };
+
+  systemd.timers.proxy-suite-autoproxy = {
+    description = "proxy-suite autoProxy probe schedule";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # Not OnBootSec: after a rebuild restarts the timer, OnUnitActiveSec had
+      # nothing to count from and the prober never ran again.
+      OnActiveSec = "10m";
+      OnUnitActiveSec = apCfg.interval;
+      RandomizedDelaySec = "2m";
+      Persistent = true;
+    };
+  };
+}

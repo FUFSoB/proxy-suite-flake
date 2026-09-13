@@ -44,20 +44,27 @@ let
   routeModeBackendJqFilter =
     import ../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
+        lib = pkgs.lib;
         pureXrayEnabled = false;
+        proxyInboundsGuardPrivate = false;
         selectionMode = routeModeFixture.config.services.proxy-suite.proxy.selection;
       };
-  routeModeSetterScript = generated.readDerivation (
-    (import ../../modules/proxy-suite/service/control-scripts.nix {
-      inherit pkgs;
-      lib = pkgs.lib;
-      proxyCfg = routeModeFixture.config.services.proxy-suite.proxy;
-      routeModeStateFile = "/run/proxy-suite/route-mode";
-      subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/sing-box";
-      subscriptionCacheHelpersBlock = "";
-      mkSubscriptionFetchBlock = _: "";
-    }).setRouteModeScript
-  );
+  routeModeControlScripts = import ../../modules/proxy-suite/service/control-scripts.nix {
+    inherit pkgs;
+    lib = pkgs.lib;
+    proxyCfg = routeModeFixture.config.services.proxy-suite.proxy;
+    clashApi = "http://127.0.0.1:9090";
+    routeModeStateFile = "/run/proxy-suite/route-mode";
+    priorityOutboundFile = "/var/lib/proxy-suite/priority-outbound";
+    outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
+    subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/sing-box";
+    subscriptionCacheHelpersBlock = "";
+    mkSubscriptionFetchBlock = _: "";
+    runtimeSubscriptionsFetchBlock = "";
+    jq = "${pkgs.jq}/bin/jq";
+  };
+  routeModeSetterScript = generated.readDerivation routeModeControlScripts.setRouteModeScript;
+  prioritySetterScript = generated.readDerivation routeModeControlScripts.setPriorityOutboundScript;
   routeModeRules = mkRouteModeRules routeModeFixture;
 in
 {
@@ -73,7 +80,7 @@ in
 
     # proxy-ctl help/status exposes default plus the explicit route modes.
     (
-      assert pkgs.lib.hasInfix "route-mode default|whitelist|blacklist|all-proxy|all-bypass|status"
+      assert pkgs.lib.hasInfix "proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]"
         minimalProxyCtlScript;
       assert pkgs.lib.hasInfix ''printf 'route_mode=%s\n' "$(_route_mode_current)"''
         minimalProxyCtlScript;
@@ -117,6 +124,39 @@ in
       assert pkgs.lib.hasInfix "default)" routeModeSetterScript;
       assert pkgs.lib.hasInfix "all-proxy)" routeModeSetterScript;
       assert pkgs.lib.hasInfix "all-bypass)" routeModeSetterScript;
+      true
+    )
+
+    # The outbound pin reuses the same unit-plus-state-file shape, but persists
+    # across a reboot and prefers a live Clash switch over a restart.
+    (
+      let
+        selectSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-select@";
+        reloadSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-reload";
+      in
+      assert selectSvc.serviceConfig.RemainAfterExit == false;
+      assert selectSvc.serviceConfig.StateDirectory == "proxy-suite";
+      assert reloadSvc.serviceConfig.RemainAfterExit == false;
+      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/priority-outbound" prioritySetterScript;
+      assert pkgs.lib.hasInfix ''rm -f "/var/lib/proxy-suite/priority-outbound"'' prioritySetterScript;
+      assert pkgs.lib.hasInfix "/proxies/proxy" prioritySetterScript;
+      assert pkgs.lib.hasInfix "systemctl restart proxy-suite-socks" prioritySetterScript;
+      true
+    )
+
+    # proxy-ctl reaches both through the wrapper environment.
+    (
+      assert
+        shellValueByPrefix minimalProxyCtlWrapper "export OUTBOUND_INVENTORY_FILE="
+        == "/run/proxy-suite-socks/outbounds.json";
+      assert
+        shellValueByPrefix minimalProxyCtlWrapper "export RUNTIME_OUTBOUNDS_DIR="
+        == "/var/lib/proxy-suite/outbounds.d";
+      assert
+        shellValueByPrefix minimalProxyCtlWrapper "export RUNTIME_SUBS_DIR="
+        == "/var/lib/proxy-suite/subscriptions.d";
+      assert pkgs.lib.hasInfix "proxy select [<tag>|auto]" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "proxy outbounds add <tag> <url>" minimalProxyCtlScript;
       true
     )
   ];

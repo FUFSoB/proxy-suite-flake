@@ -55,7 +55,7 @@ let
         xrayJson
         jsonFile
         ;
-      listen = ib.listener.listenAddress;
+      listen = ib.listener.address;
     }) derived.proxyInbounds;
   };
 

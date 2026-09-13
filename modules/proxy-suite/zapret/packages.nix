@@ -8,10 +8,10 @@
 
 let
   zapretCfg = cfg.zapret;
-  perAppZapretCfg = zapretCfg.perApp;
+  perAppZapretCfg = cfg.perAppRouting.zapret;
   tunInterfaces = lib.unique (
     lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
-    ++ lib.optional (cfg.proxy.enable && cfg.proxy.tun.perApp.enable) cfg.proxy.tun.perApp.interface
+    ++ lib.optional (cfg.proxy.enable && cfg.perAppRouting.tun.enable) cfg.perAppRouting.tun.interface
   );
   zapretDomainGroups = import ../zapret-domain-groups.nix { inherit lib zapret; };
 
@@ -44,8 +44,8 @@ let
       ipsets = zapretDomainGroups.effectiveRuleIpsetFamilies rule;
       protocols = zapretDomainGroups.effectiveRuleProtocolFamilies rule;
     }
-  ) zapretCfg.hostlistRules;
-  hostlistRuleNames = map (rule: rule.name) zapretCfg.hostlistRules;
+  ) zapretCfg.zapret-discord-youtube.hostlistRules;
+  hostlistRuleNames = map (rule: rule.name) zapretCfg.zapret-discord-youtube.hostlistRules;
 
   baseZapretPackage =
     let
@@ -57,14 +57,14 @@ let
     fileName: entries:
     if entries != [ ] then pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n") else null;
 
-  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.listGeneral;
-  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.listExclude;
-  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" zapretCfg.ipsetAll;
-  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" zapretCfg.ipsetExclude;
+  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.zapret-discord-youtube.domains;
+  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.zapret-discord-youtube.excludeDomains;
+  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" zapretCfg.zapret-discord-youtube.ips;
+  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" zapretCfg.zapret-discord-youtube.excludeIps;
 
   hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
     builtins.toJSON {
-      includeExtraUpstreamLists = zapretCfg.includeExtraUpstreamLists;
+      includeExtraUpstreamLists = zapretCfg.zapret-discord-youtube.includeExtraUpstreamLists;
       entries = map (rule: {
         inherit (rule)
           name
@@ -80,7 +80,7 @@ let
     }
   );
 
-  selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.configName;
+  selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.zapret-discord-youtube.configName;
   patchConfigScriptSrc = builtins.path {
     path = ../../../scripts/patch-zapret-config.py;
     name = "patch-zapret-config.py";
@@ -110,7 +110,7 @@ let
   globalZapretPackage = mkDerivedZapretPackage {
     packageName = "proxy-suite-zapret-${selectedConfigName}";
     pidDir = "/run/proxy-suite-zapret";
-    gameFilter = zapretCfg.gameFilter;
+    gameFilter = zapretCfg.zapret-discord-youtube.gameFilter;
     forceDisableFilterMark = true;
     customScript =
       if perAppZapretCfg.enable || tunInterfaces != [ ] then
@@ -150,15 +150,15 @@ let
   assertions = [
     {
       assertion = builtins.length hostlistRuleNames == builtins.length (lib.unique hostlistRuleNames);
-      message = "proxy-suite: zapret.hostlistRules names must be unique";
+      message = "proxy-suite: zapret.zapret-discord-youtube.hostlistRules names must be unique";
     }
     {
       assertion = builtins.all (
         rule:
         zapretDomainGroups.effectiveRuleDomains rule != [ ]
         || zapretDomainGroups.effectiveRuleIps rule != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must define domains, defaultDomains, ips, or defaultIps";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: each zapret.zapret-discord-youtube.hostlistRules entry must define domains, defaultDomains, ips, or defaultIps";
     }
     {
       assertion = builtins.all (
@@ -168,8 +168,8 @@ let
         || rule.ips != [ ]
         || rule.defaultIps != [ ]
         || rule.nfqwsArgs != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: each zapret.hostlistRules entry must set preset, defaultDomains, ips/defaultIps, nfqwsArgs, or a valid configName source";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: each zapret.zapret-discord-youtube.hostlistRules entry must set preset, defaultDomains, ips/defaultIps, nfqwsArgs, or a valid configName source";
     }
     {
       assertion = builtins.all (
@@ -178,20 +178,20 @@ let
         || rule.preset != null
         || rule.defaultDomains != [ ]
         || rule.nfqwsArgs != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules entries with domains require preset, defaultDomains, or nfqwsArgs";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: zapret.zapret-discord-youtube.hostlistRules entries with domains require preset, defaultDomains, or nfqwsArgs";
     }
     {
       assertion = builtins.all (
         rule: rule.preset != null || builtins.length rule.defaultDomains <= 1
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules entries without preset may infer a rule family from only one defaultDomains entry; split groups into separate rules or set preset";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: zapret.zapret-discord-youtube.hostlistRules entries without preset may infer a rule family from only one defaultDomains entry; split groups into separate rules or set preset";
     }
     {
       assertion = builtins.all (
         rule: !(rule.configName != null && rule.nfqwsArgs != [ ])
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules.*.configName cannot be used together with nfqwsArgs";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: zapret.zapret-discord-youtube.hostlistRules.*.configName cannot be used together with nfqwsArgs";
     }
     {
       assertion = builtins.all (
@@ -201,8 +201,8 @@ let
         || rule.defaultDomains != [ ]
         || rule.ips != [ ]
         || rule.defaultIps != [ ]
-      ) zapretCfg.hostlistRules;
-      message = "proxy-suite: zapret.hostlistRules.*.configName requires preset, defaultDomains, ips, or defaultIps";
+      ) zapretCfg.zapret-discord-youtube.hostlistRules;
+      message = "proxy-suite: zapret.zapret-discord-youtube.hostlistRules.*.configName requires preset, defaultDomains, ips, or defaultIps";
     }
   ];
 in

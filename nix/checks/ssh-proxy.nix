@@ -12,13 +12,11 @@ let
 
   testHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-  # The socks start script always passes proxy.tproxy.proxyMark as the routing
-  # mark, so an expected outbound has to carry it to match byte for byte.
+  # Expected outbounds carry proxy.tproxy.proxyMark, as the start script sets it.
   markOf = fixture: fixture.config.services.proxy-suite.proxy.tproxy.proxyMark;
 
-  # writeText paths are content-addressed, so asserting the store path appears
-  # in the start script pins the exact generated JSON without reading it back.
-  # The context has to go, or the check derivation refuses to mention the path.
+  # writeText paths are content-addressed: finding one in the start script pins the
+  # JSON. The context is dropped so the check may mention it.
   expectedOutboundFile =
     backend: value:
     builtins.unsafeDiscardStringContext "${
@@ -33,15 +31,15 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "root";
-          host = "ssh.example.com";
+          server.user = "root";
+          server.host = "ssh.example.com";
           asOutbound = true;
           identityFile = "/run/secrets/ssh-key";
           hostKey = [ testHostKey ];
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
         };
       };
     }
@@ -60,8 +58,7 @@ let
     routing_mark = markOf sshNativeSingBox;
   };
 
-  # hostKeyFile is read at start time, so the keys must be injected by the
-  # start script rather than baked into the outbound JSON.
+  # hostKeyFile keys are injected at start, not baked into the JSON.
   sshHostKeyFile = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -69,15 +66,15 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "root";
-          host = "ssh.example.com";
-          sshPort = 2222;
+          server.user = "root";
+          server.host = "ssh.example.com";
+          server.port = 2222;
           asOutbound = true;
           hostKeyFile = "/run/secrets/ssh-known-hosts";
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
         };
       };
     }
@@ -86,8 +83,7 @@ let
     sshHostKeyFile.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
 
-  # asOutbound = false is a standalone tunnel no backend knows about, so the
-  # OpenSSH unit is still created even on SingBox.
+  # asOutbound = false: a standalone tunnel, so the OpenSSH unit exists even on SingBox.
   sshStandalone = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -95,8 +91,8 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "root";
-          host = "ssh.example.com";
+          server.user = "root";
+          server.host = "ssh.example.com";
           asOutbound = false;
           serviceUser = "proxy";
           identityFile = "/run/secrets/ssh-key";
@@ -108,7 +104,7 @@ let
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "static";
@@ -130,8 +126,7 @@ let
     unchanged.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
 
-  # XRay has no SSH outbound, so it keeps the unit and proxies through its
-  # local SOCKS5 listener, with domainStrategy mapped onto sockopt.
+  # XRay keeps the unit and proxies through its listener, domainStrategy on sockopt.
   sshXray = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -139,14 +134,14 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "proxy";
-          host = "ssh.example.com";
+          server.user = "proxy";
+          server.host = "ssh.example.com";
           asOutbound = true;
           domainStrategy = "prefer_ipv4";
         };
         proxy = {
           enable = true;
-          xray.enable = true;
+          backend = "xray";
         };
       };
     }
@@ -176,15 +171,14 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "proxy";
-          host = "ssh.example.com";
+          server.user = "proxy";
+          server.host = "ssh.example.com";
           asOutbound = true;
           hostKey = [ testHostKey ];
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
-          xray.enable = true;
+          backend = "hybrid";
         };
       };
     }
@@ -209,14 +203,14 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "proxy";
-          host = "ssh.example.com";
+          server.user = "proxy";
+          server.host = "ssh.example.com";
           asOutbound = true;
           hostKey = [ testHostKey ];
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           selection = "selector";
           outbounds = [
             {
@@ -239,13 +233,13 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "proxy";
-          host = "ssh.example.com";
+          server.user = "proxy";
+          server.host = "ssh.example.com";
           asOutbound = true;
         };
         proxy = {
           enable = true;
-          xray.enable = true;
+          backend = "xray";
           selection = "urltest";
           outbounds = [
             {
@@ -268,14 +262,14 @@ let
         enable = true;
         sshProxy = {
           enable = true;
-          user = "proxy";
-          host = "ssh.example.com";
+          server.user = "proxy";
+          server.host = "ssh.example.com";
           asOutbound = true;
           hostKey = [ testHostKey ];
         };
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           selection = "selector";
           routing.rules = [
             {
@@ -293,8 +287,8 @@ let
       enable = true;
       sshProxy = {
         enable = true;
-        user = "proxy";
-        host = "ssh.example.com";
+        server.user = "proxy";
+        server.host = "ssh.example.com";
         asOutbound = true;
         hostKey = [ testHostKey ];
       };
@@ -308,21 +302,21 @@ let
       };
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
       };
     }
     {
       enable = true;
       sshProxy = {
         enable = true;
-        user = "proxy";
-        host = "ssh.example.com";
+        server.user = "proxy";
+        server.host = "ssh.example.com";
         asOutbound = true;
         hostKey = [ testHostKey ];
       };
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "ssh-proxy";
@@ -331,19 +325,18 @@ let
         ];
       };
     }
-    # SingBox verifies host keys by value, so an empty hostKey would silently
-    # accept any key.
+    # An empty hostKey would accept any key on SingBox.
     {
       enable = true;
       sshProxy = {
         enable = true;
-        user = "proxy";
-        host = "ssh.example.com";
+        server.user = "proxy";
+        server.host = "ssh.example.com";
         asOutbound = true;
       };
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
       };
     }
   ];

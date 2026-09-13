@@ -117,6 +117,21 @@ def _mk_transport(
     return None
 
 
+# sing-box refuses to start on a transport it does not know, so one bad share
+# link would otherwise take the whole config down with it.
+def _check_transport(transport: str, backend: str, protocol: str) -> str:
+    normalized = transport.lower()
+    supported = (
+        SUPPORTED_XRAY_TRANSPORTS if backend == "xray" else SUPPORTED_VLESS_TRANSPORTS
+    )
+    if normalized not in supported:
+        raise ValueError(
+            f"unsupported {protocol} transport '{transport}': proxy-suite only maps "
+            f"{backend}-documented transports; use raw JSON or another client/core"
+        )
+    return normalized
+
+
 def _require(params: dict, name: str, security: str) -> str:
     if name not in params:
         raise ValueError(f"{security} link is missing the '{name}' parameter")
@@ -168,8 +183,6 @@ def _mk_auth(userinfo: str) -> "tuple[str | None, str | None]":
 def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = params.get("security", "none")
-    transport = params.get("type", "tcp")
-    normalized_transport = transport.lower()
 
     if "ech" in params and backend != "xray":
         raise ValueError(
@@ -177,14 +190,9 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
             "share-link ECH blobs into sing-box TLS config"
         )
 
-    supported_transports = (
-        SUPPORTED_XRAY_TRANSPORTS if backend == "xray" else SUPPORTED_VLESS_TRANSPORTS
+    normalized_transport = _check_transport(
+        params.get("type", "tcp"), backend, "VLESS"
     )
-    if normalized_transport not in supported_transports:
-        raise ValueError(
-            f"unsupported VLESS transport '{transport}': proxy-suite only maps "
-            f"{backend}-documented transports; use raw JSON or another client/core"
-        )
 
     ob: dict = {
         "type": "vless",
@@ -237,7 +245,7 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     return ob
 
 
-def parse_vmess(url: str, tag: str) -> dict:
+def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
     b64 = url[len("vmess://") :]
     b64, _, _ = b64.partition("#")
     b64, _, _ = b64.partition("?")
@@ -250,7 +258,7 @@ def parse_vmess(url: str, tag: str) -> dict:
 
     host = str(data["add"])
     port = int(data["port"])
-    net = data.get("net", "tcp")
+    net = _check_transport(str(data.get("net", "tcp")), backend, "VMess")
     tls_field = str(data.get("tls", ""))
     sni = str(data.get("sni") or data.get("host") or host)
 
@@ -269,6 +277,7 @@ def parse_vmess(url: str, tag: str) -> dict:
             sni,
             fp=str(data["fp"]) if data.get("fp") else None,
             alpn=str(data["alpn"]) if data.get("alpn") else None,
+            backend=backend,
         )
 
     path = str(data.get("path") or "/")
@@ -286,9 +295,9 @@ def parse_vmess(url: str, tag: str) -> dict:
     return ob
 
 
-def parse_trojan(url: str, tag: str) -> dict:
+def parse_trojan(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "trojan")
-    transport = params.get("type", "tcp")
+    transport = _check_transport(params.get("type", "tcp"), backend, "Trojan")
 
     ob: dict = {
         "type": "trojan",
@@ -297,7 +306,10 @@ def parse_trojan(url: str, tag: str) -> dict:
         "server_port": int(port),
         "password": urllib.parse.unquote(userinfo),
         "tls": _mk_tls(
-            params.get("sni", host), fp=params.get("fp"), alpn=params.get("alpn")
+            params.get("sni", host),
+            fp=params.get("fp"),
+            alpn=params.get("alpn"),
+            backend=backend,
         ),
     }
 
@@ -459,4 +471,6 @@ PARSERS = {
 
 BACKEND_AWARE_PARSERS = {
     "vless",
+    "vmess",
+    "trojan",
 }

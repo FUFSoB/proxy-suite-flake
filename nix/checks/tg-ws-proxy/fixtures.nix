@@ -15,7 +15,7 @@ let
     {
       services.proxy-suite.tgWsProxy = {
         enable = true;
-        host = "127.0.0.1";
+        listener.address = "127.0.0.1";
         secretFile = "/run/secrets/tg-ws-proxy";
       };
     }
@@ -27,21 +27,21 @@ let
     {
       services.proxy-suite.tgWsProxy = {
         enable = true;
-        port = 2443;
-        host = "0.0.0.0";
+        listener.port = 2443;
+        listener.address = "0.0.0.0";
         secretFile = "/run/secrets/tg-ws-proxy";
-        verbose = true;
-        logFile = "/var/log/tg-ws-proxy.log";
-        logMaxMb = 2.5;
-        logBackups = 3;
-        bufKb = 512;
+        log.verbose = true;
+        log.file = "/var/log/tg-ws-proxy.log";
+        log.maxSizeMiB = 2.5;
+        log.keep = 3;
+        bufferKiB = 512;
         poolSize = 8;
-        cfProxyDomains = [
+        cloudflare.domains = [
           "cdn.example.com"
           "edge.example.net"
         ];
-        cfProxyWorkerDomains = [ "worker.example.com" ];
-        cfProxyFallback = false;
+        cloudflare.workerDomains = [ "worker.example.com" ];
+        cloudflare.fallback = false;
         fakeTlsDomain = "mask.example.com";
         proxyProtocol = true;
       };
@@ -92,7 +92,7 @@ let
           tgWsProxy = {
             enable = true;
             secretFile = "/run/secrets/tg-ws-proxy";
-            routingMark = 1;
+            fwmark = 1;
           };
         };
       }
@@ -102,7 +102,7 @@ let
         services.proxy-suite.tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
-          bufKb = 3;
+          bufferKiB = 3;
         };
       }
     ]
@@ -120,7 +120,7 @@ let
         services.proxy-suite.tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
-          logBackups = 0;
+          log.keep = 0;
         };
       }
     ]

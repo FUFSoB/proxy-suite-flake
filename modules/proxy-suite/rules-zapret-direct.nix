@@ -25,16 +25,16 @@ let
 
   subtractItems = items: exclusions: builtins.filter (item: !(builtins.elem item exclusions)) items;
 
-  syncZapretDirectDomains = zapretCfg.enable && zapretCfg.syncDirectRouting;
-  syncZapretDirectUpstreamIps = zapretCfg.enable && zapretCfg.syncDirectRoutingUpstreamIps;
-  syncZapretDirectUserIps = zapretCfg.enable && zapretCfg.syncDirectRoutingUserIps;
+  syncZapretDirectDomains = zapretCfg.enable && zapretCfg.directSync.enable;
+  syncZapretDirectUpstreamIps = zapretCfg.enable && zapretCfg.directSync.upstreamIps;
+  syncZapretDirectUserIps = zapretCfg.enable && zapretCfg.directSync.userIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
   zapretDefaultDomainFiles = [
     "list-general.txt"
     "list-google.txt"
   ]
-  ++ lib.optionals zapretCfg.includeExtraUpstreamLists [
+  ++ lib.optionals zapretCfg.zapret-discord-youtube.includeExtraUpstreamLists [
     "list-instagram.txt"
     "list-soundcloud.txt"
     "list-twitter.txt"
@@ -49,20 +49,20 @@ let
       [ ];
   zapretDefaultIps =
     if syncZapretDirectUpstreamIps then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
-  zapretUserIps = if syncZapretDirectUserIps then zapretCfg.ipsetAll else [ ];
+  zapretUserIps = if syncZapretDirectUserIps then zapretCfg.zapret-discord-youtube.ips else [ ];
   zapretCustomDomains =
     if syncZapretDirectDomains then
       lib.unique (
         lib.concatMap (
           rule: lib.optionals rule.enableDirectSync (zapretDomainGroups.effectiveRuleDomains rule)
-        ) zapretCfg.hostlistRules
+        ) zapretCfg.zapret-discord-youtube.hostlistRules
       )
     else
       [ ];
   zapretCustomUserIps =
     if syncZapretDirectUserIps then
       lib.unique (
-        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.ips) zapretCfg.hostlistRules
+        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.ips) zapretCfg.zapret-discord-youtube.hostlistRules
       )
     else
       [ ];
@@ -71,7 +71,7 @@ let
       lib.unique (
         lib.concatMap (
           rule: lib.optionals rule.enableDirectSync (zapretDomainGroups.expandDefaultIps rule.defaultIps)
-        ) zapretCfg.hostlistRules
+        ) zapretCfg.zapret-discord-youtube.hostlistRules
       )
     else
       [ ];
@@ -84,13 +84,13 @@ let
       else
         [ ]
     )
-    ++ (if syncZapretDirectUserIps then zapretCfg.ipsetExclude else [ ])
+    ++ (if syncZapretDirectUserIps then zapretCfg.zapret-discord-youtube.excludeIps else [ ])
   );
 
   zapretDirectDomains =
     if syncZapretDirectDomains then
-      subtractItems (lib.unique (zapretDefaultDomains ++ zapretCfg.listGeneral ++ zapretCustomDomains)) (
-        lib.unique (zapretExcludedDomains ++ zapretCfg.listExclude)
+      subtractItems (lib.unique (zapretDefaultDomains ++ zapretCfg.zapret-discord-youtube.domains ++ zapretCustomDomains)) (
+        lib.unique (zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains)
       )
     else
       [ ];
@@ -114,7 +114,7 @@ in
   direct = {
     domains = lib.unique (r.direct.domains ++ zapretDirectDomains);
     ips = lib.unique (r.direct.ips ++ zapretDirectIps);
-    geosites = lib.unique (r.direct.geosites ++ lib.optional r.enableRuDirect "category-ru");
-    geoips = lib.unique (r.direct.geoips ++ lib.optional r.enableRuDirect "ru");
+    geosites = lib.unique (r.direct.geosites ++ lib.optional r.directRu "category-ru");
+    geoips = lib.unique (r.direct.geoips ++ lib.optional r.directRu "ru");
   };
 }

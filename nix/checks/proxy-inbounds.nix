@@ -24,10 +24,10 @@ let
   };
 
   mkInbounds =
-    proxyInbounds:
+    inbounds:
     evalProxySuite [
       baseModule
-      { services.proxy-suite.proxyInbounds = { enable = true; } // proxyInbounds; }
+      { services.proxy-suite.inbounds = { enable = true; } // inbounds; }
     ];
 
   relayFixture = mkInbounds { listeners.vless-in = realityListener; };
@@ -35,7 +35,7 @@ let
   relaySpec = mkInboundsSpec relayFixture;
 
   exitFixture = mkInbounds {
-    via = "direct";
+    routing.via = "direct";
     listeners.vless-in = realityListener;
   };
   exitConfig = mkInboundsConfig exitFixture;
@@ -57,7 +57,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "nl-vps";
@@ -75,9 +75,9 @@ let
             }
           ];
         };
-        proxyInbounds = {
+        inbounds = {
           enable = true;
-          via = "nl-vps";
+          routing.via = "nl-vps";
           listeners.through-nl = realityListener;
           listeners.through-de = realityListener // {
             port = 8443;
@@ -104,10 +104,10 @@ let
   ipNamedConfig = mkInboundsConfig ipNamedFixture;
 
   unguardedFixture = mkInbounds {
-
-
-    blockRu = false;
-    blockPrivate = false;
+    routing = {
+      blockRu = false;
+      blockPrivate = false;
+    };
     listeners.vless-in = realityListener;
   };
   unguardedConfig = mkInboundsConfig unguardedFixture;
@@ -119,13 +119,12 @@ let
       port = 8388;
       users = [ { passwordFile = "/run/secrets/ss"; } ];
     };
-    # Fronted by something else on this host, so its port stays closed even
-    # though the share link advertises the public one.
+    # Loopback-bound: the port stays closed though the link advertises the public one.
     listeners.ws-in = {
       type = "vless";
       port = 10002;
       sharePort = 443;
-      listenAddress = "127.0.0.1";
+      address = "127.0.0.1";
       users = [ { uuidFile = "/run/secrets/ws"; } ];
       transport = {
         type = "ws";
@@ -135,6 +134,22 @@ let
         enable = true;
         certificateFile = "/run/acme/fullchain.pem";
         keyFile = "/run/acme/key.pem";
+      };
+    };
+    # h3 only: UDP is opened, the TCP port stays free.
+    listeners.h3-in = {
+      type = "vless";
+      port = 8443;
+      users = [ { uuidFile = "/run/secrets/h3"; } ];
+      transport = {
+        type = "xhttp";
+        path = "/h3";
+      };
+      tls = {
+        enable = true;
+        certificateFile = "/run/acme/fullchain.pem";
+        keyFile = "/run/acme/key.pem";
+        alpn = [ "h3" ];
       };
     };
   };
@@ -154,13 +169,28 @@ let
 
   service = fixture: fixture.config.systemd.services."proxy-suite-inbounds";
 
-  # Bad configurations are checked by looking at config.assertions directly
-  # rather than by forcing system.build.toplevel: it is far cheaper, and it
-  # pins which assertion fired instead of just "something failed".
+  # `proxy-ctl inbounds stats` reads the collected file, so userControl members need it.
+  statsScript =
+    fixture:
+    (import ./read-generated.nix).readDerivation
+      fixture.config.systemd.services."proxy-suite-inbound-stats".serviceConfig.ExecStart;
+  noControlFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        inbounds.enable = true;
+        inbounds.listeners.vless-in = realityListener;
+        userControl.allow = [ ];
+      };
+    }
+  ];
+
+  # Checked against config.assertions directly: cheaper than toplevel, and names the
+  # assertion.
   baseProxy = {
     enable = true;
     proxy.enable = true;
-    proxy.singBox.enable = true;
+    proxy.backend = "sing-box";
     proxy.outbounds = [
       {
         tag = "primary";
@@ -183,15 +213,13 @@ let
     if lib.any (a: lib.hasInfix fragment a.message) failed then
       true
     else
-      # Name what was expected and what actually failed, so a regression here
-      # points at the assertion instead of just "something evaluated wrong".
       throw "proxy-inbounds check: expected an assertion matching '${fragment}', got: ${builtins.toJSON (map (a: a.message) failed)}";
 
   failing = [
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
           listeners.bad = {
             type = "vless";
@@ -204,7 +232,7 @@ let
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
           listeners.a = realityListener;
           listeners.b = realityListener;
@@ -215,9 +243,9 @@ let
     (mkRejects {
       enable = true;
       proxy.enable = false;
-      proxyInbounds = {
+      inbounds = {
         enable = true;
-        via = "proxy";
+        routing.via = "proxy";
         listeners.vless-in = realityListener;
       };
     } "requires proxy.enable = true")
@@ -225,7 +253,7 @@ let
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
           listeners.vless-in = realityListener // {
             reality = realityListener.reality // {
@@ -239,7 +267,7 @@ let
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
           listeners.tls-in = {
             type = "vless";
@@ -254,7 +282,7 @@ let
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
           listeners.ws-in = realityListener // {
             transport.type = "ws";
@@ -266,9 +294,9 @@ let
     (mkRejects (
       baseProxy
       // {
-        proxyInbounds = {
+        inbounds = {
           enable = true;
-          via = "no-such-outbound";
+          routing.via = "no-such-outbound";
           listeners.vless-in = realityListener;
         };
       }
@@ -277,46 +305,47 @@ let
     (mkRejects {
       enable = true;
       proxy.enable = true;
-      proxy.singBox.enable = true;
+      proxy.backend = "sing-box";
       proxy.outbounds = [
         {
           tag = "sb-only";
           singBoxJson.type = "tuic";
         }
       ];
-      proxyInbounds = {
+      inbounds = {
         enable = true;
-        via = "sb-only";
+        routing.via = "sb-only";
         listeners.vless-in = realityListener;
       };
     } "targets a sing-box-only outbound")
 
-    (mkRejects (baseProxy // { proxyInbounds.enable = true; })
-      "requires at least one entry in proxyInbounds.listeners"
+    (mkRejects (baseProxy // { inbounds.enable = true; })
+      "requires at least one entry in inbounds.listeners"
     )
 
     # recursiveUpdate, not //: this one nests into proxy, which baseProxy sets.
     (mkRejects
       (lib.recursiveUpdate baseProxy {
-        proxy.port = 1080;
-        proxyInbounds = {
+        proxy.listener.port = 1080;
+        inbounds = {
           enable = true;
           listeners.clash = realityListener // {
             port = 1080;
           };
         };
       })
-      "collides with proxy.port"
+      "collides with proxy.listener.port"
     )
   ];
 
   assertions = [
-    # The template carries no listeners; they are rendered at start time so no
-    # credential reaches the Nix store.
+    # Listeners are rendered at start time.
     (assert relayConfig.inbounds == [ ]; true)
 
-    # Relaying goes through the client stack's local SOCKS listener rather than
-    # a second copy of the outbound machinery.
+    # AsIs when relayed through sing-box; IPOnDemand when XRay dials (see the template).
+    (assert relayConfig.routing.domainStrategy == "AsIs"; true)
+    (assert exitConfig.routing.domainStrategy == "IPOnDemand"; true)
+
     (assert hasOutbound relayConfig "proxy"; true)
     (assert (ruleByTag relayConfig "inbound-final").outboundTag == "proxy"; true)
     (
@@ -342,15 +371,13 @@ let
     (assert !hasOutbound exitConfig "proxy"; true)
     (assert (ruleByTag exitConfig "inbound-final").outboundTag == "direct"; true)
 
-    # Safety rules are on by default and come before anything else, so an
-    # inbound credential cannot reach the LAN or loopback.
+    # Safety rules come first.
     (assert builtins.head (ruleTags relayConfig) == "inbound-block-private"; true)
     (assert (ruleByTag relayConfig "inbound-block-private").outboundTag == "block"; true)
     (assert (ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]; true)
     (assert (ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]; true)
     (assert !builtins.elem "inbound-block-private" (ruleTags unguardedConfig); true)
-    # The relay must not blackhole the address clients dial to reach it, and the
-    # exemption has to sit after blockPrivate but ahead of the country blocks.
+    # serverAddress is exempt after blockPrivate, before the country blocks.
     (
       assert
         lib.take 3 (ruleTags namedConfig) == [
@@ -380,12 +407,10 @@ let
     (assert (ruleByTag mixedConfig "inbound-via-local-exit").inboundTag == [ "local-exit" ]; true)
     (assert (ruleByTag mixedConfig "inbound-via-local-exit").outboundTag == "direct"; true)
 
-    # Two listeners can leave through two different servers: the pinned one
-    # gets its own rule, the default one rides the final rule.
+    # The pinned listener gets its own rule; the default one rides the final rule.
     (assert (ruleByTag pinnedConfig "inbound-via-through-de").outboundTag == "de-vps"; true)
     (assert (ruleByTag pinnedConfig "inbound-final").outboundTag == "nl-vps"; true)
-    # Pinned outbounds are injected at start time, not baked into the template,
-    # and chaining through the local proxy is not needed for either of them.
+    # Pinned outbounds are injected at start and need no local proxy.
     (assert !hasOutbound pinnedConfig "proxy"; true)
     (assert outboundTags pinnedConfig == [ "direct" "block" ]; true)
     # Only referenced outbounds are rendered, so the sing-box-only one is fine.
@@ -427,9 +452,14 @@ let
         ];
       true
     )
-    (assert firewallFixture.config.networking.firewall.allowedUDPPorts == [ 8388 ]; true)
-    # A loopback-bound listener is fronted on this host; opening its port would
-    # expose what the arrangement hides.
+    (
+      assert
+        lib.sort lib.lessThan firewallFixture.config.networking.firewall.allowedUDPPorts == [
+          8388
+          8443
+        ];
+      true
+    )
     (assert wsListener.port == 10002 && wsListener.sharePort == 443; true)
     (assert noFirewallFixture.config.networking.firewall.allowedTCPPorts == [ ]; true)
 
@@ -439,6 +469,15 @@ let
     (assert !builtins.elem "proxy-suite-socks.service" (service exitFixture).after; true)
     # Not `requires`: direct-routed listeners keep serving if the client is down.
     (assert (service relayFixture).requires == [ ]; true)
+
+    # The collected stats are group-readable with userControl, root-only without.
+    (
+      assert lib.hasInfix "chgrp proxy-suite \"$tmp\"" (statsScript relayFixture);
+      assert lib.hasInfix "chmod 640 \"$tmp\"" (statsScript relayFixture);
+      assert !lib.hasInfix "chgrp" (statsScript noControlFixture);
+      assert lib.hasInfix "chmod 600 \"$tmp\"" (statsScript noControlFixture);
+      true
+    )
 
   ]
   ++ failing;

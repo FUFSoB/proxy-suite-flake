@@ -2,7 +2,12 @@
 
 import base64
 import unittest
-from proxy_parsing import decode_subscription, parse_hybrid_subscription, parse_subscription
+from proxy_parsing import (
+    decode_subscription,
+    fetch_raw,
+    parse_hybrid_subscription,
+    parse_subscription,
+)
 
 VLESS_URI = "vless://uuid@example.com:443?security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com&sid=abcd"
 VLESS_XHTTP_URI = "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fx"
@@ -33,6 +38,11 @@ def run_fetcher(
 
 
 class FetchSubscriptionTests(unittest.TestCase):
+    def test_fetch_rejects_non_http_schemes(self):
+        for url in ("file:///etc/shadow", "ftp://example.com/sub", "data:text/plain,x"):
+            with self.assertRaisesRegex(ValueError, "http"):
+                fetch_raw(url)
+
 
     def test_base64_payload_mixed_protocols(self):
         payload = _make_b64_payload(VLESS_URI, SS_URI, HY2_URI)

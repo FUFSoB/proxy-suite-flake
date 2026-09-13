@@ -41,7 +41,7 @@ in
       true
     )
     (
-      assert tproxyManualFixture.config.services.proxy-suite.proxy.tproxy.autostart == false;
+      assert tproxyManualFixture.config.services.proxy-suite.proxy.autostart == null;
       assert tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".wantedBy == [ ];
       true
     )
@@ -60,7 +60,7 @@ in
       true
     )
     (
-      assert tunManualFixture.config.services.proxy-suite.proxy.tun.autostart == false;
+      assert tunManualFixture.config.services.proxy-suite.proxy.autostart == null;
       assert tunManualFixture.config.systemd.services."proxy-suite-tun".wantedBy == [ ];
       true
     )

@@ -2,13 +2,14 @@
 """Render server-side proxy inbounds and their client share links.
 
 The input spec is backend-neutral: it mirrors the
-services.proxy-suite.proxyInbounds option tree, with secrets given as file
+services.proxy-suite.inbounds option tree, with secrets given as file
 paths that are read here rather than at Nix evaluation time. Only XRay is
 rendered today; a render_sing_box_inbound would sit beside render_xray_inbound
 without changing the spec or the link generator.
 """
 
 import base64
+import hashlib
 import json
 import urllib.parse
 
@@ -122,6 +123,9 @@ def _xray_stream(listener: dict, tag: str) -> dict:
         stream["tlsSettings"] = {"certificates": [certificate]}
         if tls.get("serverName"):
             stream["tlsSettings"]["serverName"] = tls["serverName"]
+        # ["h3"] alone is what makes an xhttp listener serve HTTP/3, on UDP.
+        if tls.get("alpn"):
+            stream["tlsSettings"]["alpn"] = tls["alpn"]
     else:
         stream["security"] = "none"
 
@@ -209,11 +213,16 @@ def _link_security_params(listener: dict, server_address: str) -> dict:
             params["sid"] = short_ids[0]
         return params
     if tls["enable"] or listener["type"] == "trojan":
-        return {
+        params = {
             "security": "tls",
             "sni": tls.get("serverName") or server_address,
             "fp": "chrome",
         }
+        # A client left to its own ALPN offers h2 and http/1.1, and so never
+        # reaches an HTTP/3-only listener at all.
+        if tls.get("alpn"):
+            params["alpn"] = ",".join(tls["alpn"])
+        return params
     return {"security": "none"}
 
 
@@ -304,22 +313,52 @@ def build_listener(listener: dict, server_address: str, share_links: bool) -> di
     return {"tag": tag, "type": listener["type"], "port": _share_port(listener), "inbound": inbound, "links": links}
 
 
+def subscription_token(name: str, secrets: list[str]) -> str:
+    """Name of a user's subscription file, and so the secret part of its URL.
+
+    Derived from the user's own credentials rather than stored: there is no
+    second secret to manage, it stays put for as long as they do, and rotating
+    the user's uuid rotates the URL with it.
+    """
+    material = "\n".join(["proxy-suite-subscription", name, *sorted(set(secrets))])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
 def build_inbounds(spec: dict, server_address: str) -> dict:
-    """Render a whole spec into {"inbounds": [...], "links": [...]}."""
+    """Render a whole spec into {"inbounds": [...], "links": [...],
+    "subscriptions": [...]}.
+
+    A subscription gathers one user's links from every listener -- users are
+    matched by name -- as base64 of the newline-joined links, which is what
+    v2rayNG, Hiddify and NekoBox import.
+    """
     inbounds = []
     links = []
+    by_user: dict[str, dict] = {}
     for listener in spec["listeners"]:
         rendered = build_listener(listener, server_address, spec.get("shareLinks", True))
         inbounds.append(rendered["inbound"])
         for index, link in enumerate(rendered["links"]):
             user = listener["users"][index]
+            name = user.get("name") or f"{rendered['tag']}-{index}"
             links.append(
                 {
                     "tag": rendered["tag"],
-                    "user": user.get("name") or f"{rendered['tag']}-{index}",
+                    "user": name,
                     "type": rendered.get("type", ""),
                     "port": rendered.get("port", 0),
                     "link": link,
                 }
             )
-    return {"inbounds": inbounds, "links": links}
+            entry = by_user.setdefault(name, {"links": [], "secrets": []})
+            entry["links"].append(link)
+            entry["secrets"].append(_user_secret(user, listener["type"], rendered["tag"]))
+    subscriptions = [
+        {
+            "user": name,
+            "token": subscription_token(name, entry["secrets"]),
+            "body": base64.b64encode("\n".join(entry["links"]).encode("utf-8")).decode("ascii"),
+        }
+        for name, entry in by_user.items()
+    ]
+    return {"inbounds": inbounds, "links": links, "subscriptions": subscriptions}

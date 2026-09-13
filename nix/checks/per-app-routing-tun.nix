@@ -15,10 +15,10 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy.tun.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
+          tun.enable = true;
         };
       };
     }
@@ -43,13 +43,11 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy = {
-          tproxy.enable = true;
-          tun.perApp.enable = true;
-        };
+        proxy.tproxy.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
+          tun.enable = true;
         };
       };
     }

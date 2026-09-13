@@ -38,11 +38,11 @@ in
 {
   assertions = [
     (
-      assert tgSecretFile.config.services.proxy-suite.tgWsProxy.host == "127.0.0.1";
+      assert tgSecretFile.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1";
       true
     )
     (
-      assert minimal.config.services.proxy-suite.tgWsProxy.host == "127.0.0.1";
+      assert minimal.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1";
       true
     )
     (

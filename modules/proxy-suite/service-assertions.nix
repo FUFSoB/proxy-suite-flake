@@ -30,6 +30,8 @@ let
     perAppRoutingTun
     perAppRoutingTproxy
     perAppZapretCfg
+    zapretCfg
+    zapretEngine
     ;
 
   mkAssertion = assertion: message: { inherit assertion message; };
@@ -55,17 +57,9 @@ let
     mkAssertion (!(condition && builtins.elem value disallowed)) message;
 
   featureAssertions = [
-    (requireAvailable proxyCfg.singBox.enable proxyEnabled
-      "proxy-suite: proxy.singBox.enable requires proxy.enable = true"
-    )
-    (requireAvailable proxyCfg.xray.enable proxyEnabled
-      "proxy-suite: proxy.xray.enable requires proxy.enable = true"
-    )
-    (mkAssertion (!proxyEnabled || proxyCfg.singBox.enable || proxyCfg.xray.enable)
-      "proxy-suite: at least one of proxy.singBox.enable or proxy.xray.enable must be true when proxy.enable = true"
-    )
-    (requireAvailable proxyEnabled (derived.hasAvailableOutbounds
-    ) "proxy-suite: at least one outbound or subscription is required when proxy.enable = true")
+    # Declaring no outbound at all is legal: they can be added at runtime with
+    # `proxy-ctl proxy outbounds add`. Only a warning here; the backend still
+    # refuses to start with nothing to dial.
     (uniqueValues proxyEnabled effectiveOutboundTags "proxy-suite: outbound tags must be unique")
     (uniqueValues proxyEnabled subscriptionTags
       "proxy-suite: subscription tags must be unique because they are used as cache keys and outbound tag prefixes"
@@ -79,24 +73,30 @@ let
     (requireEnabled cfg.sshProxy.asOutbound proxyEnabled
       "proxy-suite: sshProxy.asOutbound requires proxy.enable = true"
     )
+    (requireEnabled proxyCfg.autoProxy.enable proxyEnabled
+      "proxy-suite: proxy.autoProxy.enable requires proxy.enable = true"
+    )
+    (mkAssertion (!(proxyCfg.autoProxy.enable && pureXrayEnabled))
+      "proxy-suite: proxy.autoProxy needs the sing-box backend: learned routes are local rule-sets that sing-box reloads from disk, and pure XRay has no equivalent"
+    )
     (mkAssertion (
-      !cfg.sshProxy.enable || (cfg.sshProxy.user != null && cfg.sshProxy.host != null)
-    ) "proxy-suite: sshProxy.user and sshProxy.host are required when sshProxy.enable = true")
+      !cfg.sshProxy.enable || (cfg.sshProxy.server.user != null && cfg.sshProxy.server.host != null)
+    ) "proxy-suite: sshProxy.server.user and sshProxy.server.host are required when sshProxy.enable = true")
     # SingBox dials SSH itself and verifies host keys by value, with no
     # knownHostsFile and no trust-on-first-use fallback. An empty list accepts
     # any host key, so refuse rather than silently downgrade the tunnel.
     (mkAssertion (
       !derived.sshProxyNativeOutbound || cfg.sshProxy.hostKey != [ ] || cfg.sshProxy.hostKeyFile != null
-    ) "proxy-suite: sshProxy.hostKey or sshProxy.hostKeyFile is required when sshProxy.asOutbound = true with a SingBox or hybrid backend, because SingBox verifies host keys by value and an empty list accepts any key. Point hostKeyFile at a known-hosts file, or list every key from `ssh-keyscan -p <sshPort> <host>` in hostKey -- the host key algorithm is negotiated, so a single pinned key fails the handshake when the server picks another algorithm.")
+    ) "proxy-suite: sshProxy.hostKey or sshProxy.hostKeyFile is required when sshProxy.asOutbound = true with a SingBox or hybrid backend, because SingBox verifies host keys by value and an empty list accepts any key. Point hostKeyFile at a known-hosts file, or list every key from `ssh-keyscan -p <server.port> <server.host>` in hostKey -- the host key algorithm is negotiated, so a single pinned key fails the handshake when the server picks another algorithm.")
     (mkAssertion (!proxyEnabled || invalidRoutingTargets == [ ])
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )
     (mkAssertion (
       !(pureXrayEnabled && proxyCfg.selection == "selector")
-    ) "proxy-suite: proxy.selection = \"selector\" is only available with proxy.singBox.enable = true")
+    ) "proxy-suite: proxy.selection = \"selector\" requires proxy.backend = \"sing-box\" or \"hybrid\"")
     (mkAssertion
       (!(pureXrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls")))
-      "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.xray.enable = true; use udp/tcp DNS for XRay"
+      "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.backend = \"xray\"; use udp/tcp DNS for XRay"
     )
     (requireEnabled globalTun.enable proxyEnabled
       "proxy-suite: proxy.tun.enable requires proxy.enable = true"
@@ -104,15 +104,11 @@ let
     (requireEnabled globalTproxy.enable proxyEnabled
       "proxy-suite: proxy.tproxy.enable requires proxy.enable = true"
     )
-    (requireEnabled globalTun.autostart globalTun.enable
-      "proxy-suite: proxy.tun.autostart requires proxy.tun.enable = true"
+    (requireEnabled (proxyCfg.autostart == "tun") globalTun.enable
+      ''proxy-suite: proxy.autostart = "tun" requires proxy.tun.enable = true''
     )
-    (requireEnabled globalTproxy.autostart globalTproxy.enable
-      "proxy-suite: proxy.tproxy.autostart requires proxy.tproxy.enable = true"
-    )
-    (mkAssertion
-      (!(globalTproxy.enable && globalTproxy.autostart && globalTun.enable && globalTun.autostart))
-      "proxy-suite: proxy.tproxy.autostart and proxy.tun.autostart cannot both be enabled at the same time"
+    (requireEnabled (proxyCfg.autostart == "tproxy") globalTproxy.enable
+      ''proxy-suite: proxy.autostart = "tproxy" requires proxy.tproxy.enable = true''
     )
   ];
 
@@ -136,38 +132,38 @@ let
       "proxy-suite: route=proxychains in perAppRouting.profiles requires proxy.enable = true"
     )
     (requireEnabled perAppRoutingTun.enable perAppRoutingCfg.enable
-      "proxy-suite: proxy.tun.perApp.enable requires perAppRouting.enable = true"
+      "proxy-suite: perAppRouting.tun.enable requires perAppRouting.enable = true"
     )
     (requireEnabled perAppRoutingTun.enable proxyEnabled
-      "proxy-suite: proxy.tun.perApp.enable requires proxy.enable = true"
+      "proxy-suite: perAppRouting.tun.enable requires proxy.enable = true"
     )
     (requireAvailable hasTunProfiles perAppRoutingTun.enable
-      "proxy-suite: route=tun in perAppRouting.profiles requires proxy.tun.perApp.enable = true"
+      "proxy-suite: route=tun in perAppRouting.profiles requires perAppRouting.tun.enable = true"
     )
     (requireAvailable hasTunProfiles proxyEnabled
       "proxy-suite: route=tun in perAppRouting.profiles requires proxy.enable = true"
     )
     (requireEnabled perAppRoutingTproxy.enable perAppRoutingCfg.enable
-      "proxy-suite: proxy.tproxy.perApp.enable requires perAppRouting.enable = true"
+      "proxy-suite: perAppRouting.tproxy.enable requires perAppRouting.enable = true"
     )
     (requireEnabled perAppRoutingTproxy.enable proxyEnabled
-      "proxy-suite: proxy.tproxy.perApp.enable requires proxy.enable = true"
+      "proxy-suite: perAppRouting.tproxy.enable requires proxy.enable = true"
     )
     (requireAvailable hasTproxyProfiles perAppRoutingTproxy.enable
-      "proxy-suite: route=tproxy in perAppRouting.profiles requires proxy.tproxy.perApp.enable = true"
+      "proxy-suite: route=tproxy in perAppRouting.profiles requires perAppRouting.tproxy.enable = true"
     )
     (requireAvailable hasTproxyProfiles proxyEnabled
       "proxy-suite: route=tproxy in perAppRouting.profiles requires proxy.enable = true"
     )
     (requireEnabled perAppZapretCfg.enable perAppRoutingCfg.enable
-      "proxy-suite: zapret.perApp.enable requires perAppRouting.enable = true"
+      "proxy-suite: perAppRouting.zapret.enable requires perAppRouting.enable = true"
     )
     (requireAvailable hasZapretProfiles perAppZapretCfg.enable
-      "proxy-suite: route=zapret in perAppRouting.profiles requires zapret.perApp.enable = true"
+      "proxy-suite: route=zapret in perAppRouting.profiles requires perAppRouting.zapret.enable = true"
     )
   ];
 
-  localProxyAuthCfg = proxyCfg.auth;
+  localProxyAuthCfg = proxyCfg.listener.auth;
   localProxyAuthUsed =
     localProxyAuthCfg.username != null
     || localProxyAuthCfg.password != null
@@ -175,11 +171,11 @@ let
   localProxyAuthAssertions = [
     (mkAssertion (
       !proxyEnabled || !localProxyAuthUsed || localProxyAuthCfg.username != null
-    ) "proxy-suite: proxy.auth requires username when password or passwordFile is set")
+    ) "proxy-suite: proxy.listener.auth requires username when password or passwordFile is set")
     (exactlyOneOf (proxyEnabled && localProxyAuthUsed) [
       localProxyAuthCfg.password
       localProxyAuthCfg.passwordFile
-    ] "proxy-suite: proxy.auth requires exactly one of password or passwordFile")
+    ] "proxy-suite: proxy.listener.auth requires exactly one of password or passwordFile")
   ];
 
   secretAssertions = [
@@ -202,16 +198,16 @@ let
     )
     (mkAssertion (
       !singBoxEnabled || hybridEnabled || ob.xrayJson == null
-    ) "proxy-suite: outbound '${ob.tag}': xrayJson is only available with proxy.xray.enable = true")
+    ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
     (mkAssertion (!xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null))
-      "proxy-suite: outbound '${ob.tag}': singBoxJson/json are only available with proxy.singBox.enable = true"
+      "proxy-suite: outbound '${ob.tag}': singBoxJson/json require proxy.backend = sing-box or hybrid"
     )
     (mkAssertion (
       !(ob.backend == "xray") || xrayEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.xray.enable = true")
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
     (mkAssertion (
       !(ob.backend == "sing-box") || singBoxEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.singBox.enable = true")
+    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid")
   ]) proxyCfg.outbounds;
 
   proxyInboundsCfg = derived.proxyInboundsCfg;
@@ -230,33 +226,37 @@ let
   proxyInboundAssertions =
     [
       (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
-        "proxy-suite: proxyInbounds via targets are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies cannot be named here because their tags only exist at runtime; use via = \"proxy\" to reach those."
+        "proxy-suite: inbounds via targets are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies cannot be named here because their tags only exist at runtime; use via = \"proxy\" to reach those."
       )
       (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
-        "proxy-suite: proxyInbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
+        "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
       )
       (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
-        "proxy-suite: proxyInbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
+        "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
       )
       (requireEnabled proxyInboundsEnabled (proxyInbounds != [ ])
-        "proxy-suite: proxyInbounds.enable requires at least one entry in proxyInbounds.listeners"
+        "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners"
       )
       (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
-        "proxy-suite: proxyInbounds.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
+        "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
       )
       (requireEnabled proxyInboundsNeedLocalProxy derived.hasAvailableOutbounds
-        "proxy-suite: proxyInbounds.via = \"proxy\" relays through the local proxy stack, so at least one proxy.outbounds or proxy.subscriptions entry is required"
+        "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, so at least one proxy.outbounds or proxy.subscriptions entry is required"
       )
       (uniqueValues proxyInboundsEnabled (map (ib: ib.listener.port) proxyInbounds)
-        "proxy-suite: proxyInbounds.listeners must each use a distinct port"
+        "proxy-suite: inbounds.listeners must each use a distinct port"
+      )
+      (requireEnabled (proxyInboundsEnabled && proxyInboundsCfg.subscriptions.enable)
+        proxyInboundsCfg.shareLinks
+        "proxy-suite: inbounds.subscriptions are made of the share links, so they need inbounds.shareLinks = true"
       )
       (mkAssertion
         (
           !proxyInboundsEnabled
           || !proxyEnabled
-          || !builtins.elem proxyCfg.port derived.proxyInboundPorts
+          || !builtins.elem proxyCfg.listener.port derived.proxyInboundPorts
         )
-        "proxy-suite: a proxyInbounds listener port collides with proxy.port (${toString proxyCfg.port})"
+        "proxy-suite: a proxyInbounds listener port collides with proxy.listener.port (${toString proxyCfg.listener.port})"
       )
       (mkAssertion
         (
@@ -271,7 +271,7 @@ let
       ib:
       let
         l = ib.listener;
-        prefix = "proxy-suite: proxyInbounds listener '${ib.tag}'";
+        prefix = "proxy-suite: inbounds listener '${ib.tag}'";
         firstUser = if l.users == [ ] then null else builtins.head l.users;
         needsUuid = builtins.elem l.type [
           "vless"
@@ -314,7 +314,7 @@ let
         ) "${prefix}: reality.serverNames must not be empty")
         (requireAvailable (proxyInboundsEnabled && l.reality.enable && proxyInboundsCfg.shareLinks)
           (l.reality.publicKey != null)
-          "${prefix}: reality.publicKey is required to generate share links. Run `xray x25519` to print it alongside the private key, or set proxyInbounds.shareLinks = false."
+          "${prefix}: reality.publicKey is required to generate share links. Run `xray x25519` to print it alongside the private key, or set inbounds.shareLinks = false."
         )
         (mkAssertion
           (
@@ -333,6 +333,15 @@ let
           )
           "${prefix}: flow is only valid on a vless listener with transport.type = \"raw\""
         )
+        (mkAssertion
+          (
+            !proxyInboundsEnabled
+            || l.tls.alpn == null
+            || !builtins.elem "h3" l.tls.alpn
+            || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
+          )
+          "${prefix}: tls.alpn \"h3\" is served only by the xhttp transport with tls.enable (not REALITY)"
+        )
       ]
     ) proxyInbounds;
 
@@ -344,127 +353,134 @@ let
   ]) proxyCfg.subscriptions;
 
   globalTunAutoRouteTable = constants.tunAutoRouteTableIndex;
+  globalZapretQnum = constants.zapretGlobalQnum.${zapretEngine};
   collisionAssertions = map (item: notEqualWhen item.condition item.left item.right item.message) [
     {
       condition = globalTun.enable && perAppRoutingTun.enable;
       left = globalTun.interface;
       right = perAppRoutingTun.interface;
-      message = "proxy-suite: proxy.tun.interface and proxy.tun.perApp.interface must differ";
+      message = "proxy-suite: proxy.tun.interface and perAppRouting.tun.interface must differ";
     }
     {
       condition = globalTun.enable && perAppRoutingTun.enable;
       left = globalTun.address;
       right = perAppRoutingTun.address;
-      message = "proxy-suite: proxy.tun.address and proxy.tun.perApp.address must differ";
+      message = "proxy-suite: proxy.tun.address and perAppRouting.tun.address must differ";
     }
     {
       condition = globalTun.enable && perAppRoutingTun.enable;
       left = perAppRoutingTun.routeTable;
       right = globalTunAutoRouteTable;
-      message = "proxy-suite: proxy.tun.perApp.routeTable must differ from the global TUN auto-route table ${toString globalTunAutoRouteTable}";
+      message = "proxy-suite: perAppRouting.tun.routeTable must differ from the global TUN auto-route table ${toString globalTunAutoRouteTable}";
     }
     {
       condition = perAppRoutingTun.enable && globalTproxy.enable;
       left = perAppRoutingTun.fwmark;
       right = globalTproxy.fwmark;
-      message = "proxy-suite: proxy.tun.perApp.fwmark must differ from proxy.tproxy.fwmark when global TProxy is enabled";
+      message = "proxy-suite: perAppRouting.tun.fwmark must differ from proxy.tproxy.fwmark when global TProxy is enabled";
     }
     {
       condition = perAppRoutingTun.enable && globalTproxy.enable;
       left = perAppRoutingTun.fwmark;
       right = globalTproxy.proxyMark;
-      message = "proxy-suite: proxy.tun.perApp.fwmark must differ from proxy.tproxy.proxyMark when global TProxy is enabled";
+      message = "proxy-suite: perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark when global TProxy is enabled";
     }
     {
       condition = perAppRoutingTun.enable && globalTproxy.enable;
       left = perAppRoutingTun.routeTable;
       right = globalTproxy.routeTable;
-      message = "proxy-suite: proxy.tun.perApp.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled";
+      message = "proxy-suite: perAppRouting.tun.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled";
+    }
+    {
+      condition = perAppZapretCfg.enable && zapretCfg.enable;
+      left = perAppZapretCfg.qnum;
+      right = globalZapretQnum;
+      message = "proxy-suite: perAppRouting.zapret.qnum must differ from the global zapret instance's NFQUEUE ${toString globalZapretQnum}";
     }
     {
       condition = perAppRoutingTproxy.enable;
       left = perAppRoutingTproxy.fwmark;
       right = globalTproxy.fwmark;
-      message = "proxy-suite: proxy.tproxy.perApp.fwmark must differ from proxy.tproxy.fwmark";
+      message = "proxy-suite: perAppRouting.tproxy.fwmark must differ from proxy.tproxy.fwmark";
     }
     {
       condition = perAppRoutingTproxy.enable;
       left = perAppRoutingTproxy.fwmark;
       right = globalTproxy.proxyMark;
-      message = "proxy-suite: proxy.tproxy.perApp.fwmark must differ from proxy.tproxy.proxyMark";
+      message = "proxy-suite: perAppRouting.tproxy.fwmark must differ from proxy.tproxy.proxyMark";
     }
     {
       condition = perAppRoutingTproxy.enable;
       left = perAppRoutingTproxy.routeTable;
       right = globalTproxy.routeTable;
-      message = "proxy-suite: proxy.tproxy.perApp.routeTable must differ from proxy.tproxy.routeTable";
+      message = "proxy-suite: perAppRouting.tproxy.routeTable must differ from proxy.tproxy.routeTable";
     }
     {
       condition = perAppRoutingTun.enable && perAppRoutingTproxy.enable;
       left = perAppRoutingTun.fwmark;
       right = perAppRoutingTproxy.fwmark;
-      message = "proxy-suite: proxy.tun.perApp.fwmark and proxy.tproxy.perApp.fwmark must differ";
+      message = "proxy-suite: perAppRouting.tun.fwmark and perAppRouting.tproxy.fwmark must differ";
     }
     {
       condition = perAppRoutingTun.enable && perAppRoutingTproxy.enable;
       left = perAppRoutingTun.routeTable;
       right = perAppRoutingTproxy.routeTable;
-      message = "proxy-suite: proxy.tun.perApp.routeTable and proxy.tproxy.perApp.routeTable must differ";
+      message = "proxy-suite: perAppRouting.tun.routeTable and perAppRouting.tproxy.routeTable must differ";
     }
     {
       condition = perAppZapretCfg.enable;
       left = perAppZapretCfg.filterMark;
       right = globalTproxy.fwmark;
-      message = "proxy-suite: zapret.perApp.filterMark must differ from proxy.tproxy.fwmark";
+      message = "proxy-suite: perAppRouting.zapret.filterMark must differ from proxy.tproxy.fwmark";
     }
     {
       condition = perAppZapretCfg.enable;
       left = perAppZapretCfg.filterMark;
       right = globalTproxy.proxyMark;
-      message = "proxy-suite: zapret.perApp.filterMark must differ from proxy.tproxy.proxyMark";
+      message = "proxy-suite: perAppRouting.zapret.filterMark must differ from proxy.tproxy.proxyMark";
     }
     {
       condition = perAppRoutingTun.enable && perAppZapretCfg.enable;
       left = perAppRoutingTun.fwmark;
       right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: proxy.tun.perApp.fwmark and zapret.perApp.filterMark must differ";
+      message = "proxy-suite: perAppRouting.tun.fwmark and perAppRouting.zapret.filterMark must differ";
     }
     {
       condition = perAppRoutingTproxy.enable && perAppZapretCfg.enable;
       left = perAppRoutingTproxy.fwmark;
       right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: proxy.tproxy.perApp.fwmark and zapret.perApp.filterMark must differ";
+      message = "proxy-suite: perAppRouting.tproxy.fwmark and perAppRouting.zapret.filterMark must differ";
     }
     {
       condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
-      left = tgWsProxyCfg.routingMark;
+      left = tgWsProxyCfg.fwmark;
       right = globalTproxy.fwmark;
-      message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tproxy.fwmark";
+      message = "proxy-suite: tgWsProxy.fwmark must differ from proxy.tproxy.fwmark";
     }
     {
       condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
-      left = tgWsProxyCfg.routingMark;
+      left = tgWsProxyCfg.fwmark;
       right = globalTproxy.proxyMark;
-      message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tproxy.proxyMark";
+      message = "proxy-suite: tgWsProxy.fwmark must differ from proxy.tproxy.proxyMark";
     }
     {
       condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTun.enable;
-      left = tgWsProxyCfg.routingMark;
+      left = tgWsProxyCfg.fwmark;
       right = perAppRoutingTun.fwmark;
-      message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tun.perApp.fwmark";
+      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.tun.fwmark";
     }
     {
       condition =
         tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTproxy.enable;
-      left = tgWsProxyCfg.routingMark;
+      left = tgWsProxyCfg.fwmark;
       right = perAppRoutingTproxy.fwmark;
-      message = "proxy-suite: tgWsProxy.routingMark must differ from proxy.tproxy.perApp.fwmark";
+      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.tproxy.fwmark";
     }
     {
       condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
-      left = tgWsProxyCfg.routingMark;
+      left = tgWsProxyCfg.fwmark;
       right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: tgWsProxy.routingMark must differ from zapret.perApp.filterMark";
+      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.zapret.filterMark";
     }
   ];
 
@@ -483,7 +499,7 @@ let
         {
           condition = perAppRoutingTun.enable;
           value = perAppRoutingTun.mtu;
-          message = "proxy-suite: proxy.tun.perApp.mtu must be greater than zero";
+          message = "proxy-suite: perAppRouting.tun.mtu must be greater than zero";
         }
         {
           condition = globalTproxy.enable;
@@ -503,37 +519,37 @@ let
         {
           condition = perAppRoutingTun.enable;
           value = perAppRoutingTun.fwmark;
-          message = "proxy-suite: proxy.tun.perApp.fwmark must be greater than zero";
+          message = "proxy-suite: perAppRouting.tun.fwmark must be greater than zero";
         }
         {
           condition = perAppRoutingTun.enable;
           value = perAppRoutingTun.routeTable;
-          message = "proxy-suite: proxy.tun.perApp.routeTable must be greater than zero";
+          message = "proxy-suite: perAppRouting.tun.routeTable must be greater than zero";
         }
         {
           condition = perAppRoutingTproxy.enable;
           value = perAppRoutingTproxy.fwmark;
-          message = "proxy-suite: proxy.tproxy.perApp.fwmark must be greater than zero";
+          message = "proxy-suite: perAppRouting.tproxy.fwmark must be greater than zero";
         }
         {
           condition = perAppRoutingTproxy.enable;
           value = perAppRoutingTproxy.routeTable;
-          message = "proxy-suite: proxy.tproxy.perApp.routeTable must be greater than zero";
+          message = "proxy-suite: perAppRouting.tproxy.routeTable must be greater than zero";
         }
         {
           condition = perAppZapretCfg.enable;
           value = perAppZapretCfg.filterMark;
-          message = "proxy-suite: zapret.perApp.filterMark must be greater than zero";
+          message = "proxy-suite: perAppRouting.zapret.filterMark must be greater than zero";
         }
         {
           condition = perAppZapretCfg.enable;
           value = perAppZapretCfg.qnum;
-          message = "proxy-suite: zapret.perApp.qnum must be greater than zero";
+          message = "proxy-suite: perAppRouting.zapret.qnum must be greater than zero";
         }
         {
           condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
-          value = tgWsProxyCfg.routingMark;
-          message = "proxy-suite: tgWsProxy.routingMark must be greater than zero";
+          value = tgWsProxyCfg.fwmark;
+          message = "proxy-suite: tgWsProxy.fwmark must be greater than zero";
         }
       ];
 
@@ -547,7 +563,7 @@ let
             536870912
             1073741824
           ];
-          message = "proxy-suite: zapret.perApp.filterMark must not use zapret internal desync mark bits";
+          message = "proxy-suite: perAppRouting.zapret.filterMark must not use zapret internal desync mark bits";
         }
         {
           condition = perAppZapretCfg.enable;
@@ -565,25 +581,25 @@ let
           condition = perAppRoutingTun.enable && perAppZapretCfg.enable;
           value = perAppRoutingTun.fwmark;
           disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: proxy.tun.perApp.fwmark must not use per-app-zapret internal desync mark bits";
+          message = "proxy-suite: perAppRouting.tun.fwmark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppRoutingTproxy.enable && perAppZapretCfg.enable;
           value = perAppRoutingTproxy.fwmark;
           disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: proxy.tproxy.perApp.fwmark must not use per-app-zapret internal desync mark bits";
+          message = "proxy-suite: perAppRouting.tproxy.fwmark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = perAppZapretCfg.enable;
           value = perAppZapretCfg.filterMark;
           disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: zapret.perApp.filterMark must not use per-app-zapret internal desync mark bits";
+          message = "proxy-suite: perAppRouting.zapret.filterMark must not use per-app-zapret internal desync mark bits";
         }
         {
           condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
-          value = tgWsProxyCfg.routingMark;
+          value = tgWsProxyCfg.fwmark;
           disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: tgWsProxy.routingMark must not use per-app-zapret internal desync mark bits";
+          message = "proxy-suite: tgWsProxy.fwmark must not use per-app-zapret internal desync mark bits";
         }
       ];
 in

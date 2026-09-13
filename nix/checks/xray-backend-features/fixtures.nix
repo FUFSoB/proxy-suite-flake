@@ -22,11 +22,15 @@ let
       backend = null;
       backendArg = null;
       xraySidecarRoutingMark = null;
+      priorityOutboundFile = null;
+      runtimeOutboundsDir = null;
       jq = null;
       python3 = null;
       parserScriptsPythonPath = null;
       buildOutboundPy = null;
       mkSubscriptionBlock = null;
+      mkSubscriptionLoadHelperBlock = null;
+      runtimeSubscriptionsBlock = null;
     }).rawOutboundJson;
 
   xrayRawStreamDefinition = {
@@ -56,7 +60,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          xray.enable = true;
+          backend = "xray";
           subscriptions = [
             {
               tag = "xray-sub";
@@ -78,7 +82,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          xray.enable = true;
+          backend = "xray";
           outbounds = [ xrayRawStreamDefinition ];
         };
       };
@@ -96,7 +100,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          xray.enable = true;
+          backend = "xray";
           dns.local = {
             type = "tcp";
             address = "9.9.9.9";
@@ -118,7 +122,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        xray.enable = true;
+        backend = "xray";
         dns.remote = {
           type = "tls";
           address = "1.1.1.1";
@@ -148,7 +152,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        xray.enable = true;
+        backend = "xray";
         selection = "selector";
         outbounds = [
           {
@@ -162,7 +166,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        xray.enable = true;
+        backend = "xray";
         outbounds = [
           {
             tag = "raw";
@@ -177,7 +181,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "raw";

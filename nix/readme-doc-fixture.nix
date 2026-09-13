@@ -6,7 +6,7 @@
 
     proxy = {
       enable = true;
-      singBox.enable = true;
+      backend = "sing-box";
       outbounds = [
         {
           tag = "primary";

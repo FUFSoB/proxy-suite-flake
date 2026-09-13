@@ -13,10 +13,10 @@ let
     baseModule
     {
       services.proxy-suite = {
-        proxy.tproxy.perApp.enable = true;
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;
+          tproxy.enable = true;
         };
       };
     }

@@ -212,6 +212,11 @@ def build_outbound(
 
 
 def fetch_raw(url: str) -> bytes:
+    # urlopen also speaks file:, ftp: and data:. This runs as root over a URL that
+    # reaches it from a group-writable spool, so only the two a subscription is
+    # ever served over.
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise ValueError("subscription URL must be http:// or https://")
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "v2rayN/6.0"},

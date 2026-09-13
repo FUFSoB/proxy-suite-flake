@@ -10,7 +10,7 @@ from proxy_inbound import build_inbounds
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Render services.proxy-suite.proxyInbounds into XRay inbounds."
+        description="Render services.proxy-suite.inbounds into XRay inbounds."
     )
     ap.add_argument("--spec", required=True, help="path to the generated inbound spec JSON")
     ap.add_argument(

@@ -127,7 +127,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           outbounds = [
             {
               tag = "primary";
@@ -137,10 +137,8 @@ let
           tun.enable = true;
           tproxy.enable = true;
         };
-        zapret = {
-          enable = true;
-          perApp.enable = true;
-        };
+        zapret.enable = true;
+        perAppRouting.zapret.enable = true;
         amneziaWg = {
           enable = true;
           kernelModulePackage = null;
@@ -329,7 +327,7 @@ in
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "primary";

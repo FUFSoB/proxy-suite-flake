@@ -1,83 +1,33 @@
-# Type submodule definitions shared across options sub-files.
 { lib }:
 
 let
   inherit (lib) mkOption types;
 
-  # Reused in both outboundType.routing and routing.rules entries.
+  list =
+    description: example:
+    mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      inherit description example;
+    };
+
   routingFields = {
-    domains = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = ''
-        Domain suffixes to match in this routing rule.
-        Leave empty to skip domain-based matching for this rule entry.
-      '';
-      example = [
-        "youtube.com"
-        "discord.com"
-      ];
-    };
-    ips = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = ''
-        IP CIDRs to match in this routing rule.
-        Leave empty to skip IP-based matching for this rule entry.
-      '';
-      example = [ "1.1.1.0/24" ];
-    };
-    geosites = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = ''
-        sing-geosite rule-set names to match in this routing rule.
-        Each name becomes a backend geosite rule-set reference.
-      '';
-      example = [
-        "netflix"
-        "google"
-      ];
-    };
-    geoips = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      description = ''
-        sing-geoip rule-set names to match in this routing rule.
-        Each name becomes a backend geoip rule-set reference.
-      '';
-      example = [
-        "us"
-        "de"
-      ];
-    };
+    domains = list "Domain suffixes to match." [ "youtube.com" ];
+    ips = list "IP CIDRs to match." [ "1.1.1.0/24" ];
+    geosites = list "Geosite names to match (see geodata)." [ "netflix" ];
+    geoips = list "Geoip names to match (see geodata; the defaults are country codes only)." [ "us" ];
   };
 
   routingRuleType = types.submodule {
     options = {
       outbound = mkOption {
         type = types.str;
-        description = ''
-          Target outbound tag. Can be a specific server tag (only useful with
-          selection = "selector" or "urltest"), or one of the built-in tags:
-          "proxy" (the active proxy outbound), "direct", "block".
-
-          With selection = "first", named proxy outbounds are collapsed into the
-          single active "proxy" outbound at runtime, so per-tag routing no longer
-          distinguishes between individual proxy servers.
-        '';
+        description = ''Outbound tag, or "proxy", "direct", "block". With selection = "first" every proxy tag means "proxy".'';
         example = "vps-de";
       };
     }
     // routingFields;
   };
-
-  outboundTypes = import ./types/outbounds.nix {
-    inherit lib;
-    inherit routingFields;
-  };
-
-  zapretTypes = import ./types/zapret.nix { inherit lib; };
 
   dnsUpstreamType = types.submodule {
     options = {
@@ -88,27 +38,19 @@ let
           "tls"
         ];
         default = "udp";
-        description = ''
-          DNS transport type for this upstream resolver.
-        '';
-        example = "tls";
+        description = "DNS transport.";
       };
 
       address = mkOption {
         type = types.strMatching ".+";
-        description = ''
-          Resolver address or hostname used for this DNS upstream.
-        '';
+        description = "Resolver address.";
         example = "1.1.1.1";
       };
 
       port = mkOption {
         type = types.port;
         default = 53;
-        description = ''
-          Destination port for this DNS upstream.
-        '';
-        example = 853;
+        description = "Resolver port.";
       };
     };
   };
@@ -117,10 +59,7 @@ let
     options = {
       name = mkOption {
         type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
-        description = ''
-          Profile name used by `proxy-ctl wrap <name> -- <command>`.
-          Must be unique within perAppRouting.profiles.
-        '';
+        description = "Profile name, unique.";
         example = "steam-browser";
       };
 
@@ -134,23 +73,9 @@ let
         ];
         default = "proxychains";
         description = ''
-          Per-app route backend used by proxy-ctl wrap.
-
-          - "direct": run the command unchanged.
-          - "proxychains": run the command through proxychains-ng using the
-            local proxy-suite mixed SOCKS endpoint.
-          - "tun": launch the command in the dedicated per-app-routing TUN slice so
-            only that app's traffic is policy-routed into the app TUN backend.
-          - "tproxy": launch the command in the dedicated per-app-routing TProxy
-            slice so only that app's traffic is transparently intercepted by
-            the local proxy TProxy inbound.
-          - "zapret": launch the command in the dedicated per-app-routing zapret
-            slice so only that app's traffic is handled by the separate
-            per-app-scoped zapret instance.
-
-          Additional route backends may be added in the future.
+          Backend: "direct" (unchanged), "proxychains", or the per-app "tun", "tproxy" or "zapret"
+          backend of perAppRouting.
         '';
-        example = "proxychains";
       };
     };
   };
@@ -163,5 +88,7 @@ in
     routingRuleType
     ;
 }
-// outboundTypes
-// zapretTypes
+// import ./types/outbounds.nix { inherit lib routingFields; }
+// import ./types/zapret.nix { inherit lib; }
+// import ./types/inbounds.nix { inherit lib; }
+// import ./types/amnezia-wg.nix { inherit lib; }

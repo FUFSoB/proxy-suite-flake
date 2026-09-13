@@ -16,6 +16,11 @@ def run_xray_parser(url: str):
     return build_outbound(url, "test-outbound", backend="xray")
 
 
+def vmess_url(extra: dict) -> str:
+    body = {"add": "example.com", "port": 443, "id": "uuid", "net": "tcp", **extra}
+    return "vmess://" + base64.b64encode(json.dumps(body).encode()).decode()
+
+
 class BuildOutboundTests(unittest.TestCase):
     def test_vless_reality(self):
         ob = run_parser(
@@ -289,6 +294,34 @@ class BuildOutboundTests(unittest.TestCase):
     def test_invalid_scheme_fails(self):
         with self.assertRaisesRegex(ValueError, "unsupported scheme"):
             run_parser("wireguard://example.com")
+
+    def test_trojan_xhttp_fails_loudly_on_sing_box(self):
+        url = "trojan://pw@example.com:443?security=tls&type=xhttp&path=/p"
+        with self.assertRaisesRegex(ValueError, "unsupported Trojan transport 'xhttp'"):
+            run_parser(url)
+        self.assertEqual(
+            run_xray_parser(url)["streamSettings"]["network"], "xhttp"
+        )
+
+    def test_vmess_kcp_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, "unsupported VMess transport 'kcp'"):
+            run_parser(vmess_url({"net": "kcp"}))
+
+    def test_xray_only_fingerprint_rejected_for_sing_box_trojan_and_vmess(self):
+        trojan = "trojan://pw@example.com:443?security=tls&fp=unsafe"
+        with self.assertRaises(ValueError):
+            run_parser(trojan)
+        self.assertEqual(
+            run_xray_parser(trojan)["streamSettings"]["tlsSettings"]["fingerprint"],
+            "unsafe",
+        )
+        vmess = vmess_url({"tls": "tls", "fp": "unsafe"})
+        with self.assertRaises(ValueError):
+            run_parser(vmess)
+        self.assertEqual(
+            run_xray_parser(vmess)["streamSettings"]["tlsSettings"]["fingerprint"],
+            "unsafe",
+        )
 
     def test_backend_aware_parser_type_error_is_not_arity_fallback(self):
         def broken_parser(url: str, tag: str, backend: str):

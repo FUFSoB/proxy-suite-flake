@@ -13,7 +13,6 @@
   userControlCfg,
   selectionMode,
   collapseNamedOutbounds,
-  hasSubscriptions,
   constants,
   jq,
   python3,
@@ -28,6 +27,7 @@
   routeModeRulesFile,
   proxyInboundsCfg,
   proxyInboundsNeedLocalProxy,
+  proxyInboundsGuardPrivate,
   proxyInboundViaOutbounds,
   userControlEnabled,
   buildInboundPy,
@@ -42,7 +42,7 @@ let
   mainBackend = if pureXrayEnabled then "xray" else "sing-box";
   backendArg = "--backend ${mainBackend}";
   backendBin = if pureXrayEnabled then xray else singBox;
-  localProxyAuth = proxyCfg.auth;
+  localProxyAuth = proxyCfg.listener.auth;
   localProxyAuthEnabled =
     localProxyAuth.username != null
     && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
@@ -54,6 +54,13 @@ let
     else
       null;
   routeModeStateFile = "/run/proxy-suite/route-mode";
+  inherit (constants)
+    priorityOutboundFile
+    runtimeOutboundsDir
+    runtimeSubscriptionsDir
+    outboundInventoryFile
+    ;
+  clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
   xrayLoglevelFile = "/run/proxy-suite/xray-loglevel";
   runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
   xraySidecarRoutingMark = globalTproxy.proxyMark;
@@ -72,10 +79,10 @@ let
       lib
       pkgs
       proxyCfg
-      hasSubscriptions
       hybridEnabled
       mainBackend
       backend
+      runtimeSubscriptionsDir
       jq
       python3
       parserScriptsPythonPath
@@ -86,8 +93,11 @@ let
   inherit (subscriptionScripts)
     subscriptionCacheDir
     subscriptionCacheHelpersBlock
+    mkSubscriptionLoadHelperBlock
     mkSubscriptionBlock
+    runtimeSubscriptionsBlock
     mkSubscriptionFetchBlock
+    runtimeSubscriptionsFetchBlock
     subscriptionTagsFile
     ;
 
@@ -105,11 +115,15 @@ let
       backend
       backendArg
       xraySidecarRoutingMark
+      priorityOutboundFile
+      runtimeOutboundsDir
       jq
       python3
       parserScriptsPythonPath
       buildOutboundPy
       mkSubscriptionBlock
+      mkSubscriptionLoadHelperBlock
+      runtimeSubscriptionsBlock
       ;
   };
   inherit (outboundScripts) mkOutboundScript;
@@ -125,8 +139,10 @@ let
 
   backendJqFilter = import ./script-blocks/backend-jq-filter.nix {
     inherit
+      lib
       pureXrayEnabled
       selectionMode
+      proxyInboundsGuardPrivate
       ;
   };
   backendJqFilterFile = pkgs.writeText "proxy-suite-${backend}-backend-filter.jq" backendJqFilter;
@@ -186,38 +202,60 @@ let
       proxyInboundsFile
       proxyInboundsSpecFile
       builders
+      constants
       ;
   };
-  inherit (proxyInboundsScripts) startInbounds;
+  inherit (proxyInboundsScripts) startInbounds collectInboundStats;
   proxyInboundsLinksFile = proxyInboundsScripts.linksFile;
+  proxyInboundsSubscriptionsFile = proxyInboundsScripts.subscriptionsFile;
 
   controlScripts = import ./control-scripts.nix {
     inherit
       lib
       pkgs
       proxyCfg
+      clashApi
       routeModeStateFile
+      priorityOutboundFile
+      outboundInventoryFile
       subscriptionCacheDir
       subscriptionCacheHelpersBlock
       mkSubscriptionFetchBlock
+      runtimeSubscriptionsFetchBlock
+      jq
       ;
   };
   inherit (controlScripts)
     subscriptionUpdateScript
     setRouteModeScript
+    setPriorityOutboundScript
+    reloadOutboundsScript
     ;
 
 in
 {
-  inherit startSocks startTun startPerAppTun startInbounds;
+  inherit
+    startSocks
+    startTun
+    startPerAppTun
+    startInbounds
+    collectInboundStats
+    ;
   inherit
     proxyInboundsLinksFile
+    proxyInboundsSubscriptionsFile
     routeModeStateFile
     setRouteModeScript
+    setPriorityOutboundScript
+    reloadOutboundsScript
     subscriptionUpdateScript
-    hasSubscriptions
     subscriptionTagsFile
     subscriptionCacheDir
     runtimeProxychainsConfig
+    priorityOutboundFile
+    runtimeOutboundsDir
+    runtimeSubscriptionsDir
+    outboundInventoryFile
+    clashApi
     ;
 }

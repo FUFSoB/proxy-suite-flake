@@ -36,6 +36,7 @@ let
     perAppRoutingTun
     perAppRoutingTproxy
     perAppZapretCfg
+    zapretEngine
     userControlCfg
     selectionMode
     builtinTags
@@ -43,13 +44,13 @@ let
     subscriptionTags
     invalidRoutingTargets
     collapseNamedOutbounds
-    hasSubscriptions
     sshProxyCfg
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInboundsNeedLocalProxy
+    proxyInboundsGuardPrivate
     proxyInboundViaOutbounds
     userControlEnabled
     ;
@@ -96,7 +97,6 @@ let
       userControlCfg
       selectionMode
       collapseNamedOutbounds
-      hasSubscriptions
       constants
       ;
     inherit
@@ -120,6 +120,7 @@ let
     inherit
       proxyInboundsCfg
       proxyInboundsNeedLocalProxy
+      proxyInboundsGuardPrivate
       proxyInboundViaOutbounds
       userControlEnabled
       builders
@@ -161,12 +162,16 @@ let
       perAppRoutingTun
       perAppRoutingTproxy
       perAppZapretCfg
+      zapretEngine
+      constants
       selectionMode
+      userControlCfg
       ;
     inherit (scripts) subscriptionTagsFile subscriptionCacheDir;
     inherit (scripts) routeModeStateFile;
     inherit proxyInboundsEnabled;
-    inherit (scripts) proxyInboundsLinksFile;
+    inherit (scripts) proxyInboundsLinksFile proxyInboundsSubscriptionsFile;
+    proxyInboundsSubscriptionsBaseUrl = proxyInboundsCfg.subscriptions.baseUrl;
     inherit amneziaWgProfileNamesFile;
     inherit (perAppRouting)
       perAppRoutingProfilesFile

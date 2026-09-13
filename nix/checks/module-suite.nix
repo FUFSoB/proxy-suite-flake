@@ -186,6 +186,17 @@ let
       ;
   };
 
+  zapret2Checks = import ./zapret2.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      baseModule
+      mkProxyCtlDerived
+      mkBadFixture
+      mkFailingAssertions
+      ;
+  };
+
   tgWsProxyChecks = import ./tg-ws-proxy.nix {
     inherit
       pkgs
@@ -220,7 +231,7 @@ let
   validated = builtins.all (x: x) (
     [
       (
-        assert minimal.config.services.proxy-suite.proxy.listenAddress == "127.0.0.1";
+        assert minimal.config.services.proxy-suite.proxy.listener.address == "127.0.0.1";
         true
       )
     ]
@@ -233,6 +244,7 @@ let
     ++ outboundValidationChecks.assertions
     ++ amneziaWgChecks.assertions
     ++ zapretChecks.assertions
+    ++ zapret2Checks.assertions
     ++ globalProxyModeChecks.assertions
     ++ trayChecks.assertions
     ++ subscriptionChecks.assertions
@@ -246,4 +258,5 @@ in
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;
+  zapret2-config = zapret2Checks.runtime;
 }

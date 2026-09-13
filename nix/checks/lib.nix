@@ -166,7 +166,7 @@ let
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "primary";
@@ -214,7 +214,7 @@ let
       script = wrapper + "\n" + metadata.script;
       profiles = builtins.fromJSON (generated.readDerivation metadata.perAppRoutingProfilesFile);
       subscriptionTags = builtins.fromJSON (generated.readDerivation metadata.subscriptionTagsFile);
-      inherit (metadata) proxychainsConfigFile;
+      inherit (metadata) proxychainsConfigFile wrapperEnv;
       awgProfiles = builtins.fromJSON (generated.readDerivation metadata.amneziaWgProfileNamesFile);
     };
 in

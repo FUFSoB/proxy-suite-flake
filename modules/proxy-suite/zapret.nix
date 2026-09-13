@@ -13,7 +13,7 @@ let
   inherit (builders) mkOneshotService;
 
   zapretCfg = cfg.zapret;
-  perAppZapretCfg = zapretCfg.perApp;
+  perAppZapretCfg = cfg.perAppRouting.zapret;
   awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
     builtins.attrNames cfg.amneziaWg.profiles
   );

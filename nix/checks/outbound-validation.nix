@@ -10,7 +10,7 @@
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "dup";
@@ -29,7 +29,7 @@
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "proxy";
@@ -44,7 +44,7 @@
       enable = true;
       proxy = {
         enable = true;
-        singBox.enable = true;
+        backend = "sing-box";
         outbounds = [
           {
             tag = "primary";

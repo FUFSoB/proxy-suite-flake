@@ -1,12 +1,5 @@
-# XRay routing rules for the server-side inbound service.
-#
-# Deliberately separate from the client ruleset: inbound traffic belongs to
-# somebody else's session, so it is not subject to routing.rules, route-mode
-# overrides, or the DNS-hijack machinery the client config needs.
-#
-# The "proxy" outbound here is the local client stack's SOCKS listener, so
-# anything the client decides (selected outbound, urltest, route-mode) applies
-# to relayed traffic without being reimplemented.
+# XRay routing for the inbound service. Separate from the client ruleset:
+# "proxy" here is the client stack's SOCKS listener, so its selection applies.
 {
   lib,
   proxyInboundsCfg,
@@ -15,30 +8,21 @@
 }:
 
 let
-  defaultVia = proxyInboundsCfg.via;
+  defaultVia = proxyInboundsCfg.routing.via;
 
-  # Listeners that follow the tree-wide default need no rule of their own; the
-  # final rule already sends them there.
+  # Listeners on the default egress are covered by the final rule.
   overrideInbounds = builtins.filter (ib: ib.via != defaultVia) proxyInbounds;
   defaultInboundTags = map (ib: ib.tag) (builtins.filter (ib: ib.via == defaultVia) proxyInbounds);
 
-  blockPrivateRule = lib.optional proxyInboundsCfg.blockPrivate {
+  blockPrivateRule = lib.optional proxyInboundsCfg.routing.blockPrivate {
     type = "field";
     ruleTag = "inbound-block-private";
     ip = [ "geoip:private" ];
     outboundTag = "block";
   };
 
-  # A relay must not blackhole the address clients dial to reach it. Without
-  # this, a server on a .ru domain (or a .ru IP) blocks itself under blockRu:
-  # anyone connected through the host cannot open the very site the listeners
-  # are hidden behind, and a blackholed connection reads as a refusal rather
-  # than as a rule. Placed after blockPrivate so a NATed serverAddress cannot
-  # be used to reach the LAN.
-  #
-  # It may be given in either form, and geoip:ru catches a literal IP just as
-  # geosite catches the name. An IPv6 literal is the only form carrying a colon;
-  # a bare name cannot.
+  # The address clients dial must stay reachable even when blockRu covers it
+  # (a .ru domain or IP). After blockPrivate, so it cannot open the LAN.
   serverAddressIsIp =
     let
       addr = proxyInboundsCfg.serverAddress;
@@ -60,7 +44,7 @@ let
     )
   );
 
-  blockRuRules = lib.optionals proxyInboundsCfg.blockRu [
+  blockRuRules = lib.optionals proxyInboundsCfg.routing.blockRu [
     {
       type = "field";
       ruleTag = "inbound-block-ru-domain";
@@ -75,12 +59,29 @@ let
     }
   ];
 
-  # Only meaningful when the default egress leaves through a proxy: zapret works
-  # on traffic this host emits itself, so destinations it can already unblock
-  # are better left direct than sent through a proxy hop. Scoped to the
-  # listeners on the default egress, so an explicit per-listener `via` wins.
+  inboundProxy = proxyInboundsCfg.routing.proxy;
+
+  proxyDomainRule = lib.optional (inboundProxy.domains != [ ] || inboundProxy.geosites != [ ]) {
+    type = "field";
+    ruleTag = "inbound-proxy-domain";
+    domain =
+      map (domain: "domain:${domain}") inboundProxy.domains
+      ++ map (name: "geosite:${name}") inboundProxy.geosites;
+    inboundTag = map (ib: ib.tag) proxyInbounds;
+    outboundTag = "proxy";
+  };
+
+  proxyIpRule = lib.optional (inboundProxy.ips != [ ] || inboundProxy.geoips != [ ]) {
+    type = "field";
+    ruleTag = "inbound-proxy-ip";
+    ip = inboundProxy.ips ++ map (name: "geoip:${name}") inboundProxy.geoips;
+    inboundTag = map (ib: ib.tag) proxyInbounds;
+    outboundTag = "proxy";
+  };
+
+  # Only when the default egress is a proxy, and only for its listeners.
   zapretDirectEnabled =
-    proxyInboundsCfg.zapretDirect
+    proxyInboundsCfg.routing.zapretDirect
     && defaultInboundTags != [ ]
     && !builtins.elem defaultVia [
       "direct"
@@ -117,7 +118,17 @@ let
     outboundTag = defaultVia;
   };
 
-  xrayInboundRules = blockPrivateRule ++ serverAddressRule ++ blockRuRules ++ zapretRules ++ overrideRules ++ [ finalRule ];
+  # Explicit proxy exceptions beat blockRu: RU-geolocated ranges (Telegram's,
+  # at times) would otherwise swallow them.
+  xrayInboundRules =
+    blockPrivateRule
+    ++ serverAddressRule
+    ++ proxyDomainRule
+    ++ proxyIpRule
+    ++ blockRuRules
+    ++ zapretRules
+    ++ overrideRules
+    ++ [ finalRule ];
 in
 {
   inherit xrayInboundRules;

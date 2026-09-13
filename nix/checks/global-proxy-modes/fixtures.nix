@@ -17,7 +17,7 @@ let
         enable = true;
         proxy = {
           enable = true;
-          singBox.enable = true;
+          backend = "sing-box";
           tproxy.enable = true;
           outbounds = [
             {
@@ -44,9 +44,9 @@ let
   tproxyAutostartFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.proxy.tproxy = {
-        enable = true;
-        autostart = true;
+      services.proxy-suite.proxy = {
+        tproxy.enable = true;
+        autostart = "tproxy";
       };
     }
   ];
@@ -61,29 +61,15 @@ let
   tunAutostartFixture = evalProxySuite [
     baseModule
     {
-      services.proxy-suite.proxy.tun = {
-        enable = true;
-        autostart = true;
+      services.proxy-suite.proxy = {
+        tun.enable = true;
+        autostart = "tun";
       };
     }
   ];
 
   invalidGlobalProxyModeAssertions = mkFailingAssertions mkBadFixture [
-    # TUN and TProxy cannot both autostart globally.
-    [
-      {
-        services.proxy-suite.proxy = {
-          tproxy = {
-            enable = true;
-            autostart = true;
-          };
-          tun = {
-            enable = true;
-            autostart = true;
-          };
-        };
-      }
-    ]
+    # TUN and TProxy can no longer both autostart: proxy.autostart holds one mode.
 
     # Transparent proxy backends require proxy.enable.
     [

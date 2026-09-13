@@ -24,58 +24,60 @@ let
   zapretSyncBase = mkZapretBase zapretSyncFixture;
 
   zapretSpacedConfigAliasBase = mkZapretBase (evalZapret {
-    configName = "general(ALT12)";
+    zapret-discord-youtube.configName = "general(ALT12)";
   });
 
   zapretUnspacedConfigAliasBase = mkZapretBase (evalZapret {
-    configName = "general (ALT)";
+    zapret-discord-youtube.configName = "general (ALT)";
   });
 
   zapretSyncNoExtraListsFixture = evalZapret {
-    includeExtraUpstreamLists = false;
+    zapret-discord-youtube.includeExtraUpstreamLists = false;
   };
   zapretSyncNoExtraListsBase = mkZapretBase zapretSyncNoExtraListsFixture;
   zapretSyncNoExtraListsRules = mkRoutingRules zapretSyncNoExtraListsFixture;
 
   zapretSyncExtraListsFixture = evalZapret {
-    includeExtraUpstreamLists = true;
+    zapret-discord-youtube.includeExtraUpstreamLists = true;
   };
   zapretSyncExtraListsBase = mkZapretBase zapretSyncExtraListsFixture;
   zapretSyncExtraListsRules = mkRoutingRules zapretSyncExtraListsFixture;
 
   zapretSyncIpsRules = mkRoutingRules (evalZapret {
-    syncDirectRoutingUpstreamIps = true;
+    directSync.upstreamIps = true;
   });
 
   zapretSyncUserIpsDisabledRules = mkRoutingRules (evalZapret {
-    syncDirectRoutingUserIps = false;
-    ipsetAll = [ "203.0.113.0/24" ];
+    directSync.userIps = false;
+    zapret-discord-youtube.ips = [ "203.0.113.0/24" ];
   });
 
   zapretSyncDisabledRules = mkRoutingRules (evalZapret {
-    syncDirectRouting = false;
+    directSync.enable = false;
   });
 
   zapretSyncDomainsOnlyRules = mkRoutingRules (evalZapret {
-    syncDirectRouting = true;
-    syncDirectRoutingUpstreamIps = false;
+    directSync = {
+      enable = true;
+      upstreamIps = false;
+    };
   });
 
   zapretExtrasRules = mkRoutingRules (evalZapret {
-    listGeneral = [ "pixiv.net" ];
+    zapret-discord-youtube.domains = [ "pixiv.net" ];
   });
 
   zapretIpExtrasRules = mkRoutingRules (evalZapret {
-    ipsetAll = [ "203.0.113.0/24" ];
+    zapret-discord-youtube.ips = [ "203.0.113.0/24" ];
   });
 
   zapretExcludesRules = mkRoutingRules (evalZapret {
-    listExclude = [ "discord.com" ];
+    zapret-discord-youtube.excludeDomains = [ "discord.com" ];
   });
 
   zapretIpExcludesRules = mkRoutingRules (evalZapret {
-    ipsetExclude = [ "1.1.1.0/24" ];
-    ipsetAll = [ "1.1.1.0/24" ];
+    zapret-discord-youtube.excludeIps = [ "1.1.1.0/24" ];
+    zapret-discord-youtube.ips = [ "1.1.1.0/24" ];
   });
 in
 {

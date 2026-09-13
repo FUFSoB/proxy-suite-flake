@@ -1,101 +1,99 @@
-# Per-app routing options (backends and profiles).
 { lib, ... }:
 
 let
-  inherit (lib) mkOption mkEnableOption types;
+  inherit (lib) mkEnableOption mkOption types;
   t = import ./types.nix { inherit lib; };
+  int =
+    default: description:
+    mkOption {
+      type = types.int;
+      inherit default description;
+    };
+  localSubnets =
+    description:
+    mkOption {
+      type = types.listOf types.str;
+      default = [ "192.168.0.0/16" ];
+      inherit description;
+      example = [
+        "192.168.0.0/16"
+        "10.0.0.0/8"
+      ];
+    };
 in
 {
   options.services.proxy-suite.perAppRouting = {
-    enable = mkEnableOption "per-app routing helpers via proxy-ctl wrap";
+    enable = mkEnableOption "per-app routing (`proxy-ctl apps run`)";
 
     createDefaultProfiles = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Whether to automatically add curated perAppRouting profiles.
-
-        This is opt-in. Generated defaults are appended only when no
-        user-defined profile with the same name already exists.
-
-        Current curated defaults:
-        - `proxychains`: route = "proxychains"
-        - `tun`: route = "tun" when proxy.tun.perApp.enable = true
-        - `tproxy`: route = "tproxy" when proxy.tproxy.perApp.enable = true
-        - `zapret`: route = "zapret" when zapret.perApp.enable = true
-
-        This makes `proxy-ctl wrap proxychains -- <command>` available
-        without defining the profile manually, and similarly exposes
-        `proxy-ctl wrap tun -- <command>` or
-        `proxy-ctl wrap tproxy -- <command>` or
-        `proxy-ctl wrap zapret -- <command>` when the corresponding backend
-        is enabled.
+        Add a profile named after each enabled backend (proxychains, tun, tproxy, zapret) unless
+        one with that name already exists.
       '';
-      example = true;
     };
 
     profiles = mkOption {
       type = types.listOf t.perAppRoutingProfileType;
       default = [ ];
-      description = ''
-        Named per-app route profiles consumed by `proxy-ctl wrap`.
-
-        This initial implementation supports:
-        - "direct" for running a command unchanged
-        - "proxychains" for TCP apps that can use an LD_PRELOAD wrapper
-          instead of global TUN or TProxy interception
-        - "tun" for per-app-scoped policy routing into the dedicated app TUN
-          backend
-        - "tproxy" for per-app-scoped transparent interception through the
-          dedicated app TProxy backend
-        - "zapret" for per-app-scoped zapret handling through a separate
-          zapret instance without changing the app's network path or exit IP
-
-        proxychains-based wrapping depends on proxy.enable = true and the
-        local proxy-suite proxy listener provided by the active backend. The
-        "tun" route depends on proxy.tun.perApp.enable = true. The "tproxy"
-        route depends on proxy.tproxy.perApp.enable = true. The "zapret"
-        route depends on zapret.perApp.enable = true.
-
-        When createDefaultProfiles = true, curated defaults are added on top
-        of this list unless a user-defined profile already uses the same
-        name.
-      '';
+      description = "Profiles for `proxy-ctl apps run <name> -- <command>`.";
       example = [
         {
           name = "steam-browser";
           route = "proxychains";
         }
-        {
-          name = "native-direct";
-          route = "direct";
-        }
       ];
     };
 
     proxychains = {
-      enable = mkEnableOption "proxychains-backed perAppRouting profiles";
+      enable = mkEnableOption "the proxychains backend (TCP apps, through LD_PRELOAD)";
 
       quiet = mkOption {
         type = types.bool;
         default = true;
-        description = ''
-          Whether generated proxychains wrappers should suppress their normal
-          startup chatter. This maps to proxychains-ng quiet_mode.
-        '';
-        example = true;
+        description = "Silence proxychains (quiet_mode).";
       };
 
       proxyDns = mkOption {
         type = types.bool;
         default = true;
-        description = ''
-          Whether generated proxychains wrappers should resolve DNS through
-          the proxy instead of the local resolver. This maps to proxychains-ng
-          proxy_dns.
-        '';
-        example = true;
+        description = "Resolve DNS through the proxy (proxy_dns).";
       };
+    };
+
+    tun = {
+      enable = mkEnableOption "the per-app TUN backend";
+      fwmark = int 16 "Mark that steers wrapped apps into routeTable.";
+      routeTable = int 101 "Policy-routing table of the per-app TUN.";
+      localSubnets = localSubnets "Subnets wrapped apps reach directly.";
+
+      interface = mkOption {
+        type = types.str;
+        default = "psperapptun0";
+        description = "Per-app TUN interface name.";
+      };
+
+      address = mkOption {
+        type = types.str;
+        default = "172.20.0.1/30";
+        description = "Per-app TUN interface address (CIDR).";
+      };
+
+      mtu = int 1400 "Per-app TUN interface MTU.";
+    };
+
+    tproxy = {
+      enable = mkEnableOption "the per-app TProxy backend";
+      fwmark = int 17 "Mark that steers wrapped apps into routeTable.";
+      routeTable = int 102 "Policy-routing table of the per-app TProxy.";
+      localSubnets = localSubnets "Subnets that bypass interception (DNS excepted).";
+    };
+
+    zapret = {
+      enable = mkEnableOption "the per-app zapret backend: a second zapret instance for wrapped apps only";
+      filterMark = int 268435456 "Mark bit that selects wrapped app traffic.";
+      qnum = int 201 "NFQUEUE number. Must differ from the global instance's.";
     };
   };
 }

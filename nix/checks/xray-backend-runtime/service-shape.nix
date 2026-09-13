@@ -23,7 +23,7 @@
         );
         balancer = builtins.head xrayTproxyConfig.routing.balancers;
       in
-      assert xrayFixture.config.services.proxy-suite.proxy.xray.enable;
+      assert xrayFixture.config.services.proxy-suite.proxy.backend == "xray";
       assert xrayFixture.config.systemd.services ? "proxy-suite-socks";
       assert xrayFixture.config.systemd.services ? "proxy-suite-tproxy";
       assert xrayFixture.config.systemd.services ? "proxy-suite-tun";
