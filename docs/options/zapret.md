@@ -46,6 +46,9 @@ Part of the [proxy-suite options reference](./index.md).
       - [udpIn](#services-proxy-suite-zapret-zapret2-autohostlist-udpin)
       - [udpOut](#services-proxy-suite-zapret-zapret2-autohostlist-udpout)
     - [blobs](#services-proxy-suite-zapret-zapret2-blobs)
+    - cutoff
+      - [enable](#services-proxy-suite-zapret-zapret2-cutoff-enable)
+      - [proxyFallback](#services-proxy-suite-zapret-zapret2-cutoff-proxyfallback)
     - [domains](#services-proxy-suite-zapret-zapret2-domains)
     - [excludeDomains](#services-proxy-suite-zapret-zapret2-excludedomains)
     - [ipv6](#services-proxy-suite-zapret-zapret2-ipv6)
@@ -707,6 +710,48 @@ attribute set of string
 {
   tls_clienthello = "/etc/proxy-suite/my_clienthello.bin";
 }
+```
+
+<a id="services-proxy-suite-zapret-zapret2-cutoff-enable"></a>
+## services\.proxy-suite\.zapret\.zapret2\.cutoff\.enable
+
+Some lines let TLS to certain hosting networks handshake and then cut it at 12-34 KB,
+which no strategy fixes\. z2k’s probe checks this line against ~110 known targets when
+its network changes and once a day, and for each cut-off network searches a whitelisted
+name that nfqws2 then puts into a fake ClientHello: thousands of short TLS connections to
+foreign hosting IPs per full run, sent directly and never touched by zapret2\. State and
+maps live in /var/lib/proxy-suite/zapret2/cutoff; ` proxy-ctl zapret cutoff ` shows them\.
+
+*Type:*
+boolean
+
+*Default:*
+
+```nix
+true
+```
+
+*Example:*
+
+```nix
+true
+```
+
+<a id="services-proxy-suite-zapret-zapret2-cutoff-proxyfallback"></a>
+## services\.proxy-suite\.zapret\.zapret2\.cutoff\.proxyFallback
+
+Route the cut-off networks no name fixes through the proxy outbound\. Needs the sing-box
+backend with an outbound and a route mode other than all-bypass, and only applies to
+traffic the backend sees by address (TUN, TProxy, per-app routing, clients that dial IPs);
+explicit direct rules still win\.
+
+*Type:*
+boolean
+
+*Default:*
+
+```nix
+true
 ```
 
 <a id="services-proxy-suite-zapret-zapret2-domains"></a>

@@ -122,9 +122,19 @@ let
   collapseNamedOutbounds = selectionMode == "first";
   clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
+  zapretCutoffEnabled =
+    zapretEngine == "zapret2"
+    && (zapretCfg.enable || perAppZapretEnabled)
+    && zapretCfg.zapret2.cutoff.enable;
+  # The cut-off networks no whitelisted name fixes go through the proxy outbound.
+  zapretCutoffProxyFallback =
+    zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
   userControlEnabled = userControlCfg.allow != [ ];
   constants = {
     zapret2StateDir = "/var/lib/proxy-suite/zapret2";
+    zapret2CutoffDir = "/var/lib/proxy-suite/zapret2/cutoff";
+    # Conntrack bit on the cutoff probe's own connections, which zapret2 leaves alone.
+    zapret2CutoffProbeCtMark = 33554432; # 0x2000000
 
     # NFQUEUE of the global zapret instance, per engine. Both are the engine's own
     # default, which proxy-suite never overrides; the per-app instance opens a
@@ -203,6 +213,8 @@ in
     zapretEngine
     perAppZapretCfg
     perAppZapretEnabled
+    zapretCutoffEnabled
+    zapretCutoffProxyFallback
     userControlCfg
     userControlEnabled
     sshProxyCfg

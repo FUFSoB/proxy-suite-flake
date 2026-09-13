@@ -93,10 +93,15 @@ let
     else
       pkgs.writeText "proxy-suite-zapret2-blobs" (lib.concatStringsSep " " source.blobArgs);
 
-  # The state layer wraps circular, so it loads after the source's Lua.
+  # The state layer wraps circular, so it loads after the source's Lua. z2k-tcp16
+  # does nothing until the cutoff probe has written its maps.
   optPrefix = lib.concatStringsSep " " (
     map (file: "--lua-init=@${file}") (
-      source.luaInit ++ [ "${zapret2Sources.z2k}/files/lua/z2k-state-persist.lua" ]
+      source.luaInit
+      ++ map (name: "${zapret2Sources.z2k}/files/lua/${name}.lua") [
+        "z2k-tcp16"
+        "z2k-state-persist"
+      ]
     )
     ++ lib.mapAttrsToList (name: file: "--blob=${name}:@${blobPath file}") zapret2Cfg.blobs
   );
@@ -208,6 +213,7 @@ let
       tunInterfaces ? [ ],
       excludeMark ? null,
       exemptCidrs ? [ ],
+      probeCtMark ? null,
     }:
     let
       chains = [
@@ -240,6 +246,10 @@ let
         chain:
         lib.optional (excludeMark != null) (
           mkRule chain.name "mark and ${toHex excludeMark} != 0" "proxy-suite per-app-zapret bypass"
+        )
+        # Replies carry no socket, so the cutoff probe is matched by conntrack.
+        ++ lib.optional (probeCtMark != null) (
+          mkRule chain.name "ct mark and ${toHex probeCtMark} != 0" "proxy-suite cutoff probe bypass"
         )
         ++ map (
           interface: mkRule chain.name "${chain.direction} '\"${interface}\"'" "proxy-suite TUN bypass"
@@ -293,6 +303,13 @@ let
       # Read by z2k-state-persist.lua inside nfqws2, which inherits the unit's environment.
       "Z2K_STATE_DIR_OVERRIDE=${circularStateDir}"
       "Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE=${pidDir}"
+    ]
+    # The cutoff probe's maps, read by z2k-tcp16.lua; pin.txt forces one name for the line.
+    ++ lib.optionals zapret2Cfg.cutoff.enable [
+      "Z2K_TCP16_ASN=${constants.zapret2CutoffDir}/asn.txt"
+      "Z2K_TCP16_SNI=${constants.zapret2CutoffDir}/sni.txt"
+      "Z2K_SNI_PIN=${constants.zapret2CutoffDir}/pin.txt"
+      "Z2K_TCP16_NETS=${zapret2Sources.z2k}/files/lists/tcp16_nets.txt"
     ];
 in
 {

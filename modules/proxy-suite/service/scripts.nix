@@ -14,6 +14,7 @@
   selectionMode,
   collapseNamedOutbounds,
   constants,
+  zapretCutoffProxyFallback,
   jq,
   python3,
   singBox,
@@ -159,6 +160,7 @@ let
       hybridEnabled
       pureXrayEnabled
       constants
+      zapretCutoffProxyFallback
       jq
       singBox
       xray

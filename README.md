@@ -125,6 +125,8 @@ A group without a verb shows its status or list.
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
   zapret auto clear                      forget learned hosts and strategies (sudo)
+  zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
+  zapret cutoff probe                    probe this line again now (sudo)
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]

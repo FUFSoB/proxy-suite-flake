@@ -51,6 +51,8 @@ A group without a verb shows its status or list.
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
   zapret auto clear                      forget learned hosts and strategies (sudo)
+  zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
+  zapret cutoff probe                    probe this line again now (sudo)
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
@@ -80,9 +82,11 @@ _complete_tree() {
     "proxy subs rm") _runtime_tags subscription ;;
     "proxy select") printf 'auto\n'; _outbound_tags ;;
     "proxy mode") printf '%s\n' default whitelist blacklist all-proxy all-bypass ;;
-    "proxy tun" | "proxy tproxy" | zapret | ssh) printf '%s\n' status on off ;;
+    "proxy tun" | "proxy tproxy" | ssh) printf '%s\n' status on off ;;
+    zapret) printf '%s\n' status on off auto cutoff ;;
     "proxy auto") printf '%s\n' list probe learn queue ;;
     "zapret auto") printf '%s\n' list add forget exclude clear ;;
+    "zapret cutoff") printf '%s\n' status probe ;;
     "zapret auto forget" | "zapret auto exclude") cat "$(_zapret_auto_file zapret-hosts-auto.txt)" ;;
     awg) printf '%s\n' list on off restart ;;
     "awg on" | "awg off" | "awg restart") printf '%s\n' "${AWG_PROFILES[@]}" ;;
@@ -1070,6 +1074,11 @@ cmd_zapret() {
     cmd_zapret_auto "$@"
     return
   fi
+  if [ "${1:-}" = cutoff ]; then
+    shift
+    cmd_zapret_cutoff "$@"
+    return
+  fi
   _toggle zapret-discord-youtube zapret "$@"
 }
 
@@ -1151,6 +1160,42 @@ cmd_zapret_auto() {
       ;;
     *) _usage "zapret auto [list|add|forget|exclude|clear]" ;;
   esac
+}
+
+# --- zapret cutoff -------------------------------------------------------------
+#
+# The 16 KB cutoff probe's verdict: which networks this line cuts after the
+# handshake, and the whitelisted name that gets each through. Networks without a
+# name are what the proxy fallback routes.
+
+cmd_zapret_cutoff() {
+  local dir="${ZAPRET_STATE_DIR:-/var/lib/proxy-suite/zapret2}/cutoff" verb="${1:-status}" cut
+  [ "${ZAPRET_CUTOFF_ENABLED:-0}" = 1 ] || _die "The cutoff probe needs zapret.engine = \"zapret2\" with zapret2.cutoff.enable."
+  case "$verb" in
+    status) ;;
+    probe)
+      : >"$dir/force" 2>/dev/null || _die "Cannot write $dir - re-run with sudo."
+      echo "Probing this line; this takes a few minutes..."
+      systemctl start proxy-suite-zapret2-cutoff.service ||
+        _die "The probe failed. Details: journalctl -u proxy-suite-zapret2-cutoff -n 30"
+      ;;
+    *) _usage "zapret cutoff [status|probe]" ;;
+  esac
+  if ! [ -s "$dir/ts" ]; then
+    echo "Not probed yet."
+    return
+  fi
+  echo "Probed:  $(date -d "@$(cat "$dir/ts")" '+%F %R') from $(cat "$dir/egress" 2>/dev/null)"
+  cut=$(grep -c '^[0-9]' "$dir/asn.txt" 2>/dev/null || true)
+  if [ "${cut:-0}" = 0 ]; then
+    echo "Cutoff:  none on this line"
+    return
+  fi
+  echo "Cutoff:  ${cut} network(s)"
+  awk -F'\t' '
+    FILENAME == ARGV[1] { if ($1 ~ /^[0-9]+$/) name[$1] = $2; next }
+    $1 ~ /^[0-9]+$/ { printf "  AS%-8s %s\n", $1, ($1 in name ? name[$1] : "no name - proxy fallback") }
+  ' "$dir/sni.txt" "$dir/asn.txt"
 }
 
 # --- where -------------------------------------------------------------------

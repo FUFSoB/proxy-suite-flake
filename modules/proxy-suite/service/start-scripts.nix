@@ -10,6 +10,7 @@
   hybridEnabled,
   pureXrayEnabled,
   constants,
+  zapretCutoffProxyFallback,
   jq,
   singBox,
   xray,
@@ -143,6 +144,7 @@ let
       xraySidecarBasePort ? xraySidecarBasePorts.socks,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
       enableAutoProxy ? false,
+      enableZapretCutoff ? false,
     }:
     pkgs.writeShellScript name ''
       set -euo pipefail
@@ -234,6 +236,20 @@ let
         fi
       ''}
 
+      ${lib.optionalString enableZapretCutoff ''
+        # zapret2's cutoff probe lists the prefixes of cut-off networks no whitelisted
+        # name gets through; the proxy carries those. sing-box refuses a missing
+        # rule-set path and reloads the file when the probe renames a new one in.
+        if [ "$ROUTE_MODE" != all-bypass ]; then
+          CUTOFF_RULE_SET=${lib.escapeShellArg "${constants.zapret2CutoffDir}/proxy.json"}
+          install -d -m 0755 "$(dirname "$CUTOFF_RULE_SET")"
+          [ -s "$CUTOFF_RULE_SET" ] || echo '{"version":1,"rules":[]}' > "$CUTOFF_RULE_SET"
+          AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$CUTOFF_RULE_SET" \
+            '. + [{type: "local", format: "source", tag: "zapret-cutoff", path: $p}]' <<< "$AUTOPROXY_RULE_SETS_JSON")
+          AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-cutoff"], outbound: "proxy"}]' <<< "$AUTOPROXY_RULES_JSON")
+        fi
+      ''}
+
       ${jq} \
         --argjson obs "$OUTBOUNDS_JSON" \
         --argjson probe_inbounds "$PROBE_INBOUNDS_JSON" \
@@ -309,6 +325,7 @@ let
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
     # Only the socks unit: relayed traffic reaches it, and the prober needs one home.
     enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
+    enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
   };
 
   startTun = mkStartScript {

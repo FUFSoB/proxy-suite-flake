@@ -45,6 +45,17 @@ let
           )
         );
       lists = "--hostlist=${src}/etc/nfqws2/lists/user.list --hostlist-exclude=${src}/etc/nfqws2/lists/exclude.list";
+      # z2k's 16 KB cutoff name, as its generator places it: ahead of circular, with
+      # no strategy tag, so every strategy carries it.
+      withSniPick =
+        profile:
+        let
+          parts = splitString " --lua-desync=circular:" profile;
+        in
+        if builtins.length parts != 2 then
+          throw "proxy-suite: expected one circular in the nfqws2-keenetic TCP profile"
+        else
+          "${builtins.head parts} --lua-desync=z2k_sni_pick:payload=tls_client_hello:dir=out:blob=z2k_ch:nld=2 --lua-desync=fake:payload=tls_client_hello:dir=out:blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:${builtins.elemAt parts 1}";
     in
     {
       # Its init script's order. QUIC reads the learned list but never adds to it:
@@ -52,7 +63,7 @@ let
       profiles = [
         (args "NFQWS_ARGS_UDP")
         "${args "NFQWS_ARGS_QUIC"} <HOSTLIST_NOAUTO> ${lists}"
-        "${args "NFQWS_ARGS"} <HOSTLIST> ${lists}"
+        "${withSniPick (args "NFQWS_ARGS")} <HOSTLIST> ${lists}"
       ];
       blobArgs = map (replaceStrings [ "@/opt/etc/nfqws2/" ] [ "@${src}/etc/nfqws2/" ]) (
         filter (hasPrefix "--blob=") (words (quoted "NFQWS_BASE_ARGS"))
@@ -116,6 +127,10 @@ let
             cp "$root/extra_strats/TCP/RKN/Discord.txt" "$root/extra_strats/TCP_Discord.txt"
             cp ${src}/files/lists/cf_extra_check_ips.txt "$root/lists/"
             : >"$root/lists/discovered-domains.txt"
+            # Its cutoff name step is emitted only on lines its probe flagged; ours is
+            # a no-op until the cutoff probe writes maps, so emit it unconditionally.
+            mkdir -p "$root/state"
+            echo 1 >"$root/state/tcp16.flag"
             # The generator wires its detectors only when their Lua files exist.
             ln -s ${src}/files/lua/*.lua "$root/lua/"
 

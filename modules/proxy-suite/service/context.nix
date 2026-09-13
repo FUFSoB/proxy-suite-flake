@@ -37,6 +37,8 @@ let
     perAppRoutingTproxy
     perAppZapretCfg
     zapretEngine
+    zapretCutoffEnabled
+    zapretCutoffProxyFallback
     userControlCfg
     selectionMode
     builtinTags
@@ -98,6 +100,7 @@ let
       selectionMode
       collapseNamedOutbounds
       constants
+      zapretCutoffProxyFallback
       ;
     inherit
       jq
@@ -163,6 +166,7 @@ let
       perAppRoutingTproxy
       perAppZapretCfg
       zapretEngine
+      zapretCutoffEnabled
       constants
       selectionMode
       userControlCfg

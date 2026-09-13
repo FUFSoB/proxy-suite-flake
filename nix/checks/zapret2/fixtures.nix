@@ -63,4 +63,9 @@ in
     enable = true;
     zapret2.strategySource = "z2k";
   };
+
+  zapret2NoFallback = mkZapret2 {
+    enable = true;
+    zapret2.cutoff.proxyFallback = false;
+  };
 }

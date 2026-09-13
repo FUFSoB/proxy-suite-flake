@@ -122,5 +122,30 @@ in
         description = "Log why hosts are or are not learned to zapret-hosts-auto-debug.log.";
       };
     };
+
+    cutoff = {
+      enable = mkEnableOption "the 16 KB cutoff probe" // {
+        default = true;
+        description = ''
+          Some lines let TLS to certain hosting networks handshake and then cut it at 12-34 KB,
+          which no strategy fixes. z2k's probe checks this line against ~110 known targets when
+          its network changes and once a day, and for each cut-off network searches a whitelisted
+          name that nfqws2 then puts into a fake ClientHello: thousands of short TLS connections to
+          foreign hosting IPs per full run, sent directly and never touched by zapret2. State and
+          maps live in /var/lib/proxy-suite/zapret2/cutoff; `proxy-ctl zapret cutoff` shows them.
+        '';
+      };
+
+      proxyFallback = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Route the cut-off networks no name fixes through the proxy outbound. Needs the sing-box
+          backend with an outbound and a route mode other than all-bypass, and only applies to
+          traffic the backend sees by address (TUN, TProxy, per-app routing, clients that dial IPs);
+          explicit direct rules still win.
+        '';
+      };
+    };
   };
 }

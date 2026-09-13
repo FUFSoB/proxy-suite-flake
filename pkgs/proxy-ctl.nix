@@ -26,6 +26,7 @@
   inboundsSubscriptionsBaseUrl,
   zapretAutoEnabled,
   zapretStateDir,
+  zapretCutoffEnabled,
   priorityOutboundFile,
   outboundInventoryFile,
   runtimeOutboundsDir,
@@ -63,6 +64,7 @@ let
     INBOUNDS_SUB_BASE_URL = inboundsSubscriptionsBaseUrl;
     ZAPRET_AUTO_ENABLED = zapretAutoEnabled;
     ZAPRET_STATE_DIR = zapretStateDir;
+    ZAPRET_CUTOFF_ENABLED = zapretCutoffEnabled;
     PRIORITY_OUTBOUND_FILE = priorityOutboundFile;
     OUTBOUND_INVENTORY_FILE = outboundInventoryFile;
     RUNTIME_OUTBOUNDS_DIR = runtimeOutboundsDir;

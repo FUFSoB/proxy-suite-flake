@@ -260,6 +260,18 @@
         run list | grep -q 'No hostnames learned'
         test ! -s "$state/circular/state.tsv"
 
+        # The cutoff verdict names each cut-off network's way through.
+        mkdir -p "$state/cutoff"
+        printf '1789000000\n' > "$state/cutoff/ts"
+        printf 'AS12389\n' > "$state/cutoff/egress"
+        printf '24940\n14061\n' > "$state/cutoff/asn.txt"
+        printf '24940\t300.ya.ru\n' > "$state/cutoff/sni.txt"
+        cutoff=$(env ZAPRET_CUTOFF_ENABLED=1 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret cutoff)
+        printf '%s\n' "$cutoff" | grep -q 'from AS12389$'
+        printf '%s\n' "$cutoff" | grep -qx 'Cutoff:  2 network(s)'
+        printf '%s\n' "$cutoff" | grep -qE '^  AS24940 +300\.ya\.ru$'
+        printf '%s\n' "$cutoff" | grep -qE '^  AS14061 +no name - proxy fallback$'
+
         # Without the zapret2 engine there is nothing to inspect.
         ! env ZAPRET_AUTO_ENABLED=0 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret auto list
 

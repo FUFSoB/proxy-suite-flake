@@ -18,6 +18,7 @@ let
     zapret2Tuned
     zapret2NoAuto
     zapret2Z2k
+    zapret2NoFallback
     ;
 
   envValue =
@@ -42,6 +43,8 @@ let
   tunedRuntime = runtimeDir zapret2Tuned globalService;
   noAutoRuntime = runtimeDir zapret2NoAuto globalService;
   z2kRuntime = runtimeDir zapret2Z2k globalService;
+  cutoffProbe = zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
+  socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
 
   proxyCtlEnv = fixture: (mkProxyCtlDerived fixture).wrapperEnv;
 in
@@ -73,6 +76,16 @@ in
       assert envValue zapret2PerApp globalService "PIDDIR=" == "/run/proxy-suite-zapret";
       assert envValue zapret2PerApp perAppService "PIDDIR=" == "/run/proxy-suite-per-app-zapret";
       assert perAppGlobalRuntime != perAppRuntime;
+      true
+    )
+
+    # The cutoff probe comes with zapret2, on a timer, and nfqws2 reads its maps.
+    (
+      assert zapret2Global.config.systemd.timers ? proxy-suite-zapret2-cutoff;
+      assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-cutoff);
+      assert (proxyCtlEnv zapret2Global).ZAPRET_CUTOFF_ENABLED == "1";
+      assert
+        envValue zapret2Global globalService "Z2K_TCP16_ASN=" == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
       true
     )
 
@@ -139,6 +152,31 @@ in
         grep -qF -- '/extra_strats/TCP_Discord.txt <HOSTLIST> ' "${z2kRuntime}/config"
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 1
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
+
+        # --- 16 KB cutoff ---------------------------------------------------
+        # The whitelisted-name step runs ahead of rotation, in both sources.
+        grep -qF -- '/files/lua/z2k-tcp16.lua' "${globalRuntime}/config"
+        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:fails=2:time=300' "${globalRuntime}/config"
+        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
+        # zapret2 leaves the probe's own connections alone, in every chain.
+        test "$(grep -c 'ct mark and 0x2000000 != 0 return' "${globalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh")" = 4
+
+        # Cut-off networks without a name become the proxy's rule-set; named ones stay with zapret2.
+        rules=$(grep -o '/nix/store/[^ ]*-proxy-suite-zapret2-cutoff-rules' ${cutoffProbe} | head -n1)
+        printf '# networks\n24940\n14061\n' >asn.txt
+        printf '24940\t300.ya.ru\n' >sni.txt
+        printf '# map\n24940\t5.9.0.0/16\n14061\t104.131.0.0/16\n14061\t2604:a880::/32\n7777\t1.2.0.0/16\n' >nets.txt
+        test "$("$rules" asn.txt sni.txt nets.txt)" = '{"version":1,"rules":[{"ip_cidr":["104.131.0.0/16","2604:a880::/32"]}]}'
+        printf '24940\t300.ya.ru\n14061\tad.adriver.ru\n' >sni.txt
+        test "$("$rules" asn.txt sni.txt nets.txt)" = '{"version":1,"rules":[]}'
+
+        # The probe is built from z2k's source and knows its tcp16 mode.
+        detect=$(grep -o '/nix/store/[^:]*-z2k-detect-[^:/]*/bin' ${cutoffProbe} | head -n1)
+        "$detect/z2k-detect" tcp16 -h 2>/dev/null
+
+        # The proxy carries what no name fixes, unless the fallback is off.
+        grep -qF 'tag: "zapret-cutoff"' ${socksStart zapret2Global}
+        if grep -qF 'zapret-cutoff' ${socksStart zapret2NoFallback}; then exit 1; fi
 
         # --- per-app instance -------------------------------------------------
         # Wrapped apps opted in explicitly, so no hostlist gates them.

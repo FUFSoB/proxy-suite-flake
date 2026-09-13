@@ -288,6 +288,10 @@ services.proxy-suite = {
         udpOut = 4;
       };
       blobs = { };
+      cutoff = {
+        enable = true;
+        proxyFallback = true;
+      };
       domains = [ ];
       excludeDomains = [ ];
       ipv6 = false;

@@ -15,6 +15,7 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
+  cutoffCfg = zapretCfg.zapret2.cutoff;
   inherit (import ./derived.nix { inherit lib cfg; }) constants;
   awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
     builtins.attrNames cfg.amneziaWg.profiles
@@ -46,10 +47,11 @@ let
       let
         exemptCidrs = lib.optionals zapretCfg.cidrExemption.enable zapretCfg.cidrExemption.cidrs;
       in
-      if perAppZapretCfg.enable || tunInterfaces != [ ] || exemptCidrs != [ ] then
+      if perAppZapretCfg.enable || tunInterfaces != [ ] || exemptCidrs != [ ] || cutoffCfg.enable then
         runtime.mkCustomScript {
           inherit tunInterfaces exemptCidrs;
           excludeMark = if perAppZapretCfg.enable then perAppZapretCfg.filterMark else null;
+          probeCtMark = if cutoffCfg.enable then constants.zapret2CutoffProbeCtMark else null;
         }
       else
         null;
@@ -75,6 +77,16 @@ let
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
   '';
 
+  cutoff = import ./zapret2/cutoff.nix {
+    inherit
+      lib
+      pkgs
+      cfg
+      zapret2Sources
+      nft
+      ;
+  };
+
   perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret2-mark-up" ''
     set -euo pipefail
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
@@ -88,6 +100,9 @@ let
 in
 {
   environment.systemPackages = lib.mkBefore [ runtime.package ];
+
+  systemd.services.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.service;
+  systemd.timers.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.timer;
 
   systemd.services.zapret-discord-youtube = lib.mkIf zapretCfg.enable (mkOneshotService {
     description = "zapret2 DPI bypass";
