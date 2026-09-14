@@ -1,5 +1,13 @@
 #compdef proxy-ctl
 # proxy-ctl knows its own verbs, tags, profiles and units: ask it.
-local -a candidates
-candidates=(${(f)"$(proxy-ctl __complete ${(Q)words[2,CURRENT-1]} 2>/dev/null)"})
-compadd -a candidates
+# It answers word<TAB>description; _describe wants word:description.
+local -a lines candidates
+local line word desc
+lines=(${(f)"$(proxy-ctl __complete ${(Q)words[2,CURRENT-1]} 2>/dev/null)"})
+for line in $lines; do
+  word=${line%%$'\t'*}
+  desc=${line:${#word}}
+  desc=${desc#$'\t'}
+  candidates+=("${word//:/\\:}${desc:+:$desc}")
+done
+_describe -t commands proxy-ctl candidates

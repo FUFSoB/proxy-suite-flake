@@ -289,7 +289,7 @@
 
         printf '%s\n' '["home","work"]' > awg.json
         jq -n '[{name:"torrent",route:"direct"}]' > profiles.json
-        jq -n '{tags:["own-vps","community-de"]}' > inventory.json
+        jq -n '{tags:["own-vps","community-de"],sources:{"own-vps":"proxy.outbounds"}}' > inventory.json
 
         run() {
           env AWG_PROFILES_FILE="$PWD/awg.json" \
@@ -300,7 +300,7 @@
 
         # Every group the help lists must complete, or the table has drifted.
         python3 "$proxy_ctl" help | awk '/^  [a-z]/ { print $1 }' | sort -u > groups
-        run > top
+        run | cut -f1 > top
         while read -r group; do
           grep -qx "$group" top || { echo "help lists $group, completion does not" >&2; exit 1; }
         done < groups
@@ -309,8 +309,8 @@
         has() {
           local want="$1"
           shift
-          run "$@" > words
-          grep -qx "$want" words
+          run "$@" | cut -f1 > words
+          grep -qx -- "$want" words
         }
 
         has outbounds proxy
@@ -322,8 +322,20 @@
         has auto proxy select
         has community-de proxy select
 
+        # Flags, and completion past the first of several arguments.
+        has --delay proxy outbounds test
+        has community-de proxy outbounds test own-vps
+        has --download proxy outbounds test own-vps --ping
+        has own-vps proxy auto probe example.com --via
+        # Unreadable state loses the values, not the flags.
+        has --qr inbounds sub
+
+        # Candidates carry a description after a tab.
+        run proxy select > words
+        grep -qx "$(printf 'own-vps\tproxy.outbounds')" words
+
         # A shell completing must never die, however unreadable the state is.
-        run inbounds link | cmp - /dev/null
+        run inbounds link > /dev/null
         env AWG_PROFILES_FILE=/nonexistent python3 "$proxy_ctl" __complete awg on
 
         # Every shell's completion file at least parses.

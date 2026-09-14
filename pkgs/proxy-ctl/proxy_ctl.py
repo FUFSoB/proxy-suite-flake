@@ -251,63 +251,180 @@ def _awg_profiles():
 
 # --- completion ---------------------------------------------------------------
 #
-# Candidates for the words already typed, one per line. The tree lives here,
-# next to HELP, not in the completion files.
+# Candidates for the words already typed, one per line as word<TAB>description.
+# The tree lives here, next to HELP, not in the completion files. A node offers
+# its words and args until a positional is typed (always, when it repeats), and
+# its flags until each is typed.
+
+TOGGLE = {"status": "is it running", "on": "start it", "off": "stop it"}
 
 
-def _complete_tree(words):
-    simple = {
-        "": ["status", "restart", "logs", "where", "proxy", "zapret", "awg", "ssh", "apps", "inbounds", "help"],
-        "proxy": ["status", "on", "off", "outbounds", "select", "mode", "subs", "tun", "tproxy", "auto"],
-        "proxy outbounds": ["list", "add", "rm", "test"],
-        "proxy subs": ["list", "update", "add", "rm"],
-        "proxy mode": ["default", *ROUTE_MODES],
-        "proxy tun": ["status", "on", "off"],
-        "proxy tproxy": ["status", "on", "off"],
-        "ssh": ["status", "on", "off"],
-        "zapret": ["status", "on", "off", "auto", "cutoff"],
-        "proxy auto": ["list", "probe", "learn", "queue"],
-        "zapret auto": ["list", "add", "forget", "exclude", "clear"],
-        "zapret cutoff": ["status", "probe"],
-        "awg": ["list", "on", "off", "restart"],
-        "apps": ["list", "run"],
-        "inbounds": ["list", "link", "sub", "stats"],
-    }
-    if words in simple:
-        return simple[words]
-    if words == "proxy outbounds rm":
-        return _runtime_tags("outbound")
-    if words == "proxy outbounds test":
-        return _outbound_tags()
-    if words == "proxy subs rm":
-        return _runtime_tags("subscription")
-    if words == "proxy select":
-        return ["auto", *_outbound_tags()]
-    if words in ("zapret auto forget", "zapret auto exclude"):
-        return lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt")))
-    if words in ("awg on", "awg off", "awg restart"):
-        return _awg_profiles()
-    if words == "apps run":
-        return [_s(p["name"]) for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))]
-    if words == "inbounds link":
-        return sorted({_s(x["tag"]) for x in read_json(env("INBOUNDS_LINKS_FILE"))})
-    if words == "inbounds sub":
-        return [_s(x["user"]) for x in read_json(env("INBOUNDS_SUBS_FILE"))]
-    if words == "logs":
-        return [*ALL_SERVICES, *map(_awg_service, _awg_profiles())]
-    if words == "where":
-        return sorted(read_json(os.path.join(_autoproxy_dir(), "state.json")).get("domains") or {})
-    return []
+def _outbound_choices():
+    sources = _outbound_inventory().get("sources") or {}
+    return {tag: _s(sources.get(tag) or "") for tag in _outbound_tags()}
+
+
+def _inbound_link_choices():
+    links = read_json(env("INBOUNDS_LINKS_FILE"))
+    return dict(sorted((_s(x["tag"]), f"{_s(x.get('type', ''))} {_s(x.get('port', ''))}".strip()) for x in links))
+
+
+def _autoproxy_choices():
+    domains = read_json(os.path.join(_autoproxy_dir(), "state.json")).get("domains") or {}
+    return {d: f"via {_s(v['exit'])}" if isinstance(v, dict) and "exit" in v else "" for d, v in sorted(domains.items())}
+
+
+def _names(values):
+    return dict.fromkeys(values, "")
+
+
+COMPLETE = {
+    "": {
+        "words": {
+            "status": "services and routing mode",
+            "restart": "restart active services",
+            "logs": "follow logs",
+            "where": "how a host is routed right now",
+            "proxy": "local proxy backend",
+            "zapret": "DPI bypass",
+            "awg": "AmneziaWG profiles",
+            "ssh": "SSH SOCKS5 tunnel",
+            "apps": "per-app routing profiles",
+            "inbounds": "server inbounds",
+            "help": "usage",
+        }
+    },
+    "status": {"flags": {"--tray": "key=value lines for the tray"}},
+    "logs": {"args": lambda: _names([*ALL_SERVICES, *map(_awg_service, _awg_profiles())]), "repeat": True},
+    "where": {"args": _autoproxy_choices},
+    "proxy": {
+        "words": {
+            **TOGGLE,
+            "outbounds": "outbounds, where each came from, and the pick",
+            "select": "pin the priority outbound",
+            "mode": "show or override the routing mode",
+            "subs": "subscription caches",
+            "tun": "global TUN mode",
+            "tproxy": "global TProxy mode",
+            "auto": "what autoProxy routed",
+        }
+    },
+    "proxy outbounds": {
+        "words": {
+            "list": "outbounds, where each came from, and the pick",
+            "add": "add an outbound at runtime",
+            "rm": "remove a runtime outbound",
+            "test": "TCP ping, real delay, download speed",
+        }
+    },
+    "proxy outbounds rm": {"args": lambda: _names(_runtime_tags("outbound"))},
+    "proxy outbounds test": {
+        "args": _outbound_choices,
+        "repeat": True,
+        "flags": {
+            "--ping": "TCP connect to each server",
+            "--delay": "the backend's URL test through each outbound",
+            "--download": "timed download through each outbound",
+        },
+    },
+    "proxy select": {"args": lambda: {"auto": "let the configured selection decide", **_outbound_choices()}},
+    "proxy mode": {"args": lambda: {"default": f"config default ({_route_mode_default()})", **ROUTE_MODE_LABELS}},
+    "proxy subs": {
+        "words": {
+            "list": "subscription caches",
+            "update": "refetch the subscriptions",
+            "add": "add a subscription at runtime",
+            "rm": "remove a runtime subscription",
+        }
+    },
+    "proxy subs rm": {"args": lambda: _names(_runtime_tags("subscription"))},
+    "proxy tun": {"words": TOGGLE},
+    "proxy tproxy": {"words": TOGGLE},
+    "proxy auto": {
+        "words": {
+            "list": "what autoProxy routed, and via which exit",
+            "probe": "find an exit that reaches a domain",
+            "learn": "probe now and route it if an exit works",
+            "queue": "destinations waiting to be probed",
+        }
+    },
+    "proxy auto probe": {
+        "flags": {
+            "--json": "machine-readable result",
+            "--keep-going": "try every exit, not just until one works",
+            "--exits": "only these exits, comma-separated",
+            "--via": "probe through this one exit",
+        }
+    },
+    "zapret": {"words": {**TOGGLE, "auto": "hosts zapret2 learned as blocked", "cutoff": "networks this line cuts at 16 KB"}},
+    "zapret auto": {
+        "words": {
+            "list": "hosts zapret2 learned as blocked",
+            "add": "pin a host",
+            "forget": "forget a learned host",
+            "exclude": "never learn a host",
+            "clear": "forget learned hosts and strategies",
+        }
+    },
+    "zapret auto forget": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
+    "zapret auto exclude": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
+    "zapret cutoff": {"words": {"status": "networks this line cuts at 16 KB", "probe": "probe this line again now"}},
+    "awg": {
+        "words": {
+            "list": "profiles and their state",
+            "on": "start a profile",
+            "off": "stop a profile",
+            "restart": "restart a profile",
+        }
+    },
+    "awg on": {"args": lambda: _names(_awg_profiles())},
+    "awg off": {"args": lambda: _names(_awg_profiles())},
+    "awg restart": {"args": lambda: _names(_awg_profiles())},
+    "ssh": {"words": TOGGLE},
+    "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
+    "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
+    "inbounds": {
+        "words": {
+            "list": "server inbounds",
+            "link": "client share link",
+            "sub": "subscription users, or one user's URL",
+            "stats": "traffic per user",
+        }
+    },
+    "inbounds link": {"args": _inbound_link_choices, "flags": {"--qr": "print a QR code"}},
+    "inbounds sub": {
+        "args": lambda: _names(_s(x["user"]) for x in read_json(env("INBOUNDS_SUBS_FILE"))),
+        "flags": {"--qr": "print a QR code"},
+    },
+}
+
+
+def _complete_tree(*words):
+    path, rest = "", list(words)
+    while rest and f"{path} {rest[0]}".strip() in COMPLETE:
+        path = f"{path} {rest.pop(0)}".strip()
+    node = COMPLETE[path]
+    if rest[-1:] in (["--exits"], ["--via"]):
+        return _outbound_choices()
+    candidates = {}
+    if node.get("repeat") or not [w for w in rest if not w.startswith("-")]:
+        candidates.update(node.get("words", {}))
+        try:
+            candidates.update(node["args"]() if "args" in node else {})
+        except Exception:
+            pass  # Unreadable state costs the values, not the verbs and flags.
+    candidates.update((f, d) for f, d in node.get("flags", {}).items() if f not in rest)
+    return candidates
 
 
 def cmd_complete(*words):
     """The hidden verb the shell completions call. It never fails or speaks."""
     try:
-        candidates = _complete_tree(" ".join(words))
+        candidates = _complete_tree(*words)
     except Exception:
         return
-    for word in candidates:
-        print(word)
+    for word, description in candidates.items():
+        print(f"{word}\t{description}" if description else word)
 
 
 # --- status -------------------------------------------------------------------
