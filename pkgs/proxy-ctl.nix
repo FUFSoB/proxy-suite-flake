@@ -75,48 +75,71 @@ let
     AUTOPROXY_ENABLED = autoProxyEnabled;
     AUTOPROXY_STATE_DIR = autoProxyStateDir;
   };
-in
-pkgs.symlinkJoin {
-  name = "proxy-ctl";
-  paths = [ unwrapped ];
-  nativeBuildInputs = [ pkgs.makeWrapper ];
-  passthru.proxySuiteCheck = {
-    inherit
-      wrapperEnv
-      subscriptionTagsFile
-      perAppRoutingProfilesFile
-      proxychainsConfigFile
-      amneziaWgProfileNamesFile
-      ;
-    script = unwrapped.drvAttrs.text;
+  envFlags = lib.concatStringsSep " " (
+    lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
+  );
+  # A separate package: the Textual closure stays off hosts that don't enable it.
+  # It imports proxy_ctl for reads and runs proxy-ctl for every change.
+  tui = pkgs.symlinkJoin {
+    name = "proxy-tui";
+    paths = [
+      (pkgs.writeScriptBin "proxy-tui" (
+        "#!${pkgs.python3.withPackages (ps: [ ps.textual ])}/bin/python3\n"
+        + builtins.readFile ./proxy-ctl/proxy_tui.py
+      ))
+    ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram "$out/bin/proxy-tui" \
+        --prefix PYTHONPATH : ${pkgs.writeTextDir "proxy_ctl.py" (builtins.readFile ./proxy-ctl/proxy_ctl.py)} \
+        --prefix PATH : "${
+          lib.makeBinPath [
+            proxyCtl
+            pkgs.systemd
+          ]
+        }" ${envFlags}
+    '';
   };
-  # Probes present a browser's TLS fingerprint: bot protection refuses plain
-  # curl. The newest Chrome profile the package ships, since the set varies by
-  # version; the build fails if there is none.
-  postBuild = ''
-    install -Dm644 ${./proxy-ctl/completions/proxy-ctl.bash} \
-      "$out/share/bash-completion/completions/proxy-ctl"
-    install -Dm644 ${./proxy-ctl/completions/_proxy-ctl} "$out/share/zsh/site-functions/_proxy-ctl"
-    install -Dm644 ${./proxy-ctl/completions/proxy-ctl.fish} \
-      "$out/share/fish/vendor_completions.d/proxy-ctl.fish"
-    probe_curl=$(ls ${pkgs.curl-impersonate}/bin/curl_chrome[0-9]* | grep -E '/curl_chrome[0-9]+$' | sort -V | tail -n 1)
-    [ -x "$probe_curl" ]
-    wrapProgram "$out/bin/proxy-ctl" \
-      --set PROBE_CURL "$probe_curl" \
-      --prefix PATH : "${
-        lib.makeBinPath [
-          # curl-impersonate's curl_chrome* wrappers are `#!/usr/bin/env bash`.
-          pkgs.bash
-          pkgs.curl
-          pkgs.fzf
-          pkgs.proxychains-ng
-          pkgs.qrencode
-          pkgs.systemd
-        ]
-      }" ${
-        lib.concatStringsSep " " (
-          lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
-        )
-      }
-  '';
-}
+  proxyCtl = pkgs.symlinkJoin {
+    name = "proxy-ctl";
+    paths = [ unwrapped ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    passthru.tui = tui;
+    passthru.proxySuiteCheck = {
+      inherit
+        wrapperEnv
+        subscriptionTagsFile
+        perAppRoutingProfilesFile
+        proxychainsConfigFile
+        amneziaWgProfileNamesFile
+        ;
+      script = unwrapped.drvAttrs.text;
+    };
+    # Probes present a browser's TLS fingerprint: bot protection refuses plain
+    # curl. The newest Chrome profile the package ships, since the set varies by
+    # version; the build fails if there is none.
+    postBuild = ''
+      install -Dm644 ${./proxy-ctl/completions/proxy-ctl.bash} \
+        "$out/share/bash-completion/completions/proxy-ctl"
+      install -Dm644 ${./proxy-ctl/completions/_proxy-ctl} "$out/share/zsh/site-functions/_proxy-ctl"
+      install -Dm644 ${./proxy-ctl/completions/proxy-ctl.fish} \
+        "$out/share/fish/vendor_completions.d/proxy-ctl.fish"
+      probe_curl=$(ls ${pkgs.curl-impersonate}/bin/curl_chrome[0-9]* | grep -E '/curl_chrome[0-9]+$' | sort -V | tail -n 1)
+      [ -x "$probe_curl" ]
+      wrapProgram "$out/bin/proxy-ctl" \
+        --set PROBE_CURL "$probe_curl" \
+        --prefix PATH : "${
+          lib.makeBinPath [
+            # curl-impersonate's curl_chrome* wrappers are `#!/usr/bin/env bash`.
+            pkgs.bash
+            pkgs.curl
+            pkgs.fzf
+            pkgs.proxychains-ng
+            pkgs.qrencode
+            pkgs.systemd
+          ]
+        }" ${envFlags}
+    '';
+  };
+in
+proxyCtl

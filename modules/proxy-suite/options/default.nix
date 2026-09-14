@@ -18,6 +18,7 @@
     ./tg-ws-proxy.nix
     ./geodata.nix
     ./tray.nix
+    ./tui.nix
     ./user-control.nix
   ];
 

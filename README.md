@@ -17,7 +17,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
 - Server inbounds with share links, QR codes, per-user subscriptions and traffic stats
-- A tray indicator and the `proxy-ctl` CLI
+- A tray indicator, the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
 ## Setup
 
@@ -134,6 +134,7 @@ A group without a verb shows its status or list.
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
+  zapret auto unpin|include <domain>     undo add, or undo exclude (sudo)
   zapret auto clear                      forget learned hosts and strategies (sudo)
   zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
   zapret cutoff probe                    probe this line again now (sudo)

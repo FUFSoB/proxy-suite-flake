@@ -21,9 +21,19 @@ let
       };
     }
   ];
+
+  tuiOffFixture = evalProxySuite [
+    baseModule
+    { services.proxy-suite.tui.enable = false; }
+  ];
 in
 {
   assertions = [
+    (
+      assert packagePathMatches trayManualFixture.config.environment.systemPackages ".*/[^/]*proxy-tui$";
+      assert !(packagePathMatches tuiOffFixture.config.environment.systemPackages ".*/[^/]*proxy-tui$");
+      true
+    )
     (
       assert packagePathMatches trayAutostartFixture.config.environment.systemPackages
         ".*/[^/]*proxy-suite-tray(-[0-9.]+)?$";

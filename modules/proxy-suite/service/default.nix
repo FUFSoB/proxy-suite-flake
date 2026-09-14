@@ -135,7 +135,7 @@ in
 lib.mkMerge [
   autoProxyUnits
   {
-    environment.systemPackages = [ control.proxyCtl ];
+    environment.systemPackages = [ control.proxyCtl ] ++ lib.optional cfg.tui.enable control.proxyCtl.tui;
 
     # nftables must be on for transparent routing backends. Global TUN uses
     # SingBox auto_redirect programs an `inet sing-box` nftables table.

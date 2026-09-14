@@ -72,6 +72,7 @@ A group without a verb shows its status or list.
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
                                          pin, forget, or never learn a host (sudo)
+  zapret auto unpin|include <domain>     undo add, or undo exclude (sudo)
   zapret auto clear                      forget learned hosts and strategies (sudo)
   zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
   zapret cutoff probe                    probe this line again now (sudo)
@@ -363,11 +364,15 @@ COMPLETE = {
             "add": "pin a host",
             "forget": "forget a learned host",
             "exclude": "never learn a host",
+            "unpin": "undo add",
+            "include": "undo exclude",
             "clear": "forget learned hosts and strategies",
         }
     },
     "zapret auto forget": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
     "zapret auto exclude": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
+    "zapret auto unpin": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-user.txt"))))},
+    "zapret auto include": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-user-exclude.txt"))))},
     "zapret cutoff": {"words": {"status": "networks this line cuts at 16 KB", "probe": "probe this line again now"}},
     "awg": {
         "words": {
@@ -1642,7 +1647,7 @@ def cmd_zapret_auto(verb="list", domain="", *_):
     user = _zapret_auto_file("zapret-hosts-user.txt")
     exclude = _zapret_auto_file("zapret-hosts-user-exclude.txt")
 
-    if verb in ("add", "forget", "exclude") and not HOSTNAME.fullmatch(domain):
+    if verb in ("add", "forget", "exclude", "unpin", "include") and not HOSTNAME.fullmatch(domain):
         usage(f"zapret auto {verb} <domain>")
     if verb == "list":
         if os.path.isfile(auto) and os.path.getsize(auto) > 0:
@@ -1661,6 +1666,12 @@ def cmd_zapret_auto(verb="list", domain="", *_):
         _zapret_strategy_drop(domain)
         _zapret_auto_edit(exclude, domain, "add")
         print(f"Excluded {domain}. It is no longer touched or learned.")
+    elif verb == "unpin":
+        _zapret_auto_edit(user, domain, "drop")
+        print(f"Unpinned {domain}. It is bypassed again only if learned.")
+    elif verb == "include":
+        _zapret_auto_edit(exclude, domain, "drop")
+        print(f"Included {domain}. It can be learned again.")
     elif verb == "clear":
         _truncate(auto)
         state = _zapret_auto_file("circular/state.tsv")
@@ -1668,7 +1679,7 @@ def cmd_zapret_auto(verb="list", domain="", *_):
             _truncate(state)
         print("Cleared learned hosts and remembered strategies.")
     else:
-        usage("zapret auto [list|add|forget|exclude|clear]")
+        usage("zapret auto [list|add|forget|exclude|unpin|include|clear]")
 
 
 # --- zapret cutoff ------------------------------------------------------------

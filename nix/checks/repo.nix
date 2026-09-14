@@ -240,6 +240,13 @@
         run add pinned.example > /dev/null
         test "$(grep -c -x pinned.example "$state/zapret-hosts-user.txt")" = 1
 
+        # unpin and include undo add and exclude.
+        run unpin pinned.example > /dev/null
+        ! grep -qx pinned.example "$state/zapret-hosts-user.txt"
+        run include blocked.example > /dev/null
+        ! grep -qx blocked.example "$state/zapret-hosts-user-exclude.txt"
+        run add pinned.example > /dev/null
+
         # The lists stay readable by unprivileged proxy-ctl after a rewrite.
         test "$(stat -c %a "$state/zapret-hosts-user.txt")" = 644
 
@@ -405,6 +412,16 @@
       python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
       touch "$out"
     '';
+
+  # proxy-tui driven headless: keys turn into the right proxy-ctl argv.
+  proxy-tui-unit =
+    pkgs.runCommand "proxy-suite-proxy-tui-unit-check"
+      { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.textual ])) ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+        python ${../../pkgs/proxy-ctl}/test_proxy_tui.py
+        touch "$out"
+      '';
 
   # autoProxy slowness routing: sampler and judge.
   autoproxy-slowness =

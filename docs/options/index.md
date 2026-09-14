@@ -14,6 +14,7 @@ Update the module option docs there instead of editing these files by hand.
 - [sshProxy](./sshProxy.md)
 - [tgWsProxy](./tgWsProxy.md)
 - [tray](./tray.md)
+- [tui](./tui.md)
 - [userControl](./userControl.md)
 - [warp](./warp.md)
 - [zapret](./zapret.md)
@@ -243,6 +244,9 @@ services.proxy-suite = {
     autostart = true;
     enable = false;
     pollInterval = 5;
+  };
+  tui = {
+    enable = true;
   };
   userControl = {
     allow = [
