@@ -6,7 +6,7 @@
 # publish what it learns, which sing-box then picks up without a restart.
 { pkgs }:
 
-pkgs.writeShellScript "proxy-suite-autoproxy-render" ''
+pkgs.writeShellScript "proxy-suite-autoproxy" ''
   set -euo pipefail
   # $1 - probe-exits.json (index -> tag -> path), $2 - state.json
   export PATH=${pkgs.lib.makeBinPath [

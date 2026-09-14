@@ -31,7 +31,7 @@ let
         "proxy-suite-per-app-tun"
       ];
 
-  subscriptionUpdateScript = pkgs.writeShellScript "proxy-suite-subscription-update" ''
+  subscriptionUpdateScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     CACHE_DIR="${subscriptionCacheDir}"
     mkdir -p "$CACHE_DIR"
@@ -46,7 +46,7 @@ let
     exit "$FAILED"
   '';
 
-  setRouteModeScript = pkgs.writeShellScript "proxy-suite-set-route-mode" ''
+  setRouteModeScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     mode="''${1:-}"
 
@@ -80,7 +80,7 @@ let
   # Pins the outbound the proxy prefers, or "auto" to hand the choice back to the
   # configured selection. The pin is persisted either way; a live Clash API switch
   # only saves the restart.
-  setPriorityOutboundScript = pkgs.writeShellScript "proxy-suite-set-priority-outbound" ''
+  setPriorityOutboundScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     tag="''${1:-}"
 
@@ -117,7 +117,7 @@ let
   # Applies whatever is now in the runtime spool directories. A removed runtime
   # subscription leaves a root-owned cache behind that the group cannot unlink,
   # so the cache dir is reconciled against the sources here.
-  reloadOutboundsScript = pkgs.writeShellScript "proxy-suite-reload-outbounds" ''
+  reloadOutboundsScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     ${subscriptionCacheHelpersBlock}
 

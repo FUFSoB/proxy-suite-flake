@@ -162,7 +162,7 @@ in
         test "$(grep -c 'ct mark and 0x2000000 != 0 return' "${globalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh")" = 4
 
         # Cut-off networks without a name become the proxy's rule-set; named ones stay with zapret2.
-        rules=$(grep -o '/nix/store/[^ ]*-proxy-suite-zapret2-cutoff-rules' ${cutoffProbe} | head -n1)
+        rules=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2 asn.txt' ${cutoffProbe} | cut -d' ' -f1)
         printf '# networks\n24940\n14061\n' >asn.txt
         printf '24940\t300.ya.ru\n' >sni.txt
         printf '# map\n24940\t5.9.0.0/16\n14061\t104.131.0.0/16\n14061\t2604:a880::/32\n7777\t1.2.0.0/16\n' >nets.txt

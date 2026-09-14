@@ -27,7 +27,7 @@ let
     xrayPerAppTunIPv6RoutePrefix
     ;
 
-  perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app-tun-wait-for-interface" ''
+  perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
     for _ in $(${seqBin} 1 50); do
       if ${ip} link show dev ${lib.escapeShellArg perAppRoutingTun.interface} >/dev/null 2>&1; then
@@ -39,7 +39,7 @@ let
     exit 1
   '';
 
-  perAppTunUpScript = pkgs.writeShellScript "proxy-suite-per-app-tun-up" ''
+  perAppTunUpScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg perAppRoutingTun.address}
@@ -83,7 +83,7 @@ let
     ''}
   '';
 
-  perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app-tun-down" ''
+  perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set +e
 
     # Best-effort cleanup for graceful stops and for unclean previous exits.
@@ -106,7 +106,7 @@ let
     ${builders.flushResolvedCaches}
   '';
 
-  perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-up" ''
+  perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
 
     ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}
@@ -122,7 +122,7 @@ let
     ${ip} rule add fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable}
   '';
 
-  perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app-tproxy-down" ''
+  perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set +e
 
     ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}

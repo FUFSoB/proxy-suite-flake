@@ -20,11 +20,29 @@ let
   packages = import ../../pkgs/default.nix { inherit pkgs; };
   nftr = import ./nftables.nix { inherit lib pkgs cfg; };
   derived = import ./derived.nix { inherit lib cfg; };
+
+  # Scripts share one store name per block, and journald names a unit's output
+  # after its ExecStart basename; tag each unit with its own name instead.
+  unitsWithOwnSyslogIdentifier = lib.mkOption {
+    type = lib.types.attrsOf (
+      lib.types.submodule (
+        { name, ... }:
+        {
+          config.serviceConfig.SyslogIdentifier = lib.mkIf (
+            lib.hasPrefix "proxy-suite-" name || name == "zapret-discord-youtube"
+          ) (lib.mkDefault (lib.removeSuffix "@" name));
+        }
+      )
+    );
+  };
 in
 {
   imports = [
     ./options
   ];
+
+  options.systemd.services = unitsWithOwnSyslogIdentifier;
+  options.systemd.user.services = unitsWithOwnSyslogIdentifier;
 
   config = lib.mkMerge [
     {

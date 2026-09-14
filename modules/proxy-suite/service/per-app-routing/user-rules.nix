@@ -26,7 +26,7 @@ let
       sliceLabel,
       markRule,
     }:
-    pkgs.writeShellScript "proxy-suite-${name}-user-start" ''
+    pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
       uid="$1"
       rule_comment_prefix="proxy-suite-${name}-user-$uid"
@@ -67,7 +67,7 @@ let
       nftTable,
       nftChain,
     }:
-    pkgs.writeShellScript "proxy-suite-${name}-user-stop" ''
+    pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
       uid="$1"
       rule_comment_prefix="proxy-suite-${name}-user-$uid"

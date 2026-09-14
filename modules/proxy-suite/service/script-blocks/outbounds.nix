@@ -179,7 +179,7 @@ let
     if backendRaw != null then
       let
         outboundJson = builtins.toJSON (rawOutboundJson ob tag routingMark);
-        jsonFile = pkgs.writeText "proxy-suite-ob-${tag}.json" outboundJson;
+        jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
         # outbound: ${tag} (static ${backend} json)
@@ -189,8 +189,7 @@ let
       ''
     else
       let
-        urlSource =
-          if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
+        urlSource = if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-core" ob.url;
       in
       ''
         # outbound: ${tag}
@@ -219,7 +218,7 @@ let
     if ob.xrayJson != null then
       let
         outboundJson = builtins.toJSON (xrayRawOutboundJson ob tag);
-        jsonFile = pkgs.writeText "proxy-suite-xray-sidecar-ob-${tag}.json" outboundJson;
+        jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
         # outbound: ${tag} (hybrid XRay json sidecar)
@@ -230,7 +229,7 @@ let
     else if ob.singBoxJson != null || ob.json != null then
       let
         outboundJson = builtins.toJSON (singBoxRawOutboundJson ob tag routingMark);
-        jsonFile = pkgs.writeText "proxy-suite-sing-box-ob-${tag}.json" outboundJson;
+        jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
         # outbound: ${tag} (hybrid SingBox json)
@@ -240,8 +239,7 @@ let
       ''
     else
       let
-        urlSource =
-          if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-url-${ob.tag}" ob.url;
+        urlSource = if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-core" ob.url;
       in
       ''
         # outbound: ${tag} (hybrid ${ob.backend})
@@ -286,7 +284,7 @@ let
       };
       outbound = if pureXrayEnabled then xrayOutbound else singBoxOutbound;
       outboundJson = builtins.toJSON outbound;
-      jsonFile = pkgs.writeText "proxy-suite-ob-ssh-proxy-${backend}.json" outboundJson;
+      jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
 
       # Read at start so the known-hosts file stays out of the store.
       knownHostsTarget =

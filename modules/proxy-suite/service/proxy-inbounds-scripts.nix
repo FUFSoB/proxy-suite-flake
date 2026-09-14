@@ -56,7 +56,7 @@ let
         if ob.urlFile != null then
           ob.urlFile
         else if ob.url != null then
-          pkgs.writeText "proxy-suite-inbound-via-url-${ob.tag}" ob.url
+          pkgs.writeText "proxy-suite-inbounds" ob.url
         else
           null;
     in
@@ -64,7 +64,7 @@ let
       ''
         # via outbound: ${ob.tag} (static xray json)
         OB_JSON=$(cat ${
-          pkgs.writeText "proxy-suite-inbound-via-${ob.tag}.json" (
+          pkgs.writeText "proxy-suite-inbounds" (
             builtins.toJSON (ob.xrayJson // { inherit (ob) tag; })
           )
         })
@@ -111,7 +111,7 @@ let
     chmod ${if userControlEnabled then "640" else "600"} "${subscriptionsFile}"
   '';
 
-  startInbounds = pkgs.writeShellScript "proxy-suite-start-inbounds" ''
+  startInbounds = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     umask 077
     RUNTIME_DIR="${runtimeDir}"
@@ -156,7 +156,7 @@ let
   # Adds XRay's per-user counters to the daily totals, read and reset in one call.
   # ponytail: a restart of the inbounds loses what was counted since the last run, at
   # most one timer interval; collect from ExecStop if that matters.
-  collectInboundStats = pkgs.writeShellScript "proxy-suite-inbound-stats" ''
+  collectInboundStats = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     file=${lib.escapeShellArg constants.inboundStatsFile}
     if ! reading=$(${xray} api statsquery --server=127.0.0.1:${toString constants.inboundStatsApiPort} \
@@ -170,7 +170,12 @@ let
     ${jq} --argjson q "$reading" \
       --arg day "$(${pkgs.coreutils}/bin/date +%F)" \
       --argjson now "$(${pkgs.coreutils}/bin/date +%s)" \
-      -f ${../inbound-stats-add.jq} "$file" > "$tmp"
+      -f ${
+        builtins.path {
+          name = "proxy-suite-inbounds";
+          path = ../inbound-stats-add.jq;
+        }
+      } "$file" > "$tmp"
     ${lib.optionalString userControlEnabled ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$tmp" ||
         echo "proxy-suite: group ${userControlCfg.group} cannot read the stats; they stay root-only" >&2

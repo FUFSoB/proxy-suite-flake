@@ -49,7 +49,7 @@ let
     localProxyAuth.username != null
     && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
 
-  perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app-routing-profiles.json" (
+  perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app" (
     builtins.toJSON effectivePerAppRoutingProfiles
   );
 
@@ -57,7 +57,7 @@ let
     if localProxyAuthEnabled then
       "/run/proxy-suite-socks/proxychains.conf"
     else
-      pkgs.writeText "proxy-suite-proxychains.conf" ''
+      pkgs.writeText "proxy-suite-per-app" ''
         strict_chain
         ${lib.optionalString perAppRoutingCfg.proxychains.quiet "quiet_mode"}
         ${lib.optionalString perAppRoutingCfg.proxychains.proxyDns "proxy_dns"}

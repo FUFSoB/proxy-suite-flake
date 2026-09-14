@@ -11,6 +11,10 @@ let
   w = derived.warpCfg;
   listener = cfg.proxy.listener;
   auth = listener.auth;
+  scriptsDir = builtins.path {
+    name = "proxy-suite-scripts";
+    path = ../../scripts;
+  };
   host =
     if
       builtins.elem listener.address [
@@ -26,7 +30,7 @@ let
     if auth.passwordFile != null then
       auth.passwordFile
     else if auth.password != null then
-      pkgs.writeText "proxy-suite-warp-proxy-password" auth.password
+      pkgs.writeText "proxy-suite-warp" auth.password
     else
       null;
   userinfo = lib.optionalString (auth.username != null && passwordSource != null) ''
@@ -34,7 +38,7 @@ let
       --rawfile p ${lib.escapeShellArg passwordSource} '"\($u | @uri):\($p | rtrimstr("\n") | @uri)@"')
   '';
 
-  registerScript = pkgs.writeShellScript "proxy-suite-warp-register" ''
+  registerScript = pkgs.writeShellScript "proxy-suite-warp" ''
     set -euo pipefail
     [ -s wgcf-profile.conf ] && exit 0
 
@@ -73,7 +77,7 @@ let
   # Some lines drop a share of fresh WARP handshakes for good, and sing-box retries on the
   # same source port forever. A new process binds a new port, so the probe exits after
   # repeated failures and systemd starts the tunnel again.
-  tunnelScript = pkgs.writeShellScript "proxy-suite-warp-tunnel" ''
+  tunnelScript = pkgs.writeShellScript "proxy-suite-warp" ''
     set -euo pipefail
     profile=${lib.escapeShellArg w.profilePath}
     if [ ! -s "$profile" ]; then
@@ -82,7 +86,7 @@ let
     fi
 
     # The profile is a secret, so it is converted here rather than baked into the store.
-    endpoint=$(${pkgs.python3}/bin/python3 ${../../scripts/warp_outbound.py} --tag warp --routing-mark ${toString cfg.proxy.tproxy.proxyMark} < "$profile")
+    endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag warp --routing-mark ${toString cfg.proxy.tproxy.proxyMark} < "$profile")
     ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
       log: {level: "warn"},
       dns: {servers: [${builtins.toJSON dnsServer}]},

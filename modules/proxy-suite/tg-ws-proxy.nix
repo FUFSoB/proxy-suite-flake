@@ -25,7 +25,7 @@ let
   dcArgs = lib.concatMapStrings (id: mkValueArg "--dc-ip" "${id}:${t.dcIps.${id}}") (
     builtins.attrNames t.dcIps
   );
-  startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-start" ''
+  startScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy" ''
     args=(
       --port=${toString t.listener.port}
       --host=${lib.escapeShellArg t.listener.address}
@@ -48,7 +48,7 @@ let
     exec ${tgPkg}/bin/tg-ws-proxy "''${args[@]}"
   '';
 
-  bypassUpScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-bypass-up" ''
+  bypassUpScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy" ''
     set -euo pipefail
 
     add_bypass_rule() {
@@ -61,7 +61,7 @@ let
     add_bypass_rule -6
   '';
 
-  bypassDownScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy-bypass-down" ''
+  bypassDownScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy" ''
     set +e
 
     while ${ip} -4 rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done

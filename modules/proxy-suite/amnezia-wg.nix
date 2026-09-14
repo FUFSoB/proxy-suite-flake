@@ -25,7 +25,7 @@ let
         profile.settings
       ]
     );
-  inlineVpnFile = name: profile: pkgs.writeText "proxy-suite-awg-${name}.vpn" profile.vpn;
+  inlineVpnFile = name: profile: pkgs.writeText "proxy-suite-awg" profile.vpn;
   sourceKind =
     profile:
     if profile.configFile != null then
@@ -48,7 +48,7 @@ let
       null;
   manifestFor =
     name: profile:
-    pkgs.writeText "proxy-suite-awg-${name}-manifest.json" (
+    pkgs.writeText "proxy-suite-awg" (
       builtins.toJSON (
         {
           kind = sourceKind profile;
@@ -59,7 +59,12 @@ let
         // lib.optionalAttrs (profile.settings != null) { settings = profile.settings; }
       )
     );
-  configTool = ../../scripts/amneziawg_config.py;
+  configTool = "${
+    builtins.path {
+      name = "proxy-suite-scripts";
+      path = ../../scripts;
+    }
+  }/amneziawg_config.py";
   runtimeDir = name: "/run/${serviceName name}";
   runtimeConfig = name: profile: "${runtimeDir name}/${profile.interfaceName}.conf";
   # Keep proxy backend sockets (proxyMark) out of AWG's default-route table.
@@ -70,13 +75,13 @@ let
     let
       manifest = manifestFor name profile;
       configPath = runtimeConfig name profile;
-      prepare = pkgs.writeShellScript "proxy-suite-awg-${name}-prepare" ''
+      prepare = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
         ${pkgs.python3}/bin/python3 ${configTool} \
           --manifest ${lib.escapeShellArg (toString manifest)} \
           --output ${lib.escapeShellArg configPath}
       '';
-      proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg-${name}-proxy-bypass-up" ''
+      proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
 
         add_bypass_rule() {
@@ -99,7 +104,7 @@ let
         add_bypass_rule -4
         add_bypass_rule -6
       '';
-      proxyBypassDown = pkgs.writeShellScript "proxy-suite-awg-${name}-proxy-bypass-down" ''
+      proxyBypassDown = pkgs.writeShellScript "proxy-suite-awg" ''
         set +e
 
         while ${pkgs.iproute2}/bin/ip -4 rule del \
@@ -109,7 +114,7 @@ let
           pref ${toString proxyBypassRulePriority} \
           fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; do :; done
       '';
-      start = pkgs.writeShellScript "proxy-suite-awg-${name}-start" ''
+      start = pkgs.writeShellScript "proxy-suite-awg" ''
         set -Eeuo pipefail
 
         cleanup() {
@@ -170,7 +175,7 @@ let
         echo "proxy-suite: AmneziaWG profile '${name}' did not complete a handshake; rolling back routes" >&2
         false
       '';
-      stop = pkgs.writeShellScript "proxy-suite-awg-${name}-stop" ''
+      stop = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
         exec ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath}
       '';

@@ -12,6 +12,12 @@
 let
   apCfg = cfg.proxy.autoProxy;
   render = import ./autoproxy-render.nix { inherit pkgs; };
+  jqFile =
+    path:
+    builtins.path {
+      name = "proxy-suite-autoproxy";
+      inherit path;
+    };
 
   bin = lib.makeBinPath [
     pkgs.coreutils
@@ -36,7 +42,7 @@ let
     [ -z "$clash_secret" ] || clash_auth=(-H "Authorization: Bearer $clash_secret")
   '';
 
-  sampler = pkgs.writeShellScript "proxy-suite-autoproxy-sample" ''
+  sampler = pkgs.writeShellScript "proxy-suite-autoproxy" ''
     set -euo pipefail
     export PATH=${bin}
     state_dir=''${AUTOPROXY_STATE_DIR:-${lib.escapeShellArg autoProxyStateDir}}
@@ -55,12 +61,12 @@ let
         curl -sS --noproxy '*' --max-time 1 "''${clash_auth[@]}" "http://$clash_api/connections" 2>/dev/null ||
           echo '{}'
       done | jq -s -r --argjson min ${toString (300 * 1024)} \
-        --argjson below ${toString (apCfg.slowBelowKiBps * 1024)} -f ${./autoproxy-slow-sample.jq} || true
+        --argjson below ${toString (apCfg.slowBelowKiBps * 1024)} -f ${jqFile ./autoproxy-slow-sample.jq} || true
     )
     [ -z "$lines" ] || printf '%s\n' "$lines" >> "$state_dir/samples"
   '';
 
-  runner = pkgs.writeShellScript "proxy-suite-autoproxy-run" ''
+  runner = pkgs.writeShellScript "proxy-suite-autoproxy" ''
     set -euo pipefail
     export PATH=${bin}
 
@@ -116,7 +122,7 @@ let
     # $1 JSON array of exit tags, $2 registrable domain, $3 wall:<page>|refused|slow.
     strike() {
       update --argjson tags "$1" --arg d "$2" --arg why "$3" --argjson now "$now" --argjson ttl "$ttl" \
-        -f ${./autoproxy-strike.jq}
+        -f ${jqFile ./autoproxy-strike.jq}
     }
 
     # $1 registrable domain, $2 host probed, $3 probe JSON. Routes apply to the
@@ -198,7 +204,7 @@ let
     strike '[]' "" ""
 
     # See autoproxy-rounds.jq: one exit per AS, then the rest, bad exits last.
-    rounds=$(jq -c --slurpfile s "$state" -f ${./autoproxy-rounds.jq} "$index")
+    rounds=$(jq -c --slurpfile s "$state" -f ${jqFile ./autoproxy-rounds.jq} "$index")
     round1=$(jq -r .r1 <<<"$rounds")
     round2=$(jq -r .r2 <<<"$rounds")
 
@@ -293,7 +299,7 @@ let
         rm -f "$state_dir/samples.taking"
         before=$(jq -c '.domains' "$state")
         update --argjson o "$obs" --argjson now "$now" --argjson ttl "$ttl" --argjson hits 3 \
-          -f ${./autoproxy-slow-judge.jq}
+          -f ${jqFile ./autoproxy-slow-judge.jq}
 
         # Each crawling destination gets the next exit, in probe order, that
         # answers it as well as direct does (`probe --via`). None left: it

@@ -28,7 +28,7 @@ let
     if sub.urlFile != null then
       sub.urlFile
     else
-      pkgs.writeText "proxy-suite-sub-url-${sub.tag}" sub.url;
+      pkgs.writeText "proxy-suite-core" sub.url;
 
   # Defined in every script that touches a cache: the start scripts and the
   # update unit.
@@ -181,7 +181,7 @@ let
     done < <(_proxy_suite_runtime_subscriptions)
   '';
 
-  subscriptionTagsFile = pkgs.writeText "proxy-suite-subscription-tags.json" (
+  subscriptionTagsFile = pkgs.writeText "proxy-suite-core" (
     builtins.toJSON (map (sub: sub.tag) proxyCfg.subscriptions)
   );
 in

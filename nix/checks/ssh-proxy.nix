@@ -18,9 +18,9 @@ let
   # writeText paths are content-addressed: finding one in the start script pins the
   # JSON. The context is dropped so the check may mention it.
   expectedOutboundFile =
-    backend: value:
+    value:
     builtins.unsafeDiscardStringContext "${
-      pkgs.writeText "proxy-suite-ob-ssh-proxy-${backend}.json" (builtins.toJSON value)
+      pkgs.writeText "proxy-suite-core" (builtins.toJSON value)
     }";
 
   # SingBox dials SSH natively: no unit, no local SOCKS listener.
@@ -47,7 +47,7 @@ let
   sshNativeSingBoxStart = generated.readDerivation (
     sshNativeSingBox.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
-  expectedNativeSingBoxOutbound = expectedOutboundFile "sing-box" {
+  expectedNativeSingBoxOutbound = expectedOutboundFile {
     type = "ssh";
     tag = "ssh-proxy";
     server = "ssh.example.com";
@@ -151,7 +151,7 @@ let
   );
   xrayService = sshXray.config.systemd.services."proxy-suite-ssh-proxy";
   xrayStartScript = generated.readDerivation xrayService.serviceConfig.ExecStart;
-  expectedXrayOutbound = expectedOutboundFile "xray" {
+  expectedXrayOutbound = expectedOutboundFile {
     protocol = "socks";
     tag = "ssh-proxy";
     settings = {
@@ -186,7 +186,7 @@ let
   sshHybridStart = generated.readDerivation (
     sshHybrid.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
   );
-  expectedHybridOutbound = expectedOutboundFile "hybrid" {
+  expectedHybridOutbound = expectedOutboundFile {
     type = "ssh";
     tag = "ssh-proxy";
     server = "ssh.example.com";
@@ -512,7 +512,7 @@ let
       true
     )
     (
-      assert pkgs.lib.hasInfix "proxy-suite-ob-ssh-proxy-xray.json" sshUrltestStart;
+      assert pkgs.lib.hasInfix "# outbound: ssh-proxy (OpenSSH SOCKS5 listener)" sshUrltestStart;
       true
     )
     (

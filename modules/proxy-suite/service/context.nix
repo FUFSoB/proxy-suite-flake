@@ -69,11 +69,14 @@ let
   headBin = "${pkgs.coreutils}/bin/head";
   seqBin = "${pkgs.coreutils}/bin/seq";
   findBin = "${pkgs.findutils}/bin/find";
-  amneziaWgProfileNamesFile = pkgs.writeText "proxy-suite-awg-profiles.json" (
+  amneziaWgProfileNamesFile = pkgs.writeText "proxy-suite-core" (
     builtins.toJSON (builtins.attrNames cfg.amneziaWg.profiles)
   );
 
-  proxySuiteScriptsDir = ../../../scripts;
+  proxySuiteScriptsDir = builtins.path {
+    name = "proxy-suite-scripts";
+    path = ../../../scripts;
+  };
   parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
   buildInboundPy = "${proxySuiteScriptsDir}/build-inbound.py";

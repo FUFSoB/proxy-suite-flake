@@ -106,7 +106,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"ss-in\" and .port == 8388)' {cfg}")
         # Credentials live only in the runtime config, never in the store.
         server.succeed(f"test $(stat -c %a {cfg}) = 600")
-        server.fail("grep -r '${uuid}' /nix/store/*proxy-suite-inbounds-*.json")
+        server.fail("grep -r '${uuid}' /nix/store/*-proxy-suite-inbounds")
 
     with subtest("safety rules are present and ordered first"):
         cfg = "/run/proxy-suite-inbounds/config.json"

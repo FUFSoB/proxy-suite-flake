@@ -52,7 +52,7 @@ let
     if localProxyAuth.passwordFile != null then
       localProxyAuth.passwordFile
     else if localProxyAuth.password != null then
-      pkgs.writeText "proxy-suite-local-proxy-password" localProxyAuth.password
+      pkgs.writeText "proxy-suite-core" localProxyAuth.password
     else
       null;
   routeModeStateFile = "/run/proxy-suite/route-mode";
@@ -148,7 +148,7 @@ let
       proxyInboundsGuardPrivate
       ;
   };
-  backendJqFilterFile = pkgs.writeText "proxy-suite-${backend}-backend-filter.jq" backendJqFilter;
+  backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 
   startScripts = import ./start-scripts.nix {
     inherit

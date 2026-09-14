@@ -46,13 +46,13 @@ let
     fi
   '';
 
-  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-up" ''
+  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-zapret" ''
     set -euo pipefail
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
     ${nft} -f ${perAppZapretRulesFile}
   '';
 
-  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-per-app-zapret-mark-down" ''
+  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-zapret" ''
     set -euo pipefail
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
   '';
@@ -125,7 +125,7 @@ in
         wants = [ "zapret-discord-youtube.service" ];
         conflicts = awgServiceNames;
         wantedBy = [ "multi-user.target" ];
-        execStart = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-start" exemptStart;
-        execStop = pkgs.writeShellScript "proxy-suite-zapret-vm-exempt-stop" exemptStop;
+        execStart = pkgs.writeShellScript "proxy-suite-zapret" exemptStart;
+        execStop = pkgs.writeShellScript "proxy-suite-zapret" exemptStop;
       });
 }

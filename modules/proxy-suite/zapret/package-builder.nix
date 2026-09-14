@@ -20,7 +20,7 @@ let
       tunInterfaces ? [ ],
       scope ? "global",
     }:
-    pkgs.writeText "proxy-suite-zapret-bypass.sh" ''
+    pkgs.writeText "proxy-suite-zapret" ''
       # Upstream presets can select iptables explicitly, in which case the nft
       # hook below is never called. Use upstream helpers for idempotent start
       # and stop, and distinct comments so each service owns its exemptions.
@@ -205,10 +205,10 @@ let
         ${lib.concatMapStrings (
           rule:
           let
-            domainsFile = pkgs.writeText "proxy-suite-zapret-hostlist-${rule.name}.txt" (
+            domainsFile = pkgs.writeText "proxy-suite-zapret" (
               lib.concatStringsSep "\n" (lib.unique rule.domains) + "\n"
             );
-            ipsetFile = pkgs.writeText "proxy-suite-zapret-ipset-${rule.name}.txt" (
+            ipsetFile = pkgs.writeText "proxy-suite-zapret" (
               lib.concatStringsSep "\n" (lib.unique rule.ips) + "\n"
             );
           in

@@ -42,7 +42,7 @@ let
   tproxyLocalSubnetLines = mkLocalSubnetLines globalTproxy.localSubnets;
   perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
-  nftablesRulesFile = pkgs.writeText "proxy-suite-tproxy.nft" ''
+  nftablesRulesFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
           table ip singbox {
               chain prerouting {
@@ -66,7 +66,7 @@ let
           }
   '';
 
-  perAppTproxyRulesFile = pkgs.writeText "proxy-suite-per-app-tproxy.nft" ''
+  perAppTproxyRulesFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
           table ip proxy_suite_per_app_tproxy {
               chain prerouting {
@@ -90,7 +90,7 @@ let
           }
   '';
 
-  perAppZapretRulesFile = pkgs.writeText "proxy-suite-per-app-zapret.nft" ''
+  perAppZapretRulesFile = pkgs.writeText "proxy-suite-routing" ''
     table inet proxy_suite_per_app_zapret_mark {
         chain prerouting {
             type filter hook prerouting priority -103; policy accept;
@@ -105,7 +105,7 @@ let
     }
   '';
 
-  perAppTunChainFile = pkgs.writeText "proxy-suite-per-app-tun-chain.nft" ''
+  perAppTunChainFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
           table inet proxy_suite_per_app_tun {
               chain output {

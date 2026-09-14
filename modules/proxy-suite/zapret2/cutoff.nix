@@ -36,7 +36,7 @@ let
 
   # $1 asn.txt, $2 sni.txt, $3 AS-to-prefix map; prints a sing-box source rule-set
   # with the prefixes of every cut-off network that no whitelisted name fixes.
-  proxyRules = pkgs.writeShellScript "proxy-suite-zapret2-cutoff-rules" ''
+  proxyRules = pkgs.writeShellScript "proxy-suite-zapret2" ''
     set -euo pipefail
     ${pkgs.gawk}/bin/awk -F'\t' '
       FILENAME == ARGV[1] { if ($1 ~ /^[0-9]+$/) cut[$1] = 1; next }
@@ -48,7 +48,7 @@ let
           | {version: 1, rules: (if length > 0 then [{ip_cidr: .}] else [] end)}'
   '';
 
-  probe = pkgs.writeShellScript unit ''
+  probe = pkgs.writeShellScript "proxy-suite-zapret2" ''
     set -euo pipefail
     export PATH=${
       lib.makeBinPath [
@@ -130,7 +130,7 @@ let
   # The probe measures this line, so its traffic leaves directly: proxyMark keeps it
   # out of TUN/TProxy like the backend's own, and the conntrack bit keeps zapret2 from
   # touching or learning it.
-  exempt = pkgs.writeShellScript "${unit}-exempt" ''
+  exempt = pkgs.writeShellScript "proxy-suite-zapret2" ''
     set -euo pipefail
     ${nft} delete table inet ${table} 2>/dev/null || true
     ${nft} -f - <<EOF

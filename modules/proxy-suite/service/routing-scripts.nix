@@ -29,7 +29,7 @@ let
   };
 in
 {
-  xrayTunUpScript = pkgs.writeShellScript "proxy-suite-xray-tun-up" ''
+  xrayTunUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg globalTun.address}
@@ -81,7 +81,7 @@ in
     ${ip} -6 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
   '';
 
-  tproxyUpScript = pkgs.writeShellScript "proxy-suite-tproxy-up" ''
+  tproxyUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
 
     # Start from a clean policy-routing state.  `ip rule add` permits duplicate
@@ -100,7 +100,7 @@ in
     ${ip} rule add fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable}
   '';
 
-  tproxyDownScript = pkgs.writeShellScript "proxy-suite-tproxy-down" ''
+  tproxyDownScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set +e
 
     ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "singbox"; }}
@@ -112,7 +112,7 @@ in
     ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = globalTproxy.routeTable; }}
   '';
 
-  tunCleanupScript = pkgs.writeShellScript "proxy-suite-tun-cleanup" ''
+  tunCleanupScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set +e
 
     # SingBox normally removes these on graceful shutdown, but stale

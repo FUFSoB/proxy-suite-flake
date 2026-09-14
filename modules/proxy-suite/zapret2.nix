@@ -59,7 +59,7 @@ let
 
   # Wrapped apps opted in: MODE_FILTER=none applies every profile to all their traffic.
   perAppRuntime = runtime.mkRuntime {
-    name = "proxy-suite-per-app-zapret2";
+    name = "proxy-suite-zapret2";
     qnum = perAppZapretCfg.qnum;
     desyncMark = 134217728; # 0x8000000
     desyncMarkPostnat = 67108864; # 0x4000000
@@ -87,13 +87,13 @@ let
       ;
   };
 
-  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-per-app-zapret2-mark-up" ''
+  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-zapret2" ''
     set -euo pipefail
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
     ${nft} -f ${perAppZapretRulesFile}
   '';
 
-  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-per-app-zapret2-mark-down" ''
+  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-zapret2" ''
     set -euo pipefail
     ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
   '';

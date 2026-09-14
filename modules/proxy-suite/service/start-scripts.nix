@@ -135,7 +135,6 @@ let
 
   mkStartScript =
     {
-      name,
       runtimeDir,
       configFile,
       routingMark ? null,
@@ -148,7 +147,7 @@ let
       enableOutboundTest ? false,
       enableZapretCutoff ? false,
     }:
-    pkgs.writeShellScript name ''
+    pkgs.writeShellScript "proxy-suite-core" ''
       set -euo pipefail
       RUNTIME_DIR="${runtimeDir}"
       ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
@@ -370,7 +369,6 @@ let
     '';
 
   startSocks = mkStartScript {
-    name = "proxy-suite-start-socks";
     runtimeDir = "/run/proxy-suite-socks";
     configFile = tproxyFile;
     routingMark = globalTproxy.proxyMark;
@@ -384,7 +382,6 @@ let
   };
 
   startTun = mkStartScript {
-    name = "proxy-suite-start-tun";
     runtimeDir = "/run/proxy-suite-tun";
     configFile = tunFile;
     routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
@@ -395,7 +392,6 @@ let
   };
 
   startPerAppTun = mkStartScript {
-    name = "proxy-suite-start-per-app-tun";
     runtimeDir = "/run/proxy-suite-per-app-tun";
     configFile = perAppTunFile;
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;

@@ -54,15 +54,18 @@ let
     if upstreamPackages ? zapret then upstreamPackages.zapret else upstreamPackages.default;
 
   mkOptionalHostlistFile =
-    fileName: entries:
-    if entries != [ ] then pkgs.writeText fileName (lib.concatStringsSep "\n" entries + "\n") else null;
+    entries:
+    if entries != [ ] then
+      pkgs.writeText "proxy-suite-zapret" (lib.concatStringsSep "\n" entries + "\n")
+    else
+      null;
 
-  listGeneralFile = mkOptionalHostlistFile "proxy-suite-zapret-list-general-user.txt" zapretCfg.zapret-discord-youtube.domains;
-  listExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-list-exclude-user.txt" zapretCfg.zapret-discord-youtube.excludeDomains;
-  ipsetAllFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-all.txt" zapretCfg.zapret-discord-youtube.ips;
-  ipsetExcludeFile = mkOptionalHostlistFile "proxy-suite-zapret-ipset-exclude-user.txt" zapretCfg.zapret-discord-youtube.excludeIps;
+  listGeneralFile = mkOptionalHostlistFile zapretCfg.zapret-discord-youtube.domains;
+  listExcludeFile = mkOptionalHostlistFile zapretCfg.zapret-discord-youtube.excludeDomains;
+  ipsetAllFile = mkOptionalHostlistFile zapretCfg.zapret-discord-youtube.ips;
+  ipsetExcludeFile = mkOptionalHostlistFile zapretCfg.zapret-discord-youtube.excludeIps;
 
-  hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret-hostlist-rules.json" (
+  hostlistRuleSpec = pkgs.writeText "proxy-suite-zapret" (
     builtins.toJSON {
       includeExtraUpstreamLists = zapretCfg.zapret-discord-youtube.includeExtraUpstreamLists;
       entries = map (rule: {
@@ -81,10 +84,12 @@ let
   );
 
   selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.zapret-discord-youtube.configName;
-  patchConfigScriptSrc = builtins.path {
-    path = ../../../scripts/patch-zapret-config.py;
-    name = "patch-zapret-config.py";
-  };
+  patchConfigScriptSrc = "${
+    builtins.path {
+      name = "proxy-suite-scripts";
+      path = ../../../scripts;
+    }
+  }/patch-zapret-config.py";
   patchConfigScript = "${pkgs.python3}/bin/python3 ${patchConfigScriptSrc}";
 
   packageBuilder = import ./package-builder.nix {

@@ -9,7 +9,7 @@ let
   s = cfg.sshProxy;
   destination = if s.server.user == null then s.server.host else "${s.server.user}@${s.server.host}";
   extraArgs = lib.concatMapStrings (arg: "    args+=(${lib.escapeShellArg arg})\n") s.extraArgs;
-  startScript = pkgs.writeShellScript "proxy-suite-ssh-proxy-start" ''
+  startScript = pkgs.writeShellScript "proxy-suite-ssh-proxy" ''
         set -euo pipefail
 
         args=(
