@@ -170,10 +170,6 @@ in
     # -- perAppRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
-      assert pkgs.lib.hasInfix
-        ''_wrap_slice "proxy-suite-per-app-zapret" "$profile" "$PER_APP_ROUTING_ZAPRET_ENABLED"''
-        perAppRoutingZapretScript;
-      assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingZapretScript;
       true
     )
 

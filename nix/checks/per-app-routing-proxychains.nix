@@ -98,7 +98,6 @@ in
 
     # -- perAppRouting: proxy-ctl script embeds wrap/apps commands --
     (
-      assert pkgs.lib.hasInfix "help | -h | --help)" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "Usage: proxy-ctl <group>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "local proxy backend" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "restart active services"
@@ -118,8 +117,6 @@ in
 
     # -- proxy-ctl: restart skips services that are not present in zapret-only or tg-only builds --
     (
-      assert pkgs.lib.hasInfix "if _svc_exists proxy-suite-socks; then" minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix "_svc_exists \"$svc\" && _svc_active \"$svc\"" minimalProxyCtlScript;
       assert pkgs.lib.hasInfix "proxy-suite-tg-ws-proxy" minimalProxyCtlScript;
       true
     )
@@ -127,9 +124,6 @@ in
     # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
     (
       assert pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG=-q" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix
-        "exec proxychains4 $PROXYCHAINS_QUIET_ARG -f \"$PROXYCHAINS_CONFIG\" \"$@\""
-        perAppRoutingProxychainsScript;
       true
     )
   ];

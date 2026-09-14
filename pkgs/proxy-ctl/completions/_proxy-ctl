@@ -1,0 +1,5 @@
+#compdef proxy-ctl
+# proxy-ctl knows its own verbs, tags, profiles and units: ask it.
+local -a candidates
+candidates=(${(f)"$(proxy-ctl __complete ${(Q)words[2,CURRENT-1]} 2>/dev/null)"})
+compadd -a candidates

@@ -74,15 +74,6 @@ in
     # -- perAppRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "systemd-run --user --scope --quiet --collect --same-dir"
-        perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "_check_no_global_proxy tun" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix
-        ''_wrap_slice "proxy-suite-per-app-tun" "$profile" "$PER_APP_ROUTING_TUN_ENABLED"''
-        perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "$slice_base-user@$uid.service" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "cleanup_slice()" perAppRoutingTunScript;
-      assert pkgs.lib.hasInfix "trap cleanup_slice EXIT" perAppRoutingTunScript;
       true
     )
 

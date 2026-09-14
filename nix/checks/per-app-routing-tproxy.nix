@@ -46,10 +46,6 @@ in
     # -- perAppRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
     (
       assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
-      assert pkgs.lib.hasInfix
-        ''_wrap_slice "proxy-suite-per-app-tproxy" "$profile" "$PER_APP_ROUTING_TPROXY_ENABLED"''
-        perAppRoutingTproxyScript;
-      assert pkgs.lib.hasInfix "$slice_base-\${profile}-$$" perAppRoutingTproxyScript;
       true
     )
 

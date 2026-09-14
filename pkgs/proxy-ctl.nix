@@ -38,8 +38,9 @@
 }:
 
 let
-  unwrapped = pkgs.writeShellScriptBin "proxy-ctl" (
-    builtins.readFile ./proxy-ctl-lib.sh + "\n" + builtins.readFile ./proxy-ctl.sh
+  # Not writePython3Bin: its flake8 pass would gate the build on style.
+  unwrapped = pkgs.writeScriptBin "proxy-ctl" (
+    "#!${pkgs.python3}/bin/python3\n" + builtins.readFile ./proxy-ctl/proxy_ctl.py
   );
   wrapperEnv = {
     CLASH_API = clashApi;
@@ -93,8 +94,11 @@ pkgs.symlinkJoin {
   # curl. The newest Chrome profile the package ships, since the set varies by
   # version; the build fails if there is none.
   postBuild = ''
-    install -Dm644 ${./proxy-ctl-completion.bash} \
+    install -Dm644 ${./proxy-ctl/completions/proxy-ctl.bash} \
       "$out/share/bash-completion/completions/proxy-ctl"
+    install -Dm644 ${./proxy-ctl/completions/_proxy-ctl} "$out/share/zsh/site-functions/_proxy-ctl"
+    install -Dm644 ${./proxy-ctl/completions/proxy-ctl.fish} \
+      "$out/share/fish/vendor_completions.d/proxy-ctl.fish"
     probe_curl=$(ls ${pkgs.curl-impersonate}/bin/curl_chrome[0-9]* | grep -E '/curl_chrome[0-9]+$' | sort -V | tail -n 1)
     [ -x "$probe_curl" ]
     wrapProgram "$out/bin/proxy-ctl" \
@@ -103,12 +107,8 @@ pkgs.symlinkJoin {
         lib.makeBinPath [
           # curl-impersonate's curl_chrome* wrappers are `#!/usr/bin/env bash`.
           pkgs.bash
-          pkgs.coreutils
           pkgs.curl
           pkgs.fzf
-          pkgs.gawk
-          pkgs.gnugrep
-          pkgs.jq
           pkgs.proxychains-ng
           pkgs.qrencode
           pkgs.systemd

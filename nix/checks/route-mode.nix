@@ -82,12 +82,6 @@ in
     (
       assert pkgs.lib.hasInfix "proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]"
         minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''printf 'route_mode=%s\n' "$(_route_mode_current)"''
-        minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''printf 'default_route_mode=%s\n' "$(_route_mode_default)"''
-        minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix ''systemctl start "proxy-suite-route-mode@''${action}.service"''
-        minimalProxyCtlScript;
       true
     )
 

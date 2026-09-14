@@ -46,16 +46,14 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-subscription-list-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.gawk
           pkgs.jq
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
-        chmod +x "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         mkdir -p cache
         printf '%s\n' '["plain","hybrid","bad"]' > tags.json
@@ -78,10 +76,10 @@
           PROXYCHAINS_QUIET_ARG="" \
           ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
           DEFAULT_ROUTE_MODE="blacklist" \
-          bash "$proxy_ctl" proxy subs list > output
+          python3 "$proxy_ctl" proxy subs list > output
         # The old spelling still dispatches.
         env SUB_TAGS_FILE="$PWD/tags.json" SUB_CACHE_DIR="$PWD/cache" \
-          bash "$proxy_ctl" subscription list | cmp - output
+          python3 "$proxy_ctl" subscription list | cmp - output
 
         awk '$1 == "plain" { found = 1; if ($NF != "2") exit 1 } END { exit found ? 0 : 1 }' output
         awk '$1 == "hybrid" { found = 1; if ($NF != "3") exit 1 } END { exit found ? 0 : 1 }' output
@@ -94,7 +92,7 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-outbounds-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.curl
           pkgs.gawk
@@ -103,9 +101,7 @@
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
-        chmod +x "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         # systemd is not in the sandbox. The reload stub stands in for the start
         # script, which is what actually republishes the inventory.
@@ -149,7 +145,7 @@
             PROXYCHAINS_QUIET_ARG="" \
             ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
             DEFAULT_ROUTE_MODE="blacklist" \
-            bash "$proxy_ctl" "$@"
+            python3 "$proxy_ctl" "$@"
         }
 
         # Listing works from the inventory alone, with no Clash API answering.
@@ -213,15 +209,14 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-zapret-auto-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.gawk
           pkgs.gnugrep
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         state="$PWD/state"
         mkdir -p "$state"
@@ -230,7 +225,7 @@
         : > "$state/zapret-hosts-user-exclude.txt"
 
         run() {
-          env ZAPRET_AUTO_ENABLED=1 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret auto "$@"
+          env ZAPRET_AUTO_ENABLED=1 ZAPRET_STATE_DIR="$state" python3 "$proxy_ctl" zapret auto "$@"
         }
 
         run list | grep -qx blocked.example
@@ -266,14 +261,14 @@
         printf 'AS12389\n' > "$state/cutoff/egress"
         printf '24940\n14061\n' > "$state/cutoff/asn.txt"
         printf '24940\t300.ya.ru\n' > "$state/cutoff/sni.txt"
-        cutoff=$(env ZAPRET_CUTOFF_ENABLED=1 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret cutoff)
+        cutoff=$(env ZAPRET_CUTOFF_ENABLED=1 ZAPRET_STATE_DIR="$state" python3 "$proxy_ctl" zapret cutoff)
         printf '%s\n' "$cutoff" | grep -q 'from AS12389$'
         printf '%s\n' "$cutoff" | grep -qx 'Cutoff:  2 network(s)'
         printf '%s\n' "$cutoff" | grep -qE '^  AS24940 +300\.ya\.ru$'
         printf '%s\n' "$cutoff" | grep -qE '^  AS14061 +no name - proxy fallback$'
 
         # Without the zapret2 engine there is nothing to inspect.
-        ! env ZAPRET_AUTO_ENABLED=0 ZAPRET_STATE_DIR="$state" bash "$proxy_ctl" zapret auto list
+        ! env ZAPRET_AUTO_ENABLED=0 ZAPRET_STATE_DIR="$state" python3 "$proxy_ctl" zapret auto list
 
         touch "$out"
       '';
@@ -282,7 +277,7 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-complete-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.gawk
           pkgs.gnugrep
@@ -290,8 +285,7 @@
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         printf '%s\n' '["home","work"]' > awg.json
         jq -n '[{name:"torrent",route:"direct"}]' > profiles.json
@@ -301,11 +295,11 @@
           env AWG_PROFILES_FILE="$PWD/awg.json" \
             PER_APP_ROUTING_PROFILES_FILE="$PWD/profiles.json" \
             OUTBOUND_INVENTORY_FILE="$PWD/inventory.json" \
-            bash "$proxy_ctl" __complete "$@"
+            python3 "$proxy_ctl" __complete "$@"
         }
 
         # Every group the help lists must complete, or the table has drifted.
-        bash "$proxy_ctl" help | awk '/^  [a-z]/ { print $1 }' | sort -u > groups
+        python3 "$proxy_ctl" help | awk '/^  [a-z]/ { print $1 }' | sort -u > groups
         run > top
         while read -r group; do
           grep -qx "$group" top || { echo "help lists $group, completion does not" >&2; exit 1; }
@@ -330,7 +324,12 @@
 
         # A shell completing must never die, however unreadable the state is.
         run inbounds link | cmp - /dev/null
-        env AWG_PROFILES_FILE=/nonexistent bash "$proxy_ctl" __complete awg on
+        env AWG_PROFILES_FILE=/nonexistent python3 "$proxy_ctl" __complete awg on
+
+        # Every shell's completion file at least parses.
+        bash -n ${../../pkgs/proxy-ctl/completions/proxy-ctl.bash}
+        ${pkgs.zsh}/bin/zsh -n ${../../pkgs/proxy-ctl/completions/_proxy-ctl}
+        HOME="$TMPDIR" ${pkgs.fish}/bin/fish --no-execute ${../../pkgs/proxy-ctl/completions/proxy-ctl.fish}
 
         touch "$out"
       '';
@@ -339,15 +338,14 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-where-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.gnugrep
           pkgs.jq
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         mkdir -p ap zap
         jq -n '{domains:{"spotify.com":{exit:"community-de",host:"open.spotify.com",at:0}}}' > ap/state.json
@@ -358,7 +356,7 @@
         run() {
           env AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$PWD/ap" \
             ZAPRET_AUTO_ENABLED=1 ZAPRET_STATE_DIR="$PWD/zap" \
-            bash "$proxy_ctl" where "$@"
+            python3 "$proxy_ctl" where "$@"
         }
 
         # Piping into `grep -q` would race the script against SIGPIPE.
@@ -382,248 +380,19 @@
         # A URL is accepted where a hostname is.
         verdict https://open.spotify.com/track/x '^  domain *open.spotify.com$'
 
-        ! bash "$proxy_ctl" where 2>/dev/null
+        ! python3 "$proxy_ctl" where 2>/dev/null
 
         touch "$out"
       '';
 
-  # The verdict table, fed tuples measured on a real censored network.
-  proxy-ctl-proxy-probe =
-    pkgs.runCommand "proxy-suite-proxy-ctl-proxy-probe-check"
-      {
-        nativeBuildInputs = [
-          pkgs.bash
-          pkgs.coreutils
-          pkgs.gnugrep
-          pkgs.jq
-        ];
-      }
-      ''
-        cat > "$TMPDIR/test.sh" <<'EOF'
-        set -euo pipefail
-        . ${../../pkgs/proxy-ctl-lib.sh}
-
-        expect() {
-          local want="$1" direct="$2" via="$3" got
-          got="$(_probe_verdict "$direct" "$via")"
-          if [ "$got" != "$want" ]; then
-            echo "FAIL: expected $want, got $got" >&2
-            echo "  direct=$direct" >&2
-            echo "  proxy =$via" >&2
-            exit 1
-          fi
-        }
-
-        # Origin refuses direct, accepts the proxy: chatgpt.com/robots.txt.
-        expect destination '0|0.146175|403|6633|' '0|0.230116|200|4302|'
-
-        # The same through a redirect: claude.ai/robots.txt.
-        expect destination \
-          '0|0.141625|302|143|https://claude.com/app-unavailable-in-region' \
-          '0|0.181276|200|281|'
-
-        # TLS never completed: censorship, zapret's job.
-        expect censor '35|0.000000|000|0|' '0|0.119348|200|6258|'
-
-        # Handshake, then silence: the post-handshake throttle.
-        expect censor '0|0.125029|000|0|' '0|0.143772|200|32881|'
-
-        # Direct works. Nothing to do, whoever else also works.
-        expect ok '0|0.099546|200|2678|' '0|0.146822|200|2678|'
-
-        # robots.txt legitimately absent is not a failure.
-        expect ok '0|0.161330|404|559|' '0|0.214667|404|559|'
-
-        # An ordinary redirect must not read as a block.
-        expect ok \
-          '0|0.10|301|0|https://www.example.com/robots.txt' \
-          '0|0.20|301|0|https://www.example.com/robots.txt'
-
-        # Refused everywhere: not an egress problem.
-        expect both-fail '0|0.10|403|100|' '0|0.20|403|100|'
-
-        # Nothing reaches it at all - a dead name, not a blocked one.
-        expect unreachable '6|0.000000|000|0|' '35|0.000000|000|0|'
-
-        # --- redirect chains ---
-        # spotify.com: the block is four same-site hops in.
-        curl() {
-          local url
-          for url; do :; done
-          echo x >> "$TMPDIR/curl-calls"
-          case "$url" in
-            https://spotify.test/) printf '0|0.1|301|0|https://www.spotify.test/' ;;
-            https://www.spotify.test/) printf '0|0.1|301|0|https://open.spotify.test/' ;;
-            https://open.spotify.test/) printf '0|0.1|302|93|https://accounts.spotify.test/login' ;;
-            https://accounts.spotify.test/login)
-              printf '0|0.1|301|0|https://www.spotify.test/int/why-not-available/' ;;
-            https://redir.test/) printf '0|0.1|301|0|https://elsewhere.example/' ;;
-            https://loop.test/) printf '0|0.1|301|0|https://loop.test/' ;;
-            *) printf '0|0.1|200|10|' ;;
-          esac
-        }
-        test "$(_probe_exit_verdict "$(_probe_fetch spotify.test / --noproxy '*')")" = blocked
-        # Leaving the site ends the walk.
-        test "$(_probe_exit_verdict "$(_probe_fetch redir.test / --noproxy '*')")" = ok
-        # A redirect loop inside the site still stops.
-        : > "$TMPDIR/curl-calls"
-        _probe_fetch loop.test / --noproxy '*' > /dev/null
-        test "$(wc -l < "$TMPDIR/curl-calls")" -le 6
-        unset -f curl
-
-        # --- which path decides: the apex, robots.txt only breaks ties ---
-        _svc_active() { return 0; }
-        # No listener index: only this host and the local proxy.
-        PROBE_EXITS_FILE=/nonexistent
-
-        # A curl that cannot start is an error, not a dead site.
-        ! (PROBE_CURL=/nonexistent cmd_proxy_probe --json x.test) 2> "$TMPDIR/curl-err"
-        grep -q 'Cannot run /nonexistent' "$TMPDIR/curl-err"
-
-        probe_with() {
-          # $1 apex-direct $2 apex-proxy $3 robots-direct $4 robots-proxy
-          _probe_fetch() {
-            case "$2" in
-              /) [ "$3" = --noproxy ] && printf '%s' "$APEX_DIRECT" || printf '%s' "$APEX_PROXY" ;;
-              *) [ "$3" = --noproxy ] && printf '%s' "$ROBOTS_DIRECT" || printf '%s' "$ROBOTS_PROXY" ;;
-            esac
-          }
-          APEX_DIRECT="$1" APEX_PROXY="$2" ROBOTS_DIRECT="$3" ROBOTS_PROXY="$4" \
-            cmd_proxy_probe --json example.test
-        }
-
-        # last.fm: apex geo-blocked, robots.txt served everywhere.
-        out="$(probe_with '0|0.11|403|424|' '0|0.17|200|59809|' '0|0.11|200|400|' '0|0.17|200|400|')"
-        grep -q '"verdict":"destination"' <<<"$out"
-        grep -q '"url":"https://example.test/"' <<<"$out"
-
-        # chatgpt.com: apex 403 everywhere, robots.txt separates.
-        out="$(probe_with '0|0.14|403|6633|' '0|0.23|403|8442|' '0|0.14|403|6633|' '0|0.23|200|4302|')"
-        grep -q '"verdict":"destination"' <<<"$out"
-        grep -q '"url":"https://example.test/robots.txt"' <<<"$out"
-
-        # A working apex is never second-guessed by the fallback path.
-        # set -e: proxy-ctl runs under it, and $() does not inherit it.
-        out="$(set -e; probe_with '0|0.10|200|500|' '0|0.20|200|500|' '0|0.10|403|10|' '0|0.20|200|10|')"
-        grep -q '"verdict":"ok"' <<<"$out"
-
-        # --- walking more than two exits ---
-        # Direct and the first proxy share a WAF; only the third exit gets through.
-        printf '%s' '[{"i":0,"tag":"direct","port":18540},
-          {"i":1,"tag":"fi","port":18541},{"i":2,"tag":"de","port":18542}]' \
-          > "$TMPDIR/exits.json"
-        PROBE_EXITS_FILE="$TMPDIR/exits.json"
-        _probe_fetch() {
-          # every exit, direct included, goes through its pinned listener
-          case "$4" in
-            *:18540 | *:18541) printf '0|0.10|403|919|' ;;
-            *:18542) printf '0|0.10|200|500|' ;;
-          esac
-        }
-        out="$(cmd_proxy_probe --json sekai.test)"
-        jq -e '.verdict == "destination" and .exit == "de"' <<<"$out" > /dev/null
-
-        # --keep-going tries every exit but keeps the first that worked.
-        out="$(cmd_proxy_probe --json --keep-going --exits de,fi sekai.test)"
-        jq -e '.exit == "de" and [.exits[].tag] == ["direct", "de", "fi", "direct", "de", "fi"]' \
-          <<<"$out" > /dev/null
-
-        # --exits restricts and orders the walk; direct is always tried first.
-        out="$(cmd_proxy_probe --json --exits de sekai.test)"
-        jq -e '[.exits[].tag] == ["direct", "de"]' <<<"$out" > /dev/null
-
-        # An empty list probes direct only (every exit shares one network).
-        out="$(cmd_proxy_probe --json --exits "" sekai.test)"
-        jq -e '([.exits[].tag] | unique) == ["direct"] and .exit == null' <<<"$out" > /dev/null
-
-        # --via: can this exit carry what direct reaches?
-        out="$(cmd_proxy_probe --json --via de sekai.test)"
-        jq -e '.verdict == "ok" and ([.exits[].tag] | unique) == ["de", "direct"]' <<<"$out" > /dev/null
-        out="$(cmd_proxy_probe --json --via fi sekai.test)"
-        jq -e '.verdict == "blocked"' <<<"$out" > /dev/null
-        ! (cmd_proxy_probe --json --via nowhere sekai.test) 2> /dev/null
-        # A given path is probed as is, for that probe only.
-        out="$(cmd_proxy_probe --json --via de sekai.test/robots.txt)"
-        jq -e '.url == "https://sekai.test/robots.txt" and ([.exits[].path] | unique) == ["/robots.txt"]' \
-          <<<"$out" > /dev/null
-        out="$(cmd_proxy_probe --json --via fi sekai.test)"
-        jq -e '([.exits[].path] | unique) == ["/", "/robots.txt"]' <<<"$out" > /dev/null
-
-        # Refused a front page direct gets: not a stand-in (www.reddit.com).
-        _probe_fetch() {
-          case "$4:$2" in
-            *:18541:/) printf '0|0.10|403|190240|' ;;
-            *) printf '0|0.10|200|500|' ;;
-          esac
-        }
-        out="$(cmd_proxy_probe --json --via fi geo.test)"
-        jq -e '.verdict == "blocked"' <<<"$out" > /dev/null
-        # i.pximg.net: the front page is 400 everywhere, so robots.txt decides.
-        _probe_fetch() {
-          case "$2" in
-            /) printf '0|0.10|400|0|' ;;
-            *) printf '0|0.10|200|43|' ;;
-          esac
-        }
-        out="$(cmd_proxy_probe --json --via fi cdn.test)"
-        jq -e '.verdict == "ok"' <<<"$out" > /dev/null
-
-        # --- proxy-ctl proxy auto learn ---
-        learn_dir="$TMPDIR/learn"
-        mkdir -p "$learn_dir"
-        systemctl() {
-          # stands in for the requests-only run
-          printf '%s' '{"domains":{"last.fm":{"verdict":"destination","exit":"primary","host":"www.last.fm"}},
-            "hosts":{"www.last.fm":{"domain":"last.fm","verdict":"destination","exit":"primary"}}}' \
-            > "$learn_dir/state.json"
-        }
-        ! (AUTOPROXY_ENABLED=0 cmd_proxy_learn www.last.fm) 2> /dev/null
-        # It lands in a root-owned file and then in a URL: hostnames only.
-        ! (AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learn 'x;rm -rf /') 2> /dev/null
-        ! (AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learn '-evil.test/path') 2> /dev/null
-        out="$(AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learn www.last.fm)"
-        test "$(cat "$learn_dir/requests")" = www.last.fm
-        grep -q 'last.fm: destination - routed via primary' <<<"$out"
-
-        # A verdict that routes nothing is kept for its host and reported.
-        systemctl() {
-          printf '%s' '{"domains":{},
-            "hosts":{"api.example.test":{"domain":"example.test","verdict":"ok","exit":null}}}' \
-            > "$learn_dir/state.json"
-        }
-        out="$(AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learn api.example.test)"
-        grep -q 'api.example.test: ok - nothing to route' <<<"$out"
-
-        # A failed run is reported in plain words, and the request is not lost.
-        systemctl() { return 1; }
-        : > "$learn_dir/requests"
-        ! (AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learn www.last.fm) 2> "$TMPDIR/learn-err"
-        grep -q 'still queued' "$TMPDIR/learn-err"
-        grep -qx www.last.fm "$learn_dir/requests"
-
-        # --- queue and learned ----------------------------------------------
-        systemctl() { return 0; }
-        printf '%s' '{"domains":{"spotify.com":{"verdict":"destination","exit":"primary","host":"www.spotify.com","at":0}},
-          "hosts":{"www.spotify.com":{"domain":"spotify.com","verdict":"destination","exit":"primary"},
-                   "gew1-spclient.spotify.com":{"domain":"spotify.com","verdict":"ok","exit":null}},
-          "backlog":{"a.example":{"domain":"example","hits":2},"b.example":{"domain":"example","hits":9}}}' \
-          > "$learn_dir/state.json"
-        q="$(AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_queue)"
-        grep -qx '  www.last.fm' <<<"$q"
-        # Most-dialled first.
-        test "$(grep -oE '[ab]\.example' <<<"$q" | head -n 1)" = b.example
-        l="$(AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_learned)"
-        grep -q 'spotify.com .*-> primary' <<<"$l"
-        grep -q 'ok=1' <<<"$l"
-        # An unreadable state directory asks for sudo.
-        chmod 000 "$learn_dir"
-        ! (AUTOPROXY_ENABLED=1 AUTOPROXY_STATE_DIR="$learn_dir" cmd_proxy_queue) 2> "$TMPDIR/q-err"
-        chmod 755 "$learn_dir"
-        grep -q 'enable userControl, or run with sudo' "$TMPDIR/q-err"
-        EOF
-        bash "$TMPDIR/test.sh"
-        touch "$out"
-      '';
+  # proxy_ctl.py's function-level tests: the probe verdict table and exit walk,
+  # autoProxy learn/queue, inbound stats and subscriptions, apps run.
+  proxy-ctl-unit =
+    pkgs.runCommand "proxy-suite-proxy-ctl-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      export PYTHONDONTWRITEBYTECODE=1
+      python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
+      touch "$out"
+    '';
 
   # autoProxy slowness routing: sampler and judge.
   autoproxy-slowness =
@@ -685,17 +454,11 @@
         touch "$out"
       '';
 
-  # Per-user inbound traffic: collection and `proxy-ctl inbounds stats`.
+  # Per-user inbound traffic collection; `proxy-ctl inbounds stats` is in proxy-ctl-unit.
   inbound-stats =
     pkgs.runCommand "proxy-suite-inbound-stats-check"
       {
-        nativeBuildInputs = [
-          pkgs.bash
-          pkgs.coreutils
-          pkgs.gawk
-          pkgs.gnugrep
-          pkgs.jq
-        ];
+        nativeBuildInputs = [ pkgs.jq ];
       }
       ''
         add=${../../modules/proxy-suite/inbound-stats-add.jq}
@@ -716,40 +479,6 @@
         old="$(jq -c '.days["2024-01-01"] = {fufsob: {up: 1}}' <<<"$s")"
         jq -e '.days["2024-01-01"] == null' <<<"$(a '{}' "$old")" > /dev/null
 
-        jq -c '.days["2026-09-10"] = {fufsob: {down: 1073741824, up: 1048576}}' <<<"$s" > "$TMPDIR/stats.json"
-        cat > "$TMPDIR/test.sh" <<'EOF'
-        set -euo pipefail
-        . ${../../pkgs/proxy-ctl-lib.sh}
-        id() { echo 1000; }
-        date() { echo 2026-09-10; }
-        export INBOUNDS_STATS_FILE="$TMPDIR/stats.json"
-        out="$(_inbound_stats 2)"
-        printf '%s\n' "$out"
-        # Newest day first, sizes readable, then totals over the period.
-        test "$(grep -oE '^  2026-09-1[01]' <<<"$out" | head -n 1)" = "  2026-09-11"
-        grep -qE '^  2026-09-11 +fufsob +5\.7 MiB +4 KiB$' <<<"$out"
-        grep -qE '^  2026-09-11 +phone +0 B +0 B$' <<<"$out"
-        grep -qE '^  2026-09-10 +fufsob +1\.0 GiB +1\.0 MiB$' <<<"$out"
-        grep -qE '^  fufsob +1\.0 GiB +1\.0 MiB$' <<<"$out"
-        ! (_inbound_stats 0) 2> /dev/null
-        # Nothing collected yet says so, rather than printing an empty table.
-        ! (INBOUNDS_STATS_FILE="$TMPDIR/none.json" _inbound_stats 7) 2> "$TMPDIR/err"
-        grep -q 'No traffic recorded yet' "$TMPDIR/err"
-
-        # --- proxy-ctl inbounds sub -----------------------------------------
-        printf '%s' '[{"user":"fufsob","token":"aaa"},{"user":"teri","token":"bbb"}]' > "$TMPDIR/subs.json"
-        export INBOUNDS_SUBS_FILE="$TMPDIR/subs.json"
-        test "$(INBOUNDS_SUB_BASE_URL=https://vpn.example/sub/ _inbound_subscriptions teri)" = https://vpn.example/sub/bbb
-        # Without a user: names only, never a token.
-        out="$(INBOUNDS_SUB_BASE_URL=https://vpn.example/sub _inbound_subscriptions 2> /dev/null)"
-        test "$(wc -l <<<"$out")" = 2
-        ! grep -qE 'aaa|bbb' <<<"$out"
-        ! (_inbound_subscriptions nobody) 2> /dev/null
-        # Without a base URL: the file path, and no QR code.
-        test "$(INBOUNDS_SUB_BASE_URL= _inbound_subscriptions fufsob 2> /dev/null)" = "$TMPDIR/subs/aaa"
-        ! (INBOUNDS_SUB_BASE_URL= _inbound_subscriptions fufsob --qr) 2> /dev/null
-        EOF
-        bash "$TMPDIR/test.sh"
         touch "$out"
       '';
 
@@ -757,16 +486,14 @@
     pkgs.runCommand "proxy-suite-proxy-ctl-amneziawg-check"
       {
         nativeBuildInputs = [
-          pkgs.bash
+          pkgs.python3
           pkgs.coreutils
           pkgs.gnugrep
           pkgs.jq
         ];
       }
       ''
-        proxy_ctl="$TMPDIR/proxy-ctl"
-        cat ${../../pkgs/proxy-ctl-lib.sh} ${../../pkgs/proxy-ctl.sh} > "$proxy_ctl"
-        chmod +x "$proxy_ctl"
+        proxy_ctl=${../../pkgs/proxy-ctl/proxy_ctl.py}
 
         mkdir -p bin
         cat > bin/systemctl <<'SH'
@@ -797,17 +524,17 @@
         export SYSTEMCTL_LOG="$PWD/systemctl.log"
         export AWG_PROFILES_FILE="$PWD/awg-profiles.json"
 
-        bash "$proxy_ctl" awg list > list-output
+        python3 "$proxy_ctl" awg list > list-output
         grep -q 'home.*active' list-output
         grep -q 'work.*inactive' list-output
-        bash "$proxy_ctl" awg on work
-        bash "$proxy_ctl" awg off home
-        bash "$proxy_ctl" awg restart home
+        python3 "$proxy_ctl" awg on work
+        python3 "$proxy_ctl" awg off home
+        python3 "$proxy_ctl" awg restart home
         grep -q '^start proxy-suite-awg-work$' "$SYSTEMCTL_LOG"
         grep -q '^stop proxy-suite-awg-home$' "$SYSTEMCTL_LOG"
         grep -q '^restart proxy-suite-awg-home$' "$SYSTEMCTL_LOG"
 
-        if bash "$proxy_ctl" awg on missing 2> error-output; then
+        if python3 "$proxy_ctl" awg on missing 2> error-output; then
           exit 1
         fi
         grep -q 'Unknown AmneziaWG profile' error-output
