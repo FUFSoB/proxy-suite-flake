@@ -1,22 +1,19 @@
 { lib, ... }:
 
 let
-  inherit (lib) mkEnableOption mkOption types;
+  p =
+    path:
+    [
+      "services"
+      "proxy-suite"
+    ]
+    ++ lib.splitString "." path;
 in
 {
-  options.services.proxy-suite.tray = {
-    enable = mkEnableOption "the system tray indicator";
-
-    autostart = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Start the tray in graphical sessions (XDG autostart).";
-    };
-
-    pollInterval = mkOption {
-      type = types.ints.positive;
-      default = 5;
-      description = "Status refresh interval, in seconds.";
-    };
-  };
+  # The tray indicator became Proxy Suite GUI, which has the tray icon built in.
+  imports = [
+    (lib.mkRenamedOptionModule (p "tray.enable") (p "gui.enable"))
+    (lib.mkRenamedOptionModule (p "tray.autostart") (p "gui.autostart"))
+    (lib.mkRenamedOptionModule (p "tray.pollInterval") (p "gui.refreshInterval"))
+  ];
 }

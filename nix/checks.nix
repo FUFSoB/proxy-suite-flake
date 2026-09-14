@@ -9,7 +9,6 @@
 
 let
   pkgs = import nixpkgs { inherit system; };
-  suitePkgs = import ../pkgs/default.nix { inherit pkgs; };
   parserChecks = import ./checks/parsers.nix { inherit pkgs; };
   checkLib = import ./checks/lib.nix {
     inherit
@@ -28,7 +27,6 @@ let
       ;
     inherit (checkLib) rg;
     readmeDocSource = builtins.readFile ../nix/readme-doc.nix;
-    trayModuleSource = builtins.readFile ../modules/proxy-suite/tray.nix;
     tgWsProxyModuleSource = builtins.readFile ../modules/proxy-suite/tg-ws-proxy.nix;
     controlModuleSource = builtins.readFile ../modules/proxy-suite/service/control.nix;
   };
@@ -41,9 +39,6 @@ let
   };
 in
 moduleSuiteChecks
-// {
-  proxy-suite-tray-build = suitePkgs.proxy-suite-tray;
-}
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   amneziawg-runtime = amneziaWgRuntime;
   proxy-inbounds-runtime = proxyInboundsRuntime;

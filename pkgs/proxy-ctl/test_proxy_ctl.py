@@ -605,5 +605,48 @@ class WhereTest(EnvTest):
         self.assertEqual(ctl._where_inbounds(config, "example.org", "")[0], "proxy")
 
 
+class StatusSnapshotTest(EnvTest):
+    def setUp(self):
+        super().setUp()
+        self.patch("_awg_profiles", lambda: ["home", "work"])
+        self.patch("_route_mode_current", lambda: "default")
+        self.patch("_route_mode_default", lambda: "blacklist")
+
+    def overall(self, **states):
+        units = {f"proxy-suite-{k.replace('_', '-')}": v for k, v in states.items()}
+        return ctl._status_snapshot(units)["overall"]
+
+    def test_base_priority(self):
+        self.assertEqual(self.overall(), {"base": "disabled", "badge": "", "label": "Inactive"})
+        self.assertEqual(self.overall(zapret="active")["base"], "zapret")
+        self.assertEqual(self.overall(socks="active")["label"], "Proxy only")
+        self.assertEqual(self.overall(socks="active", zapret="active")["base"], "active")
+        both = self.overall(socks="active", zapret="active", tun="active")
+        self.assertEqual((both["base"], both["label"]), ("tunnel", "Proxy + traffic + zapret"))
+        self.assertEqual(self.overall(awg_work="active"), {"base": "tunnel", "badge": "", "label": "AmneziaWG"})
+
+    def test_badges(self):
+        self.assertEqual(self.overall(socks="active", tun="failed")["badge"], "failed")
+        self.assertEqual(self.overall(socks="activating", tun="failed")["badge"], "failed")
+        self.assertEqual(self.overall(socks="active", subscription_update="activating")["badge"], "busy")
+        self.assertEqual(ctl._overall_state(None)["badge"], "unknown")
+
+    def test_outputs(self):
+        units = {"proxy-suite-socks": "active", "proxy-suite-awg-work": "active", "proxy-suite-tun": "inactive"}
+        self.patch("_unit_states", lambda names: {u: s for u, s in units.items() if u in names})
+        self.patch("_status_outbound", lambda: "b (pinned)")
+        self.patch("_status_autoproxy", lambda: "")
+        self.patch("_status_zapret", lambda: "")
+        tray = dict(line.split("=", 1) for line in ok(ctl.cmd_status, "--tray").splitlines())
+        self.assertEqual(
+            (tray["socks_active"], tray["tun_available"], tray["tproxy_available"], tray["awg_active"], tray["awg_profiles"]),
+            ("true", "true", "false", "work", "home,work"),
+        )
+        data = json.loads(ok(ctl.cmd_status, "--json"))
+        self.assertEqual(data["overall"]["base"], "tunnel")
+        self.assertEqual(data["outbound"], "b (pinned)")
+        self.assertEqual(data["route_mode"], {"available": True, "current": "default", "default": "blacklist"})
+
+
 if __name__ == "__main__":
     unittest.main()

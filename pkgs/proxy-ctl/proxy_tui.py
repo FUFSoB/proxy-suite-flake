@@ -1,19 +1,11 @@
 """proxy-tui: an interactive front end to proxy-ctl.
 
-Reads come from proxy_ctl in-process. Every change runs proxy-ctl itself, so
-validation, permission errors and systemd triggers stay in one place, and its
-die() cannot take the TUI down.
+What it shows and does lives in proxy_model, shared with proxy-suite-gui; this is the drawing.
 """
 
-import os
-import re
 import shlex
 import signal
 import subprocess
-import sys
-import time
-from dataclasses import dataclass, field
-from typing import Callable
 
 from rich.text import Text
 from textual import events, work
@@ -28,248 +20,17 @@ from textual.theme import Theme
 from textual.widgets import DataTable, Input, Label, OptionList, RichLog, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
-import proxy_ctl as ctl
+import proxy_model as model
+from proxy_model import CTL, TABS, ctl, filter_rows, _natural, _read_states, _safe
 
-CTL = "proxy-ctl"
 REFRESH_SECONDS = 3
-
-
-def _die(message, status=1):
-    # Readers run in-process: the message rides the SystemExit, so an empty tab can say why.
-    sys.exit(message)
-
-
-ctl.die = _die
-
-_memo = {}  # (reader, args) -> result, cleared at the start of every load
-
-
-def _per_load(fn):
-    def wrapped(*args):
-        key = (fn, args)
-        if key not in _memo:
-            _memo[key] = fn(*args)
-        return _memo[key]
-
-    return wrapped
-
-
-# Clash API calls and systemctl spawns that several readers repeat within one load.
-for _name in ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_autoproxy_next_run", "svc_state"):
-    setattr(ctl, _name, _per_load(getattr(ctl, _name)))
-
-
-@dataclass
-class Action:
-    key: str
-    label: str
-    argv: Callable  # (selected row or None, prompt text, unit states) -> proxy-ctl argv
-    when: Callable = None  # row -> applies; None: a tab-wide action that needs no row
-    prompt: str = ""  # ask for text first
-    confirm: bool | Callable = False  # or row -> ask first
-    mode: str = "run"  # run: result in the feedback line; dialog: output streamed into a dialog; suspend: hand over the terminal; pause: suspend, then wait for enter; copy: last line to the clipboard
-
-
-@dataclass
-class Tab:
-    id: str
-    title: str
-    available: Callable  # unit states -> bool
-    columns: list  # (row field, heading)
-    rows: Callable  # unit states -> [row dict with a unique "key"]
-    summary: Callable = None  # () -> text above the table, read with every load
-    actions: list = field(default_factory=list)
-
-
-def ROW(_):
-    return True
-
-
-# --- readers ------------------------------------------------------------------
-
-
-def unit_states(units):
-    """unit -> ActiveState for the units that exist, in one systemctl call."""
-    if not units:
-        return {}
-    _, out = ctl._run(["systemctl", "show", "--property=Id,LoadState,ActiveState", "--", *units], capture=True, quiet=True)
-    states = {}
-    for unit, block in zip(units, out.strip().split("\n\n")):
-        props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
-        if props.get("LoadState") not in (None, "not-found"):
-            states[unit] = props.get("ActiveState", "unknown")
-    return states
-
-
-def all_units():
-    return [*ctl.ALL_SERVICES, *map(ctl._awg_service, ctl._awg_profiles())]
-
-
-def _lines(name):
-    try:
-        return [line for line in ctl.lines(ctl.read_text(ctl._zapret_auto_file(name))) if line]
-    except OSError:
-        return []
-
-
-TOGGLES = {
-    "proxy-suite-socks": ["proxy"],
-    "proxy-suite-tun": ["proxy", "tun"],
-    "proxy-suite-tproxy": ["proxy", "tproxy"],
-    "proxy-suite-ssh-proxy": ["ssh"],
-    "proxy-suite-warp-tunnel": ["warp"],
-    "proxy-suite-tg-ws-proxy": ["tg"],
-    "proxy-suite-zapret": ["zapret"],
-}
-AWG_PREFIX = ctl._awg_service("")
-ZAPRET_LISTS = (
-    ("learned", "zapret-hosts-auto.txt"),
-    ("pinned", "zapret-hosts-user.txt"),
-    ("excluded", "zapret-hosts-user-exclude.txt"),
-)
-
-
-def toggle_argv(row, *_):
-    verb = "off" if row["state"] == "active" else "on"
-    if row["unit"].startswith(AWG_PREFIX):
-        return ["awg", verb, row["unit"].removeprefix(AWG_PREFIX)]
-    return [*TOGGLES[row["unit"]], verb]
-
-
-def service_rows(states):
-    return [{"key": u, "unit": u, "name": u.removeprefix("proxy-suite-"), "state": s} for u, s in states.items()]
-
-
-def route_rows(_):
-    current = ctl._route_mode_current()
-    return [
-        {"key": m, "active": "●" if m == current else "", "mode": ctl._route_mode_label(m)}
-        for m in ("default", *ctl.ROUTE_MODES)
-    ]
-
-
-def outbound_rows(_):
-    inventory = ctl._outbound_inventory()
-    pinned = ctl._s(inventory.get("pinned") or "")
-    sources = inventory.get("sources") or {}
-    current = ctl._outbound_current()
-    reputation = ctl._reputation_by_tag()
-    runtime = set(ctl._runtime_tags("outbound"))
-    return [
-        {
-            "key": t,
-            "mark": "★" if t == pinned else "▸" if t == current else "",
-            "tag": t,
-            "reputation": reputation.get(t, "-"),
-            "source": "runtime" if t in runtime else ctl._s(sources.get(t) or "-"),
-            "runtime": t in runtime,
-        }
-        for t in ctl._outbound_tags()
-    ]
-
-
-def outbound_summary():
-    inventory = ctl._outbound_inventory()
-    if not inventory:
-        return "No outbounds yet - is proxy-suite-socks running?"
-    return (
-        f"Selection: {ctl._s(inventory.get('selection') or 'first')}   "
-        f"Pinned: {ctl._s(inventory.get('pinned') or '(none)')}   "
-        f"Current: {ctl._outbound_current() or '-'}"
-    )
-
-
-def subscription_rows(_):
-    rows = []
-    for source, tags in (("static", ctl._sub_tags()), ("runtime", ctl._runtime_tags("subscription"))):
-        for t in tags:
-            cache = ctl._subscription_cache(t)
-            cached = os.path.isfile(cache)
-            count = ctl._subscription_proxy_count_text(cache) if cached else "-"
-            updated = ctl._ago(int(os.path.getmtime(cache)), int(time.time())) + " ago" if cached else "-"
-            rows.append({"key": t, "tag": t, "proxies": count, "updated": updated, "source": source})
-    return rows
-
-
-def autoproxy_rows(_):
-    state = ctl._autoproxy_state(ctl._autoproxy_dir())
-    domains = state.get("domains") or {}
-    rows = [
-        {"key": d, "domain": d, "kind": "routed", "detail": f"via {ctl._s((v or {}).get('exit'))}"}
-        for d, v in sorted(domains.items())
-    ]
-    backlog = sorted((state.get("backlog") or {}).items(), key=lambda kv: -((kv[1] or {}).get("hits") or 0))
-    rows += [
-        {"key": h, "domain": h, "kind": "queued", "detail": f"{ctl._s((v or {}).get('hits'))} hits"}
-        for h, v in backlog
-        if h not in domains
-    ]
-    return rows
-
-
-def zapret_rows(_):
-    if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
-        return []
-    rows = {}
-    for kind, name in ZAPRET_LISTS:
-        for host in _lines(name):
-            rows.setdefault(f"{kind}:{host}", {"key": f"{kind}:{host}", "host": host, "kind": kind})
-    return list(rows.values())
-
-
-def zapret_summary():
-    if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
-        return 'Learned hostlists need zapret.engine = "zapret2".'
-    text = "   ".join(f"{len(_lines(name))} {kind}" for kind, name in ZAPRET_LISTS)
-    if ctl.env("ZAPRET_CUTOFF_ENABLED") == "1":
-        text += "\n" + "   ".join(line.strip() for line in _cutoff_status().splitlines()[:2])
-    return text
-
-
-_cutoff = {}  # ts mtime -> status text: a probe rewrites ts
-
-
-def _cutoff_status():
-    try:
-        mtime = os.path.getmtime(os.path.join(ctl._zapret_state_dir(), "cutoff", "ts"))
-    except OSError:
-        mtime = None
-    if mtime not in _cutoff:
-        _cutoff.clear()
-        _cutoff[mtime] = _capture(["zapret", "cutoff", "status"])
-    return _cutoff[mtime]
-
-
-def inbound_rows(_):
-    return [
-        {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
-        for x in ctl._inbound_links()
-    ]
-
-
-def app_rows(_):
-    return [
-        {"key": ctl._s(p.get("name")), "profile": ctl._s(p.get("name")), "route": ctl._s(p.get("route"))}
-        for p in ctl._per_app_profiles()
-    ]
+STATUS_STYLES = {"ok": "b ansi_green", "warn": "b ansi_yellow", "bad": "b ansi_red", "": "b"}
 
 
 def status_text(states):
-    parts = []
-    if "proxy-suite-socks" in states:
-        default = " (default)" if ctl._route_mode_current() == "default" else ""
-        parts.append(("mode ", ctl._route_mode_effective() + default))
-        parts.append(("outbound ", ctl._status_outbound() or "-"))
-    if autoproxy := ctl._status_autoproxy():
-        parts.append(("autoProxy ", autoproxy))
-    if zapret := ctl._status_zapret():
-        parts.append(("zapret ", f"{zapret} learned"))
-    failed = sum(1 for s in states.values() if s == "failed")
-    return [
-        "[b ansi_cyan]proxy-suite[/]",
-        *(f"[dim]{label}[/][b]{escape(value)}[/]" for label, value in parts),
-        *([f"[b ansi_red]{failed} failed[/]"] if failed else []),
-    ]
+    return ["[b ansi_cyan]proxy-suite[/]", *(
+        f"[dim]{escape(label)}[/][{STATUS_STYLES[style]}]{escape(value)}[/]" for label, value, style in model.status_items(states)
+    )]
 
 
 def pack(items, width, gap="   "):
@@ -282,172 +43,6 @@ def pack(items, width, gap="   "):
             lines.append(item)
     return "\n".join(lines)
 
-
-def filter_rows(rows, columns, text):
-    """Every word must match: column:value in that column (by heading or field), anything else in any column."""
-    names = {k.lower(): name for name, heading in columns for k in (name, heading) if k}
-
-    def matches(row, term):
-        column, sep, value = term.lower().partition(":")
-        if sep and column in names:
-            return value in str(row.get(names[column], "")).lower()
-        return any(term.lower() in str(row.get(name, "")).lower() for name, _ in columns)
-
-    return [r for r in rows if all(matches(r, t) for t in text.split())]
-
-
-def _natural(value):
-    # "port 443" before "port 2053": digit runs compare as numbers.
-    return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", str(value or "").lower())]
-
-
-def _link(row, *extra):
-    return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *extra]
-
-
-def _kind(*kinds):
-    return lambda row: row["kind"] in kinds
-
-
-def _socks(states):
-    return "proxy-suite-socks" in states
-
-
-def _enabled(name):
-    return lambda _: ctl.env(name) == "1"
-
-
-def _zapret_toggle(row, _, states):
-    return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
-
-
-TABS = [
-    Tab(
-        "services",
-        "Services",
-        lambda _: True,
-        [("name", "Unit"), ("state", "State")],
-        service_rows,
-        actions=[
-            Action(
-                "space",
-                "start / stop",
-                toggle_argv,
-                when=lambda r: r["unit"] in TOGGLES or r["unit"].startswith(AWG_PREFIX),
-                # proxy off takes tun and tproxy down with it.
-                confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] == "active",
-            ),
-            Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
-            Action(
-                "ctrl+r",
-                "restart it",
-                lambda r, *_: ["awg", "restart", r["unit"].removeprefix(AWG_PREFIX)],
-                when=lambda r: r["unit"].startswith(AWG_PREFIX) and r["state"] == "active",
-            ),
-            Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
-        ],
-    ),
-    Tab(
-        "routing",
-        "Routing",
-        _socks,
-        [("active", ""), ("key", "Mode"), ("mode", "Meaning")],
-        route_rows,
-        summary=lambda: f"Configured default: {ctl._route_mode_default()}. An override lasts until you switch back to default.",
-        actions=[Action("s", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"])],
-    ),
-    Tab(
-        "outbounds",
-        "Outbounds",
-        _socks,
-        [("mark", ""), ("tag", "Tag"), ("reputation", "Reputation"), ("source", "Source")],
-        outbound_rows,
-        summary=outbound_summary,
-        actions=[
-            Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★"),
-            Action("u", "unpin: let the selection pick", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
-            Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
-            Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
-            Action("n", "add a runtime outbound…", lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1)], prompt="<tag> <url>"),
-            Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
-        ],
-    ),
-    Tab(
-        "subs",
-        "Subs",
-        _socks,
-        [("tag", "Tag"), ("proxies", "Proxies"), ("updated", "Updated"), ("source", "Source")],
-        subscription_rows,
-        summary=lambda: f"proxy-suite-subscription-update: {ctl.svc_state('proxy-suite-subscription-update') or 'unknown'}",
-        actions=[
-            Action("u", "refetch all", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
-            Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
-            Action("n", "add a runtime subscription…", lambda r, t, _: ["proxy", "subs", "add", *t.split(None, 1)], prompt="<tag> <url>"),
-            Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
-        ],
-    ),
-    Tab(
-        "autoproxy",
-        "autoProxy",
-        _enabled("AUTOPROXY_ENABLED"),
-        [("domain", "Domain"), ("kind", "State"), ("detail", "")],
-        autoproxy_rows,
-        summary=ctl._status_autoproxy,
-        actions=[
-            Action("w", "how is it routed", lambda r, *_: ["where", r["domain"]], when=ROW, mode="dialog"),
-            Action("e", "learn it now", lambda r, *_: ["proxy", "auto", "learn", r["domain"]], when=_kind("queued"), mode="dialog"),
-            Action("p", "probe it through every exit", lambda r, *_: ["proxy", "auto", "probe", r["domain"], "--keep-going"], when=ROW, mode="dialog"),
-            Action("P", "probe a domain…", lambda r, t, _: ["proxy", "auto", "probe", t], prompt="<domain>[/path]", mode="dialog"),
-            Action("E", "learn a domain…", lambda r, t, _: ["proxy", "auto", "learn", t], prompt="<domain>", mode="dialog"),
-            Action("i", "routed, judged and bad exits", lambda r, *_: ["proxy", "auto", "list"], mode="dialog"),
-        ],
-    ),
-    Tab(
-        "zapret",
-        "zapret",
-        lambda s: "proxy-suite-zapret" in s or ctl.env("ZAPRET_AUTO_ENABLED") == "1",
-        [("host", "Host"), ("kind", "List")],
-        zapret_rows,
-        summary=zapret_summary,
-        actions=[
-            Action("f", "forget it (may be learned again)", lambda r, *_: ["zapret", "auto", "forget", r["host"]], when=_kind("learned")),
-            Action("x", "exclude it (never learn)", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
-            Action("u", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),
-            Action("i", "include it (may be learned again)", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
-            Action("a", "pin a host (always bypass)…", lambda r, t, _: ["zapret", "auto", "add", t], prompt="<domain>"),
-            Action("C", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True),
-            Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog"),
-            Action("z", "start / stop zapret", _zapret_toggle),
-        ],
-    ),
-    Tab(
-        "inbounds",
-        "Inbounds",
-        _enabled("INBOUNDS_ENABLED"),
-        [("tag", "Tag"), ("user", "User"), ("type", "Type"), ("port", "Port")],
-        inbound_rows,
-        summary=lambda: f"proxy-suite-inbounds: {ctl.svc_state('proxy-suite-inbounds') or 'unknown'}",
-        actions=[
-            Action("l", "share link", lambda r, *_: _link(r), when=ROW, mode="dialog"),
-            Action("c", "copy share link", lambda r, *_: _link(r), when=ROW, mode="copy"),
-            Action("Q", "share link as QR", lambda r, *_: _link(r, "--qr"), when=ROW, mode="dialog"),
-            Action("s", "subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="dialog"),
-            Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=lambda r: bool(r["user"]), mode="dialog"),
-            Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="copy"),
-            Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
-        ],
-    ),
-    Tab(
-        "apps",
-        "Apps",
-        _enabled("PER_APP_ROUTING_ENABLED"),
-        [("profile", "Profile"), ("route", "Route")],
-        app_rows,
-        actions=[
-            Action("x", "run a command through it…", lambda r, t, _: ["apps", "run", r["profile"], "--", *shlex.split(t)], when=ROW, prompt="<command> [args]", mode="pause"),
-        ],
-    ),
-]
 
 GLOBAL_KEYS = [
     ("enter", "actions for the selected row (or click it)"),
@@ -554,25 +149,6 @@ def _update(widget, content):
     # Only a change repaints: the refresh tick rewrites everything every few seconds.
     if widget.content != content:
         widget.update(content)
-
-
-def _capture(argv):
-    try:
-        p = subprocess.run([CTL, *argv], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    except OSError as e:
-        return f"cannot run proxy-ctl: {e}"
-    return p.stdout + p.stderr
-
-
-def _safe(fn, *args, fallback=None):
-    try:
-        return fn(*args)
-    except (Exception, SystemExit):
-        return fallback  # Unreadable state: shown empty; a tab's own rows say why in its summary.
-
-
-def _read_states():
-    return _safe(unit_states, _safe(all_units, fallback=list(ctl.ALL_SERVICES)), fallback={})
 
 
 # --- dialogs ------------------------------------------------------------------
@@ -692,10 +268,6 @@ class Output(Dialog):
 # --- main screen --------------------------------------------------------------
 
 
-def _short(label):
-    return label.split(" (")[0].removesuffix("…")
-
-
 class Table(DataTable):
     def _on_mouse_move(self, event):
         event.prevent_default()  # Textual would run DataTable's own handler again after this one.
@@ -802,7 +374,7 @@ class ProxyTui(App):
         super().__init__()
         self.states = _read_states()
         self.tabs = {t.id: t for t in TABS}
-        self.shown = self.available_tabs(self.states)
+        self.shown = model.available_tabs(self.states)
         self.rows = {}  # tab id -> {row key: row}
         self.filters = {}  # tab id -> text
         self.sorts = {}  # tab id -> (column, descending)
@@ -818,9 +390,6 @@ class ProxyTui(App):
     def on_app_blur(self, event):
         # Textual drops focus when the terminal loses it, and the table's cursor and footer change with it.
         event.prevent_default()
-
-    def available_tabs(self, states):
-        return [t.id for t in TABS if _safe(t.available, states, fallback=False)]
 
     def get_default_screen(self):
         return MainScreen(self.tabs)
@@ -874,7 +443,7 @@ class ProxyTui(App):
         _update(self.main.query_one(f"#{tab_id}-detail", Static), detail(tab, row, actions))
         width, height = self.size
         # The detail panel lists the row's actions when it shows; the key line need not repeat them.
-        shown = [] if width >= WIDE or height >= TALL else [(f"act({tab.actions.index(a)})", a.key, _short(a.label)) for a in actions]
+        shown = [] if width >= WIDE or height >= TALL else [(f"act({tab.actions.index(a)})", a.key, model.short(a.label)) for a in actions]
         # The key keeps its color outside the link: a link's own color would cover it.
         items = [f"[b ansi_cyan]{escape(k)}[/] [@click=app.{action}]{escape(label)}[/]" for action, k, label in shown + KEY_LINE]
         _update(self.main.query_one("#keys", Static), pack(items, width - 2))
@@ -886,21 +455,11 @@ class ProxyTui(App):
 
     @work(thread=True, exclusive=True, group="load")
     def load(self, tab_id):
-        _memo.clear()
-        tab = self.tabs[tab_id]
+        model.new_load()
         states = _read_states()
-        visible = self.available_tabs(states)
+        visible = model.available_tabs(states)
         status = _safe(status_text, states, fallback=["status unavailable"])
-        summary = (_safe(tab.summary, fallback="") or "") if tab.summary else ""
-        try:
-            rows = tab.rows(states)
-        except (Exception, SystemExit) as e:
-            rows = []
-            summary = f"✗ {str(e) or type(e).__name__}" + (f"\n{summary}" if summary else "")
-        else:
-            if not rows:
-                hints = "   ".join(f"{a.key}: {_short(a.label)}" for a in tab.actions if a.prompt)
-                summary = "Nothing here yet." + (f"   {hints}" if hints else "") + (f"\n{summary}" if summary else "")
+        rows, summary = model.load_tab(self.tabs[tab_id], states)
         self.call_from_thread(self.fill, tab_id, states, visible, status, rows, summary)
 
     def show_status(self):
@@ -969,7 +528,7 @@ class ProxyTui(App):
     # --- acting ---------------------------------------------------------------
 
     def applicable(self, row):
-        return [a for a in self.tabs[self.active_tab()].actions if a.when is None or (row is not None and a.when(row))]
+        return model.applicable(self.tabs[self.active_tab()], row)
 
     def check_action(self, action, parameters):
         # A row action that does not apply: its key does nothing.
@@ -994,7 +553,7 @@ class ProxyTui(App):
         self.perform(self.tabs[self.active_tab()].actions[index], self.selected_row())
 
     def action_where(self):
-        self.perform(Action("w", "How is a domain routed", lambda r, t, _: ["where", t], prompt="<domain>", mode="dialog"), None)
+        self.perform(model.WHERE, None)
 
     def on_data_table_header_selected(self, event):
         tab_id, name = self.active_tab(), event.column_key.value

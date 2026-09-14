@@ -17,7 +17,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
 - Server inbounds with share links, QR codes, per-user subscriptions and traffic stats
-- A tray indicator, the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
+- Proxy Suite GUI (a desktop app with a tray icon), the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
 ## Setup
 
@@ -88,7 +88,7 @@ services.proxy-suite = {
     secretFile = "/run/secrets/tg-ws-proxy-secret";
   };
 
-  tray.enable = true;
+  gui.enable = true;
 };
 ```
 
@@ -105,7 +105,7 @@ See the [options reference](./docs/options/index.md), one page per option group.
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
 
-  status [--tray]                        services and routing mode
+  status [--json]                        services and routing mode (--tray: deprecated key=value lines)
   restart                                restart active services
   logs [unit]                            follow logs (default: every proxy-suite unit)
   where <domain>                         how this host is routed right now

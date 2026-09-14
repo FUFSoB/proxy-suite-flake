@@ -182,6 +182,7 @@ let
     inherit (scripts) proxyInboundsLinksFile proxyInboundsSubscriptionsFile;
     proxyInboundsSubscriptionsBaseUrl = proxyInboundsCfg.subscriptions.baseUrl;
     inherit amneziaWgProfileNamesFile;
+    guiRefreshInterval = cfg.gui.refreshInterval;
     inherit (perAppRouting)
       perAppRoutingProfilesFile
       proxychainsConfigFile

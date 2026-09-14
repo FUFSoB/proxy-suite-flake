@@ -4,7 +4,6 @@
   generatedOptionsDoc,
   generatedReadmeDoc,
   readmeDocSource,
-  trayModuleSource,
   tgWsProxyModuleSource,
   controlModuleSource,
 }:
@@ -424,6 +423,34 @@
         touch "$out"
       '';
 
+  # proxy_model: the status strip, tab loads and the tray menu tree, without a UI toolkit.
+  proxy-model-unit =
+    pkgs.runCommand "proxy-suite-proxy-model-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+      python ${../../pkgs/proxy-ctl}/test_proxy_model.py
+      touch "$out"
+    '';
+
+  # proxy_gui and proxy_sni import against GTK4/libadwaita, the D-Bus interfaces parse,
+  # and the tray menu serializes to dbusmenu's layout type. No display needed.
+  proxy-gui-smoke =
+    pkgs.runCommand "proxy-suite-proxy-gui-smoke-check"
+      {
+        nativeBuildInputs = [
+          (pkgs.python3.withPackages (ps: [ ps.pygobject3 ]))
+          pkgs.gobject-introspection
+        ];
+        buildInputs = [
+          pkgs.gtk4
+          pkgs.libadwaita
+        ];
+      }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+        python ${../../pkgs/proxy-ctl}/test_proxy_gui.py
+        touch "$out"
+      '';
+
   # autoProxy slowness routing: sampler and judge.
   autoproxy-slowness =
     pkgs.runCommand "proxy-suite-autoproxy-slowness-check"
@@ -613,7 +640,6 @@
   ) (pkgs.writeText "proxy-suite-readme-doc-source-check" "ok");
 
   package-source = builtins.seq (
-    assert !(pkgs.lib.hasInfix "../../pkgs/proxy-suite-tray.nix" trayModuleSource);
     assert !(pkgs.lib.hasInfix "../../pkgs/tg-ws-proxy.nix" tgWsProxyModuleSource);
     assert !(pkgs.lib.hasInfix "../../../pkgs/proxy-ctl.nix" controlModuleSource);
     true

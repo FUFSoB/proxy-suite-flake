@@ -46,7 +46,7 @@ HELP = """\
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
 
-  status [--tray]                        services and routing mode
+  status [--json]                        services and routing mode (--tray: deprecated key=value lines)
   restart                                restart active services
   logs [unit]                            follow logs (default: every proxy-suite unit)
   where <domain>                         how this host is routed right now
@@ -303,7 +303,7 @@ COMPLETE = {
             "help": "usage",
         }
     },
-    "status": {"flags": {"--tray": "key=value lines for the tray"}},
+    "status": {"flags": {"--json": "machine-readable state, with the GUI's overall state"}},
     "logs": {"args": lambda: _names([*ALL_SERVICES, *map(_awg_service, _awg_profiles())]), "repeat": True},
     "where": {"args": _autoproxy_choices},
     "proxy": {
@@ -469,24 +469,115 @@ def _route_mode_label(mode):
     return ROUTE_MODE_LABELS.get(mode, "Unknown")
 
 
-def _status_tray():
-    for key, svc in (
-        ("socks", "proxy-suite-socks"),
-        ("tproxy", "proxy-suite-tproxy"),
-        ("tun", "proxy-suite-tun"),
-        ("zapret", "proxy-suite-zapret"),
-    ):
-        print(f"{key}_available={_bool(svc_exists(svc))}")
-        print(f"{key}_active={_bool(svc_active(svc))}")
+def _unit_states(units):
+    """unit -> ActiveState for the units that exist, in one systemctl call."""
+    if not units:
+        return {}
+    _, out = _run(["systemctl", "show", "--property=Id,LoadState,ActiveState", "--", *units], capture=True, quiet=True)
+    states = {}
+    for unit, block in zip(units, out.strip().split("\n\n")):
+        props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        if props.get("LoadState") not in (None, "not-found"):
+            states[unit] = props.get("ActiveState", "unknown")
+    return states
+
+
+SNAPSHOT_UNITS = {
+    "proxy": "proxy-suite-socks",
+    "tproxy": "proxy-suite-tproxy",
+    "tun": "proxy-suite-tun",
+    "zapret": "proxy-suite-zapret",
+}
+SUBSCRIPTION_UPDATE = "proxy-suite-subscription-update"
+BUSY_STATES = ("activating", "deactivating", "reloading")
+
+
+def _snapshot_units():
+    return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, _awg_profiles())]
+
+
+def _status_snapshot(states=None):
+    """What runs, as data: the GUI's tray, `status --json` and `status --tray` all read this.
+
+    states: unit -> ActiveState for the existing units, when the caller already has them.
+    """
+    if states is None:
+        states = _unit_states(_snapshot_units())
     profiles = _awg_profiles()
-    active = _active_awg_profiles()
-    print(f"subscription_update_available={_bool(svc_exists('proxy-suite-subscription-update'))}")
-    print(f"route_mode_available={_bool(svc_exists('proxy-suite-socks'))}")
-    print(f"route_mode={_route_mode_current()}")
-    print(f"default_route_mode={_route_mode_default()}")
-    print(f"awg_available={_bool(profiles)}")
-    print(f"awg_active={active[0] if active else ''}")
-    print(f"awg_profiles={','.join(profiles)}")
+    snapshot = {
+        name: {"available": unit in states, "active": states.get(unit) == "active"} for name, unit in SNAPSHOT_UNITS.items()
+    }
+    snapshot["awg"] = {
+        "available": bool(profiles),
+        "profiles": profiles,
+        "active": next((p for p in profiles if states.get(_awg_service(p)) == "active"), ""),
+    }
+    snapshot["route_mode"] = {
+        "available": "proxy-suite-socks" in states,
+        "current": _route_mode_current(),
+        "default": _route_mode_default(),
+    }
+    snapshot["subscription_update"] = {"available": SUBSCRIPTION_UPDATE in states, "state": states.get(SUBSCRIPTION_UPDATE, "")}
+    snapshot["units"] = dict(states)
+    snapshot["failed"] = sorted(u for u, s in states.items() if s == "failed")
+    snapshot["overall"] = _overall_state(snapshot)
+    return snapshot
+
+
+def _overall_state(snapshot):
+    """base: the tray icon's color (tunnel > active > proxy > zapret > disabled); badge: failed > busy.
+
+    A snapshot of None is state that could not be read.
+    """
+    if snapshot is None:
+        return {"base": "disabled", "badge": "unknown", "label": "Status unavailable"}
+    proxy, zapret = snapshot["proxy"]["active"], snapshot["zapret"]["active"]
+    traffic = snapshot["tun"]["active"] or snapshot["tproxy"]["active"] or bool(snapshot["awg"]["active"])
+    if traffic:
+        base = "tunnel"
+    elif proxy and zapret:
+        base = "active"
+    else:
+        base = "proxy" if proxy else "zapret" if zapret else "disabled"
+    if proxy:
+        label = "Proxy" + (" + traffic" if traffic else "") + (" + zapret" if zapret else "")
+        label = "Proxy only" if label == "Proxy" else label
+    elif snapshot["awg"]["active"]:
+        label = "AmneziaWG"
+    else:
+        label = "Zapret only" if zapret else "Inactive"
+    units = snapshot.get("units") or {}
+    if snapshot.get("failed"):
+        badge = "failed"
+    elif any(s in BUSY_STATES for s in units.values()):
+        badge = "busy"
+    else:
+        badge = ""
+    return {"base": base, "badge": badge, "label": label}
+
+
+def _status_tray():
+    """Deprecated key=value lines, for scripts written against the old tray."""
+    snapshot = _status_snapshot()
+    for key, name in (("socks", "proxy"), ("tproxy", "tproxy"), ("tun", "tun"), ("zapret", "zapret")):
+        print(f"{key}_available={_bool(snapshot[name]['available'])}")
+        print(f"{key}_active={_bool(snapshot[name]['active'])}")
+    print(f"subscription_update_available={_bool(snapshot['subscription_update']['available'])}")
+    print(f"route_mode_available={_bool(snapshot['route_mode']['available'])}")
+    print(f"route_mode={snapshot['route_mode']['current']}")
+    print(f"default_route_mode={snapshot['route_mode']['default']}")
+    print(f"awg_available={_bool(snapshot['awg']['available'])}")
+    print(f"awg_active={snapshot['awg']['active']}")
+    print(f"awg_profiles={','.join(snapshot['awg']['profiles'])}")
+
+
+def _status_json():
+    snapshot = _status_snapshot()
+    if snapshot["proxy"]["active"]:
+        snapshot["outbound"] = _status_outbound() or ""
+    snapshot["autoproxy"] = _status_autoproxy()
+    snapshot["zapret"]["learned"] = _status_zapret()
+    print(json.dumps(snapshot, indent=2))
 
 
 def _status_row(key, value):
@@ -546,6 +637,9 @@ def _status_zapret():
 
 
 def cmd_status(*args):
+    if args[:1] == ("--json",):
+        _status_json()
+        return
     if args[:1] == ("--tray",):
         _status_tray()
         return

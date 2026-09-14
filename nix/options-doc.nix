@@ -17,21 +17,24 @@ let
     ];
   };
 
-  # Visible options only (renamed aliases are hidden), packages shown by name.
+  # Visible options only (renamed aliases are hidden, and so are groups left
+  # with nothing but aliases), packages shown by name.
   visibleConfig =
     opts: cfg:
-    lib.mapAttrs (
-      name: opt:
-      if !lib.isOption opt then
-        visibleConfig opt cfg.${name}
-      else if lib.isDerivation cfg.${name} then
-        {
-          __pretty = _: "pkgs.${lib.getName cfg.${name}}";
-          val = null;
-        }
-      else
-        cfg.${name}
-    ) (lib.filterAttrs (name: opt: name != "_module" && (opt.visible or true) != false) opts);
+    lib.filterAttrs (name: value: lib.isOption opts.${name} || value != { }) (
+      lib.mapAttrs (
+        name: opt:
+        if !lib.isOption opt then
+          visibleConfig opt cfg.${name}
+        else if lib.isDerivation cfg.${name} then
+          {
+            __pretty = _: "pkgs.${lib.getName cfg.${name}}";
+            val = null;
+          }
+        else
+          cfg.${name}
+      ) (lib.filterAttrs (name: opt: name != "_module" && (opt.visible or true) != false) opts)
+    );
 
   optionDocs = pkgs.nixosOptionsDoc {
     options.services.proxy-suite = eval.options.services.proxy-suite;

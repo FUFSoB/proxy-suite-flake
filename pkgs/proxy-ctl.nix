@@ -35,6 +35,7 @@
   autoProxyEnabled,
   autoProxyStateDir,
   singBox,
+  guiRefreshInterval ? 3,
 }:
 
 let
@@ -78,6 +79,11 @@ let
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
   );
+  # The modules both front-ends import: proxy_ctl for reads, proxy_model for the tabs and the tray menu.
+  pythonModules = pkgs.runCommand "proxy-suite-python-modules" { } ''
+    install -Dm644 ${./proxy-ctl/proxy_ctl.py} "$out/proxy_ctl.py"
+    install -Dm644 ${./proxy-ctl/proxy_model.py} "$out/proxy_model.py"
+  '';
   # A separate package: the Textual closure stays off hosts that don't enable it.
   # It imports proxy_ctl for reads and runs proxy-ctl for every change.
   tui = pkgs.symlinkJoin {
@@ -91,7 +97,7 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
       wrapProgram "$out/bin/proxy-tui" \
-        --prefix PYTHONPATH : ${pkgs.writeTextDir "proxy_ctl.py" (builtins.readFile ./proxy-ctl/proxy_ctl.py)} \
+        --prefix PYTHONPATH : ${pythonModules} \
         --prefix PATH : "${
           lib.makeBinPath [
             proxyCtl
@@ -100,11 +106,102 @@ let
         }" ${envFlags}
     '';
   };
+  guiPython = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
+  # Proxy Suite GUI: a GTK4/libadwaita window over the same tabs as the TUI, with a tray icon.
+  # Separate for the same reason as the TUI: GTK stays off hosts that don't enable it.
+  gui = pkgs.stdenv.mkDerivation {
+    pname = "proxy-suite-gui";
+    version = "0.2.0";
+    dontUnpack = true;
+    nativeBuildInputs = [
+      pkgs.wrapGAppsHook4
+      pkgs.gobject-introspection
+      pkgs.makeWrapper
+      guiPython
+    ];
+    buildInputs = [
+      pkgs.gtk4
+      pkgs.libadwaita
+      pkgs.adwaita-icon-theme
+      guiPython
+    ];
+    # A Python script: the wrapper is made by hand below, with the GApps arguments.
+    dontWrapGApps = true;
+    installPhase = ''
+      runHook preInstall
+      install -Dm644 ${./proxy-ctl/proxy_gui.py} "$out/lib/proxy-suite-gui/proxy_gui.py"
+      install -Dm644 ${./proxy-ctl/proxy_sni.py} "$out/lib/proxy-suite-gui/proxy_sni.py"
+
+      # Tray icons in one flat directory (the tray's IconThemePath), and in hicolor for everything else.
+      icons="$out/share/proxy-suite-gui/icons"
+      python3 ${./proxy-ctl/icons/badges.py} ${./proxy-ctl/icons} "$icons"
+      install -Dm644 ${./proxy-ctl/icons/io.github.FUFSoB.ProxySuite.svg} "$icons/io.github.FUFSoB.ProxySuite.svg"
+      for icon in "$icons"/*.svg; do
+        case "$icon" in
+          *-symbolic.svg) install -Dm644 "$icon" "$out/share/icons/hicolor/symbolic/apps/''${icon##*/}" ;;
+          *) install -Dm644 "$icon" "$out/share/icons/hicolor/scalable/apps/''${icon##*/}" ;;
+        esac
+      done
+
+      mkdir -p "$out/share/applications" "$out/share/systemd/user"
+      cat > "$out/share/applications/io.github.FUFSoB.ProxySuite.desktop" <<EOF
+      [Desktop Entry]
+      Type=Application
+      Name=Proxy Suite
+      GenericName=Proxy Control
+      Comment=Control proxy-suite services, routing and outbounds
+      Exec=$out/bin/proxy-suite-gui
+      Icon=io.github.FUFSoB.ProxySuite
+      Categories=Network;System;
+      Keywords=proxy;vpn;sing-box;zapret;tray;
+      StartupNotify=true
+      Terminal=false
+      EOF
+
+      cat > "$out/share/systemd/user/proxy-suite-gui.service" <<EOF
+      [Unit]
+      Description=Proxy Suite GUI (tray icon)
+      PartOf=graphical-session.target
+      After=graphical-session.target
+      ConditionEnvironment=|WAYLAND_DISPLAY
+      ConditionEnvironment=|DISPLAY
+
+      [Service]
+      ExecStart=$out/bin/proxy-suite-gui --hidden
+      Restart=on-failure
+      RestartSec=3
+
+      [Install]
+      WantedBy=graphical-session.target
+      EOF
+      runHook postInstall
+    '';
+    postFixup = ''
+      makeWrapper ${guiPython}/bin/python3 "$out/bin/proxy-suite-gui" \
+        --add-flags "$out/lib/proxy-suite-gui/proxy_gui.py" \
+        "''${gappsWrapperArgs[@]}" \
+        --prefix PYTHONPATH : "${pythonModules}:$out/lib/proxy-suite-gui" \
+        --prefix PATH : "${
+          lib.makeBinPath [
+            proxyCtl
+            pkgs.systemd
+            pkgs.qrencode
+          ]
+        }" \
+        --set PROXY_GUI_ICON_DIR "$out/share/proxy-suite-gui/icons" \
+        --set PROXY_GUI_REFRESH ${toString guiRefreshInterval} ${envFlags}
+    '';
+    meta = {
+      description = "Desktop app and tray icon for proxy-suite";
+      mainProgram = "proxy-suite-gui";
+    };
+  };
   proxyCtl = pkgs.symlinkJoin {
     name = "proxy-ctl";
     paths = [ unwrapped ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     passthru.tui = tui;
+    passthru.gui = gui;
     passthru.proxySuiteCheck = {
       inherit
         wrapperEnv

@@ -23,6 +23,7 @@
   proxyInboundsLinksFile,
   proxyInboundsSubscriptionsFile,
   proxyInboundsSubscriptionsBaseUrl,
+  guiRefreshInterval,
 }:
 {
   proxyCtl = packages.mkProxyCtl {
@@ -36,6 +37,7 @@
       proxychainsQuietArg
       routeModeStateFile
       amneziaWgProfileNamesFile
+      guiRefreshInterval
       ;
     defaultRouteMode = if (proxyCfg.routing.default == "proxy") then "blacklist" else "whitelist";
     perAppRoutingEnabled = if perAppRoutingCfg.enable then "1" else "0";

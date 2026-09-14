@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Proxy Suite: the tray's shield, with a route through it -->
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#66BB6A"/>
+      <stop offset="1" stop-color="#2E7D32"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9C27B0"/>
+      <stop offset="1" stop-color="#4A148C"/>
+    </linearGradient>
+  </defs>
+  <path d="M 64 8 L 110 28 L 110 68 C 110 98 64 120 64 120 C 64 120 18 98 18 68 L 18 28 Z"
+        fill="url(#rim)"/>
+  <path d="M 64 17 L 101 33.5 L 101 68 C 101 92 64 110 64 110 C 64 110 27 92 27 68 L 27 33.5 Z"
+        fill="url(#shield)"/>
+  <path d="M 40 80 C 52 80 52 50 64 50 C 76 50 76 64 88 64"
+        stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <circle cx="40" cy="80" r="7" fill="#FFFFFF"/>
+  <path d="M 84 54 L 94 64 L 84 74" stroke="#FFFFFF" stroke-width="7" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

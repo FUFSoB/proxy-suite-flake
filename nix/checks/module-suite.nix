@@ -85,7 +85,7 @@ let
       ;
   };
 
-  trayChecks = import ./tray.nix {
+  guiChecks = import ./gui.nix {
     inherit
       evalProxySuite
       baseModule
@@ -256,7 +256,7 @@ let
     ++ zapretChecks.assertions
     ++ zapret2Checks.assertions
     ++ globalProxyModeChecks.assertions
-    ++ trayChecks.assertions
+    ++ guiChecks.assertions
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
     ++ perAppRoutingChecks.assertions
@@ -269,4 +269,5 @@ in
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;
   zapret2-config = zapret2Checks.runtime;
+  proxy-suite-gui-build = _minimalProxyCtl.proxyCtl.gui;
 }

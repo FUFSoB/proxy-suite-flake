@@ -135,7 +135,11 @@ in
 lib.mkMerge [
   autoProxyUnits
   {
-    environment.systemPackages = [ control.proxyCtl ] ++ lib.optional cfg.tui.enable control.proxyCtl.tui;
+    environment.systemPackages = [
+      control.proxyCtl
+    ]
+    ++ lib.optional cfg.tui.enable control.proxyCtl.tui
+    ++ lib.optional cfg.gui.enable control.proxyCtl.gui;
 
     # nftables must be on for transparent routing backends. Global TUN uses
     # SingBox auto_redirect programs an `inet sing-box` nftables table.
@@ -195,7 +199,27 @@ lib.mkMerge [
         ]
     );
 
-    systemd.user.services = mkNamedUnits userServiceEntries;
+    systemd.user.services = lib.mkMerge [
+      (mkNamedUnits userServiceEntries)
+      (lib.mkIf (cfg.gui.enable && cfg.gui.autostart) {
+        # Starts hidden in the tray with every graphical session.
+        proxy-suite-gui = {
+          description = "Proxy Suite GUI (tray icon)";
+          wantedBy = [ "graphical-session.target" ];
+          partOf = [ "graphical-session.target" ];
+          after = [ "graphical-session.target" ];
+          unitConfig.ConditionEnvironment = [
+            "|WAYLAND_DISPLAY"
+            "|DISPLAY"
+          ];
+          serviceConfig = {
+            ExecStart = "${control.proxyCtl.gui}/bin/proxy-suite-gui --hidden";
+            Restart = "on-failure";
+            RestartSec = 3;
+          };
+        };
+      })
+    ];
 
     assertions = import ../service-assertions.nix {
       inherit lib cfg derived;

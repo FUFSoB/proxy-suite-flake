@@ -182,18 +182,6 @@ in
               ;
           }
         ))
-
-        (lib.mkIf cfg.tray.enable (
-          import ./tray.nix {
-            inherit
-              config
-              lib
-              pkgs
-              packages
-              cfg
-              ;
-          }
-        ))
       ]
     ))
   ];

@@ -8,12 +8,12 @@ Update the module option docs there instead of editing these files by hand.
 
 - [amneziaWg](./amneziaWg.md)
 - [geodata](./geodata.md)
+- [gui](./gui.md)
 - [inbounds](./inbounds.md)
 - [perAppRouting](./perAppRouting.md)
 - [proxy](./proxy.md)
 - [sshProxy](./sshProxy.md)
 - [tgWsProxy](./tgWsProxy.md)
-- [tray](./tray.md)
 - [tui](./tui.md)
 - [userControl](./userControl.md)
 - [warp](./warp.md)
@@ -39,6 +39,11 @@ services.proxy-suite = {
     xray = {
       assets = pkgs.v2ray-rules-dat;
     };
+  };
+  gui = {
+    autostart = true;
+    enable = false;
+    refreshInterval = 3;
   };
   inbounds = {
     enable = false;
@@ -100,7 +105,6 @@ services.proxy-suite = {
     };
   };
   proxy = {
-    auth = { };
     autoProxy = {
       enable = false;
       exclude = [ ];
@@ -163,7 +167,6 @@ services.proxy-suite = {
     singBox = {
       clashApiPort = 9090;
       package = pkgs.sing-box;
-      urlTest = { };
     };
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
@@ -240,11 +243,6 @@ services.proxy-suite = {
     secret = null;
     secretFile = null;
   };
-  tray = {
-    autostart = true;
-    enable = false;
-    pollInterval = 5;
-  };
   tui = {
     enable = true;
   };
@@ -253,9 +251,7 @@ services.proxy-suite = {
       "global"
       "perApp"
     ];
-    global = { };
     group = "proxy-suite";
-    perApp = { };
   };
   warp = {
     asAmneziaWg = false;

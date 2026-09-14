@@ -64,12 +64,13 @@
           amneziawg-tools
           amneziawg-go
           mkProxyCtl
-          mkProxySuiteTray
           mkTgWsProxy
           tg-ws-proxy
-          proxy-suite-tray
           zapret2
           ;
+        # Replaced by Proxy Suite GUI, which mkProxyCtl builds as `.gui`.
+        proxy-suite-tray = throw "proxy-suite-tray was replaced by Proxy Suite GUI: set services.proxy-suite.gui.enable";
+        mkProxySuiteTray = throw "mkProxySuiteTray was replaced by Proxy Suite GUI: set services.proxy-suite.gui.enable";
       };
 
       packages = forAll (
@@ -112,7 +113,6 @@
             amneziawg-tools
             amneziawg-go
             tg-ws-proxy
-            proxy-suite-tray
             zapret2
             ;
           xray = import ./pkgs/xray.nix { inherit pkgs; };

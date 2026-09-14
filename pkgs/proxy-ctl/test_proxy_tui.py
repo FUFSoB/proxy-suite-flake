@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 import proxy_ctl as ctl
+import proxy_model as model
 import proxy_tui as tui
 
 
@@ -21,15 +22,15 @@ class TuiTest(unittest.TestCase):
         self.capture, self.awg, self.current = "", [], mock.Mock(return_value="")
         self.env = env = {"ZAPRET_AUTO_ENABLED": "1"}
         for target, name, value in [
-            (tui, "unit_states", lambda units: {u: s for u, s in self.units.items() if u in units}),
-            (tui, "_capture", lambda argv: self.capture),
-            (tui, "_lines", lambda name: self.zapret[name]),
+            (model, "unit_states", lambda units: {u: s for u, s in self.units.items() if u in units}),
+            (model, "_capture", lambda argv: self.capture),
+            (model, "_lines", lambda name: self.zapret[name]),
             (ctl, "env", lambda name, default="": env.get(name, default)),
             (ctl, "_awg_profiles", lambda: self.awg),
             (ctl, "_route_mode_current", lambda: "default"),
             (ctl, "_route_mode_effective", lambda: "whitelist"),
             (ctl, "_outbound_inventory", lambda: {"tags": ["a", "b"], "pinned": "b", "sources": {"a": "config"}}),
-            (ctl, "_outbound_current", tui._per_load(self.current)),
+            (ctl, "_outbound_current", model._per_load(self.current)),
             (ctl, "_reputation_by_tag", lambda: {}),
             (ctl, "_runtime_tags", lambda kind: []),
             (ctl, "_sub_tags", lambda: []),
@@ -56,7 +57,7 @@ class TuiTest(unittest.TestCase):
             _subscription_cache=lambda tag: cache.name,
             _subscription_proxy_count_text=lambda path: "3",
         ):
-            self.assertEqual(tui.subscription_rows({})[0]["updated"], "0m ago")
+            self.assertEqual(model.subscription_rows({})[0]["updated"], "0m ago")
 
     def test_filter_sort_pack(self):
         rows = [{"key": "a", "host": "a.example", "kind": "learned"}, {"key": "b", "host": "learned.org", "kind": "pinned"}]
@@ -128,12 +129,12 @@ class TuiTest(unittest.TestCase):
 
             # An active AmneziaWG profile restarts on its own; a failed unit shows in the status bar.
             self.awg = ["p"]
-            self.units[tui.AWG_PREFIX + "p"] = "active"
+            self.units[model.AWG_PREFIX + "p"] = "active"
             self.units["proxy-suite-ssh-proxy"] = "failed"
             app.action_reload()
             await self.settle(app, pilot)
             self.assertIn("1 failed", tui.pack(tui.status_text(app.states), 100))
-            app.table().move_cursor(row=list(app.rows["services"]).index(tui.AWG_PREFIX + "p"))
+            app.table().move_cursor(row=list(app.rows["services"]).index(model.AWG_PREFIX + "p"))
             await pilot.press("ctrl+r")
             self.assertEqual(self.ran.pop(), ["awg", "restart", "p"])
             app.table().move_cursor(row=list(app.rows["services"]).index("proxy-suite-tun"))
