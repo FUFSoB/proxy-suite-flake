@@ -5,6 +5,7 @@ import datetime
 import io
 import json
 import os
+import socket
 import tempfile
 import unittest
 from unittest import mock
@@ -404,6 +405,83 @@ class AppsRunTest(EnvTest):
     def test_disabled_route(self):
         os.environ["PER_APP_ROUTING_ZAPRET_ENABLED"] = "0"
         self.assertIn("perAppRouting.zapret.enable is false", run(ctl.cmd_apps, "run", "zapret", "--", "curl")[2])
+
+
+class OutboundTestTest(EnvTest):
+    def setUp(self):
+        super().setUp()
+        os.environ["OUTBOUND_INVENTORY_FILE"] = self.write("outbounds.json", {"tags": ["own-vps", "de", "wg"], "selection": "first"})
+        self.write(
+            "outbound-test.json",
+            {
+                "port": 18537,
+                "selector": "proxy-suite-test",
+                "url": "https://t.test/204",
+                # selection = "first": the backend knows the pick as "proxy".
+                "outbounds": {"own-vps": "proxy", "de": "de", "wg": "wg"},
+            },
+        )
+        self.calls = []
+
+        def clash(method, path, body=None, timeout=10):
+            self.calls.append((method, path, body))
+            if path.startswith("/proxies/de/delay"):
+                return 503, {"message": "An error occurred in the delay test"}
+            if method == "GET":
+                return 200, {"delay": 88}
+            return 204, None
+
+        self.patch("_clash", clash)
+        self.patch("_timed_download", lambda port: 12.34)
+
+    def test_ping(self):
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            port = server.getsockname()[1]
+            self.assertRegex(ctl._test_ping({"server": "127.0.0.1", "port": port, "network": "tcp"}), r"^\d+ ms$")
+        self.assertEqual(ctl._test_ping({"server": "127.0.0.1", "port": port}), "refused")
+        # No TCP handshake to time on a QUIC or WireGuard server.
+        self.assertEqual(ctl._test_ping({"server": "127.0.0.1", "port": port, "network": "udp"}), "udp")
+        self.assertEqual(ctl._test_ping(None), "-")
+
+    def test_every_test(self):
+        self.write("outbound-endpoints.json", {"own-vps": {"server": "127.0.0.1", "port": 9, "network": "udp"}})
+        out = ok(ctl.cmd_outbounds, "test", "--ping", "--delay", "--download")
+        self.assertRegex(out, r"(?m)^  TAG +PING +DELAY +DOWNLOAD$")
+        self.assertRegex(out, r"(?m)^  own-vps +udp +88 ms +12\.3 Mbit/s$")
+        self.assertRegex(out, r"(?m)^  de +- +failed +12\.3 Mbit/s$")
+        self.assertTrue(any(c[1].startswith("/proxies/proxy/delay?") and "t.test" in c[1] for c in self.calls))
+        # Downloads switch the test selector, one outbound at a time, in order.
+        puts = [c for c in self.calls if c[0] == "PUT"]
+        self.assertEqual([c[2]["name"] for c in puts], ["proxy", "de", "wg"])
+        self.assertEqual({c[1] for c in puts}, {"/proxies/proxy-suite-test"})
+
+    def test_default_and_arguments(self):
+        out = ok(ctl.cmd_outbounds, "test", "de")
+        self.assertEqual(ctl.lines(out)[0], "  TAG         PING        DELAY")
+        self.assertEqual(len(ctl.lines(out)), 2)
+        self.assertFalse(any(c[0] == "PUT" for c in self.calls))
+        self.assertNotEqual(run(ctl.cmd_outbounds, "test", "nope")[0], 0)
+        self.assertNotEqual(run(ctl.cmd_outbounds, "test", "--bogus")[0], 0)
+
+    def test_without_sing_box(self):
+        # Pure XRay: servers, but no test listener.
+        os.remove(self.path("outbound-test.json"))
+        status, out, err = run(ctl.cmd_outbounds, "test")
+        self.assertEqual(status, 0)
+        self.assertEqual(ctl.lines(out)[0], "  TAG         PING")
+        self.assertIn("sing-box or hybrid", err)
+        status, _, err = run(ctl.cmd_outbounds, "test", "--download")
+        self.assertNotEqual(status, 0)
+        self.assertIn("sing-box or hybrid", err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_unreadable_servers(self):
+        os.chmod(self.write("outbound-endpoints.json", {}), 0)
+        status, _, err = run(ctl.cmd_outbounds, "test", "--ping")
+        self.assertEqual(status, 0)
+        self.assertIn("enable userControl, or run with sudo", err)
 
 
 if __name__ == "__main__":

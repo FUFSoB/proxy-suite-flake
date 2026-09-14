@@ -114,6 +114,8 @@ A group without a verb shows its status or list.
   proxy outbounds [list]                 outbounds, where each came from, and the pick
   proxy outbounds add <tag> <url>        add an outbound at runtime
   proxy outbounds rm <tag>               remove a runtime outbound
+  proxy outbounds test [tag...] [--ping] [--delay] [--download]
+                                         TCP ping, real delay, download speed (default: ping, delay)
   proxy select [<tag>|auto]              pin the priority outbound (no tag: pick from a menu)
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode

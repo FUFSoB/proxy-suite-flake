@@ -167,7 +167,7 @@ in
       clashApiPort = mkOption {
         type = types.port;
         default = 9090;
-        description = ''Port of sing-box's Clash API, used with selection "selector" or "urltest".'';
+        description = "Loopback port of sing-box's Clash API, which switches and tests outbounds.";
       };
     };
 

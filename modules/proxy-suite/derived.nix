@@ -134,7 +134,8 @@ let
   hasAvailableOutbounds =
     hasStaticOutbounds || hasSubscriptions || sshProxyOutboundEnabled || warpOutboundEnabled;
   collapseNamedOutbounds = selectionMode == "first";
-  clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
+  # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
+  clashApiEnabled = singBoxEnabled;
   perAppZapretEnabled = perAppZapretCfg.enable;
   zapretCutoffEnabled =
     zapretEngine == "zapret2"
@@ -170,6 +171,8 @@ let
     outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
 
     inboundStatsApiPort = 18536;
+    # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
+    outboundTestPort = 18537;
     inboundStatsFile = "/var/lib/proxy-suite/inbound-stats.json";
 
     tunAutoRouteTableIndex = 2022;

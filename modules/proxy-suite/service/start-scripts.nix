@@ -34,6 +34,7 @@
 let
   inherit (constants)
     autoProxyStateDir
+    outboundTestPort
     xrayDnsBridgePorts
     xraySidecarBasePorts
     ;
@@ -144,6 +145,7 @@ let
       xraySidecarBasePort ? xraySidecarBasePorts.socks,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
       enableAutoProxy ? false,
+      enableOutboundTest ? false,
       enableZapretCutoff ? false,
     }:
     pkgs.writeShellScript name ''
@@ -236,6 +238,60 @@ let
         fi
       ''}
 
+      ${lib.optionalString enableOutboundTest ''
+        # proxy-ctl proxy outbounds test. Servers for its ping, keyed by the user's tag:
+        # the wrapper may have renamed one outbound "proxy" or prefixed them all, and a
+        # hybrid XRay outbound is a sing-box socks hop whose real server is the sidecar's.
+        ENDPOINTS_TMP="$RUNTIME_DIR/outbound-endpoints.json.tmp"
+        ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" '
+          def endpoint:
+            if .server then {server, port: .server_port}
+            elif (.peers | type) == "array" then {server: .peers[0].address, port: .peers[0].port}
+            elif .settings.address then {server: .settings.address, port: .settings.port}
+            elif .settings.vnext then {server: .settings.vnext[0].address, port: .settings.vnext[0].port}
+            elif .settings.servers then {server: .settings.servers[0].address, port: .settings.servers[0].port}
+            elif .settings.peers then
+              .settings.peers[0].endpoint | capture("^\\[?(?<server>.*?)\\]?:(?<port>[0-9]+)$") | .port |= tonumber
+            else null end;
+          def udp: (.type // .protocol) as $t | ["hysteria", "hysteria2", "tuic", "wireguard"] | index($t) != null;
+          ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
+          | [.[] | select(.type != "selector" and .type != "urltest")
+             | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag
+             | ($real[.tag] // .) | select(endpoint != null)
+             | {key: $tag, value: (endpoint + {network: (if udp then "udp" else "tcp" end)})}]
+          | from_entries
+        ' <<< "$OUTBOUNDS_JSON" > "$ENDPOINTS_TMP"
+        # Where each proxy server is: not credentials, but not for every local user either.
+        ${
+          if userControlCfg.allow != [ ] || localProxyAuthEnabled then
+            ''
+              ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$ENDPOINTS_TMP"
+              chmod 640 "$ENDPOINTS_TMP"
+            ''
+          else
+            ''chmod 600 "$ENDPOINTS_TMP"''
+        }
+        mv "$ENDPOINTS_TMP" "$RUNTIME_DIR/outbound-endpoints.json"
+
+        ${lib.optionalString (!pureXrayEnabled) ''
+          # Delay and download: a loopback listener pinned to a selector over every real
+          # exit, switched one outbound at a time through the Clash API.
+          OUTBOUNDS_JSON=$(${jq} -c --argjson tags "$EXIT_TAGS_JSON" \
+            '. + [{type: "selector", tag: "proxy-suite-test", outbounds: $tags}]' <<< "$OUTBOUNDS_JSON")
+          PROBE_INBOUNDS_JSON=$(${jq} -c '. + [{type: "mixed", tag: "proxy-suite-test-in",
+            listen: "127.0.0.1", listen_port: ${toString outboundTestPort}}]' <<< "$PROBE_INBOUNDS_JSON")
+          PROBE_PIN_RULES_JSON=$(${jq} -c \
+            '. + [{inbound: ["proxy-suite-test-in"], outbound: "proxy-suite-test"}]' <<< "$PROBE_PIN_RULES_JSON")
+          ${jq} -n --argjson tags "$EXIT_TAGS_JSON" --arg collapsed "''${PROXY_TAG:-}" \
+            --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} '
+            {port: ${toString outboundTestPort}, selector: "proxy-suite-test", url: $url,
+             outbounds: ($tags | map({key: (if . == "proxy" then $collapsed else . end), value: .}) | from_entries)}
+          ' > "$RUNTIME_DIR/outbound-test.json"
+          # Tags and a loopback port only.
+          chmod 644 "$RUNTIME_DIR/outbound-test.json"
+        ''}
+      ''}
+
       ${lib.optionalString enableZapretCutoff ''
         # zapret2's cutoff probe lists the prefixes of cut-off networks no whitelisted
         # name gets through; the proxy carries those. sing-box refuses a missing
@@ -326,6 +382,7 @@ let
     # Only the socks unit: relayed traffic reaches it, and the prober needs one home.
     enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
     enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
+    enableOutboundTest = true;
   };
 
   startTun = mkStartScript {

@@ -3,7 +3,7 @@
 # $below in any second (paced streams burst, so they read fast). Probe listeners are
 # skipped; chains[0] is the carrying exit.
 [.[] | [(.connections // [])[]
-  | select((.metadata.type // "") | test("/probe-in-") | not)
+  | select((.metadata.type // "") | test("/(probe-in-|proxy-suite-test-in$)") | not)
   | {id, host: (.metadata.host // ""), exit: (.chains[0] // ""), d: .download}]]
 | . as $s
 | [range(1; length) as $i

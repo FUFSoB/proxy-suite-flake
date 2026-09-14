@@ -402,13 +402,14 @@
         sample=${../../modules/proxy-suite/autoproxy-slow-sample.jq}
         judge=${../../modules/proxy-suite/autoproxy-slow-judge.jq}
 
-        # A steady crawl, a burst, probe traffic, and a tiny flow.
+        # A steady crawl, a burst, probe and outbound-test traffic, and a tiny flow.
         res="$(jq -n -c '[range(0; 11) as $t | {connections: [
             {id: "a", metadata: {host: "i.pximg.net", type: "mixed/mixed-in"}, chains: ["direct"], download: ($t * 50000)},
             {id: "b", metadata: {host: "audio.example", type: "mixed/mixed-in"}, chains: ["direct"], download: (if $t >= 5 then 2000000 else 0 end)},
             {id: "c", metadata: {host: "probe.example", type: "mixed/probe-in-0"}, chains: ["direct"], download: ($t * 50000)},
             {id: "d", metadata: {host: "tiny.example", type: "mixed/mixed-in"}, chains: ["direct"], download: ($t * 1000)},
-            {id: "e", metadata: {host: "far.example", type: "mixed/mixed-in"}, chains: ["primary", "proxy"], download: ($t * 50000)}
+            {id: "e", metadata: {host: "far.example", type: "mixed/mixed-in"}, chains: ["primary", "proxy"], download: ($t * 50000)},
+            {id: "f", metadata: {host: "speed.example", type: "mixed/proxy-suite-test-in"}, chains: ["primary", "proxy-suite-test"], download: ($t * 50000)}
           ]}][]' | jq -s -r --argjson min 307200 --argjson below 153600 -f "$sample")"
         printf '%s\n' "$res"
         test "$(wc -l <<<"$res")" = 3

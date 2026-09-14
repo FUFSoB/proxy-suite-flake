@@ -1259,7 +1259,7 @@ pkgs.sing-box
 <a id="services-proxy-suite-proxy-singbox-clashapiport"></a>
 ## services\.proxy-suite\.proxy\.singBox\.clashApiPort
 
-Port of sing-box’s Clash API, used with selection “selector” or “urltest”\.
+Loopback port of sing-box’s Clash API, which switches and tests outbounds\.
 
 *Type:*
 16 bit unsigned integer; between 0 and 65535 (both inclusive)

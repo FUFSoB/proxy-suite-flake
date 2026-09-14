@@ -4,15 +4,20 @@ Configuration arrives through the environment the Nix wrapper sets.
 """
 
 import datetime
+import http.client
 import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 ALL_SERVICES = [
     "proxy-suite-socks",
@@ -47,6 +52,8 @@ A group without a verb shows its status or list.
   proxy outbounds [list]                 outbounds, where each came from, and the pick
   proxy outbounds add <tag> <url>        add an outbound at runtime
   proxy outbounds rm <tag>               remove a runtime outbound
+  proxy outbounds test [tag...] [--ping] [--delay] [--download]
+                                         TCP ping, real delay, download speed (default: ping, delay)
   proxy select [<tag>|auto]              pin the priority outbound (no tag: pick from a menu)
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
@@ -252,7 +259,7 @@ def _complete_tree(words):
     simple = {
         "": ["status", "restart", "logs", "where", "proxy", "zapret", "awg", "ssh", "apps", "inbounds", "help"],
         "proxy": ["status", "on", "off", "outbounds", "select", "mode", "subs", "tun", "tproxy", "auto"],
-        "proxy outbounds": ["list", "add", "rm"],
+        "proxy outbounds": ["list", "add", "rm", "test"],
         "proxy subs": ["list", "update", "add", "rm"],
         "proxy mode": ["default", *ROUTE_MODES],
         "proxy tun": ["status", "on", "off"],
@@ -270,6 +277,8 @@ def _complete_tree(words):
         return simple[words]
     if words == "proxy outbounds rm":
         return _runtime_tags("outbound")
+    if words == "proxy outbounds test":
+        return _outbound_tags()
     if words == "proxy subs rm":
         return _runtime_tags("subscription")
     if words == "proxy select":
@@ -471,8 +480,10 @@ def cmd_outbounds(verb="list", *args):
         _runtime_entry_add("outbound", *args)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("outbound", *args)
+    elif verb == "test":
+        cmd_outbounds_test(*args)
     else:
-        usage("proxy outbounds [list|add <tag> <url>|rm <tag>]")
+        usage("proxy outbounds [list|add <tag> <url>|rm <tag>|test [tag...]]")
 
 
 def _outbound_inventory():
@@ -504,17 +515,174 @@ def _outbound_current():
 
     Empty otherwise, which is normal for selection = "first" and for XRay.
     """
-    api = env("CLASH_API")
-    if not api:
-        return ""
+    status, body = _clash("GET", "/proxies/proxy", timeout=5)
+    now = body.get("now") if status == 200 and isinstance(body, dict) else None
+    return "" if now is None else _s(now)
+
+
+def _clash(method, path, body=None, timeout=10):
+    """(HTTP status, JSON body or None) from the backend's Clash API; status 0 when unreachable."""
     # The API is on loopback: never through the shell's HTTP(S)_PROXY.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(
+        f"{env('CLASH_API')}{path}", data=data, method=method, headers={"Content-Type": "application/json"}
+    )
     try:
-        with opener.open(f"{api}/proxies/proxy", timeout=5) as r:
-            now = json.load(r).get("now")
-    except Exception:
-        return ""
-    return "" if now is None else _s(now)
+        with opener.open(request, timeout=timeout) as r:
+            status, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read()
+    except (OSError, ValueError, http.client.HTTPException):
+        return 0, None
+    try:
+        return status, json.loads(raw) if raw else None
+    except ValueError:
+        return status, None
+
+
+# --- proxy outbounds test -----------------------------------------------------
+#
+# ping: a TCP connect to each outbound's server, from this host. delay: the
+# backend's own URL test through the outbound, over the Clash API. download: a
+# timed fetch through the loopback test listener, its selector switched to one
+# outbound at a time. The socks start script writes what each needs next to the
+# inventory: outbound-endpoints.json (servers; root and userControl only) and, on
+# sing-box, outbound-test.json (listener, selector, user tag -> backend tag).
+
+OUTBOUND_TESTS = ("ping", "delay", "download")
+TEST_DOWNLOAD_HOST = "speed.cloudflare.com"
+# Cloudflare refuses 100 MB and more; the fetch stops at the time limit anyway.
+TEST_DOWNLOAD_PATH = "/__down?bytes=99000000"
+TEST_DOWNLOAD_SECONDS = 10
+
+
+def _runtime_file(name):
+    return os.path.join(os.path.dirname(env("OUTBOUND_INVENTORY_FILE", "/run/proxy-suite-socks/outbounds.json")), name)
+
+
+def _test_ping(endpoint, timeout=3):
+    if not endpoint:
+        return "-"
+    # QUIC and WireGuard servers have no TCP handshake to time.
+    if endpoint.get("network") == "udp":
+        return "udp"
+    try:
+        family, kind, proto, _, addr = socket.getaddrinfo(endpoint["server"], endpoint["port"], type=socket.SOCK_STREAM)[0]
+    except (OSError, UnicodeError, KeyError, TypeError):
+        return "no DNS"
+    with socket.socket(family, kind, proto) as s:
+        s.settimeout(timeout)
+        start = time.monotonic()
+        try:
+            s.connect(addr)
+        except TimeoutError:
+            return "timeout"
+        except ConnectionRefusedError:
+            return "refused"
+        except OSError:
+            return "failed"
+        return f"{(time.monotonic() - start) * 1000:.0f} ms"
+
+
+def _test_delay(backend_tag, url):
+    query = urllib.parse.urlencode({"url": url, "timeout": 8000})
+    status, body = _clash("GET", f"/proxies/{urllib.parse.quote(backend_tag, safe='')}/delay?{query}", timeout=12)
+    if status == 200 and isinstance(body, dict) and "delay" in body:
+        return f"{_s(body['delay'])} ms"
+    return {0: "no API", 504: "timeout"}.get(status, "failed")
+
+
+def _timed_download(port):
+    """Megabits per second through the test listener, None when nothing arrived.
+
+    A CONNECT tunnel by hand, so no proxy variable in the environment can send it
+    anywhere else.
+    """
+    conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=TEST_DOWNLOAD_SECONDS)
+    conn.set_tunnel(TEST_DOWNLOAD_HOST)
+    got = 0
+    start = time.monotonic()
+    try:
+        conn.request("GET", TEST_DOWNLOAD_PATH, headers={"User-Agent": "proxy-ctl"})
+        response = conn.getresponse()
+        while response.status == 200 and time.monotonic() - start < TEST_DOWNLOAD_SECONDS:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            got += len(chunk)
+    except (OSError, http.client.HTTPException):
+        pass
+    finally:
+        conn.close()
+    return got * 8 / (time.monotonic() - start) / 1e6 if got else None
+
+
+def _test_download(backend_tag, test):
+    # ponytail: no lock, so two concurrent download tests measure each other's pick.
+    status, _ = _clash("PUT", f"/proxies/{urllib.parse.quote(test['selector'], safe='')}", {"name": backend_tag})
+    if not 200 <= status < 300:
+        return "failed" if status else "no API"
+    mbps = _timed_download(test["port"])
+    return "failed" if mbps is None else f"{mbps:.1f} Mbit/s"
+
+
+def cmd_outbounds_test(*args):
+    flags = [a for a in args if a.startswith("-")]
+    for flag in flags:
+        if flag[2:] not in OUTBOUND_TESTS or not flag.startswith("--"):
+            die(f"Unknown option: {flag}")
+    tests = [t for t in OUTBOUND_TESTS if f"--{t}" in flags] or ["ping", "delay"]
+    _require_outbound_inventory()
+    known = _outbound_tags()
+    tags = [a for a in args if not a.startswith("-")] or known
+    for tag in tags:
+        if tag not in known:
+            die(f"Unknown outbound: {tag}")
+
+    notes = []
+    endpoints = {}
+    if "ping" in tests:
+        try:
+            endpoints = read_json(_runtime_file("outbound-endpoints.json"))
+        except PermissionError:
+            notes.append("ping: cannot read the servers - enable userControl, or run with sudo.")
+        except (OSError, ValueError):
+            pass
+    test = {}
+    if "delay" in tests or "download" in tests:
+        try:
+            test = read_json(_runtime_file("outbound-test.json"))
+        except (OSError, ValueError):
+            message = "Real delay and download need the sing-box or hybrid backend (restart proxy-suite-socks after an upgrade)."
+            if flags:
+                die(message)
+            tests.remove("delay")
+            notes.append(message)
+    backend = test.get("outbounds") or {}
+
+    def cell(kind, tag):
+        if kind == "ping":
+            return _test_ping(endpoints.get(tag))
+        if not backend.get(tag):
+            return "-"
+        if kind == "delay":
+            return _test_delay(backend[tag], test.get("url") or "https://www.gstatic.com/generate_204")
+        return _test_download(backend[tag], test)
+
+    # Ping and delay all at once, and done before any download competes with them.
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = {(k, t): pool.submit(cell, k, t) for t in tags for k in tests if k != "download"}
+        early = {key: f.result() for key, f in futures.items()}
+
+    width = max([12] + [len(t) + 2 for t in tags])
+    print(f"  {'TAG':<{width}}" + "".join(f"{k.upper():<12}" for k in tests).rstrip())
+    for tag in tags:
+        # Downloads one at a time: they share the test listener.
+        cells = [early[(k, tag)] if k != "download" else cell(k, tag) for k in tests]
+        print((f"  {tag:<{width}}" + "".join(f"{c:<12}" for c in cells)).rstrip(), flush=True)
+    for note in notes:
+        print(note, file=sys.stderr)
 
 
 def _outbounds_list():
