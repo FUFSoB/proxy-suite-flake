@@ -73,21 +73,32 @@ let
     (requireEnabled cfg.sshProxy.asOutbound proxyEnabled
       "proxy-suite: sshProxy.asOutbound requires proxy.enable = true"
     )
+    (mkAssertion (
+      !cfg.warp.enable || cfg.warp.asOutbound || cfg.warp.asAmneziaWg
+    ) "proxy-suite: warp.enable = true needs warp.asOutbound or warp.asAmneziaWg")
+    (requireEnabled derived.warpOutboundEnabled proxyEnabled
+      "proxy-suite: warp.asOutbound requires proxy.enable = true"
+    )
+    (requireEnabled (
+      cfg.warp.enable && cfg.warp.asAmneziaWg
+    ) cfg.amneziaWg.enable "proxy-suite: warp.asAmneziaWg requires amneziaWg.enable = true")
     (requireEnabled proxyCfg.autoProxy.enable proxyEnabled
       "proxy-suite: proxy.autoProxy.enable requires proxy.enable = true"
     )
     (mkAssertion (!(proxyCfg.autoProxy.enable && pureXrayEnabled))
       "proxy-suite: proxy.autoProxy needs the sing-box backend: learned routes are local rule-sets that sing-box reloads from disk, and pure XRay has no equivalent"
     )
-    (mkAssertion (
-      !cfg.sshProxy.enable || (cfg.sshProxy.server.user != null && cfg.sshProxy.server.host != null)
-    ) "proxy-suite: sshProxy.server.user and sshProxy.server.host are required when sshProxy.enable = true")
+    (mkAssertion
+      (!cfg.sshProxy.enable || (cfg.sshProxy.server.user != null && cfg.sshProxy.server.host != null))
+      "proxy-suite: sshProxy.server.user and sshProxy.server.host are required when sshProxy.enable = true"
+    )
     # SingBox dials SSH itself and verifies host keys by value, with no
     # knownHostsFile and no trust-on-first-use fallback. An empty list accepts
     # any host key, so refuse rather than silently downgrade the tunnel.
-    (mkAssertion (
-      !derived.sshProxyNativeOutbound || cfg.sshProxy.hostKey != [ ] || cfg.sshProxy.hostKeyFile != null
-    ) "proxy-suite: sshProxy.hostKey or sshProxy.hostKeyFile is required when sshProxy.asOutbound = true with a SingBox or hybrid backend, because SingBox verifies host keys by value and an empty list accepts any key. Point hostKeyFile at a known-hosts file, or list every key from `ssh-keyscan -p <server.port> <server.host>` in hostKey -- the host key algorithm is negotiated, so a single pinned key fails the handshake when the server picks another algorithm.")
+    (mkAssertion
+      (!derived.sshProxyNativeOutbound || cfg.sshProxy.hostKey != [ ] || cfg.sshProxy.hostKeyFile != null)
+      "proxy-suite: sshProxy.hostKey or sshProxy.hostKeyFile is required when sshProxy.asOutbound = true with a SingBox or hybrid backend, because SingBox verifies host keys by value and an empty list accepts any key. Point hostKeyFile at a known-hosts file, or list every key from `ssh-keyscan -p <server.port> <server.host>` in hostKey -- the host key algorithm is negotiated, so a single pinned key fails the handshake when the server picks another algorithm."
+    )
     (mkAssertion (!proxyEnabled || invalidRoutingTargets == [ ])
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )
@@ -104,9 +115,9 @@ let
     (requireEnabled globalTproxy.enable proxyEnabled
       "proxy-suite: proxy.tproxy.enable requires proxy.enable = true"
     )
-    (requireEnabled (proxyCfg.autostart == "tun") globalTun.enable
-      ''proxy-suite: proxy.autostart = "tun" requires proxy.tun.enable = true''
-    )
+    (requireEnabled (
+      proxyCfg.autostart == "tun"
+    ) globalTun.enable ''proxy-suite: proxy.autostart = "tun" requires proxy.tun.enable = true'')
     (requireEnabled (proxyCfg.autostart == "tproxy") globalTproxy.enable
       ''proxy-suite: proxy.autostart = "tproxy" requires proxy.tproxy.enable = true''
     )
@@ -199,15 +210,15 @@ let
     (mkAssertion (
       !singBoxEnabled || hybridEnabled || ob.xrayJson == null
     ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
-    (mkAssertion (!xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null))
-      "proxy-suite: outbound '${ob.tag}': singBoxJson/json require proxy.backend = sing-box or hybrid"
-    )
+    (mkAssertion (
+      !xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null)
+    ) "proxy-suite: outbound '${ob.tag}': singBoxJson/json require proxy.backend = sing-box or hybrid")
     (mkAssertion (
       !(ob.backend == "xray") || xrayEnabled
     ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
-    (mkAssertion (
-      !(ob.backend == "sing-box") || singBoxEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid")
+    (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
+      "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
+    )
   ]) proxyCfg.outbounds;
 
   proxyInboundsCfg = derived.proxyInboundsCfg;
@@ -218,132 +229,118 @@ let
   # A pinned outbound is rendered by the XRay renderer inside the inbound
   # service, so a sing-box-only definition cannot serve as one.
   singBoxOnlyPinnedTags = map (ob: ob.tag) (
-    builtins.filter (
-      ob: ob.singBoxJson != null || ob.json != null
-    ) derived.proxyInboundViaOutbounds
+    builtins.filter (ob: ob.singBoxJson != null || ob.json != null) derived.proxyInboundViaOutbounds
   );
 
-  proxyInboundAssertions =
+  proxyInboundAssertions = [
+    (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
+      "proxy-suite: inbounds via targets are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies cannot be named here because their tags only exist at runtime; use via = \"proxy\" to reach those."
+    )
+    (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
+      "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
+    )
+    (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
+      "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
+    )
+    (requireEnabled proxyInboundsEnabled (
+      proxyInbounds != [ ]
+    ) "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners")
+    (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
+      "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
+    )
+    (requireEnabled proxyInboundsNeedLocalProxy derived.hasAvailableOutbounds
+      "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, so at least one proxy.outbounds or proxy.subscriptions entry is required"
+    )
+    (uniqueValues proxyInboundsEnabled (map (
+      ib: ib.listener.port
+    ) proxyInbounds) "proxy-suite: inbounds.listeners must each use a distinct port")
+    (requireEnabled (proxyInboundsEnabled && proxyInboundsCfg.subscriptions.enable)
+      proxyInboundsCfg.shareLinks
+      "proxy-suite: inbounds.subscriptions are made of the share links, so they need inbounds.shareLinks = true"
+    )
+    (mkAssertion
+      (
+        !proxyInboundsEnabled
+        || !proxyEnabled
+        || !builtins.elem proxyCfg.listener.port derived.proxyInboundPorts
+      )
+      "proxy-suite: a proxyInbounds listener port collides with proxy.listener.port (${toString proxyCfg.listener.port})"
+    )
+    (mkAssertion
+      (
+        !proxyInboundsEnabled
+        || !globalTproxy.enable
+        || !builtins.elem globalTproxy.port derived.proxyInboundPorts
+      )
+      "proxy-suite: a proxyInbounds listener port collides with proxy.tproxy.port (${toString globalTproxy.port})"
+    )
+  ]
+  ++ lib.concatMap (
+    ib:
+    let
+      l = ib.listener;
+      prefix = "proxy-suite: inbounds listener '${ib.tag}'";
+      firstUser = if l.users == [ ] then null else builtins.head l.users;
+      needsUuid = builtins.elem l.type [
+        "vless"
+        "vmess"
+      ];
+      needsPassword = builtins.elem l.type [
+        "trojan"
+        "shadowsocks"
+        "socks"
+        "http"
+      ];
+      tlsTerminated = l.tls.enable || l.type == "trojan";
+    in
     [
-      (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
-        "proxy-suite: inbounds via targets are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies cannot be named here because their tags only exist at runtime; use via = \"proxy\" to reach those."
+      (exactlyOneOf proxyInboundsEnabled [
+        l.type
+        l.xrayJson
+        l.jsonFile
+      ] "${prefix}: set exactly one of type, xrayJson, or jsonFile")
+      (mkAssertion (
+        !proxyInboundsEnabled || !(l.tls.enable && l.reality.enable)
+      ) "${prefix}: tls.enable and reality.enable are mutually exclusive")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.type == null || l.users != [ ]
+      ) "${prefix}: at least one entry in users is required")
+      (exactlyOneOf (proxyInboundsEnabled && needsUuid && firstUser != null) [
+        firstUser.uuid
+        firstUser.uuidFile
+      ] "${prefix}: ${toString l.type} users need exactly one of uuid or uuidFile")
+      (exactlyOneOf (proxyInboundsEnabled && needsPassword && firstUser != null) [
+        firstUser.password
+        firstUser.passwordFile
+      ] "${prefix}: ${toString l.type} users need exactly one of password or passwordFile")
+      (exactlyOneOf (proxyInboundsEnabled && l.reality.enable) [
+        l.reality.privateKey
+        l.reality.privateKeyFile
+      ] "${prefix}: reality needs exactly one of privateKey or privateKeyFile")
+      (mkAssertion (
+        !proxyInboundsEnabled || !l.reality.enable || l.reality.serverNames != [ ]
+      ) "${prefix}: reality.serverNames must not be empty")
+      (requireAvailable (proxyInboundsEnabled && l.reality.enable && proxyInboundsCfg.shareLinks)
+        (l.reality.publicKey != null)
+        "${prefix}: reality.publicKey is required to generate share links. Run `xray x25519` to print it alongside the private key, or set inbounds.shareLinks = false."
       )
-      (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
-        "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
-      )
-      (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
-        "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
-      )
-      (requireEnabled proxyInboundsEnabled (proxyInbounds != [ ])
-        "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners"
-      )
-      (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
-        "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
-      )
-      (requireEnabled proxyInboundsNeedLocalProxy derived.hasAvailableOutbounds
-        "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, so at least one proxy.outbounds or proxy.subscriptions entry is required"
-      )
-      (uniqueValues proxyInboundsEnabled (map (ib: ib.listener.port) proxyInbounds)
-        "proxy-suite: inbounds.listeners must each use a distinct port"
-      )
-      (requireEnabled (proxyInboundsEnabled && proxyInboundsCfg.subscriptions.enable)
-        proxyInboundsCfg.shareLinks
-        "proxy-suite: inbounds.subscriptions are made of the share links, so they need inbounds.shareLinks = true"
-      )
-      (mkAssertion
-        (
-          !proxyInboundsEnabled
-          || !proxyEnabled
-          || !builtins.elem proxyCfg.listener.port derived.proxyInboundPorts
-        )
-        "proxy-suite: a proxyInbounds listener port collides with proxy.listener.port (${toString proxyCfg.listener.port})"
-      )
-      (mkAssertion
-        (
-          !proxyInboundsEnabled
-          || !globalTproxy.enable
-          || !builtins.elem globalTproxy.port derived.proxyInboundPorts
-        )
-        "proxy-suite: a proxyInbounds listener port collides with proxy.tproxy.port (${toString globalTproxy.port})"
-      )
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || !tlsTerminated
+        || l.reality.enable
+        || (l.tls.certificateFile != null && l.tls.keyFile != null)
+      ) "${prefix}: TLS termination needs both tls.certificateFile and tls.keyFile")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.flow == null || (l.type == "vless" && l.transport.type == "raw")
+      ) "${prefix}: flow is only valid on a vless listener with transport.type = \"raw\"")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.tls.alpn == null
+        || !builtins.elem "h3" l.tls.alpn
+        || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
+      ) "${prefix}: tls.alpn \"h3\" is served only by the xhttp transport with tls.enable (not REALITY)")
     ]
-    ++ lib.concatMap (
-      ib:
-      let
-        l = ib.listener;
-        prefix = "proxy-suite: inbounds listener '${ib.tag}'";
-        firstUser = if l.users == [ ] then null else builtins.head l.users;
-        needsUuid = builtins.elem l.type [
-          "vless"
-          "vmess"
-        ];
-        needsPassword = builtins.elem l.type [
-          "trojan"
-          "shadowsocks"
-          "socks"
-          "http"
-        ];
-        tlsTerminated = l.tls.enable || l.type == "trojan";
-      in
-      [
-        (exactlyOneOf proxyInboundsEnabled [
-          l.type
-          l.xrayJson
-          l.jsonFile
-        ] "${prefix}: set exactly one of type, xrayJson, or jsonFile")
-        (mkAssertion (
-          !proxyInboundsEnabled || !(l.tls.enable && l.reality.enable)
-        ) "${prefix}: tls.enable and reality.enable are mutually exclusive")
-        (mkAssertion (
-          !proxyInboundsEnabled || l.type == null || l.users != [ ]
-        ) "${prefix}: at least one entry in users is required")
-        (exactlyOneOf (proxyInboundsEnabled && needsUuid && firstUser != null) [
-          firstUser.uuid
-          firstUser.uuidFile
-        ] "${prefix}: ${toString l.type} users need exactly one of uuid or uuidFile")
-        (exactlyOneOf (proxyInboundsEnabled && needsPassword && firstUser != null) [
-          firstUser.password
-          firstUser.passwordFile
-        ] "${prefix}: ${toString l.type} users need exactly one of password or passwordFile")
-        (exactlyOneOf (proxyInboundsEnabled && l.reality.enable) [
-          l.reality.privateKey
-          l.reality.privateKeyFile
-        ] "${prefix}: reality needs exactly one of privateKey or privateKeyFile")
-        (mkAssertion (
-          !proxyInboundsEnabled || !l.reality.enable || l.reality.serverNames != [ ]
-        ) "${prefix}: reality.serverNames must not be empty")
-        (requireAvailable (proxyInboundsEnabled && l.reality.enable && proxyInboundsCfg.shareLinks)
-          (l.reality.publicKey != null)
-          "${prefix}: reality.publicKey is required to generate share links. Run `xray x25519` to print it alongside the private key, or set inbounds.shareLinks = false."
-        )
-        (mkAssertion
-          (
-            !proxyInboundsEnabled
-            || !tlsTerminated
-            || l.reality.enable
-            || (l.tls.certificateFile != null && l.tls.keyFile != null)
-          )
-          "${prefix}: TLS termination needs both tls.certificateFile and tls.keyFile"
-        )
-        (mkAssertion
-          (
-            !proxyInboundsEnabled
-            || l.flow == null
-            || (l.type == "vless" && l.transport.type == "raw")
-          )
-          "${prefix}: flow is only valid on a vless listener with transport.type = \"raw\""
-        )
-        (mkAssertion
-          (
-            !proxyInboundsEnabled
-            || l.tls.alpn == null
-            || !builtins.elem "h3" l.tls.alpn
-            || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
-          )
-          "${prefix}: tls.alpn \"h3\" is served only by the xhttp transport with tls.enable (not REALITY)"
-        )
-      ]
-    ) proxyInbounds;
+  ) proxyInbounds;
 
   subscriptionAssertions = lib.concatMap (sub: [
     (exactlyOneOf proxyEnabled [

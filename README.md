@@ -15,6 +15,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - zapret DPI bypass, including zapret2, which learns blocked sites at runtime
 - AmneziaWG 1.x–3.x tunnels from `.conf`, `vpn://`, or Nix
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
+- Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
 - Server inbounds with share links, QR codes, per-user subscriptions and traffic stats
 - A tray indicator and the `proxy-ctl` CLI
 
@@ -73,6 +74,13 @@ services.proxy-suite = {
     enable = true;
     profiles.home.configFile = "/run/secrets/home-amneziawg.conf";
     profiles.work.vpnFile = "/run/secrets/work-amnezia.vpn";
+  };
+
+  # Registers with wgcf on first start. The exit is Cloudflare, but geolocated to your own country.
+  warp = {
+    enable = true;
+    asOutbound = true; # tag "warp"
+    asAmneziaWg = true; # proxy-ctl awg on warp
   };
 
   tgWsProxy = {

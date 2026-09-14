@@ -28,6 +28,15 @@
         touch "$out"
       '';
 
+  warp-outbound-parser =
+    pkgs.runCommand "warp-outbound-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONPATH=${../../scripts}:$PYTHONPATH
+        python ${../../scripts/test-warp-outbound.py}
+        touch "$out"
+      '';
+
   amneziawg-config-parser =
     pkgs.runCommand "amneziawg-config-parser-check" { nativeBuildInputs = [ pkgs.python3 ]; }
       ''

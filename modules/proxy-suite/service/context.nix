@@ -49,6 +49,7 @@ let
     sshProxyCfg
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
+    warpCfg
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInboundsNeedLocalProxy
@@ -75,6 +76,7 @@ let
   proxySuiteScriptsDir = ../../../scripts;
   parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
+  warpOutboundPy = "${proxySuiteScriptsDir}/warp_outbound.py";
   buildInboundPy = "${proxySuiteScriptsDir}/build-inbound.py";
   fetchSubscriptionPy = "${proxySuiteScriptsDir}/fetch-subscription.py";
 
@@ -91,6 +93,7 @@ let
       singBoxCfg
       proxyCfg
       sshProxyCfg
+      warpCfg
       xrayEnabled
       hybridEnabled
       pureXrayEnabled
@@ -109,6 +112,7 @@ let
       xray
       parserScriptsPythonPath
       buildOutboundPy
+      warpOutboundPy
       buildInboundPy
       fetchSubscriptionPy
       ;

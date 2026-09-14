@@ -5,6 +5,7 @@
   singBoxCfg,
   proxyCfg,
   sshProxyCfg,
+  warpCfg,
   xrayEnabled,
   hybridEnabled,
   pureXrayEnabled,
@@ -21,6 +22,7 @@
   xray,
   parserScriptsPythonPath,
   buildOutboundPy,
+  warpOutboundPy,
   fetchSubscriptionPy,
   tproxyFile,
   tunFile,
@@ -109,6 +111,7 @@ let
       singBoxCfg
       proxyCfg
       sshProxyCfg
+      warpCfg
       pureXrayEnabled
       hybridEnabled
       collapseNamedOutbounds
@@ -122,6 +125,7 @@ let
       python3
       parserScriptsPythonPath
       buildOutboundPy
+      warpOutboundPy
       mkSubscriptionBlock
       mkSubscriptionLoadHelperBlock
       runtimeSubscriptionsBlock

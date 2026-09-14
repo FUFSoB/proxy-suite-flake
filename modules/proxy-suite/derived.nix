@@ -34,6 +34,17 @@ let
   # Only sing-box dials SSH natively; XRay and standalone tunnels use the OpenSSH unit.
   sshProxyNativeOutbound = sshProxyOutboundEnabled && !pureXrayEnabled;
   sshProxyUnitEnabled = sshProxyCfg.enable && !sshProxyNativeOutbound;
+  warpCfg = cfg.warp // {
+    # Without a configFile, proxy-suite-warp registers with wgcf into its state dir.
+    autoRegister = cfg.warp.enable && cfg.warp.configFile == null;
+    profilePath =
+      if cfg.warp.configFile != null then
+        cfg.warp.configFile
+      else
+        "/var/lib/proxy-suite/warp/wgcf-profile.conf";
+  };
+  warpOutboundTag = "warp";
+  warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound;
 
   proxyInboundsCfg = cfg.inbounds;
   proxyInboundsEnabled = proxyInboundsCfg.enable;
@@ -56,8 +67,7 @@ let
     ];
 
   # Names pass unresolved unless XRay dials itself (a direct listener, or pure XRay).
-  proxyInboundsResolveInSingBox =
-    !pureXrayEnabled && !lib.any (ib: ib.via == "direct") proxyInbounds;
+  proxyInboundsResolveInSingBox = !pureXrayEnabled && !lib.any (ib: ib.via == "direct") proxyInbounds;
 
   proxyInboundsGuardPrivate =
     proxyInboundsEnabled
@@ -113,12 +123,16 @@ let
     "block"
   ];
   outboundTags = map (ob: ob.tag) proxyCfg.outbounds;
-  effectiveOutboundTags = outboundTags ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag;
+  effectiveOutboundTags =
+    outboundTags
+    ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
+    ++ lib.optional warpOutboundEnabled warpOutboundTag;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
 
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
-  hasAvailableOutbounds = hasStaticOutbounds || hasSubscriptions || sshProxyOutboundEnabled;
+  hasAvailableOutbounds =
+    hasStaticOutbounds || hasSubscriptions || sshProxyOutboundEnabled || warpOutboundEnabled;
   collapseNamedOutbounds = selectionMode == "first";
   clashApiEnabled = (singBoxEnabled || hybridEnabled) && selectionMode != "first";
   perAppZapretEnabled = perAppZapretCfg.enable;
@@ -182,7 +196,9 @@ let
   };
 
   # Subscription tags are deliberately not accepted: they only exist at runtime.
-  invalidInboundViaTargets = builtins.filter (tag: !builtins.elem tag outboundTags) proxyInboundViaTags;
+  invalidInboundViaTargets = builtins.filter (
+    tag: !builtins.elem tag outboundTags
+  ) proxyInboundViaTags;
 
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
@@ -222,6 +238,9 @@ in
     sshProxyOutboundEnabled
     sshProxyNativeOutbound
     sshProxyUnitEnabled
+    warpCfg
+    warpOutboundTag
+    warpOutboundEnabled
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds

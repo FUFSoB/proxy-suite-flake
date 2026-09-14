@@ -14,6 +14,7 @@
     ./zapret2.nix
     ./amnezia-wg.nix
     ./ssh-proxy.nix
+    ./warp.nix
     ./tg-ws-proxy.nix
     ./geodata.nix
     ./tray.nix

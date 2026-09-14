@@ -87,7 +87,10 @@ else
       [.route.rules[]
        | select(((.action? // "") == "hijack-dns")
          and (((.inbound? // []) | index("xray-dns-in")) != null))];
-    .outbounds = $obs + .outbounds
+    # sing-box runs WireGuard as an endpoint, not an outbound.
+    .outbounds = ($obs | map(select(.type != "wireguard"))) + .outbounds
+      | ($obs | map(select(.type == "wireguard"))) as $endpoints
+      | if $endpoints == [] then . else .endpoints = (.endpoints // []) + $endpoints end
       | if $auth_enabled then
           (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
         else . end

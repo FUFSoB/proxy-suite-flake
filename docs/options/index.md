@@ -15,6 +15,7 @@ Update the module option docs there instead of editing these files by hand.
 - [tgWsProxy](./tgWsProxy.md)
 - [tray](./tray.md)
 - [userControl](./userControl.md)
+- [warp](./warp.md)
 - [zapret](./zapret.md)
 
 ## Complete default config
@@ -251,6 +252,12 @@ services.proxy-suite = {
     global = { };
     group = "proxy-suite";
     perApp = { };
+  };
+  warp = {
+    asAmneziaWg = false;
+    asOutbound = false;
+    configFile = null;
+    enable = false;
   };
   zapret = {
     cidrExemption = {

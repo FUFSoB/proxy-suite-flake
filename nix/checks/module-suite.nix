@@ -117,6 +117,15 @@ let
       ;
   };
 
+  warpChecks = import ./warp.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      ;
+  };
+
   proxyInboundsChecks = import ./proxy-inbounds.nix {
     inherit
       pkgs
@@ -238,6 +247,7 @@ let
     ++ coreProxyChecks.assertions
     ++ localProxyAuthChecks.assertions
     ++ sshProxyChecks.assertions
+    ++ warpChecks.assertions
     ++ proxyInboundsChecks.assertions
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions

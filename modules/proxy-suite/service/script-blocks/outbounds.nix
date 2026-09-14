@@ -4,6 +4,7 @@
   singBoxCfg,
   proxyCfg,
   sshProxyCfg,
+  warpCfg,
   pureXrayEnabled,
   hybridEnabled,
   collapseNamedOutbounds,
@@ -17,6 +18,7 @@
   python3,
   parserScriptsPythonPath,
   buildOutboundPy,
+  warpOutboundPy,
   mkSubscriptionBlock,
   mkSubscriptionLoadHelperBlock,
   runtimeSubscriptionsBlock,
@@ -293,18 +295,16 @@ let
           sshProxyCfg.server.host
         else
           "[${sshProxyCfg.server.host}]:${toString sshProxyCfg.server.port}";
-      hostKeyFileBlock =
-        lib.optionalString (!pureXrayEnabled && sshProxyCfg.hostKeyFile != null)
-          ''
-            SSH_HOST_KEYS=$(${pkgs.openssh}/bin/ssh-keygen -F ${lib.escapeShellArg knownHostsTarget} \
-              -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} \
-              | ${jq} -R -s '[splits("\n")] | map(select(length > 0 and (startswith("#") | not))) | map(sub("^\\S+\\s+"; ""))')
-            if [ "$(${jq} 'length' <<< "$SSH_HOST_KEYS")" -eq 0 ]; then
-              echo "proxy-suite: no host keys for ${knownHostsTarget} in ${sshProxyCfg.hostKeyFile}" >&2
-              exit 1
-            fi
-            OB_JSON=$(${jq} --argjson hk "$SSH_HOST_KEYS" '.host_key = $hk' <<< "$OB_JSON")
-          '';
+      hostKeyFileBlock = lib.optionalString (!pureXrayEnabled && sshProxyCfg.hostKeyFile != null) ''
+        SSH_HOST_KEYS=$(${pkgs.openssh}/bin/ssh-keygen -F ${lib.escapeShellArg knownHostsTarget} \
+          -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} \
+          | ${jq} -R -s '[splits("\n")] | map(select(length > 0 and (startswith("#") | not))) | map(sub("^\\S+\\s+"; ""))')
+        if [ "$(${jq} 'length' <<< "$SSH_HOST_KEYS")" -eq 0 ]; then
+          echo "proxy-suite: no host keys for ${knownHostsTarget} in ${sshProxyCfg.hostKeyFile}" >&2
+          exit 1
+        fi
+        OB_JSON=$(${jq} --argjson hk "$SSH_HOST_KEYS" '.host_key = $hk' <<< "$OB_JSON")
+      '';
     in
     ''
       # outbound: ${sshProxyTag} (${if pureXrayEnabled then "OpenSSH SOCKS5 listener" else "native SSH"})
@@ -317,6 +317,49 @@ let
           ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
       }
       _proxy_suite_record_tag_source ${sshProxyTag} ssh
+    '';
+
+  # The profile is a secret, so it is converted at start rather than baked into the store.
+  # Hybrid runs WARP in sing-box, like the SSH outbound.
+  mkWarpOutboundBlock =
+    routingMark:
+    let
+      markArg = lib.optionalString (routingMark != null) " --routing-mark ${toString routingMark}";
+      profile = lib.escapeShellArg warpCfg.profilePath;
+      convert = ''
+        OB_JSON=$(${python3} ${warpOutboundPy} --backend ${
+          if pureXrayEnabled then "xray" else "sing-box"
+        } --tag warp${markArg} < ${profile}) || exit 1
+      '';
+      blockJson =
+        if pureXrayEnabled then
+          ''{"protocol":"blackhole","tag":"warp","settings":{}}''
+        else
+          ''{"type":"block","tag":"warp"}'';
+    in
+    ''
+      # outbound: warp (${if pureXrayEnabled then "XRay wireguard" else "sing-box WireGuard endpoint"})
+      ${
+        if warpCfg.autoRegister then
+          ''
+            if [ -s ${profile} ]; then
+              ${convert}
+            else
+              # proxy-suite-warp restarts this service once wgcf has registered.
+              echo "proxy-suite: warning: no WARP profile yet; warp blocks until proxy-suite-warp registers" >&2
+              OB_JSON='${blockJson}'
+            fi
+          ''
+        else
+          convert
+      }
+      ${
+        if hybridEnabled then
+          ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
+        else
+          ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+      }
+      _proxy_suite_record_tag_source warp warp
     '';
 
   mkBackendOutboundBlock = if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock;
@@ -377,6 +420,9 @@ let
       ) proxyCfg.subscriptions;
 
       sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
+      warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound) (
+        mkWarpOutboundBlock routingMark
+      );
 
       wrapperBlock =
         if pureXrayEnabled && selectionMode == "urltest" then
@@ -445,6 +491,7 @@ let
     + runtimeSubscriptionsBlock
     + runtimeOutboundsBlock
     + sshProxyBlock
+    + warpBlock
     + requireOutboundsBlock
     + pinBlock
     + inventoryBlock
