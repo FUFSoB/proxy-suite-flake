@@ -41,7 +41,7 @@ A group without a verb shows its status or list.
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
   proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
-  proxy auto probe <domain>[/path] [--json] [--exits a,b | --via tag]
+  proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
   proxy auto learn <domain>              probe now and route it if an exit works (sudo)
   proxy auto queue [count]               destinations waiting to be probed (sudo, or userControl)
@@ -762,11 +762,13 @@ _probe_fetch_exit() {
 }
 
 # Walks EXIT_TAGS/EXIT_URLS (direct first) and stops at the first exit that
-# gets content. Sets WALK_VERDICT, WALK_EXIT, WALK_PATH, WALK_DIRECT, WALK_VIA
+# gets content; PROBE_KEEP_GOING=1 still tries the rest, keeping that one.
+# Sets WALK_VERDICT, WALK_EXIT, WALK_PATH, WALK_DIRECT, WALK_VIA
 # and WALK_ROWS ("tag<TAB>path<TAB>result<TAB>judgement" per request).
 _probe_walk() {
   local domain="$1" path direct result judgement i first_direct=""
   WALK_ROWS=()
+  WALK_VERDICT=""
   WALK_EXIT=""
   WALK_VIA=""
   for path in "$PROBE_PATH" ${PROBE_PATH_FALLBACK:+"$PROBE_PATH_FALLBACK"}; do
@@ -774,26 +776,27 @@ _probe_walk() {
     judgement="$(_probe_exit_verdict "$direct")"
     WALK_ROWS+=("${EXIT_TAGS[0]}"$'\t'"$path"$'\t'"$direct"$'\t'"$judgement")
     [ -n "$first_direct" ] || first_direct="$direct"
-    if [ "$judgement" = ok ]; then
+    if [ "$judgement" = ok ] && [ -z "$WALK_VERDICT" ]; then
       WALK_VERDICT=ok
       WALK_PATH="$path"
       WALK_DIRECT="$direct"
-      return
+      [ "${PROBE_KEEP_GOING:-0}" = 1 ] || return 0
     fi
     for ((i = 1; i < ${#EXIT_TAGS[@]}; i++)); do
       result="$(_probe_fetch_exit "$domain" "$path" "${EXIT_URLS[i]}")"
       judgement="$(_probe_exit_verdict "$result")"
       WALK_ROWS+=("${EXIT_TAGS[i]}"$'\t'"$path"$'\t'"$result"$'\t'"$judgement")
-      if [ "$judgement" = ok ]; then
+      if [ "$judgement" = ok ] && [ -z "$WALK_VERDICT" ]; then
         WALK_VERDICT="$(_probe_verdict "$direct" "$result")"
         WALK_EXIT="${EXIT_TAGS[i]}"
         WALK_PATH="$path"
         WALK_DIRECT="$direct"
         WALK_VIA="$result"
-        return
+        [ "${PROBE_KEEP_GOING:-0}" = 1 ] || return 0
       fi
     done
   done
+  [ -z "$WALK_VERDICT" ] || return 0
   WALK_PATH="$PROBE_PATH"
   WALK_DIRECT="$first_direct"
   if [ "$(_probe_exit_verdict "$first_direct")" = dead ]; then
@@ -829,11 +832,12 @@ _probe_stand_in() {
 }
 
 cmd_proxy_probe() {
-  local json=0 domain="" want="" have_want=0 via="" row tag
+  local json=0 domain="" want="" have_want=0 via="" row tag PROBE_KEEP_GOING=0
   local -a rows wanted
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
+      --keep-going) PROBE_KEEP_GOING=1 ;;
       --exits)
         want="${2?--exits needs a comma-separated list of exit tags}"
         have_want=1
@@ -851,7 +855,7 @@ cmd_proxy_probe() {
     shift
   done
 
-  [ -n "$domain" ] || _usage "proxy auto probe <domain>[/path] [--json] [--exits a,b | --via tag]"
+  [ -n "$domain" ] || _usage "proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]"
   domain="${domain#*://}"
   if [[ "$domain" == */* ]]; then
     local PROBE_PATH="/${domain#*/}" PROBE_PATH_FALLBACK=""

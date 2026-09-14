@@ -503,7 +503,8 @@
         grep -q '"url":"https://example.test/robots.txt"' <<<"$out"
 
         # A working apex is never second-guessed by the fallback path.
-        out="$(probe_with '0|0.10|200|500|' '0|0.20|200|500|' '0|0.10|403|10|' '0|0.20|200|10|')"
+        # set -e: proxy-ctl runs under it, and $() does not inherit it.
+        out="$(set -e; probe_with '0|0.10|200|500|' '0|0.20|200|500|' '0|0.10|403|10|' '0|0.20|200|10|')"
         grep -q '"verdict":"ok"' <<<"$out"
 
         # --- walking more than two exits ---
@@ -521,6 +522,11 @@
         }
         out="$(cmd_proxy_probe --json sekai.test)"
         jq -e '.verdict == "destination" and .exit == "de"' <<<"$out" > /dev/null
+
+        # --keep-going tries every exit but keeps the first that worked.
+        out="$(cmd_proxy_probe --json --keep-going --exits de,fi sekai.test)"
+        jq -e '.exit == "de" and [.exits[].tag] == ["direct", "de", "fi", "direct", "de", "fi"]' \
+          <<<"$out" > /dev/null
 
         # --exits restricts and orders the walk; direct is always tried first.
         out="$(cmd_proxy_probe --json --exits de sekai.test)"

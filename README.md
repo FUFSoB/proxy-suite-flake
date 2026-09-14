@@ -123,7 +123,7 @@ A group without a verb shows its status or list.
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
   proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
-  proxy auto probe <domain>[/path] [--json] [--exits a,b | --via tag]
+  proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
   proxy auto learn <domain>              probe now and route it if an exit works (sudo)
   proxy auto queue [count]               destinations waiting to be probed (sudo, or userControl)

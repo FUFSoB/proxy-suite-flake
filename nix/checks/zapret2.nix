@@ -174,6 +174,10 @@ in
         detect=$(grep -o '/nix/store/[^:]*-z2k-detect-[^:/]*/bin' ${cutoffProbe} | head -n1)
         "$detect/z2k-detect" tcp16 -h 2>/dev/null
 
+        # New maps restart only the zapret units this config installs.
+        grep -qF 'try-restart zapret-discord-youtube.service' ${cutoffProbe}
+        if grep -qF 'proxy-suite-per-app-zapret.service' ${cutoffProbe}; then exit 1; fi
+
         # The proxy carries what no name fixes, unless the fallback is off.
         grep -qF 'tag: "zapret-cutoff"' ${socksStart zapret2Global}
         if grep -qF 'zapret-cutoff' ${socksStart zapret2NoFallback}; then exit 1; fi

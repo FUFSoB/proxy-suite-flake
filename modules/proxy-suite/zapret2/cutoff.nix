@@ -18,6 +18,10 @@ let
   dir = constants.zapret2CutoffDir;
   unit = "proxy-suite-zapret2-cutoff";
   table = "proxy_suite_cutoff_probe";
+  # try-restart fails on a unit that is not installed, so only name the ones built.
+  restartUnits =
+    lib.optional cfg.zapret.enable "zapret-discord-youtube.service"
+    ++ lib.optional cfg.perAppRouting.zapret.enable "proxy-suite-per-app-zapret.service";
 
   z2kDetect = pkgs.buildGoModule {
     pname = "z2k-detect";
@@ -119,7 +123,7 @@ let
 
     # nfqws2 reads the maps once; learned strategies survive the restart.
     if [ "$changed" = 1 ]; then
-      systemctl try-restart zapret-discord-youtube.service proxy-suite-per-app-zapret.service
+      systemctl try-restart ${lib.escapeShellArgs restartUnits}
     fi
   '';
 
