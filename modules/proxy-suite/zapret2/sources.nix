@@ -61,7 +61,11 @@ let
       # Its init script's order. QUIC reads the learned list but never adds to it:
       # browsers retry over TCP. The UDP profile carries no SNI, so no lists.
       profiles = [
-        (args "NFQWS_ARGS_UDP")
+        # Its first UDP strategy's fake has no blob, which zapret2 rejects on every
+        # packet; nfqws1's default for unknown UDP was 64 zero bytes.
+        (replaceStrings [ "--lua-desync=fake:repeats=6:strategy=1" ] [
+          "--lua-desync=fake:blob=0x${lib.fixedWidthString 128 "0" ""}:repeats=6:strategy=1"
+        ] (args "NFQWS_ARGS_UDP"))
         "${args "NFQWS_ARGS_QUIC"} <HOSTLIST_NOAUTO> ${lists}"
         "${withSniPick (args "NFQWS_ARGS")} <HOSTLIST> ${lists}"
       ];

@@ -79,8 +79,6 @@ in
       assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" userControlDefaultPolkitConfig;
       assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-per-app-\") !== 0"
         userControlDefaultPolkitConfig;
-      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\""
-        userControlDefaultPolkitConfig;
       true
     )
 
@@ -93,8 +91,6 @@ in
       assert
         builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) === 0.*" userControlGlobalOnlyPolkitConfig
         == null;
-      assert pkgs.lib.hasInfix "unit === \"zapret-discord-youtube.service\""
-        userControlGlobalOnlyPolkitConfig;
       true
     )
 
@@ -107,7 +103,7 @@ in
         builtins.match ".*unit\\.indexOf\\(\"proxy-suite-per-app-\"\\) !== 0.*" userControlPerAppOnlyPolkitConfig
         == null;
       assert
-        builtins.match ".*unit === \"zapret-discord-youtube\\.service\".*" userControlPerAppOnlyPolkitConfig
+        builtins.match ".*unit\\.indexOf\\(\"proxy-suite-\"\\) === 0.*" userControlPerAppOnlyPolkitConfig
         == null;
       true
     )

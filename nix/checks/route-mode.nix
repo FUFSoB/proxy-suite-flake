@@ -55,7 +55,7 @@ let
     proxyCfg = routeModeFixture.config.services.proxy-suite.proxy;
     clashApi = "http://127.0.0.1:9090";
     routeModeStateFile = "/run/proxy-suite/route-mode";
-    priorityOutboundFile = "/var/lib/proxy-suite/priority-outbound";
+    pinnedOutboundFile = "/var/lib/proxy-suite/pinned-outbound";
     outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
     subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/sing-box";
     subscriptionCacheHelpersBlock = "";
@@ -64,7 +64,7 @@ let
     jq = "${pkgs.jq}/bin/jq";
   };
   routeModeSetterScript = generated.readDerivation routeModeControlScripts.setRouteModeScript;
-  prioritySetterScript = generated.readDerivation routeModeControlScripts.setPriorityOutboundScript;
+  pinSetterScript = generated.readDerivation routeModeControlScripts.pinOutboundScript;
   routeModeRules = mkRouteModeRules routeModeFixture;
 in
 {
@@ -125,16 +125,19 @@ in
     # across a reboot and prefers a live Clash switch over a restart.
     (
       let
-        selectSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-select@";
+        pinSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-pin@";
         reloadSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-reload";
       in
-      assert selectSvc.serviceConfig.RemainAfterExit == false;
-      assert selectSvc.serviceConfig.StateDirectory == "proxy-suite";
+      assert pinSvc.serviceConfig.RemainAfterExit == false;
+      assert
+        routeModeFixture.config.systemd.services."proxy-suite-outbound-unpin".serviceConfig.ExecStart
+        == "${routeModeControlScripts.pinOutboundScript}";
+      assert pinSvc.serviceConfig.StateDirectory == "proxy-suite";
       assert reloadSvc.serviceConfig.RemainAfterExit == false;
-      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/priority-outbound" prioritySetterScript;
-      assert pkgs.lib.hasInfix ''rm -f "/var/lib/proxy-suite/priority-outbound"'' prioritySetterScript;
-      assert pkgs.lib.hasInfix "/proxies/proxy" prioritySetterScript;
-      assert pkgs.lib.hasInfix "systemctl restart proxy-suite-socks" prioritySetterScript;
+      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/pinned-outbound" pinSetterScript;
+      assert pkgs.lib.hasInfix ''rm -f "/var/lib/proxy-suite/pinned-outbound"'' pinSetterScript;
+      assert pkgs.lib.hasInfix "/proxies/proxy" pinSetterScript;
+      assert pkgs.lib.hasInfix "systemctl restart proxy-suite-socks" pinSetterScript;
       true
     )
 
@@ -149,7 +152,7 @@ in
       assert
         shellValueByPrefix minimalProxyCtlWrapper "export RUNTIME_SUBS_DIR="
         == "/var/lib/proxy-suite/subscriptions.d";
-      assert pkgs.lib.hasInfix "proxy select [<tag>|auto]" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "proxy pin [tag]" minimalProxyCtlScript;
       assert pkgs.lib.hasInfix "proxy outbounds add <tag> <url>" minimalProxyCtlScript;
       true
     )

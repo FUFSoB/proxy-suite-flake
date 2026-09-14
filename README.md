@@ -116,7 +116,8 @@ A group without a verb shows its status or list.
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
-  proxy select [<tag>|auto]              pin the priority outbound (no tag: pick from a menu)
+  proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
+  proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscription caches; update refetches them
@@ -143,6 +144,8 @@ A group without a verb shows its status or list.
   awg on <profile> | off [profile] | restart [profile]
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
+  warp [status|on|off]                   WARP tunnel behind the warp outbound
+  tg [status|on|off]                     Telegram WebSocket proxy
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile

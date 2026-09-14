@@ -166,7 +166,7 @@ let
     # Runtime outbound control. The spool dirs hold one proxy URL per file and are
     # group-writable when userControl is on, so proxy-ctl edits them without sudo;
     # the pin outlives a reboot, unlike the per-boot route-mode override.
-    priorityOutboundFile = "/var/lib/proxy-suite/priority-outbound";
+    pinnedOutboundFile = "/var/lib/proxy-suite/pinned-outbound";
     runtimeOutboundsDir = "/var/lib/proxy-suite/outbounds.d";
     runtimeSubscriptionsDir = "/var/lib/proxy-suite/subscriptions.d";
     # Written by every backend start script; proxy-ctl reads the socks copy.

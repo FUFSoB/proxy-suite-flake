@@ -125,7 +125,7 @@ let
       );
     in
     pkgs.lib.removePrefix "ZAPRET_BASE=" zapretBaseEnv;
-  mkZapretBase = fixture: mkZapretBaseFor fixture "zapret-discord-youtube";
+  mkZapretBase = fixture: mkZapretBaseFor fixture "proxy-suite-zapret";
   packagePathMatches =
     packages: pattern:
     builtins.any (

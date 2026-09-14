@@ -22,7 +22,7 @@ let
       backend = null;
       backendArg = null;
       xraySidecarRoutingMark = null;
-      priorityOutboundFile = null;
+      pinnedOutboundFile = null;
       runtimeOutboundsDir = null;
       jq = null;
       python3 = null;

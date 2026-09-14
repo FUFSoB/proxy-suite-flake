@@ -70,7 +70,7 @@ in
     # selection=first renames the pinned outbound - or the first one, absent a
     # pin - to "proxy" at start, rather than collapsing at eval time.
     (
-      assert pkgs.lib.hasInfix ''PROXY_TAG="$PRIORITY_OUTBOUND"'' subscriptionFirstSelectionStartScript;
+      assert pkgs.lib.hasInfix ''PROXY_TAG="$PINNED_OUTBOUND"'' subscriptionFirstSelectionStartScript;
       assert
         pkgs.lib.hasInfix ''map(if .tag == $t then .tag = "proxy" else . end)''
           subscriptionFirstSelectionStartScript;
@@ -80,9 +80,9 @@ in
     # The pin is read from state, and one that names nothing is dropped.
     (
       assert
-        pkgs.lib.hasInfix "/var/lib/proxy-suite/priority-outbound" subscriptionOnlyStartScript;
+        pkgs.lib.hasInfix "/var/lib/proxy-suite/pinned-outbound" subscriptionOnlyStartScript;
       assert
-        pkgs.lib.hasInfix "pinned outbound '$PRIORITY_OUTBOUND' is not available"
+        pkgs.lib.hasInfix "pinned outbound '$PINNED_OUTBOUND' is not available"
           subscriptionOnlyStartScript;
       true
     )

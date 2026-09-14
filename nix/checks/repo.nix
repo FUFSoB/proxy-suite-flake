@@ -196,11 +196,11 @@
         run proxy subs add rejected https://example.com/sub > rejected 2>&1 && exit 1
         grep -q 'did not come up' rejected
 
-        # Pinning goes through the unit, including "auto".
-        run proxy select community-de | grep -q 'Pinned: community-de'
-        run proxy select auto | grep -q 'Selecting automatically again'
+        # Pinning and unpinning go through their units.
+        run proxy pin community-de | grep -q 'Pinned: community-de'
+        run proxy unpin | grep -q 'Unpinned'
         # Without a terminal and without a tag there is nothing to pick from.
-        ! run proxy select </dev/null 2>/dev/null
+        ! run proxy pin </dev/null 2>/dev/null
 
         touch "$out"
       '';
@@ -326,8 +326,8 @@
         has proxy-suite-awg-work logs
         has work awg on
         has torrent apps run
-        has auto proxy select
-        has community-de proxy select
+        has unpin proxy
+        has community-de proxy pin
 
         # Flags, and completion past the first of several arguments.
         has --delay proxy outbounds test
@@ -338,7 +338,7 @@
         has --qr inbounds sub
 
         # Candidates carry a description after a tab.
-        run proxy select > words
+        run proxy pin > words
         grep -qx "$(printf 'own-vps\tproxy.outbounds')" words
 
         # A shell completing must never die, however unreadable the state is.
@@ -390,8 +390,8 @@
         # What proxy-ctl cannot see has to be said out loud.
         grep -q 'proxy.routing.rules are not visible' where
 
-        verdict discord.com '-> direct, with the zapret2 bypass'
-        verdict nyt.com '-> direct, with the zapret2 bypass'
+        verdict discord.com '-> direct, with the zapret bypass'
+        verdict nyt.com '-> direct, with the zapret bypass'
         # Excluded is not bypassed: it must not read as a zapret2 verdict.
         verdict ok.ru '-> nothing runtime matches it'
         verdict example.org '-> nothing runtime matches it'

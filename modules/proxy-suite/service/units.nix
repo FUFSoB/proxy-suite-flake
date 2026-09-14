@@ -242,10 +242,20 @@ let
     }
     {
       enable = proxyEnabled;
-      name = "proxy-suite-outbound-select@";
+      name = "proxy-suite-outbound-pin@";
       value = mkOneshotService {
-        description = "Pin the proxy-suite priority outbound to %i";
-        execStart = "${scripts.setPriorityOutboundScript} %i";
+        description = "Pin the proxy-suite outbound to %i";
+        execStart = "${scripts.pinOutboundScript} %i";
+        stateDirectory = "proxy-suite";
+        extraServiceConfig.RemainAfterExit = false;
+      };
+    }
+    {
+      enable = proxyEnabled;
+      name = "proxy-suite-outbound-unpin";
+      value = mkOneshotService {
+        description = "Unpin the proxy-suite outbound";
+        execStart = "${scripts.pinOutboundScript}";
         stateDirectory = "proxy-suite";
         extraServiceConfig.RemainAfterExit = false;
       };

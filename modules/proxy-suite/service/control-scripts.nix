@@ -5,7 +5,7 @@
   proxyCfg,
   clashApi,
   routeModeStateFile,
-  priorityOutboundFile,
+  pinnedOutboundFile,
   outboundInventoryFile,
   subscriptionCacheDir,
   subscriptionCacheHelpersBlock,
@@ -77,20 +77,15 @@ let
     ${restartActiveConfigConsumersBlock}
   '';
 
-  # Pins the outbound the proxy prefers, or "auto" to hand the choice back to the
-  # configured selection. The pin is persisted either way; a live Clash API switch
-  # only saves the restart.
-  setPriorityOutboundScript = pkgs.writeShellScript "proxy-suite-core" ''
+  # Pins the outbound the proxy prefers; without a tag, unpins it and hands the choice
+  # back to the configured selection. The pin is persisted either way; a live Clash
+  # API switch only saves the restart.
+  pinOutboundScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     tag="''${1:-}"
 
     if [ -z "$tag" ]; then
-      echo "proxy-suite: usage: proxy-suite-set-priority-outbound <tag|auto>" >&2
-      exit 1
-    fi
-
-    if [ "$tag" = "auto" ]; then
-      rm -f "${priorityOutboundFile}"
+      rm -f "${pinnedOutboundFile}"
     else
       # The inventory only exists once the proxy has run. Without it there is
       # nothing to check against, so accept the tag and let the start script warn
@@ -100,8 +95,8 @@ let
         echo "proxy-suite: unknown outbound '$tag'" >&2
         exit 1
       fi
-      mkdir -p "$(dirname "${priorityOutboundFile}")"
-      printf '%s\n' "$tag" > "${priorityOutboundFile}"
+      mkdir -p "$(dirname "${pinnedOutboundFile}")"
+      printf '%s\n' "$tag" > "${pinnedOutboundFile}"
       # Live switch when the running config exposes a selector; the persisted pin
       # is what keeps it after the next restart.
       if ${curl} -sf -X PUT "${clashApi}/proxies/proxy" \
@@ -146,7 +141,7 @@ in
   inherit
     subscriptionUpdateScript
     setRouteModeScript
-    setPriorityOutboundScript
+    pinOutboundScript
     reloadOutboundsScript
     ;
 }

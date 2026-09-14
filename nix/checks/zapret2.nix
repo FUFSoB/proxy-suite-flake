@@ -31,7 +31,7 @@ let
       )
     );
 
-  globalService = "zapret-discord-youtube";
+  globalService = "proxy-suite-zapret";
   perAppService = "proxy-suite-per-app-zapret";
 
   zapretBase = fixture: envValue fixture globalService "ZAPRET_BASE=";
@@ -101,7 +101,10 @@ in
   runtime =
     pkgs.runCommand "proxy-suite-zapret2-config-check"
       {
-        nativeBuildInputs = [ pkgs.gnugrep ];
+        nativeBuildInputs = [
+          pkgs.gnugrep
+          pkgs.lua
+        ];
       }
       ''
         base=${zapretBase zapret2Global}
@@ -139,6 +142,22 @@ in
         grep -qx 'NFQWS2_PORTS_TCP=80,443,1984,2053,2083,2087,2096,5222,8443' "${globalRuntime}/config"
         grep -qx 'NFQWS2_PORTS_UDP=443,590-600,1400,3478-3481,5349,19294-19344,49152-65535' "${globalRuntime}/config"
         grep -qF -- '/files/lua/z2k-state-persist.lua' "${globalRuntime}/config"
+        # Counted failures are stamped before the state layer reads them, so a
+        # success on a busy host cannot undo every rotation.
+        grep -qE -- 'fail-stamp\.lua --lua-init=@[^ ]+/z2k-state-persist\.lua' "${globalRuntime}/config"
+        STAMP=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-fail-stamp\.lua' "${globalRuntime}/config") lua -e '
+          function automate_failure_counter(hrec, crec) if crec then crec.failure = true end return "orig" end
+          function clock_getfloattime() return 42.5 end
+          dofile(os.getenv("STAMP"))
+          local hrec, crec = {}, {}
+          assert(automate_failure_counter(hrec, crec, 2, 60) == "orig" and hrec.z2k_last_fail_ts == 42.5)
+          hrec.z2k_last_fail_ts = 1
+          automate_failure_counter(hrec, crec, 2, 60)
+          assert(hrec.z2k_last_fail_ts == 1, "a duplicate failure is not counted, so not stamped")
+        '
+        # Every UDP fake carries a blob; zapret2 errors on each packet otherwise.
+        grep -qF -- '--lua-desync=fake:blob=0x0000' "${globalRuntime}/config"
+        if grep -qF -- '--lua-desync=fake:repeats=' "${globalRuntime}/config"; then exit 1; fi
         # autoHostlist fills what circular leaves unset; the source keeps its fails and time.
         grep -qF -- '--lua-desync=circular:fails=2:time=300:retrans=3:nld=2:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset ' "${globalRuntime}/config"
 
@@ -175,7 +194,7 @@ in
         "$detect/z2k-detect" tcp16 -h 2>/dev/null
 
         # New maps restart only the zapret units this config installs.
-        grep -qF 'try-restart zapret-discord-youtube.service' ${cutoffProbe}
+        grep -qF 'try-restart proxy-suite-zapret.service' ${cutoffProbe}
         if grep -qF 'proxy-suite-per-app-zapret.service' ${cutoffProbe}; then exit 1; fi
 
         # The proxy carries what no name fixes, unless the fallback is off.

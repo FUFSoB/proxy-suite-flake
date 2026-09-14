@@ -12,7 +12,7 @@
   backend,
   backendArg,
   xraySidecarRoutingMark,
-  priorityOutboundFile,
+  pinnedOutboundFile,
   runtimeOutboundsDir,
   jq,
   python3,
@@ -373,14 +373,14 @@ let
   # entry that went away, say - is dropped rather than left to break the config.
   pinBlock = ''
     OUTBOUND_TAGS_JSON=$(${jq} -c '[.[].tag]' <<< "$OUTBOUNDS_JSON")
-    PRIORITY_OUTBOUND=""
-    if [ -r "${priorityOutboundFile}" ]; then
-      PRIORITY_OUTBOUND="$(tr -d '\r\n[:space:]' < "${priorityOutboundFile}" 2>/dev/null || true)"
+    PINNED_OUTBOUND=""
+    if [ -r "${pinnedOutboundFile}" ]; then
+      PINNED_OUTBOUND="$(tr -d '\r\n[:space:]' < "${pinnedOutboundFile}" 2>/dev/null || true)"
     fi
-    if [ -n "$PRIORITY_OUTBOUND" ] \
-      && ! ${jq} -e --arg t "$PRIORITY_OUTBOUND" 'index($t) != null' <<< "$OUTBOUND_TAGS_JSON" >/dev/null; then
-      echo "proxy-suite: warning: pinned outbound '$PRIORITY_OUTBOUND' is not available; picking automatically" >&2
-      PRIORITY_OUTBOUND=""
+    if [ -n "$PINNED_OUTBOUND" ] \
+      && ! ${jq} -e --arg t "$PINNED_OUTBOUND" 'index($t) != null' <<< "$OUTBOUND_TAGS_JSON" >/dev/null; then
+      echo "proxy-suite: warning: pinned outbound '$PINNED_OUTBOUND' is not available; picking automatically" >&2
+      PINNED_OUTBOUND=""
     fi
   '';
 
@@ -389,7 +389,7 @@ let
     ${jq} -n \
       --argjson tags "$OUTBOUND_TAGS_JSON" \
       --argjson sources "$OUTBOUND_SOURCES_JSON" \
-      --arg pinned "$PRIORITY_OUTBOUND" \
+      --arg pinned "$PINNED_OUTBOUND" \
       --arg selection ${lib.escapeShellArg selectionMode} \
       '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection}' \
       > "$RUNTIME_DIR/outbounds.json"
@@ -416,15 +416,15 @@ let
             OUTBOUNDS_JSON=$(${jq} 'map(.tag = ("proxy-suite-ob-" + .tag))' <<< "$OUTBOUNDS_JSON")
             # XRay has no selector: a pin degrades the balancer to the one outbound,
             # which is the same path a single-outbound config already takes.
-            if [ -n "$PRIORITY_OUTBOUND" ]; then
-              XRAY_SINGLE_PROXY_TAG="proxy-suite-ob-$PRIORITY_OUTBOUND"
+            if [ -n "$PINNED_OUTBOUND" ]; then
+              XRAY_SINGLE_PROXY_TAG="proxy-suite-ob-$PINNED_OUTBOUND"
             elif [ "$(${jq} 'length' <<< "$OUTBOUNDS_JSON")" -eq 1 ]; then
               XRAY_SINGLE_PROXY_TAG="$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")"
             fi
           ''
         else if collapseNamedOutbounds then
           ''
-            PROXY_TAG="$PRIORITY_OUTBOUND"
+            PROXY_TAG="$PINNED_OUTBOUND"
             if [ -z "$PROXY_TAG" ]; then
               PROXY_TAG=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
             fi
@@ -434,7 +434,7 @@ let
         else if selectionMode == "selector" then
           ''
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
-            DEFAULT_TAG="$PRIORITY_OUTBOUND"
+            DEFAULT_TAG="$PINNED_OUTBOUND"
             if [ -z "$DEFAULT_TAG" ]; then
               DEFAULT_TAG=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
             fi
@@ -447,12 +447,12 @@ let
         else
           ''
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
-            if [ -n "$PRIORITY_OUTBOUND" ]; then
+            if [ -n "$PINNED_OUTBOUND" ]; then
               # A pin beats latency ranking: the same outbounds, behind a selector
               # the Clash API can also switch live.
               WRAPPER=$(${jq} -n \
                 --argjson tags "$TAGS" \
-                --arg default "$PRIORITY_OUTBOUND" \
+                --arg default "$PINNED_OUTBOUND" \
                 '{type:"selector",tag:"proxy",outbounds:$tags,default:$default}')
             else
               WRAPPER=$(${jq} -n \

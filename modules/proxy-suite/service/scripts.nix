@@ -57,7 +57,7 @@ let
       null;
   routeModeStateFile = "/run/proxy-suite/route-mode";
   inherit (constants)
-    priorityOutboundFile
+    pinnedOutboundFile
     runtimeOutboundsDir
     runtimeSubscriptionsDir
     outboundInventoryFile
@@ -118,7 +118,7 @@ let
       backend
       backendArg
       xraySidecarRoutingMark
-      priorityOutboundFile
+      pinnedOutboundFile
       runtimeOutboundsDir
       jq
       python3
@@ -220,7 +220,7 @@ let
       proxyCfg
       clashApi
       routeModeStateFile
-      priorityOutboundFile
+      pinnedOutboundFile
       outboundInventoryFile
       subscriptionCacheDir
       subscriptionCacheHelpersBlock
@@ -232,7 +232,7 @@ let
   inherit (controlScripts)
     subscriptionUpdateScript
     setRouteModeScript
-    setPriorityOutboundScript
+    pinOutboundScript
     reloadOutboundsScript
     ;
 
@@ -250,13 +250,13 @@ in
     proxyInboundsSubscriptionsFile
     routeModeStateFile
     setRouteModeScript
-    setPriorityOutboundScript
+    pinOutboundScript
     reloadOutboundsScript
     subscriptionUpdateScript
     subscriptionTagsFile
     subscriptionCacheDir
     runtimeProxychainsConfig
-    priorityOutboundFile
+    pinnedOutboundFile
     runtimeOutboundsDir
     runtimeSubscriptionsDir
     outboundInventoryFile

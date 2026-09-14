@@ -104,7 +104,7 @@ in
   systemd.services.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.service;
   systemd.timers.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.timer;
 
-  systemd.services.zapret-discord-youtube = lib.mkIf zapretCfg.enable (mkOneshotService {
+  systemd.services.proxy-suite-zapret = lib.mkIf zapretCfg.enable (mkOneshotService {
     description = "zapret2 DPI bypass";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];

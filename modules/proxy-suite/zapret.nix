@@ -83,7 +83,7 @@ in
     ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
   );
 
-  systemd.services.zapret-discord-youtube = lib.mkIf zapretCfg.enable (mkOneshotService {
+  systemd.services.proxy-suite-zapret = lib.mkIf zapretCfg.enable (mkOneshotService {
     description = "zapret DPI bypass";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -121,8 +121,8 @@ in
     lib.mkIf (zapretCfg.enable && zapretCfg.cidrExemption.enable)
       (mkOneshotService {
         description = "Exempt CIDRs from zapret NFQUEUE";
-        after = [ "zapret-discord-youtube.service" ];
-        wants = [ "zapret-discord-youtube.service" ];
+        after = [ "proxy-suite-zapret.service" ];
+        wants = [ "proxy-suite-zapret.service" ];
         conflicts = awgServiceNames;
         wantedBy = [ "multi-user.target" ];
         execStart = pkgs.writeShellScript "proxy-suite-zapret" exemptStart;

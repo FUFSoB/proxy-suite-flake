@@ -184,7 +184,7 @@ in
       assert builtins.elem "proxy-suite-awg-work.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-tun.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-tproxy.service" homeService.conflicts;
-      assert builtins.elem "zapret-discord-youtube.service" homeService.conflicts;
+      assert builtins.elem "proxy-suite-zapret.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-per-app-zapret.service" homeService.conflicts;
       assert workService.wantedBy == [ ];
       assert homeService.serviceConfig.NoNewPrivileges;
@@ -240,7 +240,7 @@ in
       assert builtins.elem "proxy-suite-awg-home.service"
         withGlobalTun.config.systemd.services.proxy-suite-tproxy.conflicts;
       assert builtins.elem "proxy-suite-awg-home.service"
-        withGlobalTun.config.systemd.services.zapret-discord-youtube.conflicts;
+        withGlobalTun.config.systemd.services.proxy-suite-zapret.conflicts;
       assert builtins.elem "proxy-suite-awg-home.service"
         withGlobalTun.config.systemd.services.proxy-suite-per-app-zapret.conflicts;
       assert builtins.elem "proxy-suite-socks.service" withGlobalAwgService.after;

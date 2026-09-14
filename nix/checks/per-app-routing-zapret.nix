@@ -195,7 +195,7 @@ in
         perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services
         ? "proxy-suite-per-app-zapret-anchor";
       assert
-        !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "zapret-discord-youtube");
+        !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-zapret");
       assert builtins.length perAppRoutingZapretWithoutGlobalProfiles == 2;
       assert builtins.any (
         profile: profile.name == "zapret" && profile.route == "zapret"

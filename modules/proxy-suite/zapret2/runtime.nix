@@ -93,14 +93,28 @@ let
     else
       pkgs.writeText "proxy-suite-zapret2" (lib.concatStringsSep " " source.blobArgs);
 
+  # The state layer undoes a rotation when the host succeeded within 30 s, unless
+  # a failure came later; only z2k's own detector stamps that failure. Without the
+  # stamp any success on a busy host (all of googlevideo.com) undoes every rotation.
+  failStamp = pkgs.writeText "proxy-suite-zapret2-fail-stamp.lua" ''
+    local count = automate_failure_counter
+    function automate_failure_counter(hrec, crec, fails, maxtime)
+      if not (crec and crec.failure) then
+        hrec.z2k_last_fail_ts = type(clock_getfloattime) == "function" and clock_getfloattime() or os.time()
+      end
+      return count(hrec, crec, fails, maxtime)
+    end
+  '';
+
   # The state layer wraps circular, so it loads after the source's Lua. z2k-tcp16
   # does nothing until the cutoff probe has written its maps.
   optPrefix = lib.concatStringsSep " " (
     map (file: "--lua-init=@${file}") (
       source.luaInit
-      ++ map (name: "${zapret2Sources.z2k}/files/lua/${name}.lua") [
-        "z2k-tcp16"
-        "z2k-state-persist"
+      ++ [
+        "${zapret2Sources.z2k}/files/lua/z2k-tcp16.lua"
+        failStamp
+        "${zapret2Sources.z2k}/files/lua/z2k-state-persist.lua"
       ]
     )
     ++ lib.mapAttrsToList (name: file: "--blob=${name}:@${blobPath file}") zapret2Cfg.blobs

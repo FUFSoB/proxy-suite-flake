@@ -186,7 +186,7 @@ let
       # do not race it.
       after = [
         "network-online.target"
-        "zapret-discord-youtube.service"
+        "proxy-suite-zapret.service"
       ]
       ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
       wants = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
@@ -194,7 +194,7 @@ let
       conflicts = allProfileConflicts name ++ [
         "proxy-suite-tun.service"
         "proxy-suite-tproxy.service"
-        "zapret-discord-youtube.service"
+        "proxy-suite-zapret.service"
         "proxy-suite-per-app-zapret.service"
         "proxy-suite-zapret-vm-exempt.service"
       ];

@@ -15,9 +15,8 @@ let
       }
     ''
     + lib.optionalString (builtins.elem "global" userControlCfg.allow) ''
-      if ((unit.indexOf("proxy-suite-") === 0 &&
-           unit.indexOf("proxy-suite-per-app-") !== 0) ||
-          unit === "zapret-discord-youtube.service") {
+      if (unit.indexOf("proxy-suite-") === 0 &&
+          unit.indexOf("proxy-suite-per-app-") !== 0) {
         return polkit.Result.YES;
       }
     '';

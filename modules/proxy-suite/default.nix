@@ -28,9 +28,9 @@ let
       lib.types.submodule (
         { name, ... }:
         {
-          config.serviceConfig.SyslogIdentifier = lib.mkIf (
-            lib.hasPrefix "proxy-suite-" name || name == "zapret-discord-youtube"
-          ) (lib.mkDefault (lib.removeSuffix "@" name));
+          config.serviceConfig.SyslogIdentifier = lib.mkIf (lib.hasPrefix "proxy-suite-" name) (
+            lib.mkDefault (lib.removeSuffix "@" name)
+          );
         }
       )
     );

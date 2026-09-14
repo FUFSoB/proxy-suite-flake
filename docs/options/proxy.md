@@ -1220,7 +1220,7 @@ How to pick among outbounds:
  - “selector”: all of them, pick by hand\.
  - “urltest”: all of them, ranked by latency unless one is pinned\.
 
-` proxy-ctl proxy select ` pins an outbound in every mode, and the pin outlives a restart\.
+` proxy-ctl proxy pin ` pins an outbound in every mode, and the pin outlives a restart\.
 “selector” and “urltest” switch without restarting the backend (sing-box only); “first”
 and XRay restart it\.
 

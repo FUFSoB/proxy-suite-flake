@@ -559,7 +559,7 @@ static void update_status(void)
         }
         if (controls_core_status_label)
         {
-            gtk_label_set_text(GTK_LABEL(controls_core_status_label), "[Core] SOCKS proxy: Unknown");
+            gtk_label_set_text(GTK_LABEL(controls_core_status_label), "[Core] Proxy: Unknown");
         }
         if (controls_traffic_status_label)
         {
@@ -575,7 +575,7 @@ static void update_status(void)
         }
         if (controls_zapret_status_label)
         {
-            gtk_label_set_text(GTK_LABEL(controls_zapret_status_label), "[Zapret] zapret-discord-youtube: Unknown");
+            gtk_label_set_text(GTK_LABEL(controls_zapret_status_label), "[Zapret] DPI bypass: Unknown");
         }
         return;
     }
@@ -591,7 +591,7 @@ static void update_status(void)
         route_mode,
         zapret);
     gchar *core_text = g_strdup_printf(
-        "[Core] SOCKS proxy: %s",
+        "[Core] Proxy: %s",
         state.socks ? "Running" : "Stopped");
     gchar *route_mode_text = g_strdup_printf("[Routing] Mode: %s", route_mode);
     gchar *traffic_text = g_strdup_printf("[Traffic] Mode: %s", traffic);
@@ -599,7 +599,7 @@ static void update_status(void)
         "[AmneziaWG] Profile: %s",
         state.awg_active[0] != '\0' ? state.awg_active : "Off");
     gchar *zapret_text = g_strdup_printf(
-        "[Zapret] zapret-discord-youtube: %s",
+        "[Zapret] DPI bypass: %s",
         zapret);
 
     if (state.tproxy || state.tun || state.awg_active[0] != '\0')
@@ -665,12 +665,12 @@ static void update_status(void)
     if (proxy_item)
     {
         gtk_menu_item_set_label(GTK_MENU_ITEM(proxy_item),
-                                state.socks ? "[Core] Stop SOCKS Proxy" : "[Core] Start SOCKS Proxy");
+                                state.socks ? "[Core] Stop Proxy" : "[Core] Start Proxy");
     }
     if (controls_proxy_button)
     {
         gtk_button_set_label(GTK_BUTTON(controls_proxy_button),
-                             state.socks ? "Stop SOCKS Proxy" : "Start SOCKS Proxy");
+                             state.socks ? "Stop Proxy" : "Start Proxy");
     }
     if (route_mode_item)
     {
@@ -713,13 +713,13 @@ static void update_status(void)
     {
         gtk_menu_item_set_label(
             GTK_MENU_ITEM(zapret_item),
-            state.zapret ? "[Zapret] Stop zapret-discord-youtube" : "[Zapret] Start zapret-discord-youtube");
+            state.zapret ? "[Zapret] Stop zapret" : "[Zapret] Start zapret");
     }
     if (controls_zapret_button)
     {
         gtk_button_set_label(
             GTK_BUTTON(controls_zapret_button),
-            state.zapret ? "Stop zapret-discord-youtube" : "Start zapret-discord-youtube");
+            state.zapret ? "Stop zapret" : "Start zapret");
     }
 
     g_free(summary_text);
@@ -935,11 +935,11 @@ static void build_controls_window(void)
     gtk_container_add(GTK_CONTAINER(core_frame), core_box);
     gtk_box_pack_start(GTK_BOX(box), core_frame, FALSE, FALSE, 0);
 
-    controls_core_status_label = gtk_label_new("[Core] SOCKS proxy: Unknown");
+    controls_core_status_label = gtk_label_new("[Core] Proxy: Unknown");
     gtk_label_set_xalign(GTK_LABEL(controls_core_status_label), 0.0f);
     gtk_box_pack_start(GTK_BOX(core_box), controls_core_status_label, FALSE, FALSE, 0);
 
-    controls_proxy_button = gtk_button_new_with_label("Start SOCKS Proxy");
+    controls_proxy_button = gtk_button_new_with_label("Start Proxy");
     g_signal_connect(controls_proxy_button, "clicked", G_CALLBACK(on_proxy_toggle), NULL);
     gtk_box_pack_start(GTK_BOX(core_box), controls_proxy_button, FALSE, FALSE, 0);
 
@@ -1018,11 +1018,11 @@ static void build_controls_window(void)
         gtk_container_add(GTK_CONTAINER(zapret_frame), zapret_box);
         gtk_box_pack_start(GTK_BOX(box), zapret_frame, FALSE, FALSE, 0);
 
-        controls_zapret_status_label = gtk_label_new("[Zapret] zapret-discord-youtube: Unknown");
+        controls_zapret_status_label = gtk_label_new("[Zapret] DPI bypass: Unknown");
         gtk_label_set_xalign(GTK_LABEL(controls_zapret_status_label), 0.0f);
         gtk_box_pack_start(GTK_BOX(zapret_box), controls_zapret_status_label, FALSE, FALSE, 0);
 
-        controls_zapret_button = gtk_button_new_with_label("Start zapret-discord-youtube");
+        controls_zapret_button = gtk_button_new_with_label("Start zapret");
         g_signal_connect(controls_zapret_button, "clicked", G_CALLBACK(on_zapret_toggle), NULL);
         gtk_box_pack_start(GTK_BOX(zapret_box), controls_zapret_button, FALSE, FALSE, 0);
     }
@@ -1066,7 +1066,7 @@ static void build_menu(void)
 
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
-    proxy_item = gtk_menu_item_new_with_label("[Core] Start SOCKS Proxy");
+    proxy_item = gtk_menu_item_new_with_label("[Core] Start Proxy");
     g_signal_connect(proxy_item, "activate", G_CALLBACK(on_proxy_toggle), NULL);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), proxy_item);
 
@@ -1152,7 +1152,7 @@ static void build_menu(void)
     {
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
-        zapret_item = gtk_menu_item_new_with_label("[Zapret] Start zapret-discord-youtube");
+        zapret_item = gtk_menu_item_new_with_label("[Zapret] Start zapret");
         g_signal_connect(zapret_item, "activate", G_CALLBACK(on_zapret_toggle), NULL);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), zapret_item);
     }

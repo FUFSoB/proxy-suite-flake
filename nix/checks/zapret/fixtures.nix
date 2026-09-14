@@ -19,7 +19,7 @@ let
     ];
 
   zapretSyncFixture = evalZapret { };
-  zapretSyncService = zapretSyncFixture.config.systemd.services."zapret-discord-youtube";
+  zapretSyncService = zapretSyncFixture.config.systemd.services."proxy-suite-zapret";
   zapretSyncRules = mkRoutingRules zapretSyncFixture;
   zapretSyncBase = mkZapretBase zapretSyncFixture;
 

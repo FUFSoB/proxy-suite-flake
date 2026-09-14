@@ -46,7 +46,6 @@
     zapretAutoEnabled = if zapretEngine == "zapret2" then "1" else "0";
     zapretStateDir = constants.zapret2StateDir;
     zapretCutoffEnabled = if zapretCutoffEnabled then "1" else "0";
-    priorityOutboundFile = constants.priorityOutboundFile;
     outboundInventoryFile = constants.outboundInventoryFile;
     runtimeOutboundsDir = constants.runtimeOutboundsDir;
     runtimeSubscriptionsDir = constants.runtimeSubscriptionsDir;

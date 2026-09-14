@@ -25,9 +25,11 @@ ALL_SERVICES = [
     "proxy-suite-tun",
     "proxy-suite-inbounds",
     "proxy-suite-ssh-proxy",
+    "proxy-suite-warp",
+    "proxy-suite-warp-tunnel",
     "proxy-suite-tg-ws-proxy",
+    "proxy-suite-zapret",
     "proxy-suite-zapret-vm-exempt",
-    "zapret-discord-youtube",
 ]
 
 RESTART_SERVICES = [
@@ -35,8 +37,9 @@ RESTART_SERVICES = [
     "proxy-suite-tun",
     "proxy-suite-inbounds",
     "proxy-suite-ssh-proxy",
+    "proxy-suite-warp-tunnel",
     "proxy-suite-tg-ws-proxy",
-    "zapret-discord-youtube",
+    "proxy-suite-zapret",
 ]
 
 HELP = """\
@@ -54,7 +57,8 @@ A group without a verb shows its status or list.
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
-  proxy select [<tag>|auto]              pin the priority outbound (no tag: pick from a menu)
+  proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
+  proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscription caches; update refetches them
@@ -81,6 +85,8 @@ A group without a verb shows its status or list.
   awg on <profile> | off [profile] | restart [profile]
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
+  warp [status|on|off]                   WARP tunnel behind the warp outbound
+  tg [status|on|off]                     Telegram WebSocket proxy
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
@@ -290,6 +296,8 @@ COMPLETE = {
             "zapret": "DPI bypass",
             "awg": "AmneziaWG profiles",
             "ssh": "SSH SOCKS5 tunnel",
+            "warp": "WARP tunnel behind the warp outbound",
+            "tg": "Telegram WebSocket proxy",
             "apps": "per-app routing profiles",
             "inbounds": "server inbounds",
             "help": "usage",
@@ -302,7 +310,8 @@ COMPLETE = {
         "words": {
             **TOGGLE,
             "outbounds": "outbounds, where each came from, and the pick",
-            "select": "pin the priority outbound",
+            "pin": "always use this outbound",
+            "unpin": "let the configured selection pick again",
             "mode": "show or override the routing mode",
             "subs": "subscription caches",
             "tun": "global TUN mode",
@@ -328,7 +337,7 @@ COMPLETE = {
             "--download": "timed download through each outbound",
         },
     },
-    "proxy select": {"args": lambda: {"auto": "let the configured selection decide", **_outbound_choices()}},
+    "proxy pin": {"args": _outbound_choices},
     "proxy mode": {"args": lambda: {"default": f"config default ({_route_mode_default()})", **ROUTE_MODE_LABELS}},
     "proxy subs": {
         "words": {
@@ -386,6 +395,8 @@ COMPLETE = {
     "awg off": {"args": lambda: _names(_awg_profiles())},
     "awg restart": {"args": lambda: _names(_awg_profiles())},
     "ssh": {"words": TOGGLE},
+    "warp": {"words": TOGGLE},
+    "tg": {"words": TOGGLE},
     "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
     "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
     "inbounds": {
@@ -454,7 +465,7 @@ def _route_mode_current():
 
 def _route_mode_label(mode):
     if mode == "default":
-        return f"Default ({ROUTE_MODE_LABELS.get(_route_mode_default(), 'Unknown')})"
+        return f"Default: {ROUTE_MODE_LABELS.get(_route_mode_default(), 'Unknown')}"
     return ROUTE_MODE_LABELS.get(mode, "Unknown")
 
 
@@ -463,7 +474,7 @@ def _status_tray():
         ("socks", "proxy-suite-socks"),
         ("tproxy", "proxy-suite-tproxy"),
         ("tun", "proxy-suite-tun"),
-        ("zapret", "zapret-discord-youtube"),
+        ("zapret", "proxy-suite-zapret"),
     ):
         print(f"{key}_available={_bool(svc_exists(svc))}")
         print(f"{key}_active={_bool(svc_active(svc))}")
@@ -529,7 +540,7 @@ def _status_zapret():
     if not readable(auto):
         return ""
     try:
-        return f"{sum(1 for line in lines(read_text(auto)) if line)} learned"
+        return str(sum(1 for line in lines(read_text(auto)) if line))
     except OSError:
         return ""
 
@@ -543,15 +554,17 @@ def cmd_status(*args):
         _svc_status(svc)
     for profile in _awg_profiles():
         _svc_status(_awg_service(profile))
-    socks = svc_exists("proxy-suite-socks")
-    if socks or env("ZAPRET_AUTO_ENABLED") == "1":
+    if svc_exists("proxy-suite-socks"):
         print()
         print("routing:")
-        if socks:
-            _status_row("active mode", _route_mode_label(_route_mode_current()))
-            _status_row_if("outbound", _status_outbound())
-            _status_row_if("autoProxy", _status_autoproxy())
-        _status_row_if("zapret2", _status_zapret())
+        _status_row("active mode", _route_mode_label(_route_mode_current()))
+        _status_row_if("outbound", _status_outbound())
+        _status_row_if("autoProxy", _status_autoproxy())
+    zapret = _status_zapret()
+    if zapret:
+        print()
+        print("zapret:")
+        _status_row("learned hosts", zapret)
 
 
 def cmd_restart(*_):
@@ -579,8 +592,10 @@ def cmd_proxy(verb="status", *args):
         must("stop", "proxy-suite-socks")
     elif verb == "outbounds":
         cmd_outbounds(*args)
-    elif verb == "select":
-        cmd_select(*args)
+    elif verb == "pin":
+        cmd_pin(*args)
+    elif verb == "unpin":
+        cmd_unpin()
     elif verb == "mode":
         cmd_route_mode(*args)
     elif verb == "subs":
@@ -594,7 +609,7 @@ def cmd_proxy(verb="status", *args):
     elif verb in ("probe", "learn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|outbounds|select|mode|subs|tun|tproxy|auto]")
+        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|tun|tproxy|auto]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -818,7 +833,7 @@ def _outbounds_list():
     reputation = _reputation_by_tag()
 
     print(f"Selection: {_s(inventory.get('selection') or 'first')}")
-    print(f"Pinned:    {pinned or '(auto)'}")
+    print(f"Pinned:    {pinned or '(none)'}")
     if current:
         print(f"Current:   {current}")
     print()
@@ -834,22 +849,16 @@ def _outbounds_list():
         print(f" {mark}{tag:<34} {rep(tag)}{_s(sources.get(tag) or '-')}")
 
 
-def cmd_select(tag="", *_):
+def cmd_pin(tag="", *_):
     if not tag:
         if not (os.isatty(0) and os.isatty(1)):
-            usage("proxy select <tag>|auto")
+            usage("proxy pin <tag>")
         _require_outbound_inventory()
-        pinned = _s(_outbound_inventory().get("pinned") or "") or "auto"
+        pinned = _s(_outbound_inventory().get("pinned") or "") or "(none)"
         status, tag = _run(
-            [
-                "fzf",
-                "--prompt=outbound> ",
-                "--height=40%",
-                "--reverse",
-                f"--header=pinned: {pinned}  (auto = let the configured selection decide)",
-            ],
+            ["fzf", "--prompt=pin> ", "--height=40%", "--reverse", f"--header=pinned: {pinned}"],
             capture=True,
-            stdin="".join(f"{t}\n" for t in ["auto", *_outbound_tags()]),
+            stdin="".join(f"{t}\n" for t in _outbound_tags()),
         )
         tag = tag.strip("\n")
         # Dismissed.
@@ -858,10 +867,16 @@ def cmd_select(tag="", *_):
     status, escaped = _run(["systemd-escape", "--", tag], capture=True)
     if status:
         sys.exit(status)
-    escaped = escaped.rstrip("\n")
-    if systemctl("start", f"proxy-suite-outbound-select@{escaped}.service")[0]:
-        die(f"Failed - see: proxy-ctl logs proxy-suite-outbound-select@{escaped}")
-    print("Selecting automatically again." if tag == "auto" else f"Pinned: {tag}")
+    unit = "proxy-suite-outbound-pin@" + escaped.rstrip("\n")
+    if systemctl("start", f"{unit}.service")[0]:
+        die(f"Failed - see: proxy-ctl logs {unit}")
+    print(f"Pinned: {tag}")
+
+
+def cmd_unpin(*_):
+    if systemctl("start", "proxy-suite-outbound-unpin.service")[0]:
+        die("Failed - see: proxy-ctl logs proxy-suite-outbound-unpin")
+    print("Unpinned: the configured selection picks again.")
 
 
 # --- runtime outbounds and subscriptions --------------------------------------
@@ -965,7 +980,7 @@ def cmd_route_mode(action="status", *_):
     if not svc_exists("proxy-suite-socks"):
         die("proxy is not enabled in this configuration.")
     if action == "status":
-        print(_route_mode_current())
+        print(_route_mode_label(_route_mode_current()))
     elif action in ("default", *ROUTE_MODES):
         must("start", f"proxy-suite-route-mode@{action}.service")
         print(f"Switched to: {_route_mode_label(action)}")
@@ -1573,7 +1588,7 @@ def cmd_zapret(*args):
     elif args[:1] == ("cutoff",):
         cmd_zapret_cutoff(*args[1:])
     else:
-        _toggle("zapret-discord-youtube", "zapret", *args)
+        _toggle("proxy-suite-zapret", "zapret", *args)
 
 
 def _zapret_state_dir():
@@ -1796,15 +1811,15 @@ def cmd_where(domain="", *_):
         pinned = _where_in_list(_zapret_auto_file("zapret-hosts-user.txt"), domain)
         learned = _where_in_list(_zapret_auto_file("zapret-hosts-auto.txt"), domain)
         if excluded:
-            _where_row("zapret2", f"excluded ({excluded}) - never bypassed, never learned")
+            _where_row("zapret", f"excluded ({excluded}) - never bypassed, never learned")
         elif pinned:
-            _where_row("zapret2", f"pinned ({pinned}) - always bypassed")
-            verdict = verdict or "direct, with the zapret2 bypass"
+            _where_row("zapret", f"pinned ({pinned}) - always bypassed")
+            verdict = verdict or "direct, with the zapret bypass"
         elif learned:
-            _where_row("zapret2", f"learned ({learned}) - bypassed")
-            verdict = verdict or "direct, with the zapret2 bypass"
+            _where_row("zapret", f"learned ({learned}) - bypassed")
+            verdict = verdict or "direct, with the zapret bypass"
         else:
-            _where_row("zapret2", "not learned, not pinned, not excluded")
+            _where_row("zapret", "not learned, not pinned, not excluded")
 
     print(f"  -> {verdict or 'nothing runtime matches it; the configured routing decides'}")
     print("  Declared proxy.routing.rules are not visible here. Test what reaches it:")
@@ -2111,7 +2126,6 @@ ALIASES = {
     "tun": ["proxy", "tun"],
     "tproxy": ["proxy", "tproxy"],
     "outbounds": ["proxy", "outbounds"],
-    "select": ["proxy", "select"],
     "route-mode": ["proxy", "mode"],
     "subscription": ["proxy", "subs"],
     "wrap": ["apps", "run"],
@@ -2122,7 +2136,7 @@ def cmd_logs(*units):
     if units:
         _exec(["journalctl", "-fu", *units])
     # journalctl takes unit globs, so the default needs no unit list of its own.
-    _exec(["journalctl", "-f", "-u", "proxy-suite-*", "-u", "zapret-discord-youtube"])
+    _exec(["journalctl", "-f", "-u", "proxy-suite-*"])
 
 
 COMMANDS = {
@@ -2136,6 +2150,8 @@ COMMANDS = {
     "zapret": cmd_zapret,
     "awg": cmd_awg,
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
+    "warp": lambda *args: _toggle("proxy-suite-warp-tunnel", "warp", *args),
+    "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
     "apps": cmd_apps,
     "inbounds": cmd_inbounds,
     "where": cmd_where,
