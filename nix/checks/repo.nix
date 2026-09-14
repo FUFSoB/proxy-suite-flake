@@ -540,9 +540,11 @@
       # A TTL later the older strike has expired.
       s="$(k '[]' "" "" 1115 "$s")"
       jq -e '.exits.a | (.bad | not) and .badBy == ["pximg.net slow"]' <<<"$s" > /dev/null
-      # A block page is the site's own verdict on the address: one is enough.
+      # A block page may be a passing challenge: one is not enough either.
       s="$(k '["b"]' colorfulpalette.org wall:aws-waf 1120 "$s")"
-      jq -e '.exits.b | .bad and .badBy == ["colorfulpalette.org wall:aws-waf"]' <<<"$s" > /dev/null
+      jq -e '.exits.b | (.bad | not) and .badBy == ["colorfulpalette.org wall:aws-waf"]' <<<"$s" > /dev/null
+      s="$(k '["b"]' fandom.com wall:cloudflare 1130 "$s")"
+      jq -e '.exits.b | .bad and .badBy == ["colorfulpalette.org wall:aws-waf", "fandom.com wall:cloudflare"]' <<<"$s" > /dev/null
       touch "$out"
     '';
 
