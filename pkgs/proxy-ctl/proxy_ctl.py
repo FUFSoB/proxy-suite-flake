@@ -1778,6 +1778,86 @@ def _where_in_list(path, domain):
         return ""
 
 
+# The generated configs are walked rule by rule, the way each backend would for
+# a connection by name: IP rules need an address, so they are not consulted.
+
+
+def _where_suffix(domain, suffix):
+    """sing-box domain_suffix: the name or a subdomain; a leading dot means subdomains only."""
+    return domain.endswith(suffix) if suffix.startswith(".") else domain == suffix or domain.endswith("." + suffix)
+
+
+def _where_rule_set_match(rule_set, domain):
+    path, fmt = rule_set.get("path"), rule_set.get("format", "source")
+    if not isinstance(path, str) or not readable(path):
+        return False
+    try:
+        out = subprocess.run(
+            [env("SING_BOX", "sing-box"), "rule-set", "match", "-f", fmt, path, domain],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    # sing-box logs the verdict to stderr, and prints nothing on a miss.
+    return "match rules" in out.stdout + out.stderr
+
+
+def _where_sing_box(config, domain):
+    """(outbound, why) of the first route rule matching domain; the final outbound when none does."""
+    route = config.get("route") or {}
+    rule_sets = {r.get("tag"): r for r in route.get("rule_set") or [] if isinstance(r, dict)}
+    for rule in route.get("rules") or []:
+        # Inbound-bound rules belong to probes and test listeners; the rest are actions.
+        if not isinstance(rule, dict) or "inbound" in rule or "outbound" not in rule:
+            continue
+        hit = next((f"domain {d}" for d in rule.get("domain") or [] if d == domain), "")
+        hit = hit or next((f"domain_suffix {s}" for s in rule.get("domain_suffix") or [] if _where_suffix(domain, s)), "")
+        hit = hit or next((f"domain_keyword {k}" for k in rule.get("domain_keyword") or [] if k in domain), "")
+        hit = hit or next((f"domain_regex {r}" for r in rule.get("domain_regex") or [] if re.search(r, domain)), "")
+        hit = hit or next(
+            (f"rule-set {t}" for t in rule.get("rule_set") or [] if _where_rule_set_match(rule_sets.get(t, {}), domain)),
+            "",
+        )
+        if hit:
+            return _s(rule["outbound"]), hit
+    return _s(route.get("final", "direct")), "no rule matches, the final outbound"
+
+
+def _where_inbounds(config, domain, geosite_dir):
+    """(outboundTag, why) of the first XRay inbound routing rule matching domain by name."""
+    for rule in (config.get("routing") or {}).get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("ruleTag") == "inbound-final":
+            return _s(rule.get("outboundTag")), "no rule matches, the default egress"
+        for entry in rule.get("domain") or []:
+            kind, _, value = entry.partition(":") if ":" in entry else ("keyword", "", entry)
+            matched = (
+                (kind == "domain" and _where_suffix(domain, value))
+                or (kind == "full" and domain == value)
+                or (kind == "keyword" and value in domain)
+                or (kind == "regexp" and re.search(value, domain))
+                # XRay's geosite data is not readable from here; sing-box's lists of the same name stand in.
+                or (kind == "geosite" and geosite_dir
+                    and _where_rule_set_match({"path": os.path.join(geosite_dir, f"geosite-{value}.srs"), "format": "binary"}, domain))
+            )
+            if matched:
+                return _s(rule.get("outboundTag")), f"{_s(rule.get('ruleTag'))} ({entry})"
+    return "", ""
+
+
+def _where_live(domain):
+    """Open connections to domain or a subdomain, as Counter-like {exit: count}."""
+    status, body = _clash("GET", "/connections", timeout=5)
+    exits = {}
+    for c in (body or {}).get("connections") or [] if status == 200 and isinstance(body, dict) else []:
+        host = _s((c.get("metadata") or {}).get("host") or "")
+        chains = c.get("chains") or []
+        if host and chains and _where_suffix(host, domain):
+            exits[_s(chains[0])] = exits.get(_s(chains[0]), 0) + 1
+    return exits
+
+
 def cmd_where(domain="", *_):
     if not domain:
         usage("where <domain>")
@@ -1785,11 +1865,48 @@ def cmd_where(domain="", *_):
     verdict = ""
     _where_row("domain", domain)
 
+    local = ""
     if svc_exists("proxy-suite-socks"):
         _where_row("route mode", _route_mode_label(_route_mode_current()))
         outbound = _status_outbound()
         if outbound:
             _where_row("outbound", outbound)
+
+        config_path = _runtime_file("config.json")
+        geosite_dir = ""
+        if readable(config_path):
+            try:
+                config = read_json(config_path)
+            except (OSError, ValueError):
+                config = None
+            if isinstance(config, dict) and "route" in config:
+                exit_tag, why = _where_sing_box(config, domain)
+                local = outbound if exit_tag == "proxy" and outbound else exit_tag
+                shown = f"proxy -> {outbound}" if local != exit_tag else exit_tag
+                _where_row("sing-box", f"{shown} - {why}")
+                geosite_dir = next(
+                    (os.path.dirname(r["path"]) for r in config["route"].get("rule_set") or []
+                     if isinstance(r, dict) and "/geosite-" in _s(r.get("path", ""))),
+                    "",
+                )
+
+        live = _where_live(domain)
+        if live:
+            _where_row("live", ", ".join(f"{n} via {tag}" for tag, n in sorted(live.items())))
+            local = " and ".join(sorted(live))
+
+        if env("INBOUNDS_ENABLED") == "1":
+            inbounds_path = "/run/proxy-suite-inbounds/config.json"
+            if not readable(inbounds_path):
+                _where_row("inbounds", "routing is not readable - run with sudo")
+            else:
+                try:
+                    tag, why = _where_inbounds(read_json(inbounds_path), domain, geosite_dir)
+                except (OSError, ValueError, AttributeError):
+                    tag, why = "", ""
+                if tag:
+                    shown = f"{tag} (then sing-box: {local})" if tag == "proxy" and local else tag
+                    _where_row("inbounds", f"{shown} - {why}")
 
     if env("AUTOPROXY_ENABLED") == "1":
         if not readable(os.path.join(_autoproxy_dir(), "state.json")):
@@ -1821,8 +1938,13 @@ def cmd_where(domain="", *_):
         else:
             _where_row("zapret", "not learned, not pinned, not excluded")
 
+    if local:
+        zapret = verdict == "direct, with the zapret bypass"
+        verdict = f"{local}, with the zapret bypass" if zapret and local == "direct" else local
+        print(f"  -> {verdict}")
+        return
     print(f"  -> {verdict or 'nothing runtime matches it; the configured routing decides'}")
-    print("  Declared proxy.routing.rules are not visible here. Test what reaches it:")
+    print("  The sing-box config is not readable here. Test what reaches it:")
     print(f"    proxy-ctl proxy auto probe {domain}")
 
 

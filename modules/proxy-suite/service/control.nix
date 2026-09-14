@@ -58,6 +58,7 @@
       if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
     autoProxyEnabled = if proxyCfg.autoProxy.enable then "1" else "0";
     autoProxyStateDir = constants.autoProxyStateDir;
+    singBox = "${singBoxCfg.package}/bin/sing-box";
     localProxyUrl = "http://${
       if proxyCfg.listener.address == "0.0.0.0" then "127.0.0.1" else proxyCfg.listener.address
     }:${toString proxyCfg.listener.port}";

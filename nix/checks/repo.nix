@@ -388,7 +388,7 @@
         verdict open.spotify.com '-> proxied via community-de'
         grep -q 'autoProxy .*routed via community-de' where
         # What proxy-ctl cannot see has to be said out loud.
-        grep -q 'proxy.routing.rules are not visible' where
+        grep -q 'sing-box config is not readable' where
 
         verdict discord.com '-> direct, with the zapret bypass'
         verdict nyt.com '-> direct, with the zapret bypass'
@@ -408,6 +408,7 @@
   # autoProxy learn/queue, inbound stats and subscriptions, apps run.
   proxy-ctl-unit =
     pkgs.runCommand "proxy-suite-proxy-ctl-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      export SING_BOX=${pkgs.sing-box}/bin/sing-box
       export PYTHONDONTWRITEBYTECODE=1
       python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
       touch "$out"

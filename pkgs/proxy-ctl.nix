@@ -34,6 +34,7 @@
   localProxyUrl,
   autoProxyEnabled,
   autoProxyStateDir,
+  singBox,
 }:
 
 let
@@ -72,6 +73,7 @@ let
     LOCAL_PROXY_URL = localProxyUrl;
     AUTOPROXY_ENABLED = autoProxyEnabled;
     AUTOPROXY_STATE_DIR = autoProxyStateDir;
+    SING_BOX = singBox;
   };
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv

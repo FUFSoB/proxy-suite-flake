@@ -565,5 +565,45 @@ class BadExitTest(EnvTest):
         self.assertIn("1 bad exit", ctl._status_autoproxy())
         self.assertRegex(ok(ctl.cmd_proxy_learned), r"(?m)^  proxy +sekai\.test refused, pximg\.net slow$")
 
+class WhereTest(EnvTest):
+    """The route walk has to agree with sing-box and XRay, rule-sets included."""
+
+    def test_sing_box_walk(self):
+        rs = self.write("rs.json", {"version": 1, "rules": [{"domain_suffix": ["youtube.com"]}]})
+        config = {
+            "route": {
+                "final": "direct",
+                "rule_set": [{"tag": "yt", "type": "local", "format": "source", "path": rs}],
+                "rules": [
+                    # Probe listeners and actions are not what a connection by name meets.
+                    {"inbound": ["probe-in-0"], "outbound": "primary"},
+                    {"action": "sniff"},
+                    {"ip_cidr": ["0.0.0.0/0"], "outbound": "block"},
+                    {"domain_suffix": [".example.org"], "outbound": "proxy"},
+                    {"rule_set": ["yt"], "outbound": "warp"},
+                ],
+            }
+        }
+        self.assertEqual(ctl._where_sing_box(config, "rr1.youtube.com"), ("warp", "rule-set yt"))
+        self.assertEqual(ctl._where_sing_box(config, "a.example.org")[0], "proxy")
+        # A leading dot is subdomains only; nothing else matches, so the final outbound.
+        self.assertEqual(ctl._where_sing_box(config, "example.org")[0], "direct")
+
+    def test_inbounds_walk(self):
+        config = {
+            "routing": {
+                "rules": [
+                    {"ruleTag": "inbound-block-ru-ip", "ip": ["geoip:ru"], "outboundTag": "block"},
+                    {"ruleTag": "inbound-proxy-domain", "domain": ["domain:googlevideo.com"], "outboundTag": "proxy"},
+                    {"ruleTag": "inbound-zapret-direct-domain", "domain": ["full:youtube.com"], "outboundTag": "direct"},
+                    {"ruleTag": "inbound-final", "network": "tcp,udp", "outboundTag": "proxy"},
+                ]
+            }
+        }
+        self.assertEqual(ctl._where_inbounds(config, "rr1.googlevideo.com", "")[0], "proxy")
+        self.assertEqual(ctl._where_inbounds(config, "youtube.com", ""), ("direct", "inbound-zapret-direct-domain (full:youtube.com)"))
+        self.assertEqual(ctl._where_inbounds(config, "example.org", "")[0], "proxy")
+
+
 if __name__ == "__main__":
     unittest.main()
