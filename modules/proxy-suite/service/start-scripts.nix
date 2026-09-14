@@ -242,22 +242,20 @@ let
         # proxy-ctl proxy outbounds test. Servers for its ping, keyed by the user's tag:
         # the wrapper may have renamed one outbound "proxy" or prefixed them all, and a
         # hybrid XRay outbound is a sing-box socks hop whose real server is the sidecar's.
+        # A loopback hop (the WARP tunnel, XRay's SSH listener) has no server worth timing.
         ENDPOINTS_TMP="$RUNTIME_DIR/outbound-endpoints.json.tmp"
         ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" '
           def endpoint:
             if .server then {server, port: .server_port}
-            elif (.peers | type) == "array" then {server: .peers[0].address, port: .peers[0].port}
             elif .settings.address then {server: .settings.address, port: .settings.port}
             elif .settings.vnext then {server: .settings.vnext[0].address, port: .settings.vnext[0].port}
             elif .settings.servers then {server: .settings.servers[0].address, port: .settings.servers[0].port}
-            elif .settings.peers then
-              .settings.peers[0].endpoint | capture("^\\[?(?<server>.*?)\\]?:(?<port>[0-9]+)$") | .port |= tonumber
             else null end;
-          def udp: (.type // .protocol) as $t | ["hysteria", "hysteria2", "tuic", "wireguard"] | index($t) != null;
+          def udp: (.type // .protocol) as $t | ["hysteria", "hysteria2", "tuic"] | index($t) != null;
           ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | [.[] | select(.type != "selector" and .type != "urltest")
              | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag
-             | ($real[.tag] // .) | select(endpoint != null)
+             | ($real[.tag] // .) | select(endpoint != null and (endpoint.server | test("^(127\\.|::1$|localhost$)") | not))
              | {key: $tag, value: (endpoint + {network: (if udp then "udp" else "tcp" end)})}]
           | from_entries
         ' <<< "$OUTBOUNDS_JSON" > "$ENDPOINTS_TMP"

@@ -16,7 +16,7 @@ in
 
         When null, proxy-suite-warp registers a device with wgcf (accepting Cloudflare's terms)
         into /var/lib/proxy-suite/warp, through the local proxy when proxy.enable is set, and
-        retries until it succeeds. Until then the warp outbound blocks.
+        retries until it succeeds. Until then warp connections fail.
       '';
       example = "/run/secrets/wgcf-profile.conf";
     };
@@ -25,8 +25,9 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Add WARP as an outbound tagged "warp". sing-box runs it as a WireGuard endpoint,
-        XRay as a wireguard outbound.
+        Add WARP as an outbound tagged "warp": a SOCKS hop to proxy-suite-warp-tunnel, which
+        runs WARP as a sing-box WireGuard endpoint on 127.0.0.1:18538 and restarts it on a new
+        source port when the handshake stops being answered.
       '';
     };
 

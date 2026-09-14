@@ -42,6 +42,8 @@ let
         cfg.warp.configFile
       else
         "/var/lib/proxy-suite/warp/wgcf-profile.conf";
+    # Loopback SOCKS listener of proxy-suite-warp-tunnel, which the "warp" outbound dials.
+    tunnelPort = 18538;
   };
   warpOutboundTag = "warp";
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound;

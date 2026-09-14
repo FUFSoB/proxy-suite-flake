@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a WireGuard .conf (e.g. wgcf-profile.conf) into a WARP outbound for sing-box or XRay."""
+"""Turn a WireGuard .conf (e.g. wgcf-profile.conf) into a sing-box WireGuard endpoint for WARP."""
 
 from __future__ import annotations
 
@@ -44,56 +44,25 @@ def split_endpoint(endpoint: str) -> tuple[str, int]:
     return host.strip("[]"), int(port)
 
 
-def build(text: str, backend: str, tag: str, routing_mark: int | None) -> dict[str, Any]:
+def build(text: str, tag: str, routing_mark: int | None) -> dict[str, Any]:
     interface, peer = parse_conf(text)
-    addresses = _split(interface["address"])
-    allowed_ips = _split(peer.get("allowedips", "")) or ["0.0.0.0/0", "::/0"]
-    mtu = int(interface.get("mtu") or 1280)
-    keepalive = int(peer["persistentkeepalive"]) if peer.get("persistentkeepalive") else None
-    psk = peer.get("presharedkey")
     host, port = split_endpoint(peer["endpoint"])
-
-    if backend == "xray":
-        xray_peer: dict[str, Any] = {
-            "publicKey": peer["publickey"],
-            "endpoint": peer["endpoint"],
-            "allowedIPs": allowed_ips,
-        }
-        if keepalive is not None:
-            xray_peer["keepAlive"] = keepalive
-        if psk:
-            xray_peer["preSharedKey"] = psk
-        outbound: dict[str, Any] = {
-            "protocol": "wireguard",
-            "tag": tag,
-            "settings": {
-                "secretKey": interface["privatekey"],
-                "address": addresses,
-                "peers": [xray_peer],
-                "mtu": mtu,
-            },
-        }
-        if routing_mark is not None:
-            outbound["streamSettings"] = {"sockopt": {"mark": routing_mark}}
-        return outbound
-
-    # sing-box >= 1.11: WireGuard is an endpoint; the start script moves it out of outbounds.
     sb_peer: dict[str, Any] = {
         "address": host,
         "port": port,
         "public_key": peer["publickey"],
-        "allowed_ips": allowed_ips,
+        "allowed_ips": _split(peer.get("allowedips", "")) or ["0.0.0.0/0", "::/0"],
     }
-    if keepalive is not None:
-        sb_peer["persistent_keepalive_interval"] = keepalive
-    if psk:
-        sb_peer["pre_shared_key"] = psk
+    if peer.get("persistentkeepalive"):
+        sb_peer["persistent_keepalive_interval"] = int(peer["persistentkeepalive"])
+    if peer.get("presharedkey"):
+        sb_peer["pre_shared_key"] = peer["presharedkey"]
     endpoint: dict[str, Any] = {
         "type": "wireguard",
         "tag": tag,
-        "address": addresses,
+        "address": _split(interface["address"]),
         "private_key": interface["privatekey"],
-        "mtu": mtu,
+        "mtu": int(interface.get("mtu") or 1280),
         "peers": [sb_peer],
     }
     if routing_mark is not None:
@@ -103,12 +72,11 @@ def build(text: str, backend: str, tag: str, routing_mark: int | None) -> dict[s
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=["sing-box", "xray"], required=True)
     parser.add_argument("--tag", default="warp")
     parser.add_argument("--routing-mark", type=int)
     args = parser.parse_args()
     try:
-        print(json.dumps(build(sys.stdin.read(), args.backend, args.tag, args.routing_mark)))
+        print(json.dumps(build(sys.stdin.read(), args.tag, args.routing_mark)))
     except (ConfigError, ValueError) as error:
         print(f"proxy-suite: warp: {error}", file=sys.stderr)
         return 1

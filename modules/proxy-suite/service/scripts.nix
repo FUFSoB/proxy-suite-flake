@@ -22,7 +22,6 @@
   xray,
   parserScriptsPythonPath,
   buildOutboundPy,
-  warpOutboundPy,
   fetchSubscriptionPy,
   tproxyFile,
   tunFile,
@@ -125,7 +124,6 @@ let
       python3
       parserScriptsPythonPath
       buildOutboundPy
-      warpOutboundPy
       mkSubscriptionBlock
       mkSubscriptionLoadHelperBlock
       runtimeSubscriptionsBlock

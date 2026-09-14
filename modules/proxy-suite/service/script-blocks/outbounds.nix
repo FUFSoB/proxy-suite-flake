@@ -18,7 +18,6 @@
   python3,
   parserScriptsPythonPath,
   buildOutboundPy,
-  warpOutboundPy,
   mkSubscriptionBlock,
   mkSubscriptionLoadHelperBlock,
   runtimeSubscriptionsBlock,
@@ -319,40 +318,31 @@ let
       _proxy_suite_record_tag_source ${sshProxyTag} ssh
     '';
 
-  # The profile is a secret, so it is converted at start rather than baked into the store.
-  # Hybrid runs WARP in sing-box, like the SSH outbound.
+  # WARP runs in proxy-suite-warp-tunnel, which restarts it when the handshake stops being
+  # answered. Every backend reaches it as a loopback SOCKS hop.
   mkWarpOutboundBlock =
-    routingMark:
     let
-      markArg = lib.optionalString (routingMark != null) " --routing-mark ${toString routingMark}";
-      profile = lib.escapeShellArg warpCfg.profilePath;
-      convert = ''
-        OB_JSON=$(${python3} ${warpOutboundPy} --backend ${
-          if pureXrayEnabled then "xray" else "sing-box"
-        } --tag warp${markArg} < ${profile}) || exit 1
-      '';
-      blockJson =
+      outbound =
         if pureXrayEnabled then
-          ''{"protocol":"blackhole","tag":"warp","settings":{}}''
+          {
+            protocol = "socks";
+            tag = "warp";
+            settings = {
+              address = "127.0.0.1";
+              port = warpCfg.tunnelPort;
+            };
+          }
         else
-          ''{"type":"block","tag":"warp"}'';
+          {
+            type = "socks";
+            tag = "warp";
+            server = "127.0.0.1";
+            server_port = warpCfg.tunnelPort;
+          };
     in
     ''
-      # outbound: warp (${if pureXrayEnabled then "XRay wireguard" else "sing-box WireGuard endpoint"})
-      ${
-        if warpCfg.autoRegister then
-          ''
-            if [ -s ${profile} ]; then
-              ${convert}
-            else
-              # proxy-suite-warp restarts this service once wgcf has registered.
-              echo "proxy-suite: warning: no WARP profile yet; warp blocks until proxy-suite-warp registers" >&2
-              OB_JSON='${blockJson}'
-            fi
-          ''
-        else
-          convert
-      }
+      # outbound: warp (SOCKS hop to proxy-suite-warp-tunnel)
+      OB_JSON=${lib.escapeShellArg (builtins.toJSON outbound)}
       ${
         if hybridEnabled then
           ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
@@ -420,9 +410,7 @@ let
       ) proxyCfg.subscriptions;
 
       sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
-      warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound) (
-        mkWarpOutboundBlock routingMark
-      );
+      warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound) mkWarpOutboundBlock;
 
       wrapperBlock =
         if pureXrayEnabled && selectionMode == "urltest" then

@@ -113,6 +113,12 @@ let
       mv -f "$tmp" "$state"
     }
 
+    # $1 JSON array of exit tags, $2 registrable domain, $3 wall:<page>|refused|slow.
+    strike() {
+      update --argjson tags "$1" --arg d "$2" --arg why "$3" --argjson now "$now" --argjson ttl "$ttl" \
+        -f ${./autoproxy-strike.jq}
+    }
+
     # $1 registrable domain, $2 host probed, $3 probe JSON. Routes apply to the
     # whole domain (geo-blocks are drawn around sites); other verdicts only to
     # the host probed.
@@ -129,6 +135,20 @@ let
             at: $now
           }
         | del(.backlog[$h])'
+      # Exits refused on the path another egress reached: by a block page
+      # (wall:<page>, the site turning the address away) or by the origin.
+      local t why
+      while IFS=$'\t' read -r t why; do
+        strike "$(jq -cn --arg t "$t" '[$t]')" "$1" "$why"
+      done < <(jq -r '(.path // "") as $p | .exit as $x
+        | ([(.exits // [])[] | select(.tag == $x and .path == $p) | .judgement][0]) as $won
+        | if $x == null then empty else
+            # An origin refusal only counts against an exit when the winner got content.
+            [(.exits // [])[] | select(.path == $p and .tag != "direct" and .tag != $x
+                and (.judgement == "wall" or (.judgement == "blocked" and $won == "ok")))
+              | {tag, why: (if .judgement == "wall" then "wall:" + .block else "refused" end)}]
+            | unique_by(.tag)[] | "\(.tag)\t\(.why)"
+          end' <<<"$3")
     }
 
     # Prefixes each host line with "registrable-domain<TAB>".
@@ -171,26 +191,26 @@ let
       asn=$(jq -r '(.org // "") | split(" ")[0]' <<<"$info" 2>/dev/null || true)
       [ -n "$ip" ] || continue
       update --arg t "$tag" --arg ip "$ip" --arg asn "$asn" --argjson now "$now" \
-        '.exits[$t] = {ip: $ip, asn: $asn, at: $now}'
+        '.exits[$t] += {ip: $ip, asn: $asn, at: $now}'
     done < <(jq -r '.[] | "\(.tag)\t\(.port)"' "$index")
 
-    # Round 1: one exit per AS. Round 2, only if all refused: the rest.
-    rounds=$(jq -c --slurpfile s "$state" '
-      [.[1:][] | {tag, asn: ($s[0].exits[.tag].asn // "")}]
-      | reduce .[] as $e ({seen: {}, r1: [], r2: []};
-          if $e.asn == "" or (.seen[$e.asn] | not)
-          then .r1 += [$e.tag] | .seen[$e.asn] = true
-          else .r2 += [$e.tag] end)
-      | {r1: (.r1 | join(",")), r2: (.r2 | join(","))}' "$index")
+    # --- 2b. strikes older than a TTL stop counting against an exit ---
+    strike '[]' "" ""
+
+    # See autoproxy-rounds.jq: one exit per AS, then the rest, bad exits last.
+    rounds=$(jq -c --slurpfile s "$state" -f ${./autoproxy-rounds.jq} "$index")
     round1=$(jq -r .r1 <<<"$rounds")
     round2=$(jq -r .r2 <<<"$rounds")
 
     walk() {
-      local out verdict
+      local out first verdict
       out=$(proxy-ctl proxy auto probe --json --exits "$round1" "$1" 2>/dev/null || echo '{}')
       verdict=$(jq -r '.verdict // "error"' <<<"$out")
       if { [ "$verdict" = both-fail ] || [ "$verdict" = unreachable ]; } && [ -n "$round2" ]; then
+        first=$out
         out=$(proxy-ctl proxy auto probe --json --exits "$round2" "$1" 2>/dev/null || echo '{}')
+        # Round 1's refusals count against its exits too (see record).
+        out=$(jq -c --argjson f "$first" '.exits = ($f.exits // []) + (.exits // [])' <<<"$out")
       fi
       printf '%s' "$out"
     }
@@ -241,10 +261,12 @@ let
             | {key: .[0], value: {domain: .[1], hits: (.[2] | tonumber)}}) | from_entries'
       )
       # Skipped: hosts of an already routed domain, hosts judged within the TTL.
-      # Dropped: entries older than the TTL, and those a route now covers.
+      # Dropped: entries older than the TTL, and those a route now covers; host
+      # verdicts past the TTL, which would only be probed again anyway.
       update --argjson c "$counts" --argjson now "$now" --argjson ttl "$ttl" '
         . as $s
         | .lastRun = $now
+        | .hosts |= with_entries(select(.value.at + $ttl > $now))
         | .backlog = (reduce ($c | to_entries[]) as $e (($s.backlog // {});
             if ($s.domains[$e.value.domain].exit != null)
                or ((($s.hosts[$e.key].at // 0) + $ttl) > $now)
@@ -278,16 +300,26 @@ let
         # stays direct for a TTL.
         while IFS=$'\t' read -r dom host tried; do
           was=''${tried##*,}
+          # It crawled twice on the exit it was routed through.
+          [ -z "$was" ] || strike "$(jq -cn --arg t "$was" '[$t]')" "$dom" slow
           via=""
           while IFS= read -r tag; do
             [[ ",$tried," != *",$tag,"* ]] || continue
             tried="''${tried:+$tried,}$tag"
-            if [ "$(proxy-ctl proxy auto probe --json --via "$tag" "$host" < /dev/null 2>/dev/null |
-              jq -r '.verdict // ""' 2>/dev/null)" = ok ]; then
+            out=$(proxy-ctl proxy auto probe --json --via "$tag" "$host" < /dev/null 2>/dev/null || echo '{}')
+            verdict=$(jq -r '.verdict // ""' <<<"$out" 2>/dev/null || true)
+            if [ "$verdict" = ok ]; then
               via=$tag
               break
             fi
-          done < <(jq -r '.[1:][] | .tag' "$index")
+            # Refused what direct gets, by a block page or by the origin.
+            if [ "$verdict" = blocked ]; then
+              why=$(jq -r --arg t "$tag" '[.exits[] | select(.tag == $t)] as $r
+                | [$r[] | select(.judgement == "wall") | "wall:" + .block][0]
+                  // (if any($r[]; .judgement == "blocked") then "refused" else "" end)' <<<"$out" 2>/dev/null || true)
+              [ -z "$why" ] || strike "$(jq -cn --arg t "$tag" '[$t]')" "$dom" "$why"
+            fi
+          done < <(jq -r '.ordered[]' <<<"$rounds")
           if [ -n "$via" ]; then
             echo "slow $dom: crawls ''${was:+via $was}''${was:-directly}, routed via $via"
             update --arg d "$dom" --arg h "$host" --arg e "$via" --arg tried "$tried" --argjson now "$now" '

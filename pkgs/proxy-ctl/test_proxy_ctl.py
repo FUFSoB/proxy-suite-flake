@@ -63,23 +63,30 @@ class ProbeVerdictTest(unittest.TestCase):
 
     def test_table(self):
         # Origin refuses direct, accepts the proxy: chatgpt.com/robots.txt.
-        self.expect("destination", "0|0.146175|403|6633|", "0|0.230116|200|4302|")
+        self.expect("destination", "0|0.146175|403|6633||", "0|0.230116|200|4302||")
         # The same through a redirect: claude.ai/robots.txt.
-        self.expect("destination", "0|0.141625|302|143|https://claude.com/app-unavailable-in-region", "0|0.181276|200|281|")
+        self.expect("destination", "0|0.141625|302|143||https://claude.com/app-unavailable-in-region", "0|0.181276|200|281||")
         # TLS never completed: censorship, zapret's job.
-        self.expect("censor", "35|0.000000|000|0|", "0|0.119348|200|6258|")
+        self.expect("censor", "35|0.000000|000|0||", "0|0.119348|200|6258||")
         # Handshake, then silence: the post-handshake throttle.
-        self.expect("censor", "0|0.125029|000|0|", "0|0.143772|200|32881|")
+        self.expect("censor", "0|0.125029|000|0||", "0|0.143772|200|32881||")
         # Direct works. Nothing to do, whoever else also works.
-        self.expect("ok", "0|0.099546|200|2678|", "0|0.146822|200|2678|")
+        self.expect("ok", "0|0.099546|200|2678||", "0|0.146822|200|2678||")
         # robots.txt legitimately absent is not a failure.
-        self.expect("ok", "0|0.161330|404|559|", "0|0.214667|404|559|")
+        self.expect("ok", "0|0.161330|404|559||", "0|0.214667|404|559||")
         # An ordinary redirect must not read as a block.
-        self.expect("ok", "0|0.10|301|0|https://www.example.com/robots.txt", "0|0.20|301|0|https://www.example.com/robots.txt")
+        self.expect("ok", "0|0.10|301|0||https://www.example.com/robots.txt", "0|0.20|301|0||https://www.example.com/robots.txt")
         # Refused everywhere: not an egress problem.
-        self.expect("both-fail", "0|0.10|403|100|", "0|0.20|403|100|")
+        self.expect("both-fail", "0|0.10|403|100||", "0|0.20|403|100||")
+        # AWS WAF's page for direct, the origin's own 403 through the proxy: it got
+        # past the wall (game-version.sekai.colorfulpalette.org, S3 behind CloudFront).
+        self.expect("destination", "0|0.12|403|919|aws-waf|", "0|0.19|403|243||")
+        # A wall everywhere is not an egress problem either (a bot challenge, say).
+        self.expect("both-fail", "0|0.12|403|919|aws-waf|", "0|0.19|403|919|aws-waf|")
+        # A country refused is an ordinary refusal: nothing to get past.
+        self.expect("both-fail", "0|0.12|403|500|cloudfront-geo|", "0|0.19|403|243||")
         # Nothing reaches it at all - a dead name, not a blocked one.
-        self.expect("unreachable", "6|0.000000|000|0|", "35|0.000000|000|0|")
+        self.expect("unreachable", "6|0.000000|000|0||", "35|0.000000|000|0||")
 
 
 class ProbeFetchTest(EnvTest):
@@ -107,6 +114,42 @@ class ProbeFetchTest(EnvTest):
         calls.clear()
         ctl._probe_fetch("loop.test", "/", "--noproxy", "*")
         self.assertLessEqual(len(calls), 6)
+
+    def test_block_pages(self):
+        waf_head = "HTTP/2 403\r\nserver: CloudFront\r\nx-cache: Error from cloudfront\r\n\r\n"
+        waf_body = "<H1>403 ERROR</H1>\n<H2>The request could not be satisfied.</H2>\n<HR noshade size=\"1px\">\nRequest blocked.\n"
+        pages = {
+            # Measured through two exits: AWS WAF's page, and past it S3 refusing "/".
+            "waf.test": ("403", waf_head, waf_body),
+            "s3.test": ("403", "HTTP/2 403\r\nserver: AmazonS3\r\n\r\n", "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>"),
+            "cf.test": ("403", "HTTP/2 403\r\nserver: cloudflare\r\n\r\n", '<span class="cf-error-code">1020</span>'),
+            "cfgeo.test": ("403", "HTTP/2 403\r\nserver: cloudflare\r\n\r\n", "error code: 1009"),
+            # Content that merely quotes a block page is content.
+            "article.test": ("200", waf_head, waf_body),
+        }
+
+        def curl(argv):
+            code, head, body = pages[argv[-1].split("/")[2]]
+            for flag, text in (("-D", head), ("-o", body)):
+                with open(argv[argv.index(flag) + 1], "w") as f:
+                    f.write(text)
+            return 0, f"0|0.1|{code}|{len(body)}|"
+
+        self.patch("run_curl", curl)
+        got = {}
+        for host in pages:
+            result = ctl._probe_fetch(host, "/", "--noproxy", "*")
+            got[host] = (ctl._probe_field(result, 5), ctl._probe_exit_verdict(result))
+        self.assertEqual(
+            got,
+            {
+                "waf.test": ("aws-waf", "wall"),
+                "s3.test": ("", "blocked"),
+                "cf.test": ("cloudflare", "wall"),
+                "cfgeo.test": ("cloudflare-geo", "blocked"),
+                "article.test": ("", "ok"),
+            },
+        )
 
     def test_curl_that_cannot_start(self):
         # An error, not a dead site.
@@ -140,16 +183,16 @@ class ProbeWalkTest(EnvTest):
     # --- which path decides: the apex, robots.txt only breaks ties ---
     def test_apex_decides(self):
         # last.fm: apex geo-blocked, robots.txt served everywhere.
-        out = self.probe_with("0|0.11|403|424|", "0|0.17|200|59809|", "0|0.11|200|400|", "0|0.17|200|400|")
+        out = self.probe_with("0|0.11|403|424||", "0|0.17|200|59809||", "0|0.11|200|400||", "0|0.17|200|400||")
         self.assertEqual((out["verdict"], out["url"]), ("destination", "https://example.test/"))
 
     def test_robots_breaks_ties(self):
         # chatgpt.com: apex 403 everywhere, robots.txt separates.
-        out = self.probe_with("0|0.14|403|6633|", "0|0.23|403|8442|", "0|0.14|403|6633|", "0|0.23|200|4302|")
+        out = self.probe_with("0|0.14|403|6633||", "0|0.23|403|8442||", "0|0.14|403|6633||", "0|0.23|200|4302||")
         self.assertEqual((out["verdict"], out["url"]), ("destination", "https://example.test/robots.txt"))
 
     def test_working_apex_is_not_second_guessed(self):
-        out = self.probe_with("0|0.10|200|500|", "0|0.20|200|500|", "0|0.10|403|10|", "0|0.20|200|10|")
+        out = self.probe_with("0|0.10|200|500||", "0|0.20|200|500||", "0|0.10|403|10||", "0|0.20|200|10||")
         self.assertEqual(out["verdict"], "ok")
 
     # --- walking more than two exits ---
@@ -163,7 +206,7 @@ class ProbeWalkTest(EnvTest):
     def test_multi_exit(self):
         # Direct and the first proxy share a WAF; only the third exit gets through.
         # Every exit, direct included, goes through its pinned listener.
-        self.use_exits(lambda domain, path, flag, url: "0|0.10|200|500|" if url.endswith(":18542") else "0|0.10|403|919|")
+        self.use_exits(lambda domain, path, flag, url: "0|0.10|200|500||" if url.endswith(":18542") else "0|0.10|403|919||")
         out = self.probe("sekai.test")
         self.assertEqual((out["verdict"], out["exit"]), ("destination", "de"))
 
@@ -197,16 +240,29 @@ class ProbeWalkTest(EnvTest):
 
     def test_via_refused_front_page(self):
         # Refused a front page direct gets: not a stand-in (www.reddit.com).
-        self.use_exits(lambda domain, path, flag, url: "0|0.10|403|190240|" if url.endswith(":18541") and path == "/" else "0|0.10|200|500|")
+        self.use_exits(lambda domain, path, flag, url: "0|0.10|403|190240||" if url.endswith(":18541") and path == "/" else "0|0.10|200|500||")
         self.assertEqual(self.probe("--via", "fi", "geo.test")["verdict"], "blocked")
 
     def test_via_robots_decides(self):
         # i.pximg.net: the front page is 400 everywhere, so robots.txt decides.
-        self.use_exits(lambda domain, path, flag, url: "0|0.10|400|0|" if path == "/" else "0|0.10|200|43|")
+        self.use_exits(lambda domain, path, flag, url: "0|0.10|400|0||" if path == "/" else "0|0.10|200|43||")
         self.assertEqual(self.probe("--via", "fi", "cdn.test")["verdict"], "ok")
 
+    def test_past_a_wall(self):
+        # game-version.sekai.colorfulpalette.org: AWS WAF for direct and fi, S3's own 403 for de.
+        self.use_exits(lambda domain, path, flag, url: "0|0.19|403|243||" if url.endswith(":18542") else "0|0.12|403|919|aws-waf|")
+        out = self.probe("sekai.test")
+        self.assertEqual((out["verdict"], out["exit"], out["path"]), ("destination", "de", "/"))
+        self.assertEqual(
+            [(e["tag"], e["judgement"], e["block"]) for e in out["exits"]],
+            [("direct", "wall", "aws-waf"), ("fi", "wall", "aws-waf"), ("de", "blocked", "")],
+        )
+        # Walled everywhere: nobody got past.
+        self.use_exits(lambda domain, path, flag, url: "0|0.12|403|919|aws-waf|")
+        self.assertEqual(self.probe("sekai.test")["verdict"], "both-fail")
+
     def test_text_output(self):
-        self.use_exits(lambda domain, path, flag, url: "0|0.10|200|500|" if url.endswith(":18542") else "0|0.10|403|919|")
+        self.use_exits(lambda domain, path, flag, url: "0|0.10|200|500||" if url.endswith(":18542") else "0|0.10|403|919||")
         out = ok(ctl.cmd_proxy_probe, "sekai.test")
         self.assertRegex(out, r"(?m)^    de +/ +TLS 0\.10s, 200, 500 bytes +ok  <- chosen$")
         self.assertIn('pin: proxy.routing.rules = [ { outbound = "de"; domains = [ "sekai.test" ]; } ]', out)
@@ -483,6 +539,31 @@ class OutboundTestTest(EnvTest):
         self.assertEqual(status, 0)
         self.assertIn("enable userControl, or run with sudo", err)
 
+
+class BadExitTest(EnvTest):
+    def test_shown_from_state(self):
+        os.environ.update(
+            AUTOPROXY_ENABLED="1",
+            AUTOPROXY_STATE_DIR=self.dir,
+            OUTBOUND_INVENTORY_FILE=self.write("outbounds.json", {"tags": ["mine", "fresh", "new"], "sources": {}}),
+        )
+        # The user's "mine" is the backend's "proxy".
+        self.write("outbound-test.json", {"outbounds": {"mine": "proxy", "fresh": "fresh", "new": "new"}})
+        exits = {
+            "proxy": {"strikes": {"sekai.test": {}, "pximg.net": {}}, "bad": True, "badBy": ["sekai.test refused", "pximg.net slow"]},
+            "fresh": {"strikes": {"sekai.test": {}}, "bad": False, "badBy": ["sekai.test refused"]},
+            "new": {"ip": "192.0.2.1"},
+        }
+        self.write("state.json", {"domains": {}, "exits": exits})
+        self.patch("_outbound_current", lambda: "")
+        self.patch("_autoproxy_next_run", lambda: None)
+        rows = {line.split()[0]: line.split() for line in ctl.lines(ok(ctl.cmd_outbounds, "list")) if line.startswith("  ")}
+        self.assertEqual(rows["mine"][1], "bad")
+        self.assertEqual(rows["fresh"][1], "ok")
+        # Not judged yet.
+        self.assertEqual(rows["new"][1], "-")
+        self.assertIn("1 bad exit", ctl._status_autoproxy())
+        self.assertRegex(ok(ctl.cmd_proxy_learned), r"(?m)^  proxy +sekai\.test refused, pximg\.net slow$")
 
 if __name__ == "__main__":
     unittest.main()

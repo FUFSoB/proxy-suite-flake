@@ -76,7 +76,6 @@ let
   proxySuiteScriptsDir = ../../../scripts;
   parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
-  warpOutboundPy = "${proxySuiteScriptsDir}/warp_outbound.py";
   buildInboundPy = "${proxySuiteScriptsDir}/build-inbound.py";
   fetchSubscriptionPy = "${proxySuiteScriptsDir}/fetch-subscription.py";
 
@@ -112,7 +111,6 @@ let
       xray
       parserScriptsPythonPath
       buildOutboundPy
-      warpOutboundPy
       buildInboundPy
       fetchSubscriptionPy
       ;

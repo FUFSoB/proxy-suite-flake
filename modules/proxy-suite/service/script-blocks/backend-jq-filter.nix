@@ -8,7 +8,9 @@
 if pureXrayEnabled then
   ''
     def xray_bind_outbound($interface):
-      if $interface == "" or .protocol == "blackhole" or .protocol == "dns" then
+      # A loopback hop (the WARP tunnel, the OpenSSH listener) cannot leave through the uplink.
+      if $interface == "" or .protocol == "blackhole" or .protocol == "dns"
+        or ((.settings.address? // "") | test("^(127\\.|::1$|localhost$)")) then
         .
       else
         .streamSettings = (.streamSettings // {})
@@ -87,10 +89,7 @@ else
       [.route.rules[]
        | select(((.action? // "") == "hijack-dns")
          and (((.inbound? // []) | index("xray-dns-in")) != null))];
-    # sing-box runs WireGuard as an endpoint, not an outbound.
-    .outbounds = ($obs | map(select(.type != "wireguard"))) + .outbounds
-      | ($obs | map(select(.type == "wireguard"))) as $endpoints
-      | if $endpoints == [] then . else .endpoints = (.endpoints // []) + $endpoints end
+    .outbounds = $obs + .outbounds
       | if $auth_enabled then
           (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
         else . end

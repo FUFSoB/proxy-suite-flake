@@ -502,13 +502,15 @@ def _status_autoproxy():
     state = os.path.join(_autoproxy_dir(), "state.json")
     if not readable(state):
         return ""
-    counts = []
-    for key in ("domains", "backlog"):
-        try:
-            counts.append(str(len(read_json(state).get(key) or {})))
-        except (OSError, ValueError, AttributeError, TypeError):
-            counts.append("?")
+    try:
+        data = read_json(state)
+        counts = [str(len(data.get(key) or {})) for key in ("domains", "backlog")]
+        bad = sum(1 for e in (data.get("exits") or {}).values() if isinstance(e, dict) and e.get("bad") is True)
+    except (OSError, ValueError, AttributeError, TypeError):
+        counts, bad = ["?", "?"], 0
     text = f"{counts[0]} routed, {counts[1]} queued"
+    if bad:
+        text += f", {bad} bad exit{'' if bad == 1 else 's'}"
     next_run = _autoproxy_next_run()
     if next_run:
         text += f", next run {_in_time(next_run)}"
@@ -808,20 +810,23 @@ def _outbounds_list():
     pinned = _s(inventory.get("pinned") or "")
     sources = inventory.get("sources") or {}
     current = _outbound_current()
+    reputation = _reputation_by_tag()
 
     print(f"Selection: {_s(inventory.get('selection') or 'first')}")
     print(f"Pinned:    {pinned or '(auto)'}")
     if current:
         print(f"Current:   {current}")
     print()
-    print(f"  {'TAG':<34} SOURCE")
+    # The reputation column only once the autoProxy prober has checked some exit.
+    rep = (lambda tag: f"{reputation.get(tag, '-'):<16} ") if reputation else (lambda tag: "")
+    print(f"  {'TAG':<34} {'REPUTATION':<16} SOURCE" if reputation else f"  {'TAG':<34} SOURCE")
     for tag in _outbound_tags():
         mark = " "
         if tag == pinned:
             mark = "*"
         elif not pinned and tag == current:
             mark = ">"
-        print(f" {mark}{tag:<34} {_s(sources.get(tag) or '-')}")
+        print(f" {mark}{tag:<34} {rep(tag)}{_s(sources.get(tag) or '-')}")
 
 
 def cmd_select(tag="", *_):
@@ -1030,10 +1035,28 @@ def cmd_subscription(verb="list", *args):
 # this host and the local proxy. The apex decides when any exit gets content
 # from it; robots.txt breaks ties when the apex is refused everywhere.
 #
-# A fetch result is "<curl-exit>|<appconnect-seconds>|<http-status>|<bytes>|<location>".
+# A fetch result is "<curl-exit>|<appconnect-seconds>|<http-status>|<bytes>|<block-page>|<location>".
+# block-page names the vendor page a refusal came with (PROBE_BLOCK_PAGES): the
+# site's security layer turning the address away, not its origin answering.
 
 PROBE_BLOCK_REDIRECT = re.compile(r"unavailable|not-available|blocked|geo|region|restricted", re.I)
 PROBE_WRITE_OUT = "%{exitcode}|%{time_appconnect}|%{http_code}|%{size_download}|%{redirect_url}"
+# name -> (kind, pattern over a refusal's headers and first 8 KiB of body). "address":
+# the address itself was refused, so an exit that gets past it reaches the site.
+# "geo": its country was, which is an ordinary refusal.
+PROBE_BLOCK_PAGES = {
+    name: (kind, re.compile(pattern))
+    for name, kind, pattern in [
+        # CloudFront's AWS WAF page (game-version.sekai.colorfulpalette.org).
+        ("aws-waf", "address", r"(?ims)^server: cloudfront\b.*Request blocked\."),
+        ("cloudfront-geo", "geo", r"(?i)configured to block access from your country"),
+        ("cloudflare", "address", r'(?im)^cf-mitigated: challenge|cf-error-code">10(06|07|08|20)<|error code: 10(06|07|08|20)\b'),
+        ("cloudflare-geo", "geo", r'(?i)cf-error-code">1009<|error code: 1009\b'),
+        ("akamai", "address", r"(?ims)^server: AkamaiGHost\b.*Access Denied"),
+        ("imperva", "address", r"(?i)Incapsula incident ID"),
+        ("datadome", "address", r"(?im)^x-datadome:"),
+    ]
+}
 
 
 def _probe_paths():
@@ -1068,38 +1091,58 @@ def _probe_fetch(domain, path, *selector):
     # An impersonating curl must keep its browser's own User-Agent.
     ua = [] if curl else ["-A", env("PROBE_UA", "Mozilla/5.0 (X11; Linux x86_64) proxy-suite-probe")]
     result = ""
-    for _ in range(6):
-        status, result = run_curl(
-            [
-                curl or "curl",
-                "-sS",
-                "-o",
-                "/dev/null",
-                *ua,
-                "--connect-timeout",
-                env("PROBE_CONNECT_TIMEOUT", "8"),
-                "--max-time",
-                env("PROBE_MAX_TIME", "15"),
-                "-w",
-                PROBE_WRITE_OUT,
-                *selector,
-                url,
-            ]
-        )
-        # Not a dead site: curl itself did not start.
-        if not result and status >= 126:
-            die(f"Cannot run {curl or 'curl'} (exit {status}).")
-        result = result or "99|0|000|0|"
-        if not re.fullmatch(r"3..", _probe_field(result, 3)) or _probe_redirect_is_block(result):
-            break
-        url = _probe_field(result, 5)
-        if not url or _probe_site(url) != site:
-            break
+    with tempfile.TemporaryDirectory(prefix="proxy-ctl-probe-") as tmp:
+        for hop in range(6):
+            head, body = os.path.join(tmp, f"{hop}.head"), os.path.join(tmp, f"{hop}.body")
+            status, out = run_curl(
+                [
+                    curl or "curl",
+                    "-sS",
+                    "-D",
+                    head,
+                    "-o",
+                    body,
+                    *ua,
+                    "--connect-timeout",
+                    env("PROBE_CONNECT_TIMEOUT", "8"),
+                    "--max-time",
+                    env("PROBE_MAX_TIME", "15"),
+                    "-w",
+                    PROBE_WRITE_OUT,
+                    *selector,
+                    url,
+                ]
+            )
+            # Not a dead site: curl itself did not start.
+            if not out and status >= 126:
+                die(f"Cannot run {curl or 'curl'} (exit {status}).")
+            fields = (out or "99|0|000|0|").split("|", 4)
+            fields += [""] * (5 - len(fields))
+            result = "|".join([*fields[:4], _probe_block_page(fields[2], head, body), fields[4]])
+            if not re.fullmatch(r"3..", _probe_field(result, 3)) or _probe_redirect_is_block(result):
+                break
+            url = _probe_field(result, 6)
+            if not url or _probe_site(url) != site:
+                break
     return result
 
 
+def _probe_block_page(code, head, body):
+    """The PROBE_BLOCK_PAGES name a refusal's page matches; "" for none."""
+    if not re.fullmatch(r"[45]..", code):
+        return ""
+    text = ""
+    for path, limit in ((head, -1), (body, 8192)):
+        try:
+            with open(path, "rb") as f:
+                text += f.read(limit).decode("latin-1") + "\n\n"
+        except OSError:
+            pass
+    return next((name for name, (_, pattern) in PROBE_BLOCK_PAGES.items() if pattern.search(text)), "")
+
+
 def _probe_field(result, n):
-    fields = result.split("|", 4)
+    fields = result.split("|", 5)
     return fields[n - 1] if n <= len(fields) else ""
 
 
@@ -1109,7 +1152,7 @@ def _probe_tls_ok(result):
 
 
 def _probe_redirect_is_block(result):
-    return bool(PROBE_BLOCK_REDIRECT.search(_probe_field(result, 5)))
+    return bool(PROBE_BLOCK_REDIRECT.search(_probe_field(result, 6)))
 
 
 def _probe_http_ok(result):
@@ -1124,11 +1167,23 @@ def _probe_http_ok(result):
 def _probe_exit_verdict(result):
     """dead: failed before the origin spoke (the censor's doing, zapret's job).
 
+    wall: the site's security layer refused this address (an exit past it helps).
     blocked: the origin answered and refused (a proxy hop can fix it).
     """
     if not _probe_tls_ok(result) or _probe_field(result, 3) == "000":
         return "dead"
-    return "ok" if _probe_http_ok(result) else "blocked"
+    if _probe_http_ok(result):
+        return "ok"
+    return "wall" if PROBE_BLOCK_PAGES.get(_probe_field(result, 5), ("",))[0] == "address" else "blocked"
+
+
+def _probe_reaches(direct_judgement, judgement):
+    """Content, or - where direct hit a wall - any answer from the origin past it.
+
+    ponytail: an origin refusing behind the wall (its own geo-block) counts as
+    reached too; compare with robots.txt if that misroutes a site.
+    """
+    return judgement == "ok" or (direct_judgement == "wall" and judgement == "blocked")
 
 
 def _probe_verdict(direct, via):
@@ -1136,7 +1191,7 @@ def _probe_verdict(direct, via):
     v = _probe_exit_verdict(via)
     if d == "ok":
         return "ok"
-    if v == "ok":
+    if _probe_reaches(d, v):
         return "censor" if d == "dead" else "destination"
     return "unreachable" if d == "dead" else "both-fail"
 
@@ -1158,7 +1213,9 @@ def _probe_describe(result):
     if status == "000":
         return f"TLS {_probe_field(result, 2)}s, then no response"
     text = f"TLS {_probe_field(result, 2)}s, {status}, {_probe_field(result, 4)} bytes"
-    location = _probe_field(result, 5)
+    if _probe_field(result, 5):
+        text += f", {_probe_field(result, 5)} page"
+    location = _probe_field(result, 6)
     return f"{text} -> {location}" if location else text
 
 
@@ -1181,7 +1238,8 @@ def _walk(**fields):
 
 
 def _probe_walk(domain, exits, paths, keep_going):
-    """Walks exits (direct first) and stops at the first that gets content.
+    """Walks exits (direct first) and stops at the first that reaches it: gets
+    content, or gets past a wall direct hit (_probe_reaches).
 
     keep_going still tries the rest, keeping that first one. rows are
     (tag, path, result, judgement) per request.
@@ -1191,10 +1249,10 @@ def _probe_walk(domain, exits, paths, keep_going):
     first_direct = ""
     for path in paths:
         direct = _probe_fetch_exit(domain, path, direct_url)
-        judgement = _probe_exit_verdict(direct)
-        w["rows"].append((direct_tag, path, direct, judgement))
+        dj = _probe_exit_verdict(direct)
+        w["rows"].append((direct_tag, path, direct, dj))
         first_direct = first_direct or direct
-        if judgement == "ok" and not w["verdict"]:
+        if dj == "ok" and not w["verdict"]:
             w.update(verdict="ok", path=path, direct=direct)
             if not keep_going:
                 return w
@@ -1202,7 +1260,7 @@ def _probe_walk(domain, exits, paths, keep_going):
             result = _probe_fetch_exit(domain, path, url)
             judgement = _probe_exit_verdict(result)
             w["rows"].append((tag, path, result, judgement))
-            if judgement == "ok" and not w["verdict"]:
+            if _probe_reaches(dj, judgement) and not w["verdict"]:
                 w.update(verdict=_probe_verdict(direct, result), exit=tag, path=path, direct=direct, via=result)
                 if not keep_going:
                     return w
@@ -1292,7 +1350,7 @@ def cmd_proxy_probe(*args):
             "exit": w["exit"] or None,
             "direct": w["direct"],
             "proxy": w["via"],
-            "exits": [dict(zip(("tag", "path", "result", "judgement"), row)) for row in w["rows"]],
+            "exits": [dict(zip(("tag", "path", "result", "judgement"), row), block=_probe_field(row[2], 5)) for row in w["rows"]],
         }
         print(json.dumps(out, separators=(",", ":"), ensure_ascii=False))
         return
@@ -1314,6 +1372,31 @@ def cmd_proxy_probe(*args):
         print(f'             pin: proxy.routing.rules = [ {{ outbound = "{w["exit"]}"; domains = [ "{domain}" ]; }} ]')
     elif w["verdict"] == "censor":
         print(f"             try: proxy-ctl zapret auto add {domain}")
+
+
+# --- bad exits -----------------------------------------------------------------
+#
+# The autoProxy prober strikes an exit when a destination refuses it while
+# another egress gets content, or crawls on it (autoproxy-strike.jq). An exit
+# struck by several destinations within a TTL is bad, and probed last.
+
+
+def _reputation_by_tag():
+    """User tag -> "bad" or "ok" once the prober has judged its exit; {} before it has."""
+    if env("AUTOPROXY_ENABLED") != "1":
+        return {}
+    exits = _autoproxy_state(_autoproxy_dir()).get("exits") or {}
+    # Exits are keyed by the backend's tag; outbound-test.json maps the user's to it.
+    try:
+        backend = read_json(_runtime_file("outbound-test.json")).get("outbounds") or {}
+    except (OSError, ValueError, AttributeError):
+        backend = {}
+    out = {}
+    for tag in _outbound_tags():
+        e = exits.get(_s(backend.get(tag) or tag))
+        if isinstance(e, dict) and "strikes" in e:
+            out[tag] = "bad" if e.get("bad") is True else "ok"
+    return out
 
 
 def _autoproxy_dir():
@@ -1441,6 +1524,13 @@ def cmd_proxy_learned(*_):
     judged = "  ".join(f"{v}={n}" for v, n in sorted(counts.items()))
     print()
     print(f"Hosts judged: {judged or 'none yet'}")
+
+    bad = {t: e.get("badBy") or [] for t, e in (state.get("exits") or {}).items() if isinstance(e, dict) and e.get("bad") is True}
+    if bad:
+        print()
+        print("Probed last, refused or crawled by several destinations:")
+        for tag, by in sorted(bad.items()):
+            print(f"  {_s(tag):<28} {', '.join(_s(b) for b in by)}")
 
 
 def cmd_proxy_learn(host="", *_):
