@@ -38,6 +38,8 @@ class TuiTest(unittest.TestCase):
             (ctl, "_status_zapret", lambda: ""),
             (ctl, "svc_state", lambda unit: ""),
             (ctl, "_inbound_links", lambda: [{"tag": "vless", "user": "alice", "type": "vless", "port": 443}]),
+            # No refresh ticks: a tick's load landing mid-test would read everything again.
+            (tui, "REFRESH_SECONDS", 3600),
         ]:
             patcher = mock.patch.object(target, name, value)
             patcher.start()
@@ -55,6 +57,17 @@ class TuiTest(unittest.TestCase):
             _subscription_proxy_count_text=lambda path: "3",
         ):
             self.assertEqual(tui.subscription_rows({})[0]["updated"], "0m ago")
+
+    def test_filter_sort_pack(self):
+        rows = [{"key": "a", "host": "a.example", "kind": "learned"}, {"key": "b", "host": "learned.org", "kind": "pinned"}]
+        columns = [("host", "Host"), ("kind", "List")]
+        keys = lambda text: [r["key"] for r in tui.filter_rows(rows, columns, text)]
+        self.assertEqual(keys("learned"), ["a", "b"])
+        self.assertEqual(keys("list:learned"), ["a"])  # by heading
+        self.assertEqual(keys("kind:pinned LEARNED"), ["b"])  # by field, and every word must match
+        self.assertEqual(sorted(["port 2053", "port 443"], key=tui._natural), ["port 443", "port 2053"])
+        # Items never split across lines.
+        self.assertEqual(tui.pack(["[b]aaa[/]", "bbb", "ccc"], 9), "[b]aaa[/]   bbb\nccc")
 
     def test_ui(self):
         # Not IsolatedAsyncioTestCase: its asyncio debug mode makes Textual crawl.
@@ -76,6 +89,17 @@ class TuiTest(unittest.TestCase):
             await self.settle(app, pilot)
             self.assertEqual(app.shown, ["services", "zapret"])
             self.assertEqual(app.focused.id, "services-table")
+
+            # The terminal losing focus leaves the TUI as it is.
+            app.post_message(tui.events.AppBlur())
+            await pilot.pause()
+            self.assertEqual((app.app_focus, app.focused.id), (True, "services-table"))
+
+            # Hovering the header, even past its last column, does not highlight it.
+            await pilot.hover("#services-table", offset=(90, 0))
+            self.assertFalse(app.table()._show_hover_cursor)
+            await pilot.hover("#services-table", offset=(90, 1))
+            self.assertTrue(app.table()._show_hover_cursor)
 
             # Tabs follow what runs: socks starting brings its tabs in.
             self.units = {"proxy-suite-socks": "active", **self.units}
@@ -108,7 +132,7 @@ class TuiTest(unittest.TestCase):
             self.units["proxy-suite-ssh-proxy"] = "failed"
             app.action_reload()
             await self.settle(app, pilot)
-            self.assertIn("1 failed", tui.status_text(app.states))
+            self.assertIn("1 failed", tui.pack(tui.status_text(app.states), 100))
             app.table().move_cursor(row=list(app.rows["services"]).index(tui.AWG_PREFIX + "p"))
             await pilot.press("ctrl+r")
             self.assertEqual(self.ran.pop(), ["awg", "restart", "p"])
@@ -136,15 +160,23 @@ class TuiTest(unittest.TestCase):
             app.action_reload()
             await self.settle(app, pilot)
             self.assertEqual(self.current.call_count, 1)
+            # The footer offers only what applies to the selected row.
+            self.assertIn("p", app.screen.active_bindings)
+            self.assertNotIn("u", app.screen.active_bindings)
             await pilot.press("p", "t", "u")
             self.assertEqual(self.ran, [["proxy", "pin", "a"], ["proxy", "outbounds", "test", "a"]])
-            await pilot.press("down", "p", "d", "u")
+            await pilot.press("down")
+            self.assertNotIn("p", app.screen.active_bindings)
+            await pilot.press("p", "d", "u")
             self.assertEqual(self.ran.pop(), ["proxy", "unpin"])
             self.ran.clear()
             await pilot.press("enter")
             await pilot.pause()
             self.assertNotIn("pin it", self.menu_labels(app))
             self.assertNotIn("remove it", self.menu_labels(app))
+            # Hovering an option selects it: one cursor for mouse and keys.
+            await pilot.hover(tui.Choices, offset=(3, 1))
+            self.assertEqual(app.screen.query_one(tui.Choices).highlighted, 1)
             await pilot.press("escape")
 
             # Prompts: add takes "<tag> <url>".
@@ -156,6 +188,11 @@ class TuiTest(unittest.TestCase):
             await pilot.pause()
             self.assertEqual(app.screen.query_one(tui.Input).value, "x vless://h")
             await pilot.press("escape")
+
+            # An empty tab says how to fill it.
+            await pilot.press("4")
+            await self.settle(app, pilot)
+            self.assertIn("Nothing here yet.   n: add a runtime subscription", str(app.main.query_one("#subs-summary").content))
 
             # zapret: an excluded host can be included again, not forgotten.
             # Brackets in a summary are text, not markup.
@@ -173,7 +210,12 @@ class TuiTest(unittest.TestCase):
             await pilot.press("escape", "i")
             self.assertEqual(self.ran.pop(), ["zapret", "auto", "include", "kept.example"])
 
-            # Confirmed actions run only on yes.
+            # Confirmed actions run only on yes; a click beside a dialog closes it.
+            await pilot.press("C")
+            await pilot.pause()
+            await pilot.click(offset=(0, 0))
+            await pilot.pause()
+            self.assertIs(app.screen, app.main)
             await pilot.press("C", "n")
             await pilot.pause()
             self.assertEqual(self.ran, [])
@@ -188,6 +230,22 @@ class TuiTest(unittest.TestCase):
             await pilot.press("escape")
             await self.settle(app, pilot)
             self.assertEqual(len(app.rows["zapret"]), 2)
+
+            # A narrow terminal lists the row's actions on the key line; wider ones in the detail panel instead.
+            self.assertIn("forget it", str(app.main.query_one("#keys").content))
+
+            # Clicking a heading sorts by it, again reverses, a third time restores the order.
+            order = lambda: [str(app.table().get_row_at(i)[0]) for i in range(app.table().row_count)]
+            self.assertEqual(order(), ["learned.example", "kept.example"])
+            await pilot.click("#zapret-table", offset=(2, 0))
+            self.assertEqual(order(), ["kept.example", "learned.example"])
+            self.assertEqual(str(app.table().columns["host"].label), "Host ▲")
+            await pilot.click("#zapret-table", offset=(2, 0))
+            self.assertEqual(order(), ["learned.example", "kept.example"])
+            self.assertEqual(str(app.table().columns["host"].label), "Host ▼")
+            await pilot.click("#zapret-table", offset=(2, 0))
+            self.assertEqual(order(), ["learned.example", "kept.example"])
+            self.assertEqual(str(app.table().columns["host"].label), "Host  ")
 
             # Inbounds appears once enabled; c copies the share link.
             self.env["INBOUNDS_ENABLED"] = "1"
