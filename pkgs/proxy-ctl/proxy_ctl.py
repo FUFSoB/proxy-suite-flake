@@ -544,6 +544,9 @@ def _overall_state(snapshot):
         label = "Proxy only" if label == "Proxy" else label
     elif snapshot["awg"]["active"]:
         label = "AmneziaWG"
+    elif traffic:
+        # TUN runs its own backend, without proxy-suite-socks.
+        label = "TUN" + (" + zapret" if zapret else "")
     else:
         label = "Zapret only" if zapret else "Inactive"
     units = snapshot.get("units") or {}
@@ -2350,7 +2353,8 @@ ALIASES = {
 
 def cmd_logs(*units):
     if units:
-        _exec(["journalctl", "-fu", *units])
+        # One -u per unit: a bare second name would be taken as a journal match.
+        _exec(["journalctl", "-f", *(f"--unit={u}" for u in units)])
     # journalctl takes unit globs, so the default needs no unit list of its own.
     _exec(["journalctl", "-f", "-u", "proxy-suite-*"])
 

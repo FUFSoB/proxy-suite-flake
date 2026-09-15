@@ -10,6 +10,8 @@ let
   t = cfg.tgWsProxy;
   tgPkg = packages.tg-ws-proxy;
   ip = "${pkgs.iproute2}/bin/ip";
+  nft = "${pkgs.nftables}/bin/nft";
+  markTable = "proxy_suite_tg_ws_proxy";
 
   transparentBypassEnabled =
     t.bypassTransparentProxy && cfg.proxy.enable && (cfg.proxy.tun.enable || cfg.proxy.tproxy.enable);
@@ -59,6 +61,18 @@ let
 
     add_bypass_rule -4
     add_bypass_rule -6
+
+    # The relay's own sockets carry the mark. By cgroup, which is resolved when the rule
+    # loads: this runs again on every start. Ahead of the TProxy output chain.
+    ${nft} delete table inet ${markTable} 2>/dev/null || true
+    ${nft} -f - <<EOF
+    table inet ${markTable} {
+      chain output {
+        type route hook output priority mangle - 1; policy accept;
+        socket cgroupv2 level 2 "system.slice/proxy-suite-tg-ws-proxy.service" meta mark set ${toString t.fwmark}
+      }
+    }
+    EOF
   '';
 
   bypassDownScript = pkgs.writeShellScript "proxy-suite-tg-ws-proxy" ''
@@ -66,6 +80,7 @@ let
 
     while ${ip} -4 rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done
     while ${ip} -6 rule del pref ${toString bypassRulePriority} fwmark ${toString t.fwmark} lookup main 2>/dev/null; do :; done
+    ${nft} delete table inet ${markTable} 2>/dev/null
   '';
 in
 {
@@ -83,7 +98,6 @@ in
     // lib.optionalAttrs transparentBypassEnabled {
       ExecStartPre = bypassUpScript;
       ExecStopPost = bypassDownScript;
-      SocketMark = toString t.fwmark;
     };
   };
 }

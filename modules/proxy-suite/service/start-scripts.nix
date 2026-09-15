@@ -354,9 +354,10 @@ let
 
               ${singBox} run -c "$RUNTIME_DIR/config.json" &
               SING_BOX_PID="$!"
+              # Either one going away breaks the outbounds: exit, and let systemd restart both.
               SING_BOX_STATUS=0
-              wait "$SING_BOX_PID" || SING_BOX_STATUS="$?"
-              exit "$SING_BOX_STATUS"
+              wait -n "$XRAY_SIDECAR_PID" "$SING_BOX_PID" || SING_BOX_STATUS="$?"
+              exit "$(( SING_BOX_STATUS == 0 ? 1 : SING_BOX_STATUS ))"
             fi
 
             exec ${singBox} run -c "$RUNTIME_DIR/config.json"

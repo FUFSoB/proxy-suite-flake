@@ -50,6 +50,12 @@ in
       assert subscriptionOnlyFixture.config.systemd.timers ? "proxy-suite-subscription-update";
       true
     )
+    # A oneshot left active would swallow every later timer run.
+    (
+      assert
+        !subscriptionOnlyFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.RemainAfterExit;
+      true
+    )
 
     # StateDirectory is set on the socks service.
     (

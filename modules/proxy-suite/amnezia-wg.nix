@@ -151,7 +151,7 @@ let
 
         implementation="$(${pkgs.python3}/bin/python3 ${configTool} \
           --transport-implementation ${lib.escapeShellArg configPath})"
-        # The 3.1.20260812 kernel module drops RandomTrailers packets with ranged H1-H3;
+        # The 3.1 kernel module dropped RandomTrailers packets with ranged H1-H3 (seen on 20260812);
         # userspace carries the fix.
         if [[ "$implementation" == userspace ]]; then
           WG_QUICK_FORCE_USERSPACE_IMPLEMENTATION=1 \

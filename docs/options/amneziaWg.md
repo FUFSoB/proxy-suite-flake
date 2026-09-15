@@ -95,7 +95,7 @@ null or package
 *Default:*
 
 ```nix
-<derivation amneziawg-3.1.20260812>
+<derivation amneziawg-3.1.20260828>
 ```
 
 <a id="services-proxy-suite-amneziawg-profiles"></a>

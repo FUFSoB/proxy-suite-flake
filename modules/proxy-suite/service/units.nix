@@ -229,6 +229,8 @@ let
         wants = [ "network-online.target" ];
         execStart = scripts.subscriptionUpdateScript;
         stateDirectory = "proxy-suite";
+        # Run by a timer and by `proxy subs update`: a unit left "active" would never run again.
+        extraServiceConfig.RemainAfterExit = false;
       };
     }
     {

@@ -297,6 +297,10 @@ def _enabled(name):
     return lambda _: ctl.env(name) == "1"
 
 
+def _sub_url(row):
+    return bool(row["user"]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
+
+
 def _zapret_toggle(row, _, states):
     return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
 
@@ -412,8 +416,9 @@ TABS = [
             Action("c", "copy share link", lambda r, *_: _link(r), when=ROW, mode="copy"),
             Action("Q", "share link as QR", lambda r, *_: _link(r, "--qr"), when=ROW, mode="dialog"),
             Action("s", "subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="dialog"),
-            Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=lambda r: bool(r["user"]), mode="dialog"),
-            Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="copy"),
+            # Without subscriptions.baseUrl there is only a file path, with a hint after it: nothing to encode or copy.
+            Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
+            Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
         ],
     ),

@@ -46,7 +46,7 @@ let
       cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
 
       handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${grepBin} -F "comment \"$rule_comment_prefix-mark\"" \
         | ${awk} '{ print $NF }' || true)
       if [ -n "$handles" ]; then
         while IFS= read -r handle; do
@@ -72,7 +72,7 @@ let
       uid="$1"
       rule_comment_prefix="proxy-suite-${name}-user-$uid"
       handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix" \
+        | ${grepBin} -F "comment \"$rule_comment_prefix-mark\"" \
         | ${awk} '{ print $NF }' || true)
       if [ -n "$handles" ]; then
         while IFS= read -r handle; do

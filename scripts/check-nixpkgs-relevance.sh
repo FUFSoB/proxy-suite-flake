@@ -20,7 +20,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 system="${NIXPKGS_WATCH_SYSTEM:-x86_64-linux}"
-default_watch_attrs="sing-box,proxychains-ng,sing-geosite,sing-geoip,nftables,iproute2,iptables,ipset,python3,python3Packages.requests,python3Packages.websockets,python3Packages.cryptography,gtk3,libayatana-appindicator"
+default_watch_attrs="sing-box,proxychains-ng,sing-geosite,sing-geoip,nftables,iproute2,iptables,ipset,python3,python3Packages.requests,python3Packages.websockets,python3Packages.cryptography,gtk4,libadwaita,amneziawg-tools,amneziawg-go,linuxPackages.amneziawg"
 watch_attrs_csv="${NIXPKGS_WATCH_ATTRS:-$default_watch_attrs}"
 
 IFS=',' read -r -a watch_attrs <<< "$watch_attrs_csv"

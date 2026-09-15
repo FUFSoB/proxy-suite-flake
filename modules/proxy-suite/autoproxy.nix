@@ -406,7 +406,8 @@ let
       "proxy-suite-socks.service"
       "proxy-suite-inbounds.service"
     ];
-    wants = [ "proxy-suite-socks.service" ];
+    # No wants: a timer run must not start a proxy stopped on purpose; without
+    # its listeners the runner has nothing to do and says so.
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${runner}${args}";

@@ -80,7 +80,9 @@ in
 
     # Global TUN/TProxy bypass mark keeps relay traffic out of transparent capture.
     (
-      assert tgWithGlobalTunServiceConfig.SocketMark == "4";
+      assert !(tgWithGlobalTunServiceConfig ? SocketMark);
+      assert pkgs.lib.hasInfix "\"system.slice/proxy-suite-tg-ws-proxy.service\" meta mark set 4" tgWithGlobalTunBypassUp;
+      assert pkgs.lib.hasInfix "delete table inet proxy_suite_tg_ws_proxy" tgWithGlobalTunBypassDown;
       assert pkgs.lib.hasInfix "rule add pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassUp;
       assert pkgs.lib.hasInfix "rule del pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassDown;
       assert hasDirectIP tgWithGlobalTunRules "149.154.167.220";

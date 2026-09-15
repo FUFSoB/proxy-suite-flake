@@ -119,13 +119,23 @@ in
 
   systemd.services.proxy-suite-zapret-vm-exempt =
     lib.mkIf (zapretCfg.enable && zapretCfg.cidrExemption.enable)
-      (mkOneshotService {
-        description = "Exempt CIDRs from zapret NFQUEUE";
-        after = [ "proxy-suite-zapret.service" ];
-        wants = [ "proxy-suite-zapret.service" ];
-        conflicts = awgServiceNames;
-        wantedBy = [ "multi-user.target" ];
-        execStart = pkgs.writeShellScript "proxy-suite-zapret" exemptStart;
-        execStop = pkgs.writeShellScript "proxy-suite-zapret" exemptStop;
-      });
+      (
+        mkOneshotService {
+          description = "Exempt CIDRs from zapret NFQUEUE";
+          after = [ "proxy-suite-zapret.service" ];
+          wants = [ "proxy-suite-zapret.service" ];
+          conflicts = awgServiceNames;
+          # zapret inserts its rules at the top (iptables -I): these are re-inserted after
+          # every zapret start or restart, or they end up below its NFQUEUE jumps.
+          wantedBy = [
+            "multi-user.target"
+            "proxy-suite-zapret.service"
+          ];
+          execStart = pkgs.writeShellScript "proxy-suite-zapret" exemptStart;
+          execStop = pkgs.writeShellScript "proxy-suite-zapret" exemptStop;
+        }
+        // {
+          partOf = [ "proxy-suite-zapret.service" ];
+        }
+      );
 }

@@ -18,18 +18,18 @@ let
   systemctl = "${pkgs.systemd}/bin/systemctl";
   curl = "${pkgs.curl}/bin/curl";
 
-  restartActiveConfigConsumersBlock =
-    lib.concatMapStrings
-      (svc: ''
-        if ${systemctl} is-active --quiet ${svc}; then
-          ${systemctl} restart ${svc}
-        fi
-      '')
-      [
-        "proxy-suite-socks"
-        "proxy-suite-tun"
-        "proxy-suite-per-app-tun"
-      ];
+  restartActiveBlock = lib.concatMapStrings (svc: ''
+    if ${systemctl} is-active --quiet ${svc}; then
+      ${systemctl} restart ${svc}
+    fi
+  '');
+
+  # The TUN backends are sing-box instances of their own, without a Clash API.
+  tunConsumers = [
+    "proxy-suite-tun"
+    "proxy-suite-per-app-tun"
+  ];
+  restartActiveConfigConsumersBlock = restartActiveBlock ([ "proxy-suite-socks" ] ++ tunConsumers);
 
   subscriptionUpdateScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
@@ -102,6 +102,7 @@ let
       if ${curl} -sf -X PUT "${clashApi}/proxies/proxy" \
         -H "Content-Type: application/json" \
         -d "$(${jq} -cn --arg name "$tag" '{name:$name}')" >/dev/null 2>&1; then
+        ${restartActiveBlock tunConsumers}
         exit 0
       fi
     fi

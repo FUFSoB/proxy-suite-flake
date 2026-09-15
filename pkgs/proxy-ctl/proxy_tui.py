@@ -607,7 +607,11 @@ class ProxyTui(App):
 
     def perform(self, action, row):
         def with_text(text=""):
-            argv = action.argv(row, text, self.states)
+            try:
+                argv = action.argv(row, text, self.states)
+            except (ValueError, IndexError) as e:  # an unbalanced quote in a typed command
+                self.feedback(f"Cannot run that: {e}", False)
+                return
             confirm = action.confirm(row) if callable(action.confirm) else action.confirm
             if confirm:
                 self.push_screen(Confirm(f"proxy-ctl {shlex.join(argv)}"), lambda ok: ok and self.run_argv(action.mode, argv))

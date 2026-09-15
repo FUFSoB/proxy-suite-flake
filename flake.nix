@@ -60,9 +60,12 @@
       nixosModules.zapret = zapret.nixosModules.default;
 
       overlays.default = final: prev: {
-        inherit (import ./pkgs/default.nix { pkgs = final; })
+        # From prev: these override the nixpkgs packages of the same name.
+        inherit (import ./pkgs/default.nix { pkgs = prev; })
           amneziawg-tools
           amneziawg-go
+          ;
+        inherit (import ./pkgs/default.nix { pkgs = final; })
           mkProxyCtl
           mkTgWsProxy
           tg-ws-proxy

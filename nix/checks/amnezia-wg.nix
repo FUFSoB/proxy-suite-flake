@@ -197,8 +197,8 @@ in
         awgOnly.config.environment.systemPackages;
       assert builtins.elem awgOnly.config.services.proxy-suite.amneziaWg.userspacePackage
         awgOnly.config.environment.systemPackages;
-      assert awgOnly.config.services.proxy-suite.amneziaWg.toolsPackage.version == "3.1.20260812";
-      assert awgOnly.config.services.proxy-suite.amneziaWg.userspacePackage.version == "3.1.20260828";
+      assert pkgs.lib.versionAtLeast awgOnly.config.services.proxy-suite.amneziaWg.toolsPackage.version "3.1";
+      assert pkgs.lib.versionAtLeast awgOnly.config.services.proxy-suite.amneziaWg.userspacePackage.version "3.1";
       assert pkgs.lib.hasInfix "cmd_awg" ctl.script;
       assert
         ctl.awgProfiles == [
@@ -208,11 +208,11 @@ in
       true
     )
     (
-      assert defaultPackages.config.services.proxy-suite.amneziaWg.toolsPackage.version == "3.1.20260812";
+      assert pkgs.lib.versionAtLeast defaultPackages.config.services.proxy-suite.amneziaWg.toolsPackage.version "3.1";
       assert
-        defaultPackages.config.services.proxy-suite.amneziaWg.userspacePackage.version == "3.1.20260828";
+        pkgs.lib.versionAtLeast defaultPackages.config.services.proxy-suite.amneziaWg.userspacePackage.version "3.1";
       assert
-        defaultPackages.config.services.proxy-suite.amneziaWg.kernelModulePackage.version == "3.1.20260812";
+        pkgs.lib.versionAtLeast defaultPackages.config.services.proxy-suite.amneziaWg.kernelModulePackage.version "3.1";
       true
     )
     (

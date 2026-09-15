@@ -1,7 +1,7 @@
 {
   config,
   lib,
-  pkgs,
+  proxySuiteUpstream,
   ...
 }:
 
@@ -12,7 +12,7 @@ let
     types
     ;
   t = import ./types.nix { inherit lib; };
-  awgPackages = import ../../../pkgs/amneziawg.nix { inherit pkgs; };
+  awgPackages = proxySuiteUpstream.amneziaWg;
 in
 {
   options.services.proxy-suite.amneziaWg = {

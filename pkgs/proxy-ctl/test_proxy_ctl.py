@@ -624,6 +624,7 @@ class StatusSnapshotTest(EnvTest):
         both = self.overall(socks="active", zapret="active", tun="active")
         self.assertEqual((both["base"], both["label"]), ("tunnel", "Proxy + traffic + zapret"))
         self.assertEqual(self.overall(awg_work="active"), {"base": "tunnel", "badge": "", "label": "AmneziaWG"})
+        self.assertEqual(self.overall(tun="active")["label"], "TUN")
 
     def test_badges(self):
         self.assertEqual(self.overall(socks="active", tun="failed")["badge"], "failed")

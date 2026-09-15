@@ -5,7 +5,7 @@
 # Table columns: nix-file|owner|repo|version-key|flake-attr
 #   version-key  the `<key> = "...";` line holding the tag. A leading "=" means
 #                "do not query GitHub, reuse the value of that key" - for sources
-#                that must stay in lockstep (AWG kernel module follows tools).
+#                that must stay in lockstep.
 #   flake-attr   package built to recompute vendorHash; "-" when there is none.
 #
 # Prints one "updated <repo>: <old> -> <new>" line per change on stdout; progress
@@ -16,9 +16,6 @@ PINS=(
   "pkgs/tg-ws-proxy.nix|Flowseal|tg-ws-proxy|rev|tg-ws-proxy"
   "pkgs/zapret2.nix|bol-van|zapret2|version|zapret2"
   "pkgs/xray.nix|XTLS|Xray-core|version|xray"
-  "pkgs/amneziawg.nix|amnezia-vpn|amneziawg-tools|version|amneziawg-tools"
-  "pkgs/amneziawg.nix|amnezia-vpn|amneziawg-go|userspaceVersion|amneziawg-go"
-  "pkgs/amneziawg.nix|amnezia-vpn|amneziawg-linux-kernel-module|=version|-"
 )
 
 FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -64,7 +61,7 @@ get_key() {
 
 # Replace `<attr> = "...";` with val. When repo is non-empty the search is scoped
 # to the fetchFromGitHub block of that repo, so sibling pins in the same file
-# (amneziawg.nix holds three) never clobber each other. Returns 1 if not found.
+# never clobber each other. Returns 1 if not found.
 set_attr() {
   local file=$1 repo=$2 attr=$3 val=$4 tmp
   tmp=$(mktemp)
@@ -110,7 +107,7 @@ refresh_vendor_hash() {
 
 
 # `--self-test`: the one thing that must not break is set_attr's block scoping -
-# amneziawg.nix holds three fetchFromGitHub blocks and a vendorHash that belongs
+# a file may hold several fetchFromGitHub blocks and a vendorHash that belongs
 # to exactly one of them.
 self_test() {
   local d f

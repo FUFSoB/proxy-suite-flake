@@ -55,6 +55,8 @@ in
         in
         {
           xray = import ../../pkgs/xray.nix { pkgs = upstream; };
+          # AWG 3.1 userspace; its kernel module has to match the system's kernel instead.
+          amneziaWg = import ../../pkgs/amneziawg.nix { pkgs = upstream; };
           inherit (upstream) sing-box;
         };
     }
