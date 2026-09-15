@@ -578,21 +578,64 @@
       ''
         add=${../../modules/proxy-suite/inbound-stats-add.jq}
         now=1789135690 # 2026-09-11
-        a() { jq -c --argjson q "$1" --arg day 2026-09-11 --argjson now "$now" -f "$add" <<<"$2"; }
+        a() { jq -c --argjson q "$1" --argjson online "''${3:-{\}}" --arg day 2026-09-11 --argjson now "$now" -f "$add" <<<"$2"; }
 
         # XRay gives values as strings and leaves a zero counter without one.
         r='{"stat":[{"name":"user>>>fufsob>>>traffic>>>downlink","value":"3000000"},
           {"name":"user>>>fufsob>>>traffic>>>uplink","value":"2000"},
-          {"name":"user>>>phone>>>traffic>>>uplink"}]}'
+          {"name":"user>>>phone>>>traffic>>>uplink"},
+          {"name":"inbound>>>vless-in>>>traffic>>>downlink","value":5},
+          {"name":"outbound>>>direct>>>traffic>>>uplink","value":6}]}'
         s="$(a "$r" '{}')"
         s="$(a "$r" "$s")"
-        jq -e '.days["2026-09-11"].fufsob == {down: 6000000, up: 4000}
-          and .days["2026-09-11"].phone.up == 0 and .at == 1789135690' <<<"$s" > /dev/null
+        jq -e '.days["2026-09-11"] | .user.fufsob == {down: 6000000, up: 4000}
+          and .user.phone.up == 0 and .inbound["vless-in"].down == 10 and .outbound.direct.up == 12' <<<"$s" > /dev/null
+        jq -e '.at == 1789135690' <<<"$s" > /dev/null
         # Nothing counted since the last reading: nothing changes.
         jq -e --argjson s "$s" '.days == $s.days' <<<"$(a '{}' "$s")" > /dev/null
+        # An online user's last seen time is kept, and never goes back.
+        o='{"users":[{"email":"phone","ips":[{"ip":"203.0.113.7","lastSeen":1789135000},{"ip":"203.0.113.8","lastSeen":1789135600}]}]}'
+        s="$(a '{}' "$s" "$o")"
+        jq -e '.seen.phone == 1789135600' <<<"$s" > /dev/null
+        s="$(a '{}' "$s" '{"users":[{"email":"phone","ips":[{"ip":"203.0.113.7","lastSeen":1}]}]}')"
+        jq -e '.seen.phone == 1789135600' <<<"$s" > /dev/null
         # Days more than a year old are let go.
-        old="$(jq -c '.days["2024-01-01"] = {fufsob: {up: 1}}' <<<"$s")"
+        old="$(jq -c '.days["2024-01-01"] = {user: {fufsob: {up: 1}}}' <<<"$s")"
         jq -e '.days["2024-01-01"] == null' <<<"$(a '{}' "$old")" > /dev/null
+
+        touch "$out"
+      '';
+
+  # Proxy chains, resolved at start once subscription entries exist.
+  outbound-detours =
+    pkgs.runCommand "proxy-suite-outbound-detours-check"
+      {
+        nativeBuildInputs = [ pkgs.jq ];
+      }
+      ''
+        f=${../../modules/proxy-suite/outbound-detours.jq}
+        d() { jq -c -f "$f" --argjson d "$1" --argjson sources "$2" --arg kind "$3" <<<"$4"; }
+
+        # sing-box: a declared outbound and every entry of a subscription.
+        r="$(d '{"outbounds":{"de":"ru"},"subscriptions":{"s":"warp"}}' '{"ru":"static","de":"static","s-a":"sub:s","warp":"warp"}' sing-box \
+          '{"outbounds":[{"tag":"ru"},{"tag":"de"},{"tag":"s-a"},{"tag":"warp"}],"xray":[]}')"
+        jq -e '.errors == [] and ([.outbounds[] | .detour] == [null, "ru", "warp", null])' <<<"$r" > /dev/null
+        # XRay: dialerProxy, next to what sockopt already had.
+        r="$(d '{"outbounds":{"de":"ru"},"subscriptions":{}}' '{"ru":"static","de":"static"}' xray \
+          '{"outbounds":[{"tag":"ru"},{"tag":"de","streamSettings":{"sockopt":{"mark":1}}}],"xray":[]}')"
+        jq -e '.outbounds[1].streamSettings.sockopt == {mark: 1, dialerProxy: "ru"}' <<<"$r" > /dev/null
+        # Hybrid: sidecar outbounds chain in the sidecar, sing-box ones through anything.
+        r="$(d '{"outbounds":{"x1":"x2","sb":"x1"},"subscriptions":{}}' '{"x1":"static","x2":"static","sb":"static"}' hybrid \
+          '{"outbounds":[{"tag":"x1"},{"tag":"x2"},{"tag":"sb"}],"xray":[{"tag":"x1"},{"tag":"x2"}]}')"
+        jq -e '.errors == [] and .xray[0].streamSettings.sockopt.dialerProxy == "x2"
+          and .outbounds[0].detour == null and .outbounds[2].detour == "x1"' <<<"$r" > /dev/null
+        r="$(d '{"outbounds":{"x1":"sb"},"subscriptions":{}}' '{"x1":"static","sb":"static"}' hybrid \
+          '{"outbounds":[{"tag":"x1"},{"tag":"sb"}],"xray":[{"tag":"x1"}]}')"
+        jq -e '.errors == ["outbound '"'x1'"' runs on XRay and can only chain through another XRay outbound, not '"'sb'"'"]' <<<"$r" > /dev/null
+        # A missing hop and a loop are errors, and nothing is rewritten.
+        r="$(d '{"outbounds":{"a":"b","b":"a","c":"gone"},"subscriptions":{}}' '{"a":"static","b":"static","c":"static"}' sing-box \
+          '{"outbounds":[{"tag":"a"},{"tag":"b"},{"tag":"c"}],"xray":[]}')"
+        jq -e '(.errors | length) == 3 and all(.outbounds[]; .detour == null)' <<<"$r" > /dev/null
 
         touch "$out"
       '';

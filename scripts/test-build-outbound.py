@@ -274,6 +274,22 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["type"], "tuic")
         self.assertEqual(ob["tls"]["alpn"], ["h3", "hq-29"])
 
+    def test_anytls(self):
+        ob = run_parser("anytls://p%40ss@example.com:443?sni=a.example.com&insecure=1&fp=chrome#name")
+        self.assertEqual(ob["type"], "anytls")
+        self.assertEqual(ob["password"], "p@ss")
+        self.assertEqual(ob["tls"], {"enabled": True, "server_name": "a.example.com", "insecure": True,
+                                     "utls": {"enabled": True, "fingerprint": "chrome"}})
+        with self.assertRaisesRegex(ValueError, "unsupported XRay outbound type"):
+            run_xray_parser("anytls://pw@example.com:443")
+
+    def test_naive(self):
+        ob = run_parser("naive+https://user:pass@example.com:443#name")
+        self.assertEqual((ob["type"], ob["username"], ob["password"]), ("naive", "user", "pass"))
+        self.assertEqual(ob["tls"]["server_name"], "example.com")
+        self.assertNotIn("quic", ob)
+        self.assertTrue(run_parser("naive+quic://user:pass@example.com:443")["quic"])
+
     def test_socks5(self):
         ob = run_parser("socks5://user:pass@example.com:1080")
         self.assertEqual(ob["type"], "socks")

@@ -181,21 +181,24 @@ let
     exec ${runXray} ${xray} run -c "$RUNTIME_DIR/config.json"
   '';
 
-  # Adds XRay's per-user counters to the daily totals, read and reset in one call.
+  # Adds XRay's counters to the daily totals, read and reset in one call, and notes who
+  # is online.
   # ponytail: a restart of the inbounds loses what was counted since the last run, at
   # most one timer interval; collect from ExecStop if that matters.
   collectInboundStats = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     file=${lib.escapeShellArg constants.inboundStatsFile}
-    if ! reading=$(${xray} api statsquery --server=127.0.0.1:${toString constants.inboundStatsApiPort} \
-      -pattern 'user>>>' -reset 2> /dev/null); then
+    api=--server=127.0.0.1:${toString constants.inboundStatsApiPort}
+    if ! reading=$(${xray} api statsquery "$api" -pattern "" -reset 2> /dev/null); then
       echo "the inbounds' stats API is not answering; nothing collected"
       exit 0
     fi
     [ -n "$reading" ] || reading='{}'
+    online=$(${xray} api statsonlineiplist "$api" -all 2> /dev/null) || online=""
+    [ -n "$online" ] || online='{}'
     [ -s "$file" ] || echo '{}' > "$file"
     tmp=$(${pkgs.coreutils}/bin/mktemp "$file.XXXXXX")
-    ${jq} --argjson q "$reading" \
+    ${jq} --argjson q "$reading" --argjson online "$online" \
       --arg day "$(${pkgs.coreutils}/bin/date +%F)" \
       --argjson now "$(${pkgs.coreutils}/bin/date +%s)" \
       -f ${

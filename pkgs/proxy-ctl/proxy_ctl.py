@@ -100,7 +100,9 @@ A group without a verb shows its status or list.
                                          client share link, or the client's outbound JSON
   inbounds link <tag> --server-json      the server's inbound JSON (sudo)
   inbounds sub [user] [--qr]             subscription users, or one user's URL
-  inbounds stats [days]                  traffic per user (sudo, or userControl)
+  inbounds stats [days] [--by user|inbound|outbound]
+                                         traffic per user, listener or exit (sudo, or userControl)
+  inbounds online                        who is connected now, and when the rest were last seen
 """
 
 ROUTE_MODES = ["whitelist", "blacklist", "all-proxy", "all-bypass"]
@@ -430,9 +432,11 @@ COMPLETE = {
             "list": "server inbounds",
             "link": "client share link",
             "sub": "subscription users, or one user's URL",
-            "stats": "traffic per user",
+            "stats": "traffic per user, listener or exit",
+            "online": "who is connected now",
         }
     },
+    "inbounds stats": {"flags": {"--by": "user, inbound or outbound"}},
     "inbounds link": {
         "args": _inbound_link_choices,
         "flags": {"--qr": "print a QR code", "--json": "the client's outbound JSON", "--server-json": "the server's inbound JSON"},
@@ -2408,11 +2412,21 @@ def _today():
     return datetime.date.today()
 
 
-def _inbound_stats(days):
-    """Per-user traffic over the last `days` days, newest first, then totals."""
+STATS_KINDS = ("user", "inbound", "outbound")
+
+
+def _inbound_stats(*args):
+    """Traffic over the last `days` days by user, inbound or outbound, newest first, then totals."""
+    days, kind, rest = "7", "user", list(args)
+    if "--by" in rest:
+        i = rest.index("--by")
+        kind = rest[i + 1] if i + 1 < len(rest) else ""
+        del rest[i : i + 2]
+    if rest:
+        days = rest.pop(0)
+    if rest or kind not in STATS_KINDS or not re.fullmatch(r"[1-9][0-9]*", days):
+        usage("inbounds stats [days] [--by user|inbound|outbound]")
     path = env("INBOUNDS_STATS_FILE", "/var/lib/proxy-suite/inbound-stats.json")
-    if not re.fullmatch(r"[1-9][0-9]*", days):
-        usage("inbounds stats [days]")
     # Collect what XRay counted since the last run first; root and userControl
     # members may, anyone else reads what the timer last wrote.
     systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
@@ -2420,32 +2434,70 @@ def _inbound_stats(days):
         die("No traffic recorded yet - the collector runs every 5 minutes.")
     if not readable(path):
         die(f"Cannot read {path} - enable userControl, or run with sudo.")
+    stats = read_json(path)
     since = (_today() - datetime.timedelta(days=int(days) - 1)).isoformat()
-    print(f"Traffic through the inbounds since {since}, by user:")
+    print(f"Traffic through the inbounds since {since}, by {kind}:")
 
     records = [
-        (day, user, (c or {}).get("down") or 0, (c or {}).get("up") or 0)
-        for day, users in (read_json(path).get("days") or {}).items()
+        (day, name, (c or {}).get("down") or 0, (c or {}).get("up") or 0)
+        for day, kinds in (stats.get("days") or {}).items()
         if day >= since
-        for user, c in users.items()
+        for name, c in ((kinds or {}).get(kind) or {}).items()
     ]
     if not records:
         print("  (nothing recorded)")
         return
     row = "  {:<12} {:<20} {:>10} {:>10}"
-    print(row.format("DAY", "USER", "DOWN", "UP"))
-    # Newest day first, users in order within a day.
-    for day, user, down, up in sorted(sorted(records, key=lambda r: r[1]), key=lambda r: r[0], reverse=True):
-        print(row.format(day, user, _human_bytes(down), _human_bytes(up)))
+    print(row.format("DAY", kind.upper(), "DOWN", "UP"))
+    # Newest day first, names in order within a day.
+    for day, name, down, up in sorted(sorted(records, key=lambda r: r[1]), key=lambda r: r[0], reverse=True):
+        print(row.format(day, name, _human_bytes(down), _human_bytes(up)))
     totals = {}
-    for _, user, down, up in records:
-        d, u = totals.get(user, (0, 0))
-        totals[user] = (d + down, u + up)
+    for _, name, down, up in records:
+        d, u = totals.get(name, (0, 0))
+        totals[name] = (d + down, u + up)
     total = "  {:<33} {:>10} {:>10}"
     print()
     print(total.format("TOTAL", "DOWN", "UP"))
-    for user, (down, up) in sorted(totals.items()):
-        print(total.format(user, _human_bytes(down), _human_bytes(up)))
+    for name, (down, up) in sorted(totals.items()):
+        print(total.format(name, _human_bytes(down), _human_bytes(up)))
+
+
+def _inbound_online():
+    """Users connected right now with their addresses, then when the others were last seen."""
+    status, out = _run(
+        [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={env('INBOUNDS_API', '127.0.0.1:18536')}", "-all"],
+        capture=True,
+        quiet=True,
+    )
+    if status != 0:
+        die("The inbounds' stats API is not answering - is proxy-suite-inbounds running?")
+    try:
+        online = {_s(u.get("email")): u.get("ips") or [] for u in json.loads(out or "{}").get("users") or []}
+    except (ValueError, AttributeError):
+        die("Unexpected answer from the inbounds' stats API.")
+    # As the timer last wrote it: the API already told who is online now.
+    path = env("INBOUNDS_STATS_FILE", "/var/lib/proxy-suite/inbound-stats.json")
+    seen = (read_json(path).get("seen") or {}) if readable(path) else {}
+    # Users nobody has seen yet, when the links say who exists.
+    path = env("INBOUNDS_LINKS_FILE")
+    known = {_s(x.get("user")) for x in read_json(path) if x.get("user")} if readable(path) else set()
+
+    def when(ts):
+        return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+    row = "  {:<20} {:<24} {}"
+    print(row.format("USER", "STATE", "ADDRESSES"))
+    for user in sorted(set(online) | set(seen) | known):
+        ips = online.get(user)
+        if ips:
+            print(row.format(user, "online", ", ".join(_s(i.get("ip")) for i in ips)))
+        elif user in seen:
+            print(row.format(user, f"seen {when(seen[user])}", ""))
+        else:
+            print(row.format(user, "never seen", ""))
+    sys.stdout.flush()
+    print("A user counts as online while a connection is open; one relayed through a local web server shows as never seen.", file=sys.stderr)
 
 
 def _inbound_subscriptions(*args):
@@ -2505,11 +2557,13 @@ def cmd_inbounds(verb="list", *args):
         else:
             _emit(_inbound_link_for(*rest), verb == "qr" or "--qr" in args)
     elif verb == "stats":
-        _inbound_stats(args[0] if args else "7")
+        _inbound_stats(*args)
+    elif verb == "online":
+        _inbound_online()
     elif verb == "sub":
         _inbound_subscriptions(*args)
     else:
-        usage("inbounds [list] | link <tag> [user] [--qr] | sub [user] [--qr] | stats [days]")
+        usage("inbounds [list] | link <tag> [user] [--qr] | sub [user] [--qr] | stats [days] [--by user|inbound|outbound] | online")
 
 
 # --- main ---------------------------------------------------------------------

@@ -18,6 +18,10 @@ Part of the [proxy-suite options reference](./index.md).
   - [autostart](#services-proxy-suite-proxy-autostart)
   - [backend](#services-proxy-suite-proxy-backend)
   - dns
+    - [clientSubnet](#services-proxy-suite-proxy-dns-clientsubnet)
+    - fakeIp
+      - [enable](#services-proxy-suite-proxy-dns-fakeip-enable)
+      - [inet4Range](#services-proxy-suite-proxy-dns-fakeip-inet4range)
     - [local](#services-proxy-suite-proxy-dns-local)
       - [address](#services-proxy-suite-proxy-dns-local-address)
       - [port](#services-proxy-suite-proxy-dns-local-port)
@@ -26,6 +30,10 @@ Part of the [proxy-suite options reference](./index.md).
       - [address](#services-proxy-suite-proxy-dns-remote-address)
       - [port](#services-proxy-suite-proxy-dns-remote-port)
       - [type](#services-proxy-suite-proxy-dns-remote-type)
+    - singBox
+      - [rules](#services-proxy-suite-proxy-dns-singbox-rules)
+      - [servers](#services-proxy-suite-proxy-dns-singbox-servers)
+    - [strategy](#services-proxy-suite-proxy-dns-strategy)
   - listener
     - [address](#services-proxy-suite-proxy-listener-address)
     - auth
@@ -36,6 +44,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [outbounds](#services-proxy-suite-proxy-outbounds)
     - item
       - [backend](#services-proxy-suite-proxy-outbounds-backend)
+      - [detour](#services-proxy-suite-proxy-outbounds-detour)
       - routing
         - [domains](#services-proxy-suite-proxy-outbounds-routing-domains)
         - [geoips](#services-proxy-suite-proxy-outbounds-routing-geoips)
@@ -78,6 +87,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [subscriptionUpdateInterval](#services-proxy-suite-proxy-subscriptionupdateinterval)
   - [subscriptions](#services-proxy-suite-proxy-subscriptions)
     - item
+      - [detour](#services-proxy-suite-proxy-subscriptions-detour)
       - [tag](#services-proxy-suite-proxy-subscriptions-tag)
       - [url](#services-proxy-suite-proxy-subscriptions-url)
       - [urlFile](#services-proxy-suite-proxy-subscriptions-urlfile)
@@ -308,6 +318,60 @@ one of “sing-box”, “xray”, “hybrid”
 "hybrid"
 ```
 
+<a id="services-proxy-suite-proxy-dns-clientsubnet"></a>
+## services\.proxy-suite\.proxy\.dns\.clientSubnet
+
+EDNS client subnet sent with every query, so a resolver reached through the proxy still
+answers with CDN nodes near this network\. sing-box and hybrid backends\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"203.0.113.0/24"
+```
+
+<a id="services-proxy-suite-proxy-dns-fakeip-enable"></a>
+## services\.proxy-suite\.proxy\.dns\.fakeIp\.enable
+
+In TUN mode (global and per-app), answer A queries from the TUN with a fake address and
+AAAA ones with nothing; sing-box maps the address back to the name when the connection
+comes\. Saves a lookup per new site and no real lookup leaves for proxied names\. Names that
+proxy\.dns\.singBox\.rules or the direct geosites send elsewhere keep real answers\. Mappings
+do not survive a restart: an app holding a fake address fails until it looks the name up
+again\. sing-box and hybrid backends; XRay’s TUN already uses its own fake DNS\.
+
+*Type:*
+boolean
+
+*Default:*
+
+```nix
+false
+```
+
+<a id="services-proxy-suite-proxy-dns-fakeip-inet4range"></a>
+## services\.proxy-suite\.proxy\.dns\.fakeIp\.inet4Range
+
+Range the fake addresses come from\.
+
+*Type:*
+string
+
+*Default:*
+
+```nix
+"198.18.0.0/15"
+```
+
 <a id="services-proxy-suite-proxy-dns-local"></a>
 ## services\.proxy-suite\.proxy\.dns\.local
 
@@ -445,6 +509,81 @@ one of “udp”, “tcp”, “tls”
 
 ```nix
 "udp"
+```
+
+<a id="services-proxy-suite-proxy-dns-singbox-rules"></a>
+## services\.proxy-suite\.proxy\.dns\.singBox\.rules
+
+sing-box DNS rules, as sing-box JSON, checked before the generated ones\. Kept when the
+route mode is all-proxy or all-bypass, which drop the generated ones\.
+
+*Type:*
+list of (attribute set)
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  {
+    domain_suffix = [
+      "corp.example"
+    ];
+    server = "corp";
+  }
+]
+```
+
+<a id="services-proxy-suite-proxy-dns-singbox-servers"></a>
+## services\.proxy-suite\.proxy\.dns\.singBox\.servers
+
+Extra sing-box DNS servers, as sing-box JSON, for proxy\.dns\.singBox\.rules to name\. The
+built-in ones are ` local `, ` remote `, and ` fakeip ` when fakeIp is on\.
+
+*Type:*
+list of (attribute set)
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  {
+    server = "10.0.0.53";
+    tag = "corp";
+    type = "udp";
+  }
+]
+```
+
+<a id="services-proxy-suite-proxy-dns-strategy"></a>
+## services\.proxy-suite\.proxy\.dns\.strategy
+
+Which addresses sing-box asks for\. ` ipv4_only ` for an uplink without IPv6\. sing-box and hybrid backends\.
+
+*Type:*
+null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"ipv4_only"
 ```
 
 <a id="services-proxy-suite-proxy-listener-address"></a>
@@ -585,6 +724,29 @@ one of “auto”, “sing-box”, “xray”
 
 ```nix
 "xray"
+```
+
+<a id="services-proxy-suite-proxy-outbounds-detour"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.detour
+
+Tag of the outbound this one connects through: a proxy chain\. Any outbound can be the hop,
+subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG ones included\. On hybrid, an
+outbound that runs on XRay can only chain through another XRay one\. ShadowTLS works this
+way too: a ` shadowtls ` outbound in singBoxJson, and the shadowsocks one with detour naming it\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"ru-vps"
 ```
 
 <a id="services-proxy-suite-proxy-outbounds-routing-domains"></a>
@@ -1315,6 +1477,29 @@ list of (submodule)
     urlFile = "/run/secrets/private-sub-url";
   }
 ]
+```
+
+<a id="services-proxy-suite-proxy-subscriptions-detour"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.detour
+
+Tag of the outbound every entry of this subscription connects through: a proxy chain\. Any outbound can be the hop,
+subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG ones included\. On hybrid, an
+outbound that runs on XRay can only chain through another XRay one\. ShadowTLS works this
+way too: a ` shadowtls ` outbound in singBoxJson, and the shadowsocks one with detour naming it\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"ru-vps"
 ```
 
 <a id="services-proxy-suite-proxy-subscriptions-tag"></a>

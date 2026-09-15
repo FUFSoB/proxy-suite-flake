@@ -120,6 +120,20 @@ class SingBoxTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             export.portable(sing_box_config(), only="nope")
 
+    def test_chains(self):
+        base = sing_box_config()
+        base["outbounds"][1]["detour"] = "vps"
+        base["outbounds"].insert(4, {"type": "trojan", "tag": "via-warp", "server": "nl.example.com", "server_port": 443, "password": "x", "detour": "warp"})
+        base["outbounds"][5]["outbounds"].append("via-warp")
+        # One server takes its hop along, but not into the group.
+        cfg, _ = export.portable(base, only="sub-de")
+        self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["vps", "sub-de", "proxy", "direct", "block"])
+        self.assertEqual(cfg["outbounds"][2]["outbounds"], ["sub-de"])
+        # Chained through a hop that stays behind: stays behind too.
+        cfg, warnings = export.portable(base)
+        self.assertNotIn("via-warp", [o["tag"] for o in cfg["outbounds"]])
+        self.assertIn("left out via-warp: it chains through warp", warnings)
+
     def test_collapsed_proxy(self):
         base = sing_box_config()
         base["outbounds"] = [{**base["outbounds"][0], "tag": "proxy"}, base["outbounds"][1], *base["outbounds"][6:]]
@@ -163,6 +177,13 @@ class XrayTest(unittest.TestCase):
     def test_one_server(self):
         cfg, _ = export.portable(xray_config(), only="de")
         self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["proxy-suite-ob-de", "direct", "block"])
+
+    def test_chains(self):
+        base = xray_config()
+        base["outbounds"][1]["streamSettings"] = {"sockopt": {"dialerProxy": "proxy-suite-ob-vps"}}
+        cfg, _ = export.portable(base, only="de")
+        self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["proxy-suite-ob-vps", "proxy-suite-ob-de", "direct", "block"])
+        self.assertEqual(cfg["routing"]["balancers"][0]["selector"], ["proxy-suite-ob-de"])
 
 
 if __name__ == "__main__":

@@ -451,6 +451,42 @@ let
     done < <(_proxy_suite_runtime_outbounds)
   '';
 
+  # Declared detours, resolved once every outbound - subscription entries included - exists.
+  detourMap =
+    entries: lib.listToAttrs (map (e: lib.nameValuePair e.tag e.detour) (lib.filter (e: e.detour != null) entries));
+  detours = {
+    outbounds = detourMap proxyCfg.outbounds;
+    subscriptions = detourMap proxyCfg.subscriptions;
+  };
+  detourKind =
+    if hybridEnabled then
+      "hybrid"
+    else if pureXrayEnabled then
+      "xray"
+    else
+      "sing-box";
+  detourBlock = lib.optionalString (detours.outbounds != { } || detours.subscriptions != { }) ''
+    # outbound chaining
+    DETOUR_RESULT=$(${jq} -c --argjson xob "${
+      if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"
+    }" '{outbounds: ., xray: $xob}' <<< "$OUTBOUNDS_JSON" \
+      | ${jq} -c -f ${
+        builtins.path {
+          name = "proxy-suite-outbound-detours";
+          path = ../../outbound-detours.jq;
+        }
+      } \
+        --argjson d ${lib.escapeShellArg (builtins.toJSON detours)} \
+        --argjson sources "$OUTBOUND_SOURCES_JSON" \
+        --arg kind ${detourKind})
+    if ${jq} -e '.errors != []' <<< "$DETOUR_RESULT" >/dev/null; then
+      ${jq} -r '.errors[] | "proxy-suite: " + .' <<< "$DETOUR_RESULT" >&2
+      exit 1
+    fi
+    OUTBOUNDS_JSON=$(${jq} -c '.outbounds' <<< "$DETOUR_RESULT")
+    ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c '.xray' <<< "$DETOUR_RESULT")''}
+  '';
+
   requireOutboundsBlock = ''
     if [ "$(${jq} 'length' <<< "$OUTBOUNDS_JSON")" -eq 0 ]; then
       echo "proxy-suite: no proxy outbounds are available; declare one, or add one with 'proxy-ctl proxy outbounds add'" >&2
@@ -506,7 +542,8 @@ let
       wrapperBlock =
         if pureXrayEnabled && selectionMode == "urltest" then
           ''
-            OUTBOUNDS_JSON=$(${jq} 'map(.tag = ("proxy-suite-ob-" + .tag))' <<< "$OUTBOUNDS_JSON")
+            OUTBOUNDS_JSON=$(${jq} 'map(.tag = ("proxy-suite-ob-" + .tag)
+              | if .streamSettings.sockopt.dialerProxy? then .streamSettings.sockopt.dialerProxy |= "proxy-suite-ob-" + . else . end)' <<< "$OUTBOUNDS_JSON")
             # XRay has no selector: a pin degrades the balancer to the one outbound,
             # which is the same path a single-outbound config already takes.
             if [ -n "$PINNED_OUTBOUND" ]; then
@@ -522,7 +559,9 @@ let
               PROXY_TAG=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
             fi
             OUTBOUNDS_JSON=$(${jq} --arg t "$PROXY_TAG" \
-              'map(if .tag == $t then .tag = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
+              'map(if .tag == $t then .tag = "proxy" else . end
+                | if .detour == $t then .detour = "proxy" else . end
+                | if .streamSettings.sockopt.dialerProxy? == $t then .streamSettings.sockopt.dialerProxy = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
           ''
         else if selectionMode == "selector" then
           ''
@@ -572,6 +611,7 @@ let
     + sshProxyBlock
     + warpBlock
     + awgBlocks
+    + detourBlock
     + requireOutboundsBlock
     + pinBlock
     + inventoryBlock

@@ -120,6 +120,16 @@ let
       (!(pureXrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls")))
       "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.backend = \"xray\"; use udp/tcp DNS for XRay"
     )
+    (mkAssertion (
+      !pureXrayEnabled
+      || (
+        proxyCfg.dns.strategy == null
+        && proxyCfg.dns.clientSubnet == null
+        && !proxyCfg.dns.fakeIp.enable
+        && proxyCfg.dns.singBox.servers == [ ]
+        && proxyCfg.dns.singBox.rules == [ ]
+      )
+    ) "proxy-suite: proxy.dns.strategy, clientSubnet, fakeIp and singBox require proxy.backend = \"sing-box\" or \"hybrid\"")
     (requireEnabled globalTun.enable proxyEnabled
       "proxy-suite: proxy.tun.enable requires proxy.enable = true"
     )
@@ -230,7 +240,21 @@ let
     (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
       "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
     )
-  ]) proxyCfg.outbounds;
+    (mkAssertion (
+      ob.detour != ob.tag
+    ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
+  ])
+  proxyCfg.outbounds
+  ++ map (
+    e:
+    mkAssertion (
+      !builtins.elem e.detour [
+        "proxy"
+        "direct"
+        "block"
+      ]
+    ) "proxy-suite: '${e.tag}': detour must name a real outbound, not proxy, direct or block"
+  ) (builtins.filter (e: e.detour != null) (proxyCfg.outbounds ++ proxyCfg.subscriptions));
 
   proxyInboundsCfg = derived.proxyInboundsCfg;
   proxyInboundsEnabled = derived.proxyInboundsEnabled;
@@ -250,6 +274,9 @@ let
     (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
       "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
     )
+    (mkAssertion (
+      !proxyInboundsEnabled || builtins.all (ob: ob.detour == null) derived.proxyInboundViaOutbounds
+    ) "proxy-suite: inbounds via targets a chained outbound (one with detour), which the inbound service cannot render; use via = \"proxy\"")
     (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
       "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
     )

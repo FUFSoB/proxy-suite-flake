@@ -44,6 +44,37 @@ def portable_outbound(ob):
     return ob
 
 
+def _hop(ob):
+    """The outbound this one chains through: detour on sing-box, dialerProxy on XRay."""
+    return ob.get("detour") or ((ob.get("streamSettings") or {}).get("sockopt") or {}).get("dialerProxy")
+
+
+def _dropped(exits, keep):
+    """Exits that stay behind, and why: all but `keep` and the hops it chains through,
+    loopback hops, and whatever chains through something left behind."""
+    hops = {o["tag"]: _hop(o) for o in exits}
+    chain, tag = set(), keep
+    while tag and tag not in chain:
+        chain.add(tag)
+        tag = hops.get(tag)
+    dropped, warnings = set(), []
+    for o in exits:
+        if keep and o["tag"] not in chain:
+            dropped.add(o["tag"])
+        elif _loopback(o):
+            dropped.add(o["tag"])
+            warnings.append(f"left out {o['tag']}: this host reaches it through a local hop")
+    grew = True
+    while grew:
+        grew = False
+        for tag, hop in hops.items():
+            if tag not in dropped and hop in dropped:
+                dropped.add(tag)
+                warnings.append(f"left out {tag}: it chains through {hop}")
+                grew = True
+    return dropped, warnings
+
+
 def _backend_tag(tags, only, prefix=""):
     """The tag `only` has in the backend: as given, prefixed by the XRay wrapper, or the
     outbound collapsed into "proxy"."""
@@ -55,24 +86,18 @@ def _backend_tag(tags, only, prefix=""):
 
 def portable_sing_box(cfg, only=None):
     cfg = copy.deepcopy(cfg)
-    warnings = []
     obs = cfg.get("outbounds") or []
     exits = [o for o in obs if o.get("type") not in SING_BOX_SYSTEM]
     keep = _backend_tag({o["tag"] for o in exits}, only) if only else None
 
-    dropped = set()
-    for o in exits:
-        if keep and o["tag"] != keep:
-            dropped.add(o["tag"])
-        elif _loopback(o):
-            dropped.add(o["tag"])
-            warnings.append(f"left out {o['tag']}: this host reaches it through a local hop")
+    dropped, warnings = _dropped(exits, keep)
     dropped |= {o["tag"] for o in obs if o["tag"].startswith("proxy-suite-test")}
 
     obs = [portable_outbound(o) for o in obs if o["tag"] not in dropped]
     for o in obs:
         if o.get("type") in GROUPS:
-            o["outbounds"] = [t for t in o.get("outbounds") or [] if t not in dropped]
+            # Not the hops `keep` chains through: they stay only to be chained through.
+            o["outbounds"] = [t for t in o.get("outbounds") or [] if t not in dropped and (not keep or t == keep)]
             if o.get("default") in dropped:
                 o.pop("default")
     tags = {o["tag"] for o in obs}
@@ -132,18 +157,11 @@ def portable_sing_box(cfg, only=None):
 
 def portable_xray(cfg, only=None):
     cfg = copy.deepcopy(cfg)
-    warnings = []
     obs = cfg.get("outbounds") or []
     exits = [o for o in obs if o.get("protocol") not in XRAY_SYSTEM]
     keep = _backend_tag({o["tag"] for o in exits}, only, "proxy-suite-ob-") if only else None
 
-    dropped = set()
-    for o in exits:
-        if keep and o["tag"] != keep:
-            dropped.add(o["tag"])
-        elif _loopback(o):
-            dropped.add(o["tag"])
-            warnings.append(f"left out {o['tag']}: this host reaches it through a local hop")
+    dropped, warnings = _dropped(exits, keep)
     obs = [portable_outbound(o) for o in obs if o["tag"] not in dropped]
     remaining = [o["tag"] for o in obs if o.get("protocol") not in XRAY_SYSTEM]
     if not remaining:
@@ -172,6 +190,10 @@ def portable_xray(cfg, only=None):
                 rule["outboundTag"] = keep or remaining[0]
         rules.append(rule)
     routing["rules"] = rules
+    if keep:
+        # The selector is a tag prefix, which would also pick the hops `keep` chains through.
+        for balancer in routing.get("balancers") or []:
+            balancer["selector"] = [keep]
     for key in ("api", "stats", "policy"):
         cfg.pop(key, None)
     return cfg, warnings

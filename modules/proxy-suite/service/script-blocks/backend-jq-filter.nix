@@ -3,6 +3,7 @@
   pureXrayEnabled,
   selectionMode,
   proxyInboundsGuardPrivate,
+  userDnsRules,
 }:
 
 if pureXrayEnabled then
@@ -97,7 +98,10 @@ else
           .route.rules = (sing_box_preserved_rules + $route_rules)
           | .route.final = $route_final
           | .dns.final = $dns_final
-          | if $clear_dns_rules then .dns.rules = [] else . end
+          | if $clear_dns_rules then
+              .dns.rules = .dns.rules[:${toString (builtins.length userDnsRules)}]
+                + [.dns.rules[${toString (builtins.length userDnsRules)}:][] | select(.server? == "fakeip")]
+            else . end
         else . end
       # autoProxy rules, after the route-mode replace so no mode drops them: pins first
       # (they only match their own listener), learned rules last before final, so

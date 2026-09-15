@@ -351,13 +351,19 @@ class InboundsTest(EnvTest):
             "stats.json",
             {
                 "days": {
-                    "2026-09-11": {"fufsob": {"down": 6000000, "up": 4000}, "phone": {"up": 0}},
-                    "2026-09-10": {"fufsob": {"down": 1073741824, "up": 1048576}},
-                    "2026-09-01": {"fufsob": {"down": 1, "up": 1}},
+                    "2026-09-11": {
+                        "user": {"fufsob": {"down": 6000000, "up": 4000}, "phone": {"up": 0}},
+                        "outbound": {"direct": {"down": 7, "up": 8}},
+                    },
+                    "2026-09-10": {"user": {"fufsob": {"down": 1073741824, "up": 1048576}}},
+                    "2026-09-01": {"user": {"fufsob": {"down": 1, "up": 1}}},
                 }
             },
         )
         out = ok(ctl._inbound_stats, "2")
+        self.assertNotIn("direct", out)
+        self.assertRegex(ok(ctl._inbound_stats, "--by", "outbound"), r"(?m)^  2026-09-11 +direct +7 B +8 B$")
+        self.assertNotEqual(run(ctl._inbound_stats, "--by", "listener")[0], 0)
         # Newest day first, sizes readable, then totals over the period.
         self.assertLess(out.index("  2026-09-11"), out.index("  2026-09-10"))
         self.assertNotIn("2026-09-01", out)
@@ -371,6 +377,19 @@ class InboundsTest(EnvTest):
         status, _, err = run(ctl._inbound_stats, "7")
         self.assertNotEqual(status, 0)
         self.assertIn("No traffic recorded yet", err)
+
+    def test_online(self):
+        answer = {"users": [{"email": "fufsob", "ips": [{"ip": "203.0.113.7", "lastSeen": 1789471207}]}]}
+        self.patch("_run", lambda *a, **kw: (0, json.dumps(answer)))
+        os.environ["INBOUNDS_STATS_FILE"] = self.write("stats.json", {"seen": {"phone": 1789135690}})
+        os.environ["INBOUNDS_LINKS_FILE"] = self.write("links.json", [{"tag": "a", "user": "fufsob"}, {"tag": "a", "user": "teri"}])
+        out = ok(ctl._inbound_online)
+        self.assertRegex(out, r"(?m)^  fufsob +online +203\.0\.113\.7$")
+        self.assertRegex(out, r"(?m)^  phone +seen 2026-09-1\d \d\d:\d\d")
+        self.assertRegex(out, r"(?m)^  teri +never seen")
+        # XRay not running is an error, not an empty table.
+        self.patch("_run", lambda *a, **kw: (1, ""))
+        self.assertNotEqual(run(ctl._inbound_online)[0], 0)
 
     def test_subscriptions(self):
         os.environ["INBOUNDS_SUBS_FILE"] = self.write("subs.json", [{"user": "fufsob", "token": "aaa"}, {"user": "teri", "token": "bbb"}])

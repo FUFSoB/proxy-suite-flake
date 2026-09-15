@@ -252,7 +252,7 @@ let
             elif .settings.vnext then {server: .settings.vnext[0].address, port: .settings.vnext[0].port}
             elif .settings.servers then {server: .settings.servers[0].address, port: .settings.servers[0].port}
             else null end;
-          def udp: (.type // .protocol) as $t | ["hysteria", "hysteria2", "tuic"] | index($t) != null;
+          def udp: (.type // .protocol) as $t | (["hysteria", "hysteria2", "tuic"] | index($t) != null) or .quic? == true;
           ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | [.[] | select(.type != "selector" and .type != "urltest")
              | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag

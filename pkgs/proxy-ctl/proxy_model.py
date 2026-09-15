@@ -432,6 +432,7 @@ TABS = [
             Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=ROW, mode="dialog"),
             Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
+            Action("o", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
         ],
     ),
     Tab(

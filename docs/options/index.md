@@ -118,6 +118,11 @@ services.proxy-suite = {
     autostart = null;
     backend = "sing-box";
     dns = {
+      clientSubnet = null;
+      fakeIp = {
+        enable = false;
+        inet4Range = "198.18.0.0/15";
+      };
       local = {
         address = "1.1.1.1";
         port = 53;
@@ -128,6 +133,11 @@ services.proxy-suite = {
         port = 53;
         type = "udp";
       };
+      singBox = {
+        rules = [ ];
+        servers = [ ];
+      };
+      strategy = null;
     };
     enable = false;
     listener = {

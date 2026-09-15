@@ -50,16 +50,26 @@ in
 
   inbounds = [ ];
 
-  # Per-user counters for proxy-suite-inbound-stats, on loopback only.
+  # Counters per user, inbound and outbound for proxy-suite-inbound-stats, and who is
+  # connected right now, on loopback only.
   stats = { };
   api = {
     tag = "api";
     listen = "127.0.0.1:${toString derived.constants.inboundStatsApiPort}";
     services = [ "StatsService" ];
   };
-  policy.levels."0" = {
-    statsUserUplink = true;
-    statsUserDownlink = true;
+  policy = {
+    levels."0" = {
+      statsUserUplink = true;
+      statsUserDownlink = true;
+      statsUserOnline = true;
+    };
+    system = {
+      statsInboundUplink = true;
+      statsInboundDownlink = true;
+      statsOutboundUplink = true;
+      statsOutboundDownlink = true;
+    };
   };
 
   outbounds = localProxyOutbound ++ [

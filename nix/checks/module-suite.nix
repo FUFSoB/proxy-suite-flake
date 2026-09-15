@@ -157,6 +157,17 @@ let
   outboundValidationChecks = import ./outbound-validation.nix {
     inherit mkBadProxySuiteFixture mkFailingAssertions;
   };
+  chainingDnsChecks = import ./chaining-dns.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      baseModule
+      mkTunConfig
+      mkTProxyConfig
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      ;
+  };
 
   amneziaWgChecks = import ./amnezia-wg.nix {
     inherit
@@ -264,6 +275,7 @@ let
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions
+    ++ chainingDnsChecks.assertions
     ++ amneziaWgChecks.assertions
     ++ amneziaWgOutboundChecks.assertions
     ++ zapretChecks.assertions

@@ -10,7 +10,8 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - Global TProxy or TUN mode, on demand or at boot
 - Per-app routing: `proxy-ctl apps run <profile> -- <cmd>` through proxychains, a per-app TUN/TProxy, or zapret
 - Outbounds from URLs, raw JSON or subscriptions; manual or latency-based selection; per-outbound routing
-- vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC on sing-box, XHTTP/ECH on XRay
+- vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC, AnyTLS and NaïveProxy on sing-box, XHTTP/ECH on XRay
+- Proxy chains: any outbound or a whole subscription can connect through another (`detour`)
 - autoProxy: finds which exit reaches a blocked site and routes it there
 - zapret DPI bypass, including zapret2, which learns blocked sites at runtime
 - AmneziaWG 1.x–3.x tunnels from `.conf`, `vpn://`, or Nix
@@ -164,6 +165,8 @@ A group without a verb shows its status or list.
                                          client share link, or the client's outbound JSON
   inbounds link <tag> --server-json      the server's inbound JSON (sudo)
   inbounds sub [user] [--qr]             subscription users, or one user's URL
-  inbounds stats [days]                  traffic per user (sudo, or userControl)
+  inbounds stats [days] [--by user|inbound|outbound]
+                                         traffic per user, listener or exit (sudo, or userControl)
+  inbounds online                        who is connected now, and when the rest were last seen
 ```
 <!-- proxy-ctl-help:end -->

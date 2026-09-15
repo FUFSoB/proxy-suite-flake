@@ -419,6 +419,44 @@ def parse_tuic(url: str, tag: str) -> dict:
     }
 
 
+def parse_anytls(url: str, tag: str) -> dict:
+    # anytls://password@host:port?sni=example.com&insecure=1&fp=chrome&alpn=h2
+    userinfo, host, port, params = _parse_url_parts(url, "anytls")
+    if not userinfo:
+        raise ValueError("anytls link is missing the password")
+    tls = _mk_tls(params.get("sni") or params.get("peer") or host, params.get("fp"), params.get("alpn"))
+    if params.get("insecure", params.get("allowInsecure", "0")) == "1":
+        tls["insecure"] = True
+    return {
+        "type": "anytls",
+        "tag": tag,
+        "server": host,
+        "server_port": int(port),
+        "password": urllib.parse.unquote(userinfo),
+        "tls": tls,
+    }
+
+
+def parse_naive(url: str, tag: str) -> dict:
+    # naive+https://user:pass@host:port, or naive+quic:// for HTTP/3 (NekoBox's form).
+    scheme = url.split("://", 1)[0].lower()
+    userinfo, host, port, params = _parse_url_parts(url, scheme)
+    ob: dict = {
+        "type": "naive",
+        "tag": tag,
+        "server": host,
+        "server_port": int(port),
+        "tls": {"enabled": True, "server_name": params.get("sni") or host},
+    }
+    username, password = _mk_auth(userinfo)
+    if username is not None:
+        ob["username"] = username
+        ob["password"] = password
+    if scheme == "naive+quic":
+        ob["quic"] = True
+    return ob
+
+
 def parse_socks(url: str, tag: str) -> dict:
     scheme = url.split("://")[0].lower()
     version = "4" if scheme.startswith("socks4") else "5"
@@ -461,6 +499,9 @@ PARSERS = {
     "hysteria2": parse_hysteria2,
     "hy2": parse_hysteria2,
     "tuic": parse_tuic,
+    "anytls": parse_anytls,
+    "naive+https": parse_naive,
+    "naive+quic": parse_naive,
     "socks5": parse_socks,
     "socks5h": parse_socks,
     "socks4": parse_socks,

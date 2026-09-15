@@ -150,6 +150,7 @@ let
       selectionMode
       proxyInboundsGuardPrivate
       ;
+    userDnsRules = proxyCfg.dns.singBox.rules;
   };
   backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 

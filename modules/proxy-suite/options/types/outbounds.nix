@@ -17,6 +17,20 @@ let
       inherit description example;
     };
 
+  detourOption =
+    what:
+    mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        Tag of the outbound ${what} connects through: a proxy chain. Any outbound can be the hop,
+        subscription entries, `warp`, `ssh-proxy` and AmneziaWG ones included. On hybrid, an
+        outbound that runs on XRay can only chain through another XRay one. ShadowTLS works this
+        way too: a `shadowtls` outbound in singBoxJson, and the shadowsocks one with detour naming it.
+      '';
+      example = "ru-vps";
+    };
+
   subscriptionType = types.submodule {
     options = {
       tag = mkOption {
@@ -26,6 +40,7 @@ let
       };
       url = nullStr "Subscription URL. Ends up in the Nix store; prefer urlFile." "https://example.com/sub/token123";
       urlFile = nullStr "Runtime path to the subscription URL." "/run/secrets/proxy-subscription-url";
+      detour = detourOption "every entry of this subscription";
     };
   };
 
@@ -39,6 +54,7 @@ let
 
       url = nullStr "Proxy URL. Ends up in the Nix store; prefer urlFile." "hy2://password@example.com:443?sni=example.com";
       urlFile = nullStr "Runtime path to the proxy URL." "/run/secrets/my-proxy-url";
+      detour = detourOption "this one";
 
       singBoxJson = nullAttrs "Raw sing-box outbound (sing-box backend); tag is overridden." {
         type = "vless";

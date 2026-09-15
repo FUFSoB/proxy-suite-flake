@@ -186,6 +186,7 @@ let
     inherit proxyInboundsEnabled;
     inherit (scripts) proxyInboundsLinksFile proxyInboundsSubscriptionsFile;
     proxyInboundsSubscriptionsBaseUrl = proxyInboundsCfg.subscriptions.baseUrl;
+    proxyInboundsXray = "${proxyInboundsCfg.package}/bin/xray";
     inherit amneziaWgProfileNamesFile;
     guiRefreshInterval = cfg.gui.refreshInterval;
     inherit (perAppRouting)

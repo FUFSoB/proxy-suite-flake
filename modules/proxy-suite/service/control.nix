@@ -23,6 +23,7 @@
   proxyInboundsLinksFile,
   proxyInboundsSubscriptionsFile,
   proxyInboundsSubscriptionsBaseUrl,
+  proxyInboundsXray,
   guiRefreshInterval,
 }:
 {
@@ -55,6 +56,8 @@
     inboundsEnabled = if proxyInboundsEnabled then "1" else "0";
     inboundsLinksFile = proxyInboundsLinksFile;
     inboundsStatsFile = constants.inboundStatsFile;
+    inboundsXray = proxyInboundsXray;
+    inboundsApi = "127.0.0.1:${toString constants.inboundStatsApiPort}";
     inboundsSubscriptionsFile = proxyInboundsSubscriptionsFile;
     inboundsSubscriptionsBaseUrl =
       if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;

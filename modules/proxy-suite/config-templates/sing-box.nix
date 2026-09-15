@@ -38,6 +38,7 @@ let
     {
       localDetour ? null,
       useOutboundRoutingMark ? false,
+      fakeIp ? false,
     }:
     {
       servers = [
@@ -51,17 +52,39 @@ let
           bind_interface = ob.interface;
         }
         // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
-      ) derived.awgInterfaceOutbounds;
+      ) derived.awgInterfaceOutbounds
+      ++ lib.optional fakeIp {
+        tag = "fakeip";
+        type = "fakeip";
+        inet4_range = proxyCfg.dns.fakeIp.inet4Range;
+      }
+      ++ proxyCfg.dns.singBox.servers;
+      # The route mode keeps the user's rules and fake IP, and may drop what sits between.
       rules =
-        lib.optional (builtins.elem "google" proxyCfg.routing.proxy.geosites) {
+        proxyCfg.dns.singBox.rules
+        ++ lib.optional (builtins.elem "google" proxyCfg.routing.proxy.geosites) {
           rule_set = [ "geosite-google" ];
           server = "remote";
         }
         ++ lib.optional (direct.geosites != [ ]) {
           rule_set = map (s: "geosite-${s}") direct.geosites;
           server = "local";
+        }
+        # Only what apps ask through the TUN: the XRay sidecar's and sing-box's own lookups
+        # need real addresses.
+        ++ lib.optional fakeIp {
+          inbound = [ "tun-in" ];
+          query_type = [
+            "A"
+            "AAAA"
+          ];
+          server = "fakeip";
         };
       final = if (proxyCfg.routing.default == "proxy") then "remote" else "local";
+    }
+    // lib.optionalAttrs (proxyCfg.dns.strategy != null) { inherit (proxyCfg.dns) strategy; }
+    // lib.optionalAttrs (proxyCfg.dns.clientSubnet != null) {
+      client_subnet = proxyCfg.dns.clientSubnet;
     };
 
   xrayDnsBridgeHijackRule = {
@@ -103,6 +126,7 @@ let
       dns = mkDnsConfig {
         localDetour = if forceLocalDnsViaProxy then "proxy" else null;
         inherit useOutboundRoutingMark;
+        fakeIp = enableTun && proxyCfg.dns.fakeIp.enable;
       };
 
       inbounds =

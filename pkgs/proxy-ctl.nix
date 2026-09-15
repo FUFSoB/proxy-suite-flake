@@ -22,6 +22,8 @@
   inboundsEnabled,
   inboundsLinksFile,
   inboundsStatsFile,
+  inboundsXray,
+  inboundsApi,
   inboundsSubscriptionsFile,
   inboundsSubscriptionsBaseUrl,
   zapretAutoEnabled,
@@ -62,6 +64,8 @@ let
     INBOUNDS_ENABLED = inboundsEnabled;
     INBOUNDS_LINKS_FILE = inboundsLinksFile;
     INBOUNDS_STATS_FILE = inboundsStatsFile;
+    INBOUNDS_XRAY = inboundsXray;
+    INBOUNDS_API = inboundsApi;
     INBOUNDS_SUBS_FILE = inboundsSubscriptionsFile;
     INBOUNDS_SUB_BASE_URL = inboundsSubscriptionsBaseUrl;
     ZAPRET_AUTO_ENABLED = zapretAutoEnabled;
