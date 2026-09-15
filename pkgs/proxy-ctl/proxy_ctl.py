@@ -325,7 +325,7 @@ COMPLETE = {
         }
     },
     "status": {"flags": {"--json": "machine-readable state, with the GUI's overall state"}},
-    "logs": {"args": lambda: _names([*ALL_SERVICES, *map(_awg_service, _awg_profiles())]), "repeat": True},
+    "logs": {"args": lambda: _names(_snapshot_units()), "repeat": True},
     "where": {"args": _autoproxy_choices},
     "proxy": {
         "words": {
@@ -456,8 +456,10 @@ def _complete_tree(*words):
     while rest and f"{path} {rest[0]}".strip() in COMPLETE:
         path = f"{path} {rest.pop(0)}".strip()
     node = COMPLETE[path]
-    if rest[-1:] in (["--exits"], ["--via"]):
+    if rest[-1:] in (["--exits"], ["--via"], ["--detour"]):
         return _outbound_choices()
+    if rest[-1:] == ["--by"]:
+        return _names(STATS_KINDS)
     candidates = {}
     if node.get("repeat") or not [w for w in rest if not w.startswith("-")]:
         candidates.update(node.get("words", {}))
@@ -529,7 +531,10 @@ BUSY_STATES = ("activating", "deactivating", "reloading")
 
 
 def _snapshot_units():
-    return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, _awg_profiles())]
+    profiles = _awg_profiles()
+    # WARP as an AmneziaWG outbound has no profile to toggle, but it is a unit that can fail (_warp_unit).
+    warp = [] if "warp" in profiles else [_awg_service("warp")]
+    return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, profiles), *warp]
 
 
 def _status_snapshot(states=None):
@@ -635,11 +640,14 @@ def _svc_status(unit):
 
 
 def _status_outbound():
-    """The pin when there is one, otherwise whatever the backend is dialling."""
-    pinned = _outbound_inventory().get("pinned")
-    if pinned:
-        return f"{_s(pinned)} (pinned)"
-    return _outbound_current()
+    """The pin when there is one, otherwise whatever the backend is dialling, and the hop it chains through."""
+    inventory = _outbound_inventory()
+    pinned = _s(inventory.get("pinned") or "")
+    tag = pinned or _outbound_current()
+    # ponytail: detours are keyed by the inventory's tags; a `now` named otherwise shows no hop.
+    hop = (inventory.get("detours") or {}).get(tag) if tag else None
+    text = f"{tag} via {_s(hop)}" if hop else tag
+    return f"{text} (pinned)" if pinned else text
 
 
 def _status_autoproxy():
@@ -683,10 +691,9 @@ def cmd_status(*args):
         _status_tray()
         return
     print("proxy-suite services:")
-    for svc in ALL_SERVICES:
-        _svc_status(svc)
-    for profile in _awg_profiles():
-        _svc_status(_awg_service(profile))
+    for svc in _snapshot_units():
+        if svc != SUBSCRIPTION_UPDATE:
+            _svc_status(svc)
     if svc_exists("proxy-suite-socks"):
         print()
         print("routing:")
@@ -1195,9 +1202,12 @@ def _runtime_entry_add(kind, tag="", url="", *_, detour=""):
     old = os.umask(0o027)
     try:
         # The hop first: the entry is what the start script looks for.
+        hop = os.path.join(_runtime_dir(kind), f"{tag}.detour")
         if detour:
-            with open(os.path.join(_runtime_dir(kind), f"{tag}.detour"), "w", encoding="utf-8") as f:
+            with open(hop, "w", encoding="utf-8") as f:
                 f.write(f"{detour}\n")
+        elif os.path.exists(hop):
+            os.unlink(hop)  # left from an earlier entry of this name: it would chain this one too
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{url}\n")
     except OSError:
@@ -1303,6 +1313,10 @@ def _subscription_list():
         _subscription_row(tag, "static")
     for tag in runtime:
         _subscription_row(tag, "runtime")
+    next_run = _timer_next_run(f"{SUBSCRIPTION_UPDATE}.timer")
+    if next_run:
+        print()
+        print(f"Next update: {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
 
 
 def cmd_subscription(verb="list", *args):
@@ -1677,19 +1691,27 @@ def cmd_proxy_probe(*args):
 # struck by several destinations within a TTL is bad, and probed last.
 
 
+def _backend_tags():
+    """User outbound tag -> the backend's tag, which probe exits and their reputation are keyed by."""
+    try:
+        return read_json(_runtime_file("outbound-test.json")).get("outbounds") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _backend_tag(tag, backend=None):
+    return _s((_backend_tags() if backend is None else backend).get(tag) or tag)
+
+
 def _reputation_by_tag():
     """User tag -> "bad" or "ok" once the prober has judged its exit; {} before it has."""
     if env("AUTOPROXY_ENABLED") != "1":
         return {}
     exits = _autoproxy_state(_autoproxy_dir()).get("exits") or {}
-    # Exits are keyed by the backend's tag; outbound-test.json maps the user's to it.
-    try:
-        backend = read_json(_runtime_file("outbound-test.json")).get("outbounds") or {}
-    except (OSError, ValueError, AttributeError):
-        backend = {}
+    backend = _backend_tags()
     out = {}
     for tag in _outbound_tags():
-        e = exits.get(_s(backend.get(tag) or tag))
+        e = exits.get(_backend_tag(tag, backend))
         if isinstance(e, dict) and "strikes" in e:
             out[tag] = "bad" if e.get("bad") is True else "ok"
     return out
@@ -1734,11 +1756,15 @@ def cmd_proxy_auto(verb="list", *args):
 
 
 def _autoproxy_next_run():
-    """Epoch seconds of the next timer run, None when none is armed.
+    return _timer_next_run("proxy-suite-autoproxy.timer")
 
-    The timer is relative, so only list-timers knows it.
+
+def _timer_next_run(timer):
+    """Epoch seconds of the timer's next run, None when none is armed.
+
+    The timers are relative, so only list-timers knows it.
     """
-    _, out = systemctl("list-timers", "-o", "json", "proxy-suite-autoproxy.timer", capture=True, quiet=True)
+    _, out = systemctl("list-timers", "-o", "json", timer, capture=True, quiet=True)
     try:
         next_run = json.loads(out)[0].get("next")
     except (ValueError, IndexError, AttributeError, TypeError, KeyError):
@@ -2486,8 +2512,8 @@ def _inbound_stats(*args):
         print(total.format(name, _human_bytes(down), _human_bytes(up)))
 
 
-def _inbound_online():
-    """Users connected right now with their addresses, then when the others were last seen."""
+def _inbound_presence():
+    """user -> (state, addresses): "online", "seen <time>" or "never seen"; dies when the stats API is silent."""
     status, out = _run(
         [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={env('INBOUNDS_API', '127.0.0.1:18536')}", "-all"],
         capture=True,
@@ -2509,16 +2535,25 @@ def _inbound_online():
     def when(ts):
         return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
-    row = "  {:<20} {:<24} {}"
-    print(row.format("USER", "STATE", "ADDRESSES"))
+    presence = {}
     for user in sorted(set(online) | set(seen) | known):
         ips = online.get(user)
         if ips:
-            print(row.format(user, "online", ", ".join(_s(i.get("ip")) for i in ips)))
+            presence[user] = ("online", ", ".join(_s(i.get("ip")) for i in ips))
         elif user in seen:
-            print(row.format(user, f"seen {when(seen[user])}", ""))
+            presence[user] = (f"seen {when(seen[user])}", "")
         else:
-            print(row.format(user, "never seen", ""))
+            presence[user] = ("never seen", "")
+    return presence
+
+
+def _inbound_online():
+    """Users connected right now with their addresses, then when the others were last seen."""
+    row = "  {:<20} {:<24} {}"
+    presence = _inbound_presence()
+    print(row.format("USER", "STATE", "ADDRESSES"))
+    for user, (state, addresses) in presence.items():
+        print(row.format(user, state, addresses))
     sys.stdout.flush()
     print("A user counts as online while a connection is open; one relayed through a local web server shows as never seen.", file=sys.stderr)
 

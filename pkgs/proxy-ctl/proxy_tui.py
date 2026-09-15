@@ -5,7 +5,6 @@ What it shows and does lives in proxy_model, shared with proxy-suite-gui; this i
 
 import shlex
 import signal
-import subprocess
 
 from rich.text import Text
 from textual import events, work
@@ -21,7 +20,7 @@ from textual.widgets import DataTable, Input, Label, OptionList, RichLog, Static
 from textual.widgets.option_list import Option
 
 import proxy_model as model
-from proxy_model import CTL, TABS, ctl, filter_rows, _natural, _read_states, _safe
+from proxy_model import CTL, STATE_ICONS, TABS, ctl, filter_rows, _natural, _read_states, _safe
 
 REFRESH_SECONDS = 3
 STATUS_STYLES = {"ok": "b ansi_green", "warn": "b ansi_yellow", "bad": "b ansi_red", "": "b"}
@@ -106,8 +105,7 @@ THEME = Theme(
 )
 ACCENT = "bold cyan"
 
-STATE_STYLES = {"active": "green", "inactive": "dim", "failed": "bold red", "activating": "yellow", "deactivating": "yellow"}
-STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐"}
+STATE_STYLES = {"active": "green", "inactive": "dim", "failed": "bold red", "activating": "yellow", "deactivating": "yellow", "reloading": "yellow"}
 CELL_STYLES = {
     "ok": "green",
     "bad": "red",
@@ -118,6 +116,7 @@ CELL_STYLES = {
     "pinned": "cyan",
     "excluded": "dim",
     "queued": "yellow",
+    "online": "green",
 }
 
 
@@ -232,9 +231,9 @@ class Menu(Dialog):
 class Output(Dialog):
     BINDINGS = [Binding("escape,q", "dismiss", "close"), Binding("c", "copy", "copy")]
 
-    def __init__(self, title, text=None):
+    def __init__(self, title, text=None, wrap=True):
         super().__init__()
-        self.heading, self.initial = title, text
+        self.heading, self.initial, self.wrap = title, text, wrap
         self.proc = None  # the streaming command, stopped when the dialog closes
         self.text = []  # plain lines, for copying
 
@@ -242,7 +241,7 @@ class Output(Dialog):
         with Vertical(classes="dialog output"):
             yield Label(self.heading, classes="dialog-title", markup=False)
             # Follow a streaming command; show finished text from its top.
-            log = RichLog(wrap=True, min_width=1, markup=False, auto_scroll=self.initial is None)
+            log = RichLog(wrap=self.wrap, min_width=1, markup=False, auto_scroll=self.initial is None)
             if self.initial is not None:
                 text = self.initial if isinstance(self.initial, Text) else Text.from_ansi(self.initial)
                 self.text.append(text.plain)
@@ -261,8 +260,7 @@ class Output(Dialog):
         self.notify("Copied the output.")
 
     def on_unmount(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+        model.stop(self.proc)
 
 
 # --- main screen --------------------------------------------------------------
@@ -612,8 +610,7 @@ class ProxyTui(App):
             except (ValueError, IndexError) as e:  # an unbalanced quote in a typed command
                 self.feedback(f"Cannot run that: {e}", False)
                 return
-            confirm = action.confirm(row) if callable(action.confirm) else action.confirm
-            if confirm:
+            if model.needs_confirm(action, row):
                 self.push_screen(Confirm(f"proxy-ctl {shlex.join(argv)}"), lambda ok: ok and self.run_argv(action.mode, argv))
             else:
                 self.run_argv(action.mode, argv)
@@ -641,7 +638,8 @@ class ProxyTui(App):
                         pass
             self.action_reload()
             return
-        dialog = Output(command) if mode == "dialog" else None
+        # A wrapped QR code no longer scans: it scrolls sideways instead.
+        dialog = Output(command, wrap="--qr" not in argv) if mode == "dialog" else None
         if dialog:
             self.push_screen(dialog)
         self.feedback(f"… {command}")
@@ -651,9 +649,7 @@ class ProxyTui(App):
     def stream(self, command, argv, dialog, copy=False):
         out = []
         try:
-            p = subprocess.Popen(
-                [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True
-            )
+            p = model.popen(argv)
             if dialog:
                 dialog.proc = p
             for line in p.stdout:

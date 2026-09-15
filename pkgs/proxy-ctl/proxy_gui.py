@@ -20,7 +20,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 import proxy_model as model  # noqa: E402
-from proxy_model import CTL, TABS, ctl  # noqa: E402
+from proxy_model import STATE_ICONS, TABS, ctl  # noqa: E402
 
 APP_ID = "io.github.FUFSoB.ProxySuite"
 TITLE = "Proxy Suite"
@@ -34,7 +34,6 @@ def refresh_seconds():
         return 3
 
 
-STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐", "reloading": "◐"}
 STATE_CLASSES = {"active": ["success"], "inactive": ["dim-label"], "failed": ["error", "heading"], "activating": ["warning"], "deactivating": ["warning"], "reloading": ["warning"]}
 CELL_CLASSES = {
     "ok": ["success"],
@@ -46,6 +45,7 @@ CELL_CLASSES = {
     "pinned": ["accent"],
     "excluded": ["dim-label"],
     "queued": ["warning"],
+    "online": ["success"],
 }
 TAB_ICONS = {
     "services": "system-run-symbolic",
@@ -251,7 +251,7 @@ def cell_text(name, value):
     return value, CELL_CLASSES.get(value, [])
 
 
-BADGE_VALUES = {"ok", "bad", "runtime", "pinned", "excluded", "queued"}
+BADGE_VALUES = {"ok", "bad", "runtime", "pinned", "excluded", "queued", "online"}
 
 
 def is_badge(name, value):
@@ -381,12 +381,9 @@ class Page(Gtk.Box):
             label._handler = None
 
     def compare(self, a, b, name):
+        # Text and digit runs alternate in the same places, so the lists always compare.
         ka, kb = model._natural(a.row.get(name)), model._natural(b.row.get(name))
-        try:
-            return (ka > kb) - (ka < kb)
-        except TypeError:  # a number against text in the same place
-            sa, sb = str(ka), str(kb)
-            return (sa > sb) - (sa < sb)
+        return (ka > kb) - (ka < kb)
 
     # --- keys -------------------------------------------------------------------------
 
@@ -722,11 +719,7 @@ class OutputDialog(Adw.Dialog):
         self.qr.set_visible(True)
 
     def terminate(self):
-        if self.proc and self.proc.poll() is None:
-            try:
-                os.killpg(self.proc.pid, signal.SIGTERM)
-            except OSError:
-                self.proc.terminate()
+        model.stop(self.proc)
 
 
 # --- window -------------------------------------------------------------------------------
@@ -774,6 +767,7 @@ class Window(Adw.ApplicationWindow):
         view.add_top_bar(header)
 
         self.status = Adw.WrapBox(child_spacing=18, line_spacing=2, css_classes=["status-strip"])
+        self.status_items = None
         view.add_top_bar(self.status)
         self.banner = Adw.Banner(title="", revealed=False, button_label="Retry", action_name="app.reload")
         view.add_top_bar(self.banner)
@@ -872,6 +866,10 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def show_status(self, items):
+        # Only a change rebuilds the chips: the refresh tick sends the same items every few seconds.
+        if items == self.status_items:
+            return
+        self.status_items = items
         while child := self.status.get_first_child():
             self.status.remove(child)
         for n, (label, value, style) in enumerate(items):
@@ -924,8 +922,7 @@ class Window(Adw.ApplicationWindow):
             except (ValueError, IndexError) as e:
                 self.toast(f"Cannot run that: {e}")
                 return
-            confirm = action.confirm(row) if callable(action.confirm) else action.confirm
-            if confirm:
+            if model.needs_confirm(action, row):
                 self.app.confirm(argv, lambda: self.app.run_argv(action.mode, argv, self), self)
             else:
                 self.app.run_argv(action.mode, argv, self)
@@ -1105,7 +1102,8 @@ class ProxySuiteGui(Adw.Application):
         model.new_load()
         states = model._read_states()
         snap = model.snapshot(states) if states else None
-        tray = (model.tray_menu(snap, model.tray_outbounds(snap)), ctl._overall_state(snap))
+        outbound = model._safe(ctl._status_outbound, fallback="") if snap and snap["proxy"]["active"] else ""
+        tray = (model.tray_menu(snap, model.tray_outbounds(snap)), ctl._overall_state(snap), outbound)
         result = {"states": states, "snap": snap, "tray": tray}
         if tab is not None:
             result["visible"] = model.available_tabs(states)
@@ -1120,10 +1118,10 @@ class ProxySuiteGui(Adw.Application):
         if generation == self.generation:
             self.states = result["states"]
             snap = result["snap"]
-            tree, overall = result["tray"]
+            tree, overall, outbound = result["tray"]
             if self.tray:
                 failed = snap["failed"] if snap else []
-                tooltip = overall["label"] + (f"\nFailed: {', '.join(failed)}" if failed else "")
+                tooltip = overall["label"] + (f"\nOutbound: {outbound}" if outbound else "") + (f"\nFailed: {', '.join(failed)}" if failed else "")
                 self.tray.update(model.icon_name(overall), tooltip, tree, attention=bool(failed))
             self.notify_failures(snap)
             if "tab" in result and self.window:
@@ -1188,10 +1186,7 @@ class ProxySuiteGui(Adw.Application):
     def stream(self, command, argv, mode, win, dialog, qr):
         out = []
         try:
-            p = subprocess.Popen(
-                [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, errors="replace", start_new_session=True,
-            )
+            p = model.popen(argv)
             if dialog:
                 GLib.idle_add(lambda: dialog.running(p) and False)
             for line in p.stdout:

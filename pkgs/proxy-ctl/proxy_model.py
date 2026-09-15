@@ -8,6 +8,7 @@ die() cannot take a front end down.
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -25,7 +26,7 @@ def _die(message, status=1):
 
 
 # Clash API calls and systemctl spawns that several readers repeat within one load.
-MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_autoproxy_next_run", "svc_state")
+MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_timer_next_run", "svc_state")
 # proxy_ctl as the CLI has it, before the patching below: its own tests put these back.
 CLI_FUNCTIONS = {name: getattr(ctl, name) for name in ("die", *MEMOIZED)}
 
@@ -78,6 +79,13 @@ def ROW(_):
     return True
 
 
+def needs_confirm(action, row):
+    return action.confirm(row) if callable(action.confirm) else action.confirm
+
+
+STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐", "reloading": "◐"}
+
+
 # --- readers ------------------------------------------------------------------
 
 
@@ -103,6 +111,8 @@ TOGGLES = {
     "proxy-suite-tproxy": ["proxy", "tproxy"],
     "proxy-suite-ssh-proxy": ["ssh"],
     "proxy-suite-warp-tunnel": ["warp"],
+    # WARP as an AmneziaWG outbound: `proxy-ctl warp`, not `awg`, which only knows global profiles.
+    "proxy-suite-awg-warp": ["warp"],
     "proxy-suite-tg-ws-proxy": ["tg"],
     "proxy-suite-zapret": ["zapret"],
 }
@@ -114,10 +124,16 @@ ZAPRET_LISTS = (
 )
 
 
+def _awg_profile(row):
+    """The global AmneziaWG profile behind a row, or empty."""
+    name = row["unit"].removeprefix(AWG_PREFIX)
+    return name if row["unit"].startswith(AWG_PREFIX) and name in ctl._awg_profiles() else ""
+
+
 def toggle_argv(row, *_):
     verb = "off" if row["state"] == "active" else "on"
-    if row["unit"].startswith(AWG_PREFIX):
-        return ["awg", verb, row["unit"].removeprefix(AWG_PREFIX)]
+    if profile := _awg_profile(row):
+        return ["awg", verb, profile]
     return [*TOGGLES[row["unit"]], verb]
 
 
@@ -141,6 +157,8 @@ def outbound_rows(_):
     inventory = ctl._outbound_inventory()
     pinned = ctl._s(inventory.get("pinned") or "")
     sources = inventory.get("sources") or {}
+    detours = inventory.get("detours") or {}
+    excluded = set(inventory.get("excluded") or [])
     current = ctl._outbound_current()
     reputation = ctl._reputation_by_tag()
     runtime = set(ctl._runtime_tags("outbound"))
@@ -151,6 +169,8 @@ def outbound_rows(_):
             "tag": t,
             "reputation": reputation.get(t, "-"),
             "source": "runtime" if t in runtime else ctl._s(sources.get(t) or "-"),
+            # As `proxy-ctl proxy outbounds` prints them.
+            "notes": ", ".join(([f"via {ctl._s(detours[t])}"] if t in detours else []) + (["never picked"] if t in excluded else [])),
             "runtime": t in runtime,
         }
         for t in ctl._outbound_tags()
@@ -178,6 +198,12 @@ def subscription_rows(_):
             updated = ctl._ago(int(os.path.getmtime(cache)), int(time.time())) + " ago" if cached else "-"
             rows.append({"key": t, "tag": t, "proxies": count, "updated": updated, "source": source})
     return rows
+
+
+def subscription_summary():
+    text = f"{ctl.SUBSCRIPTION_UPDATE}: {ctl.svc_state(ctl.SUBSCRIPTION_UPDATE) or 'unknown'}"
+    next_run = ctl._timer_next_run(f"{ctl.SUBSCRIPTION_UPDATE}.timer")
+    return text + (f", next update {ctl._in_time(next_run)}" if next_run else "")
 
 
 def autoproxy_rows(_):
@@ -230,10 +256,15 @@ def _cutoff_status():
 
 
 def inbound_rows(_):
-    return [
-        {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
-        for x in ctl._inbound_links()
-    ]
+    links = ctl._inbound_links()
+    # One XRay API call per load, and only while this tab loads; empty when the API is not answering.
+    presence = _safe(ctl._inbound_presence, fallback=None) or {}
+    rows = []
+    for x in links:
+        row = {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
+        row["online"] = (presence.get(row["user"]) or ("",))[0]
+        rows.append(row)
+    return rows
 
 
 def app_rows(_):
@@ -282,7 +313,8 @@ def filter_rows(rows, columns, text):
 
 def _natural(value):
     # "port 443" before "port 2053": digit runs compare as numbers.
-    return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", str(value or "").lower())]
+    # isdecimal, not isdigit: "²" is a digit to isdigit, but neither \d nor int() takes it.
+    return [int(p) if p.isdecimal() else p for p in re.split(r"(\d+)", str(value or "").lower())]
 
 
 def _link(row, *extra):
@@ -321,7 +353,7 @@ TABS = [
                 "space",
                 "start / stop",
                 toggle_argv,
-                when=lambda r: r["unit"] in TOGGLES or r["unit"].startswith(AWG_PREFIX),
+                when=lambda r: r["unit"] in TOGGLES or bool(_awg_profile(r)),
                 # proxy off takes tun and tproxy down with it.
                 confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] == "active",
             ),
@@ -329,8 +361,8 @@ TABS = [
             Action(
                 "ctrl+r",
                 "restart it",
-                lambda r, *_: ["awg", "restart", r["unit"].removeprefix(AWG_PREFIX)],
-                when=lambda r: r["unit"].startswith(AWG_PREFIX) and r["state"] == "active",
+                lambda r, *_: ["awg", "restart", _awg_profile(r)],
+                when=lambda r: bool(_awg_profile(r)) and r["state"] == "active",
             ),
             Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
         ],
@@ -348,15 +380,31 @@ TABS = [
         "outbounds",
         "Outbounds",
         _socks,
-        [("mark", ""), ("tag", "Tag"), ("reputation", "Reputation"), ("source", "Source")],
+        [("mark", ""), ("tag", "Tag"), ("reputation", "Reputation"), ("source", "Source"), ("notes", "Notes")],
         outbound_rows,
         summary=outbound_summary,
         actions=[
             Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★"),
             Action("u", "unpin: let the selection pick", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
             Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
+            Action("D", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=ROW, mode="dialog"),
+            Action(
+                "v",
+                "probe a domain through it…",
+                lambda r, t, _: ["proxy", "auto", "probe", t, "--via", ctl._backend_tag(r["tag"])],
+                when=_enabled("AUTOPROXY_ENABLED"),
+                prompt="<domain>[/path]",
+                mode="dialog",
+            ),
             Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
             Action("n", "add a runtime outbound…", lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1)], prompt="<tag> <url or JSON>"),
+            Action(
+                "h",
+                "add an outbound chained through this one…",
+                lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1), "--detour", r["tag"]],
+                when=ROW,
+                prompt="<tag> <url or JSON>",
+            ),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
             # Credentials: proxy-ctl refuses these without root, and the dialog says so.
             Action("l", "its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
@@ -373,7 +421,7 @@ TABS = [
         _socks,
         [("tag", "Tag"), ("proxies", "Proxies"), ("updated", "Updated"), ("source", "Source")],
         subscription_rows,
-        summary=lambda: f"proxy-suite-subscription-update: {ctl.svc_state('proxy-suite-subscription-update') or 'unknown'}",
+        summary=subscription_summary,
         actions=[
             Action("u", "refetch all", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
             Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
@@ -422,7 +470,7 @@ TABS = [
         "inbounds",
         "Inbounds",
         _enabled("INBOUNDS_ENABLED"),
-        [("tag", "Tag"), ("user", "User"), ("type", "Type"), ("port", "Port")],
+        [("tag", "Tag"), ("user", "User"), ("type", "Type"), ("port", "Port"), ("online", "Online")],
         inbound_rows,
         summary=lambda: f"proxy-suite-inbounds: {ctl.svc_state('proxy-suite-inbounds') or 'unknown'}",
         actions=[
@@ -436,6 +484,8 @@ TABS = [
             Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=ROW, mode="dialog"),
             Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
+            Action("I", "traffic per inbound", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),
+            Action("O", "traffic per exit", lambda r, *_: ["inbounds", "stats", "--by", "outbound"], mode="dialog"),
             Action("o", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
         ],
     ),
@@ -485,6 +535,22 @@ def _capture(argv):
     except OSError as e:
         return f"cannot run proxy-ctl: {e}"
     return p.stdout + p.stderr
+
+
+def popen(argv):
+    """proxy-ctl with its output streamed: its own process group, so stop() takes down what it spawned too."""
+    return subprocess.Popen(
+        [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        text=True, errors="replace", start_new_session=True,
+    )
+
+
+def stop(proc):
+    if proc and proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            proc.terminate()
 
 
 def _safe(fn, *args, fallback=None):
@@ -583,7 +649,7 @@ def tray_menu(snap, outbounds=None):
     if snap["subscription_update"]["available"]:
         busy = snap["subscription_update"]["state"] in ctl.BUSY_STATES
         items.append(MenuItem("subs", "Updating subscriptions…" if busy else "Update subscriptions", enabled=not busy, argv=["proxy", "subs", "update"]))
-    items.append(MenuItem("restart", "Restart active services", argv=["restart"]))
+    items.append(MenuItem("restart", "Restart active services", argv=["restart"], confirm=True))
     items += [_sep(6), MenuItem("quit", "Quit", app="quit")]
     return items
 

@@ -735,6 +735,22 @@ class StatusSnapshotTest(EnvTest):
         self.assertEqual(data["outbound"], "b (pinned)")
         self.assertEqual(data["route_mode"], {"available": True, "current": "default", "default": "blacklist"})
 
+    def test_warp_over_amneziawg_is_watched(self):
+        # An outbound WARP profile is no `awg` profile, but its unit can still fail.
+        self.assertIn("proxy-suite-awg-warp", ctl._snapshot_units())
+        self.patch("_awg_profiles", lambda: ["warp"])
+        self.assertEqual(ctl._snapshot_units().count("proxy-suite-awg-warp"), 1)
+
+    def test_outbound_with_its_hop(self):
+        inventory = {"pinned": "", "detours": {"a": "b"}}
+        self.patch("_outbound_inventory", lambda: inventory)
+        self.patch("_outbound_current", lambda: "a")
+        self.assertEqual(ctl._status_outbound(), "a via b")
+        inventory["pinned"] = "c"
+        self.assertEqual(ctl._status_outbound(), "c (pinned)")
+        inventory["detours"]["c"] = "b"
+        self.assertEqual(ctl._status_outbound(), "c via b (pinned)")
+
 
 if __name__ == "__main__":
     unittest.main()

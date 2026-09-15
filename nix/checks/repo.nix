@@ -195,6 +195,11 @@
         [ "$(cat obd/chained.detour)" = own-vps ]
         run proxy outbounds rm chained > /dev/null
         [ ! -e obd/chained.detour ]
+        # A hop left behind does not chain a later entry of the same name.
+        echo own-vps > obd/unchained.detour
+        run proxy outbounds add unchained http://example.com:1 > /dev/null
+        [ ! -e obd/unchained.detour ]
+        run proxy outbounds rm unchained > /dev/null
 
         # JSON, as `link --json` prints it, lands as <tag>.json without its own tag; stdin too.
         run proxy outbounds add from-json '{"type":"trojan","tag":"x","server":"t.test","server_port":443,"password":"p"}' \
@@ -357,6 +362,8 @@
         has community-de proxy outbounds test own-vps
         has --download proxy outbounds test own-vps --ping
         has own-vps proxy auto probe example.com --via
+        has community-de proxy outbounds add hop https://example.com --detour
+        has outbound inbounds stats --by
         # Unreadable state loses the values, not the flags.
         has --qr inbounds sub
 

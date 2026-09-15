@@ -67,6 +67,7 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(keys("list:learned"), ["a"])  # by heading
         self.assertEqual(keys("kind:pinned LEARNED"), ["b"])  # by field, and every word must match
         self.assertEqual(sorted(["port 2053", "port 443"], key=tui._natural), ["port 443", "port 2053"])
+        self.assertEqual(sorted(["b2", "a1²", "a10"], key=tui._natural), ["a1²", "a10", "b2"])  # ² is text, not a number
         # Items never split across lines.
         self.assertEqual(tui.pack(["[b]aaa[/]", "bbb", "ccc"], 9), "[b]aaa[/]   bbb\nccc")
 
@@ -264,18 +265,19 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(app.rows["inbounds"], {})
             self.assertIn("Share links are not readable", str(app.main.query_one("#inbounds-summary").content))
 
-            # Closing a dialog stops the command still streaming into it; c copies what it showed.
+            # Closing a dialog stops the command still streaming into it, and what it spawned; c copies what it showed.
             dialog = tui.Output("proxy-ctl proxy outbounds test")
-            dialog.proc = mock.Mock(**{"poll.return_value": None})
+            dialog.proc = mock.Mock(pid=4242, **{"poll.return_value": None})
             app.push_screen(dialog)
             await pilot.pause()
             dialog.write("\x1b[32mok\x1b[0m a")
             with mock.patch.object(app, "copy_to_clipboard") as copy:
                 await pilot.press("c")
             copy.assert_called_once_with("ok a")
-            await pilot.press("escape")
-            await pilot.pause()
-            dialog.proc.terminate.assert_called_once()
+            with mock.patch.object(model.os, "killpg") as killpg:
+                await pilot.press("escape")
+                await pilot.pause()
+            killpg.assert_called_once_with(4242, model.signal.SIGTERM)
 
 
 if __name__ == "__main__":

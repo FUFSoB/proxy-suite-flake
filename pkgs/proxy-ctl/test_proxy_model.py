@@ -47,6 +47,23 @@ class ModelTest(unittest.TestCase):
         rows = model.service_rows({"proxy-suite-socks": "active", ctl.SUBSCRIPTION_UPDATE: "inactive"})
         self.assertEqual([r["unit"] for r in rows], ["proxy-suite-socks"])
 
+    def test_warp_over_amneziawg_toggles_with_warp(self):
+        tab = model.TABS[0]
+        row = model.service_rows({"proxy-suite-awg-warp": "inactive"})[0]
+        keys = lambda: [a.key for a in model.applicable(tab, {**row, "state": "active"})]
+        self.assertEqual(model.toggle_argv(row), ["warp", "on"])  # an outbound profile: `awg` does not know it
+        self.assertNotIn("ctrl+r", keys())
+        with mock.patch.object(ctl, "_awg_profiles", lambda: ["warp"]):
+            self.assertEqual(model.toggle_argv(row), ["awg", "on", "warp"])  # a global profile named warp
+            self.assertIn("ctrl+r", keys())
+
+    def test_inbound_presence(self):
+        links = [{"tag": "vless", "user": "alice", "type": "vless", "port": 443}, {"tag": "vless", "user": "bob", "type": "vless", "port": 443}]
+        with mock.patch.object(ctl, "_inbound_links", lambda: links), mock.patch.object(ctl, "_inbound_presence", lambda: {"alice": ("online", "10.0.0.2")}):
+            self.assertEqual([r["online"] for r in model.inbound_rows({})], ["online", ""])
+        with mock.patch.object(ctl, "_inbound_links", lambda: links), mock.patch.object(ctl, "_inbound_presence", lambda: ctl.die("API silent")):
+            self.assertEqual([r["online"] for r in model.inbound_rows({})], ["", ""])
+
     def test_tray_menu(self):
         states = {
             "proxy-suite-socks": "active",
@@ -70,6 +87,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(items["awg-off"].argv, ["awg", "off"])
         self.assertEqual(items["zapret"].argv, ["zapret", "on"])
         self.assertFalse(items["subs"].enabled)  # an update already runs
+        self.assertTrue(items["restart"].confirm)  # as R in the TUI and GUI
         self.assertEqual(items["quit"].app, "quit")
 
     def test_tray_menu_without_proxy(self):
@@ -85,11 +103,20 @@ class ModelTest(unittest.TestCase):
 
     def test_load_tab(self):
         tab = next(t for t in model.TABS if t.id == "outbounds")
-        with mock.patch.object(ctl, "_outbound_current", lambda: "a"), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []):
+        inventory = {"tags": ["a", "b"], "pinned": "b", "detours": {"a": "b"}, "excluded": ["b"]}
+        with mock.patch.object(ctl, "_outbound_current", lambda: "a"), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []), mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
             rows, summary = model.load_tab(tab, {})
-        self.assertEqual([(r["tag"], r["mark"]) for r in rows], [("a", "▸"), ("b", "★")])
+        self.assertEqual([(r["tag"], r["mark"], r["notes"]) for r in rows], [("a", "▸", "via b"), ("b", "★", "never picked")])
         self.assertIn("Pinned: b", summary)
-        self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "T", "n", "l", "c", "Q", "J", "F", "X"])
+        with mock.patch.object(ctl, "env", lambda name, default="": ""):
+            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "l", "c", "Q", "J", "F", "X"])
+        chain = next(a for a in tab.actions if a.key == "h")
+        self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
+        # Probe exits go by the backend's tag.
+        probe = next(a for a in tab.actions if a.key == "v")
+        with mock.patch.object(ctl, "env", lambda name, default="": "1" if name == "AUTOPROXY_ENABLED" else ""), mock.patch.object(ctl, "_backend_tags", lambda: {"b": "b-backend"}):
+            self.assertIn(probe, model.applicable(tab, rows[1]))
+            self.assertEqual(probe.argv(rows[1], "example.com", {}), ["proxy", "auto", "probe", "example.com", "--via", "b-backend"])
         broken = model.Tab("x", "X", model.ROW, [], lambda _: ctl.die("backend gone"))
         self.assertEqual(model.load_tab(broken, {}), ([], "✗ backend gone"))
 
