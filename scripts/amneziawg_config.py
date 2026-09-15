@@ -284,6 +284,29 @@ def _set_interface_value(config: str, key: str, value: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _remove_interface_key(config: str, key: str) -> str:
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=", re.IGNORECASE)
+    lines: list[str] = []
+    in_interface = False
+    for line in config.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_interface = stripped.lower() == "[interface]"
+        if not (in_interface and pattern.match(line)):
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def as_outbound(config: str, fwmark: int) -> str:
+    """Keep the host's routes and resolver: the proxy binds to the interface instead.
+
+    The mark lets the tunnel's own packets past TUN and TProxy capture.
+    """
+    config = _remove_interface_key(config, "DNS")
+    config = _set_interface_value(config, "Table", "off")
+    return _set_interface_value(config, "FwMark", str(fwmark))
+
+
 def conf_sections(config: str) -> list[tuple[str, list[tuple[str, str]]]]:
     """Each [Section] of a WireGuard .conf, lowercased, with its key = value lines in order.
 
@@ -608,6 +631,12 @@ def main() -> int:
     parser.add_argument("--manifest")
     parser.add_argument("--output")
     parser.add_argument(
+        "--outbound-fwmark",
+        type=int,
+        metavar="MARK",
+        help="render for an outbound-only interface: no routes or DNS, packets marked MARK",
+    )
+    parser.add_argument(
         "--inspect",
         metavar="CONFIG",
         help="print the transport implementation, a probe address and the rekey interval",
@@ -625,7 +654,10 @@ def main() -> int:
         manifest = json.loads(_read_limited(args.manifest))
         if not isinstance(manifest, dict):
             raise ConfigError("manifest must be a JSON object")
-        write_private(args.output, prepare(manifest))
+        config = prepare(manifest)
+        if args.outbound_fwmark is not None:
+            config = as_outbound(config, args.outbound_fwmark)
+        write_private(args.output, config)
     except (ConfigError, KeyError, OSError, json.JSONDecodeError) as exc:
         parser.exit(1, f"amneziawg-config: {exc}\n")
     return 0

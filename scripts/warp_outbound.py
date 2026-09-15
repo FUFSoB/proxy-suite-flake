@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a WireGuard .conf (e.g. wgcf-profile.conf) into a sing-box WireGuard endpoint for WARP."""
+"""Turn a WireGuard .conf (a wgcf profile, an AmneziaWG profile) into a sing-box WireGuard endpoint."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import json
 import sys
 from typing import Any
 
-from amneziawg_config import ConfigError, conf_sections
+from amneziawg_config import VPN_INTERFACE_FIELDS, ConfigError, conf_sections
 
 
 def parse_conf(text: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -62,16 +62,33 @@ def build(text: str, tag: str, routing_mark: int | None) -> dict[str, Any]:
     return endpoint
 
 
+def obfuscation_keys(text: str) -> list[str]:
+    """AmneziaWG [Interface] keys sing-box has no use for; the endpoint goes without them."""
+    return sorted(
+        {key for name, pairs in conf_sections(text) if name == "interface" for key, _ in pairs}
+        & VPN_INTERFACE_FIELDS.keys()
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="warp")
     parser.add_argument("--routing-mark", type=int)
     args = parser.parse_args()
+    text = sys.stdin.read()
     try:
-        print(json.dumps(build(sys.stdin.read(), args.tag, args.routing_mark)))
+        print(json.dumps(build(text, args.tag, args.routing_mark)))
     except ValueError as error:
-        print(f"proxy-suite: warp: {error}", file=sys.stderr)
+        print(f"proxy-suite: {args.tag}: {error}", file=sys.stderr)
         return 1
+    dropped = obfuscation_keys(text)
+    if dropped:
+        names = ", ".join(VPN_INTERFACE_FIELDS[key] for key in dropped)
+        print(
+            f"proxy-suite: {args.tag}: warning: sing-box speaks plain WireGuard; dropping {names}."
+            " A server that expects them will not answer",
+            file=sys.stderr,
+        )
     return 0
 
 

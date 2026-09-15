@@ -255,7 +255,7 @@ services.proxy-suite = {
   };
   warp = {
     asAmneziaWg = false;
-    asOutbound = false;
+    asOutbound = null;
     configFile = null;
     enable = false;
     generatorUrl = null;

@@ -14,8 +14,9 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
+  # Global AmneziaWG profiles only: an outbound one leaves the host's routes alone.
   awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
-    builtins.attrNames cfg.amneziaWg.profiles
+    builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
   );
   zapretPackages = import ./zapret/packages.nix {
     inherit

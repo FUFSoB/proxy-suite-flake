@@ -74,19 +74,22 @@ let
       "proxy-suite: sshProxy.asOutbound requires proxy.enable = true"
     )
     (mkAssertion (
-      !cfg.warp.enable || cfg.warp.asOutbound || cfg.warp.asAmneziaWg
+      !cfg.warp.enable || cfg.warp.asOutbound != null || cfg.warp.asAmneziaWg
     ) "proxy-suite: warp.enable = true needs warp.asOutbound or warp.asAmneziaWg")
     # One key, one session: the second peer on a WARP key takes the session over.
-    (mkAssertion (!(cfg.warp.enable && cfg.warp.asOutbound && cfg.warp.asAmneziaWg))
+    (mkAssertion (!(cfg.warp.enable && cfg.warp.asOutbound != null && cfg.warp.asAmneziaWg))
       "proxy-suite: warp.asOutbound and warp.asAmneziaWg share one WARP key and would knock each other off; enable one"
     )
     # Daemon configs are readable by the service group; users must not share it.
     (mkAssertion (cfg.userControl.group != derived.constants.serviceUser)
       "proxy-suite: userControl.group must not be ${derived.constants.serviceUser}, the group that can read backend configs"
     )
-    (requireEnabled derived.warpOutboundEnabled proxyEnabled
+    (requireEnabled (cfg.warp.enable && cfg.warp.asOutbound != null) proxyEnabled
       "proxy-suite: warp.asOutbound requires proxy.enable = true"
     )
+    (requireEnabled (
+      cfg.warp.enable && cfg.warp.asOutbound == "interface"
+    ) cfg.amneziaWg.enable ''proxy-suite: warp.asOutbound = "interface" requires amneziaWg.enable = true'')
     (requireEnabled (
       cfg.warp.enable && cfg.warp.asAmneziaWg
     ) cfg.amneziaWg.enable "proxy-suite: warp.asAmneziaWg requires amneziaWg.enable = true")

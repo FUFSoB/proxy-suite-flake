@@ -5,6 +5,7 @@
   proxyCfg,
   sshProxyCfg,
   warpCfg,
+  awgOutbounds,
   constants,
   pureXrayEnabled,
   hybridEnabled,
@@ -370,39 +371,72 @@ let
       _proxy_suite_record_tag_source ${sshProxyTag} ssh
     '';
 
-  # WARP runs in proxy-suite-warp-tunnel, which restarts it when the handshake stops being
-  # answered. Every backend reaches it as a loopback SOCKS hop.
-  mkWarpOutboundBlock =
-    let
-      outbound =
-        if pureXrayEnabled then
-          {
-            protocol = "socks";
-            tag = "warp";
-            settings = {
-              address = "127.0.0.1";
-              port = warpCfg.tunnelPort;
-            };
-          }
-        else
-          {
-            type = "socks";
-            tag = "warp";
-            server = "127.0.0.1";
-            server_port = warpCfg.tunnelPort;
+  # Outbounds whose JSON is known at build time: every backend takes it as is.
+  mkFixedOutboundBlock = comment: source: outbound: ''
+    # outbound: ${outbound.tag} (${comment})
+    OB_JSON=${lib.escapeShellArg (builtins.toJSON outbound)}
+    ${
+      if hybridEnabled then
+        ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
+      else
+        ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+    }
+    _proxy_suite_record_tag_source ${lib.escapeShellArg outbound.tag} ${source}
+  '';
+
+  # WARP and "singBox" AmneziaWG profiles run in a tunnel unit, which restarts them when the
+  # handshake stops being answered. Every backend reaches it as a loopback SOCKS hop.
+  mkTunnelOutboundBlock =
+    unit: source: tag: port:
+    mkFixedOutboundBlock "SOCKS hop to ${unit}" source (
+      if pureXrayEnabled then
+        {
+          protocol = "socks";
+          inherit tag;
+          settings = {
+            address = "127.0.0.1";
+            inherit port;
           };
-    in
-    ''
-      # outbound: warp (SOCKS hop to proxy-suite-warp-tunnel)
-      OB_JSON=${lib.escapeShellArg (builtins.toJSON outbound)}
-      ${
-        if hybridEnabled then
-          ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
-        else
-          ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
-      }
-      _proxy_suite_record_tag_source warp warp
-    '';
+        }
+      else
+        {
+          type = "socks";
+          inherit tag;
+          server = "127.0.0.1";
+          server_port = port;
+        }
+    );
+
+  # An "interface" AmneziaWG profile: the outbound binds to the interface, which has no routes.
+  # sing-box resolves its destinations through it too; XRay resolves as usual.
+  mkInterfaceOutboundBlock =
+    routingMark: ob:
+    mkFixedOutboundBlock "bound to ${ob.interface}" "awg" (
+      if pureXrayEnabled then
+        {
+          protocol = "freedom";
+          inherit (ob) tag;
+          streamSettings.sockopt = {
+            inherit (ob) interface;
+          }
+          // lib.optionalAttrs (routingMark != null) { mark = routingMark; };
+        }
+      else
+        {
+          type = "direct";
+          inherit (ob) tag;
+          bind_interface = ob.interface;
+          domain_resolver = constants.awgDnsServerTag ob.tag;
+        }
+        // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; }
+    );
+
+  mkAwgOutboundBlock =
+    routingMark: ob:
+    if ob.kind == "interface" then
+      mkInterfaceOutboundBlock routingMark ob
+    else
+      mkTunnelOutboundBlock "proxy-suite-awg-${ob.name}" "awg" ob.tag ob.tunnelPort;
 
   mkBackendOutboundBlock = if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock;
 
@@ -464,7 +498,10 @@ let
       ) proxyCfg.subscriptions;
 
       sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
-      warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound) mkWarpOutboundBlock;
+      warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound == "singBox") (
+        mkTunnelOutboundBlock "proxy-suite-warp-tunnel" "warp" "warp" warpCfg.tunnelPort
+      );
+      awgBlocks = lib.concatMapStrings (mkAwgOutboundBlock routingMark) awgOutbounds;
 
       wrapperBlock =
         if pureXrayEnabled && selectionMode == "urltest" then
@@ -534,6 +571,7 @@ let
     + runtimeOutboundsBlock
     + sshProxyBlock
     + warpBlock
+    + awgBlocks
     + requireOutboundsBlock
     + pinBlock
     + inventoryBlock

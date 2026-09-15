@@ -1,5 +1,5 @@
-# Cloudflare WARP: the tunnel behind the "warp" outbound, the AmneziaWG profile and, without a
-# configFile, wgcf registration.
+# Cloudflare WARP: the sing-box tunnel or AmneziaWG profile behind the "warp" outbound, the global
+# AmneziaWG profile and, without a configFile, wgcf registration.
 {
   lib,
   pkgs,
@@ -9,13 +9,9 @@
 
 let
   w = derived.warpCfg;
-  inherit (derived.constants) serviceUser runAsServiceUser unprivilegedServiceConfig;
+  inherit (derived.constants) unprivilegedServiceConfig;
   listener = cfg.proxy.listener;
   auth = listener.auth;
-  scriptsDir = builtins.path {
-    name = "proxy-suite-scripts";
-    path = ../../scripts;
-  };
   host =
     if
       builtins.elem listener.address [
@@ -89,112 +85,30 @@ let
     }
   '';
 
-  # sing-box's "local" server has no upstream on hosts behind systemd-resolved, so the tunnel
-  # resolves like the main config: the peer hostname and destinations go to proxy.dns.local.
-  dnsServer = {
-    tag = "local";
-    type = cfg.proxy.dns.local.type;
-    server = cfg.proxy.dns.local.address;
-    server_port = cfg.proxy.dns.local.port;
-  };
-  mark = cfg.proxy.tproxy.proxyMark;
-  probe = port: url: ''
-    ${pkgs.curl}/bin/curl -s --noproxy "" -x socks5h://127.0.0.1:${toString port} -m "$timeout" \
-      -o /dev/null ${url}'';
-
-  # Some lines drop a share of fresh WARP handshakes for good, and sing-box retries on the
-  # same source port forever. A new process binds a new port, so the watchdog exits when
-  # WARP stops answering and systemd starts the tunnel again. A healthy WARP handshake takes
-  # a fraction of a second, so a start gets 15 seconds; a running tunnel gets three misses.
-  # The "direct-in" listener reaches Cloudflare through the uplink with the backend's mark (not
-  # urlTest.url, which is picked to be blocked here): when that fails too, WARP could not work
-  # from a new port either.
-  watchdogScript = pkgs.writeShellScript "proxy-suite-warp" ''
-    set -uo pipefail
-    ${cfg.proxy.singBox.package}/bin/sing-box run -c "$RUNTIME_DIRECTORY/config.json" &
-    singbox=$!
-
-    healthy=0
-    failures=0
-    uplink_down=0
-    since=0
-    while sleep $(( healthy ? 10 : 2 )); do
-      kill -0 "$singbox" 2>/dev/null || { wait "$singbox"; exit 1; }
-      timeout=$(( healthy ? 10 : 4 ))
-      if ${probe w.tunnelPort "-f ${lib.escapeShellArg cfg.proxy.urlTest.url}"}; then
-        (( healthy )) || echo "proxy-suite: WARP is answering" >&2
-        healthy=1 failures=0 uplink_down=0
-        continue
-      fi
-      if ! ${probe w.directPort "https://1.1.1.1/cdn-cgi/trace"}; then
-        (( uplink_down )) || echo "proxy-suite: the uplink is down; waiting for it before judging WARP" >&2
-        uplink_down=1 failures=0 since=$SECONDS
-        continue
-      fi
-      uplink_down=0
-      if (( healthy ? ++failures >= 3 : SECONDS - since >= 15 )); then
-        echo "proxy-suite: WARP is not answering; restarting the tunnel on a new source port" >&2
-        kill "$singbox"
-        wait "$singbox"
-        exit 1
-      fi
-    done
-  '';
-
-  tunnelScript = pkgs.writeShellScript "proxy-suite-warp" ''
-    set -euo pipefail
-    profile=${lib.escapeShellArg w.profilePath}
-    if [ ! -s "$profile" ]; then
-      echo "proxy-suite: waiting for the WARP profile at $profile" >&2
-      until [ -s "$profile" ]; do sleep 5; done
-    fi
-
-    # The profile is a secret, so it is converted here, as root, rather than baked into
-    # the store; sing-box itself runs as ${serviceUser}.
-    endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag warp --routing-mark ${toString mark} < "$profile")
-    (umask 027 && ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
-      log: {level: "warn"},
-      dns: {servers: [${builtins.toJSON dnsServer}]},
-      route: {
-        default_domain_resolver: "local",
-        rules: [{inbound: ["direct-in"], outbound: "direct"}],
-        final: "warp"
-      },
-      inbounds: [
-        {type: "socks", tag: "socks-in", listen: "127.0.0.1", listen_port: ${toString w.tunnelPort}},
-        {type: "socks", tag: "direct-in", listen: "127.0.0.1", listen_port: ${toString w.directPort}}
-      ],
-      outbounds: [{type: "direct", tag: "direct", routing_mark: ${toString mark}}],
-      endpoints: [$ep]
-    }' > "$RUNTIME_DIRECTORY/config.json")
-    ${pkgs.coreutils}/bin/chgrp ${serviceUser} "$RUNTIME_DIRECTORY" "$RUNTIME_DIRECTORY/config.json"
-
-    exec ${runAsServiceUser pkgs [ "net_admin" ]} ${watchdogScript}
-  '';
+  inherit (import ./wg-tunnel.nix { inherit lib pkgs cfg derived; }) mkTunnel;
 in
 {
-  services.proxy-suite.amneziaWg.profiles = lib.mkIf w.asAmneziaWg {
-    warp.configFile = w.profilePath;
+  services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || w.asOutbound == "interface") {
+    warp = {
+      configFile = w.profilePath;
+      asOutbound = lib.mkIf (w.asOutbound == "interface") "interface";
+    };
   };
 
   systemd.services = lib.mkMerge [
-    (lib.mkIf w.asOutbound {
-      proxy-suite-warp-tunnel = {
+    (lib.mkIf (w.asOutbound == "singBox") {
+      proxy-suite-warp-tunnel = mkTunnel {
         description = "proxy-suite - Cloudflare WARP tunnel behind the warp outbound";
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        wantedBy = [ "multi-user.target" ];
-        # Probe-triggered restarts must not trip the start limit.
-        startLimitIntervalSec = 0;
-        serviceConfig = {
-          Type = "simple";
-          ExecStart = tunnelScript;
-          Restart = "always";
-          RestartSec = 2;
-          RuntimeDirectory = "proxy-suite-warp-tunnel";
-          RuntimeDirectoryMode = "0750";
-          UMask = "0077";
-        };
+        unit = "proxy-suite-warp-tunnel";
+        tag = "warp";
+        profile = ''
+          profile=${lib.escapeShellArg w.profilePath}
+          if [ ! -s "$profile" ]; then
+            echo "proxy-suite: waiting for the WARP profile at $profile" >&2
+            until [ -s "$profile" ]; do sleep 5; done
+          fi
+        '';
+        inherit (w) tunnelPort directPort;
       };
     })
 
@@ -223,7 +137,7 @@ in
       };
 
       # Only pulls registration in: a simple unit gives the profile no ordering guarantee.
-      proxy-suite-awg-warp = lib.mkIf w.asAmneziaWg {
+      proxy-suite-awg-warp = lib.mkIf (w.asAmneziaWg || w.asOutbound == "interface") {
         wants = [ "proxy-suite-warp.service" ];
       };
     })

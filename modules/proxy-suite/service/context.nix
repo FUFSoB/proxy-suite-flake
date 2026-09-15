@@ -50,6 +50,7 @@ let
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
     warpCfg
+    awgOutbounds
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInboundsNeedLocalProxy
@@ -69,8 +70,11 @@ let
   headBin = "${pkgs.coreutils}/bin/head";
   seqBin = "${pkgs.coreutils}/bin/seq";
   findBin = "${pkgs.findutils}/bin/find";
+  # `proxy-ctl awg` toggles global profiles; outbound ones always run and show up with the proxy.
   amneziaWgProfileNamesFile = pkgs.writeText "proxy-suite-core" (
-    builtins.toJSON (builtins.attrNames cfg.amneziaWg.profiles)
+    builtins.toJSON (
+      builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
+    )
   );
 
   proxySuiteScriptsDir = builtins.path {
@@ -96,6 +100,7 @@ let
       proxyCfg
       sshProxyCfg
       warpCfg
+      awgOutbounds
       xrayEnabled
       hybridEnabled
       pureXrayEnabled

@@ -237,6 +237,17 @@ def _toggle(unit, name, verb="status", *_):
         usage(f"{name} [status|on|off]")
 
 
+def _warp_unit():
+    """The unit behind the warp outbound: its sing-box tunnel, or an outbound AmneziaWG profile.
+
+    A global "warp" profile belongs to `awg on warp`, not here.
+    """
+    awg = _awg_service("warp")
+    if "warp" not in _awg_profiles() and svc_exists(awg):
+        return awg
+    return "proxy-suite-warp-tunnel"
+
+
 def _emit(text, qr):
     """Prints text, or its QR code."""
     if not qr:
@@ -2533,7 +2544,7 @@ COMMANDS = {
     "zapret": cmd_zapret,
     "awg": cmd_awg,
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
-    "warp": lambda *args: _toggle("proxy-suite-warp-tunnel", "warp", *args),
+    "warp": lambda *args: _toggle(_warp_unit(), "warp", *args),
     "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
     "apps": cmd_apps,
     "inbounds": cmd_inbounds,

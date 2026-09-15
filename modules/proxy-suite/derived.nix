@@ -48,7 +48,28 @@ let
     directPort = 18539;
   };
   warpOutboundTag = "warp";
-  warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound;
+  # The sing-box tunnel; asOutbound = "interface" comes in through the AmneziaWG profile list.
+  warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound == "singBox";
+
+  # AmneziaWG profiles are either global (proxy-ctl awg on) or outbounds tagged with their name.
+  awgProfiles = lib.optionalAttrs cfg.amneziaWg.enable cfg.amneziaWg.profiles;
+  awgGlobalProfiles = lib.filterAttrs (_: profile: profile.asOutbound == null) awgProfiles;
+  awgOutbounds = lib.imap0 (
+    index: name:
+    let
+      profile = awgProfiles.${name};
+    in
+    {
+      inherit name;
+      tag = name;
+      kind = profile.asOutbound;
+      interface = profile.interfaceName;
+      # Loopback listeners of a "singBox" tunnel, as warpCfg.tunnelPort/directPort.
+      tunnelPort = 18540 + 2 * index;
+      directPort = 18541 + 2 * index;
+    }
+  ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
+  awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;
 
   proxyInboundsCfg = cfg.inbounds;
   proxyInboundsEnabled = proxyInboundsCfg.enable;
@@ -130,13 +151,18 @@ let
   effectiveOutboundTags =
     outboundTags
     ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
-    ++ lib.optional warpOutboundEnabled warpOutboundTag;
+    ++ lib.optional warpOutboundEnabled warpOutboundTag
+    ++ map (ob: ob.tag) awgOutbounds;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
 
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
   hasAvailableOutbounds =
-    hasStaticOutbounds || hasSubscriptions || sshProxyOutboundEnabled || warpOutboundEnabled;
+    hasStaticOutbounds
+    || hasSubscriptions
+    || sshProxyOutboundEnabled
+    || warpOutboundEnabled
+    || awgOutbounds != [ ];
   collapseNamedOutbounds = selectionMode == "first";
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
   clashApiEnabled = singBoxEnabled;
@@ -220,6 +246,9 @@ let
     outboundTestPort = 18537;
     inboundStatsFile = "/var/lib/proxy-suite/inbound-stats.json";
 
+    # sing-box DNS server resolving through an "interface" AmneziaWG outbound.
+    awgDnsServerTag = tag: "awg-dns-${tag}";
+
     tunAutoRouteTableIndex = 2022;
     tunAutoRouteRulePriority = 9000;
     xrayTunPerAppTproxyRulePriority = 8996;
@@ -289,6 +318,9 @@ in
     warpCfg
     warpOutboundTag
     warpOutboundEnabled
+    awgGlobalProfiles
+    awgOutbounds
+    awgInterfaceOutbounds
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds

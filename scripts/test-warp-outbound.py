@@ -2,7 +2,7 @@
 
 import unittest
 
-from warp_outbound import ConfigError, build
+from warp_outbound import ConfigError, build, obfuscation_keys
 
 WGCF = """[Interface]
 PrivateKey = priv=
@@ -37,6 +37,12 @@ class WarpOutboundTest(unittest.TestCase):
         # Generator AWG 3 profiles range the keepalive; sing-box gets the lower bound.
         ob = build(WGCF.replace("[Peer]", "RekeyAfterTime = 100-120\n[Peer]\nPersistentKeepalive = 25-35"), "warp", None)
         self.assertEqual(ob["peers"][0]["persistent_keepalive_interval"], 25)
+
+    def test_obfuscation_keys(self):
+        self.assertEqual(obfuscation_keys(WGCF), [])
+        awg = WGCF.replace("[Peer]", "Jc = 4\nH1 = 1-2\n[Peer]")
+        self.assertEqual(obfuscation_keys(awg), ["h1", "jc"])
+        self.assertNotIn("jc", build(awg, "warp", None))
 
     def test_rejects_missing_peer(self):
         with self.assertRaises(ConfigError):

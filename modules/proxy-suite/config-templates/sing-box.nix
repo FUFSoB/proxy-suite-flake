@@ -37,12 +37,21 @@ let
   mkDnsConfig =
     {
       localDetour ? null,
+      useOutboundRoutingMark ? false,
     }:
     {
       servers = [
         (mkDnsServer "remote" proxyCfg.dns.remote "proxy")
         (mkDnsServer "local" proxyCfg.dns.local localDetour)
-      ];
+      ]
+      ++ map (
+        ob:
+        mkDnsServer (constants.awgDnsServerTag ob.tag) proxyCfg.dns.remote null
+        // {
+          bind_interface = ob.interface;
+        }
+        // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
+      ) derived.awgInterfaceOutbounds;
       rules =
         lib.optional (builtins.elem "google" proxyCfg.routing.proxy.geosites) {
           rule_set = [ "geosite-google" ];
@@ -93,6 +102,7 @@ let
 
       dns = mkDnsConfig {
         localDetour = if forceLocalDnsViaProxy then "proxy" else null;
+        inherit useOutboundRoutingMark;
       };
 
       inbounds =

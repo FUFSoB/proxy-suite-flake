@@ -4,17 +4,23 @@
   lib,
   pkgs,
   cfg,
+  derived,
 }:
 
 let
   awgCfg = cfg.amneziaWg;
   profiles = awgCfg.profiles;
   profileNames = builtins.attrNames profiles;
+  globalProfileNames = builtins.attrNames derived.awgGlobalProfiles;
+  singBoxOutbounds = builtins.filter (ob: ob.kind == "singBox") derived.awgOutbounds;
   serviceName = name: "proxy-suite-awg-${name}";
-  serviceNames = map serviceName profileNames;
+  globalServiceNames = map serviceName globalProfileNames;
   allProfileConflicts =
     name:
-    map (other: "${serviceName other}.service") (builtins.filter (other: other != name) profileNames);
+    map (other: "${serviceName other}.service") (
+      builtins.filter (other: other != name) globalProfileNames
+    );
+  inherit (import ./wg-tunnel.nix { inherit lib pkgs cfg derived; }) mkTunnel;
   sourceCount =
     profile:
     builtins.length (
@@ -100,16 +106,31 @@ let
     }
   '';
 
+  # `ping` for the handshake probe. An outbound interface has no route to the probe address, so
+  # the probe is bound to it.
+  pingVia =
+    profile:
+    "${pkgs.iputils}/bin/ping -n -c 1"
+    + lib.optionalString (profile.asOutbound == "interface") " -I ${lib.escapeShellArg profile.interfaceName}";
+
+  # An outbound interface keeps the host's routes and resolver, and marks its packets so TUN and
+  # TProxy let them past.
+  prepareCommand = profile: output: ''
+    ${pkgs.python3}/bin/python3 ${configTool} \
+      --manifest ${lib.escapeShellArg (toString (manifestFor profile))} \
+      --output ${output}${
+        lib.optionalString (profile.asOutbound == "interface") " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
+      }
+  '';
+
   mkService =
     name: profile:
     let
-      manifest = manifestFor profile;
+      outbound = profile.asOutbound == "interface";
       configPath = runtimeConfig name profile;
       prepare = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
-        ${pkgs.python3}/bin/python3 ${configTool} \
-          --manifest ${lib.escapeShellArg (toString manifest)} \
-          --output ${lib.escapeShellArg configPath}
+        ${prepareCommand profile (lib.escapeShellArg configPath)}
       '';
       proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
@@ -176,7 +197,7 @@ let
         ${mkHandshakeHelpers profile}
         # A handshake is retried every 5 seconds: each retry after the first gets a new port.
         for attempt in $(${pkgs.coreutils}/bin/seq 1 20); do
-          ${pkgs.iputils}/bin/ping -n -c 1 -W 1 "$probe" >/dev/null 2>&1 || true
+          ${pingVia profile} -W 1 "$probe" >/dev/null 2>&1 || true
           if (( $(handshake_age) < 1000000 )); then
             trap - ERR
             exit 0
@@ -194,24 +215,38 @@ let
         exec ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath}
       '';
     in
-    {
-      description = "proxy-suite AmneziaWG client profile ${name}";
-      # Start the local proxy before AWG takes the default route, so HTTP_PROXY clients
-      # do not race it.
-      after = [
-        "network-online.target"
-        "proxy-suite-zapret.service"
-      ]
-      ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
-      wants = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
-      wantedBy = lib.optionals profile.autostart [ "multi-user.target" ];
-      conflicts = allProfileConflicts name ++ [
-        "proxy-suite-tun.service"
-        "proxy-suite-tproxy.service"
-        "proxy-suite-zapret.service"
-        "proxy-suite-per-app-zapret.service"
-        "proxy-suite-zapret-vm-exempt.service"
-      ];
+    (
+      if outbound then
+        {
+          description = "proxy-suite AmneziaWG interface behind the ${name} outbound";
+          # Nothing waits for it: a slow handshake must not hold up the proxy.
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          wantedBy = [ "multi-user.target" ];
+          startLimitIntervalSec = 0;
+        }
+      else
+        {
+          description = "proxy-suite AmneziaWG client profile ${name}";
+          # Start the local proxy before AWG takes the default route, so HTTP_PROXY clients
+          # do not race it.
+          after = [
+            "network-online.target"
+            "proxy-suite-zapret.service"
+          ]
+          ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
+          wants = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
+          wantedBy = lib.optionals profile.autostart [ "multi-user.target" ];
+          conflicts = allProfileConflicts name ++ [
+            "proxy-suite-tun.service"
+            "proxy-suite-tproxy.service"
+            "proxy-suite-zapret.service"
+            "proxy-suite-per-app-zapret.service"
+            "proxy-suite-zapret-vm-exempt.service"
+          ];
+        }
+    )
+    // {
       path = [
         awgCfg.toolsPackage
         awgCfg.userspacePackage
@@ -237,13 +272,33 @@ let
         ProtectKernelLogs = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
-        ExecStartPre = [ prepare ] ++ lib.optionals cfg.proxy.enable [ proxyBypassUp ];
+        ExecStartPre = [ prepare ] ++ lib.optionals (cfg.proxy.enable && !outbound) [ proxyBypassUp ];
         ExecStart = start;
         ExecStop = stop;
       }
-      // lib.optionalAttrs cfg.proxy.enable {
+      // lib.optionalAttrs (cfg.proxy.enable && !outbound) {
         ExecStopPost = proxyBypassDown;
+      }
+      # A failed handshake leaves no routes behind here, so try again later.
+      // lib.optionalAttrs outbound {
+        Restart = "on-failure";
+        RestartSec = 30;
       };
+    };
+
+  mkSingBoxService =
+    ob:
+    let
+      profile = profiles.${ob.name};
+    in
+    mkTunnel {
+      description = "proxy-suite AmneziaWG tunnel behind the ${ob.name} outbound";
+      unit = serviceName ob.name;
+      inherit (ob) tag tunnelPort directPort;
+      profile = ''
+        profile="$RUNTIME_DIRECTORY/profile.conf"
+        ${prepareCommand profile ''"$profile"''}
+      '';
     };
 
   # Runs alongside a started profile. Its pings keep traffic flowing, and traffic makes
@@ -264,7 +319,7 @@ let
         ${mkHandshakeHelpers profile}
         stale=0
         while sleep 15; do
-          ${pkgs.iputils}/bin/ping -n -c 1 -W 2 "$probe" >/dev/null 2>&1 || true
+          ${pingVia profile} -W 2 "$probe" >/dev/null 2>&1 || true
           if (( $(handshake_age) <= rekey + 10 )); then
             stale=0
           elif (( ++stale >= 2 )); then
@@ -324,6 +379,18 @@ let
         message = "proxy-suite: AmneziaWG profile '${name}': vpnContainer requires vpn or vpnFile";
       }
       {
+        assertion = profile.asOutbound == null || cfg.proxy.enable;
+        message = "proxy-suite: AmneziaWG profile '${name}': asOutbound requires proxy.enable = true";
+      }
+      {
+        assertion = profile.asOutbound == null || !profile.autostart;
+        message = "proxy-suite: AmneziaWG profile '${name}': an outbound always runs; leave autostart off";
+      }
+      {
+        assertion = profile.asOutbound != "interface" || settings == null || settings.table == null;
+        message = "proxy-suite: AmneziaWG profile '${name}': an outbound interface has no routes; leave settings.table unset";
+      }
+      {
         assertion = settings == null || settings.addresses != [ ];
         message = "proxy-suite: AmneziaWG profile '${name}': declarative settings require at least one address";
       }
@@ -353,7 +420,7 @@ let
   ) profileNames;
 
   interfaceNames = map (name: profiles.${name}.interfaceName) profileNames;
-  autostartProfiles = builtins.filter (name: profiles.${name}.autostart) profileNames;
+  autostartProfiles = builtins.filter (name: profiles.${name}.autostart) globalProfileNames;
   globalAutostartCount = builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
 in
 {
@@ -366,18 +433,24 @@ in
     awgCfg.kernelModulePackage
   ];
 
+  # Replies to the proxy's sockets come in on an interface the host has no route through.
+  networking.firewall.extraReversePathFilterRules = lib.concatMapStrings (ob: ''
+    iifname "${ob.interface}" accept
+  '') derived.awgInterfaceOutbounds;
+
   systemd.services = lib.mkMerge [
-    (lib.mapAttrs' (
-      name: profile: lib.nameValuePair (serviceName name) (mkService name profile)
-    ) profiles)
+    (lib.mapAttrs' (name: profile: lib.nameValuePair (serviceName name) (mkService name profile)) (
+      lib.filterAttrs (_: profile: profile.asOutbound != "singBox") profiles
+    ))
     (lib.mapAttrs' (
       name: profile: lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog name profile)
-    ) profiles)
+    ) (lib.filterAttrs (_: profile: profile.asOutbound != "singBox") profiles))
+    (lib.listToAttrs (map (ob: lib.nameValuePair (serviceName ob.name) (mkSingBoxService ob)) singBoxOutbounds))
     (lib.mkIf cfg.proxy.tun.enable {
-      proxy-suite-tun.conflicts = map (name: "${name}.service") serviceNames;
+      proxy-suite-tun.conflicts = map (name: "${name}.service") globalServiceNames;
     })
     (lib.mkIf cfg.proxy.tproxy.enable {
-      proxy-suite-tproxy.conflicts = map (name: "${name}.service") serviceNames;
+      proxy-suite-tproxy.conflicts = map (name: "${name}.service") globalServiceNames;
     })
   ];
 

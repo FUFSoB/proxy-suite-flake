@@ -6,6 +6,7 @@
   proxyCfg,
   sshProxyCfg,
   warpCfg,
+  awgOutbounds,
   xrayEnabled,
   hybridEnabled,
   pureXrayEnabled,
@@ -111,6 +112,7 @@ let
       proxyCfg
       sshProxyCfg
       warpCfg
+      awgOutbounds
       constants
       pureXrayEnabled
       hybridEnabled

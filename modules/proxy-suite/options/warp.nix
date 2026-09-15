@@ -12,7 +12,8 @@ in
       default = null;
       description = ''
         Runtime path to a WireGuard profile for WARP, as written by `wgcf register && wgcf generate`.
-        AmneziaWG lines (Jc, S1-S4, H1-H4, I1-I5, AWG 3 timing) are honoured by the AmneziaWG profile only.
+        AmneziaWG lines (Jc, S1-S4, H1-H4, I1-I5, AWG 3 timing) are honoured by the AmneziaWG profile
+        (asAmneziaWg, asOutbound = "interface") only.
 
         When null, proxy-suite-warp registers a device with wgcf (accepting Cloudflare's terms)
         into /var/lib/proxy-suite/warp, through the local proxy when proxy.enable is set, and
@@ -35,13 +36,21 @@ in
     };
 
     asOutbound = mkOption {
-      type = types.bool;
-      default = false;
+      type = types.nullOr (
+        types.enum [
+          "singBox"
+          "interface"
+        ]
+      );
+      default = null;
       description = ''
-        Add WARP as an outbound tagged "warp": a SOCKS hop to proxy-suite-warp-tunnel, which
-        runs WARP as a sing-box WireGuard endpoint on 127.0.0.1:18538, as the proxy-suite-daemon user.
-        The tunnel starts again on a new source port when WARP does not answer within 15 seconds
-        of a start, or misses three probes later on, unless the uplink itself is down.
+        Add WARP as an outbound tagged "warp".
+        - "singBox": a SOCKS hop to proxy-suite-warp-tunnel, which runs WARP as a sing-box WireGuard
+          endpoint on 127.0.0.1:18538, as the proxy-suite-daemon user. The tunnel starts again on a
+          new source port when WARP does not answer within 15 seconds of a start, or misses three
+          probes later on, unless the uplink itself is down.
+        - "interface": an AmneziaWG profile named "warp" with asOutbound = "interface", which honours
+          the AmneziaWG lines of the profile. Requires amneziaWg.enable.
       '';
     };
 

@@ -168,6 +168,18 @@ let
       ;
   };
 
+  amneziaWgOutboundChecks = import ./amnezia-wg-outbound.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      mkProxyCtlDerived
+      mkTProxyConfig
+      dnsServerByTag
+      ;
+  };
+
   globalProxyModeChecks = import ./global-proxy-modes.nix {
     inherit
       pkgs
@@ -253,6 +265,7 @@ let
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions
     ++ amneziaWgChecks.assertions
+    ++ amneziaWgOutboundChecks.assertions
     ++ zapretChecks.assertions
     ++ zapret2Checks.assertions
     ++ globalProxyModeChecks.assertions

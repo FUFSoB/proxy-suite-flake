@@ -10,6 +10,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [profiles](#services-proxy-suite-amneziawg-profiles)
     - `<name>`
       - [allowConfigHooks](#services-proxy-suite-amneziawg-profiles-name-allowconfighooks)
+      - [asOutbound](#services-proxy-suite-amneziawg-profiles-name-asoutbound)
       - [autostart](#services-proxy-suite-amneziawg-profiles-name-autostart)
       - [configFile](#services-proxy-suite-amneziawg-profiles-name-configfile)
       - [interfaceName](#services-proxy-suite-amneziawg-profiles-name-interfacename)
@@ -129,6 +130,29 @@ boolean
 
 ```nix
 false
+```
+
+<a id="services-proxy-suite-amneziawg-profiles-name-asoutbound"></a>
+## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.asOutbound
+
+Make the profile a proxy outbound tagged with its name instead of a global profile\. It then
+always runs, leaves the host’s routes and resolver alone, and is not listed by
+` proxy-ctl awg `\. Requires proxy\.enable\.
+
+ - “singBox”: a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
+   hop\. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning\.
+ - “interface”: the AmneziaWG interface comes up without routes (Table = off), and the
+   outbound binds to it, so obfuscation works\. With the sing-box backend its DNS goes
+   through the interface too (proxy\.dns\.remote); XRay resolves as usual\.
+   Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy\.
+
+*Type:*
+null or one of “singBox”, “interface”
+
+*Default:*
+
+```nix
+null
 ```
 
 <a id="services-proxy-suite-amneziawg-profiles-name-autostart"></a>

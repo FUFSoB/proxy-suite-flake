@@ -183,6 +183,7 @@ in
               lib
               pkgs
               cfg
+              derived
               ;
           }
         ))

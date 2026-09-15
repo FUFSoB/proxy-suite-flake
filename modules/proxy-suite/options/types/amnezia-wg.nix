@@ -269,6 +269,26 @@ let
           default = false;
           description = "Whether to start this profile at boot. At most one profile may autostart.";
         };
+        asOutbound = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "singBox"
+              "interface"
+            ]
+          );
+          default = null;
+          description = ''
+            Make the profile a proxy outbound tagged with its name instead of a global profile. It then
+            always runs, leaves the host's routes and resolver alone, and is not listed by
+            `proxy-ctl awg`. Requires proxy.enable.
+            - "singBox": a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
+              hop. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning.
+            - "interface": the AmneziaWG interface comes up without routes (Table = off), and the
+              outbound binds to it, so obfuscation works. With the sing-box backend its DNS goes
+              through the interface too (proxy.dns.remote); XRay resolves as usual.
+            Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy.
+          '';
+        };
         allowConfigHooks = mkOption {
           type = types.bool;
           default = false;

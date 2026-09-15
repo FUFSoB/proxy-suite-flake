@@ -74,13 +74,18 @@ services.proxy-suite = {
     enable = true;
     profiles.home.configFile = "/run/secrets/home-amneziawg.conf";
     profiles.work.vpnFile = "/run/secrets/work-amnezia.vpn";
+    # An outbound tagged "de" instead: the proxy binds to its interface, which gets no routes.
+    profiles.de = {
+      asOutbound = "interface"; # or "singBox": plain WireGuard inside sing-box
+      configFile = "/run/secrets/de-amneziawg.conf";
+    };
   };
 
   # Registers with wgcf on first start. The exit is Cloudflare, but geolocated to your own country.
   warp = {
     enable = true;
-    asOutbound = true; # tag "warp"
-    asAmneziaWg = true; # proxy-ctl awg on warp
+    asOutbound = "singBox"; # tag "warp"; "interface" runs it as an AmneziaWG profile
+    # asAmneziaWg = true; # or a global profile instead: proxy-ctl awg on warp
   };
 
   tgWsProxy = {

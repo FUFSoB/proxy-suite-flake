@@ -447,6 +447,17 @@ class AmneziaWgConfigTests(unittest.TestCase):
             "auto",
         )
 
+    def test_outbound_render_keeps_host_routes_and_resolver(self):
+        config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1").replace(
+            "Address = 10.8.0.2/32", "Address = 10.8.0.2/32\nTable = 1234\ndns = 9.9.9.9"
+        )
+        rendered = amneziawg_config.as_outbound(config, 2)
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "dns"), [])
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "table"), ["off"])
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "fwmark"), ["2"])
+        # The peer is untouched.
+        self.assertIn("Endpoint = vpn.example.com:51820", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

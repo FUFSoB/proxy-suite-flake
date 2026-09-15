@@ -44,20 +44,20 @@ let
   singBoxHop = ''"server":"127.0.0.1","server_port":18538,"tag":"warp","type":"socks"'';
   xrayHop = ''"protocol":"socks","settings":{"address":"127.0.0.1","port":18538},"tag":"warp"'';
 
-  singBox = mkFixture "sing-box" { asOutbound = true; };
+  singBox = mkFixture "sing-box" { asOutbound = "singBox"; };
   singBoxStart = startOf singBox;
   singBoxTunnel = tunnelOf singBox;
-  xray = mkFixture "xray" { asOutbound = true; };
+  xray = mkFixture "xray" { asOutbound = "singBox"; };
   xrayStart = startOf xray;
-  hybrid = mkFixture "hybrid" { asOutbound = true; };
+  hybrid = mkFixture "hybrid" { asOutbound = "singBox"; };
   hybridStart = startOf hybrid;
   auto = mkFixture "sing-box" {
-    asOutbound = true;
+    asOutbound = "singBox";
     configFile = null;
   };
   autoTunnel = tunnelOf auto;
   generator = mkFixture "sing-box" {
-    asOutbound = true;
+    asOutbound = "singBox";
     configFile = null;
     generatorUrl = "https://gen.example.com/api/warp?mode=awg2";
   };
@@ -97,7 +97,7 @@ let
       warp = {
         enable = true;
         configFile = profile;
-        asOutbound = true;
+        asOutbound = "singBox";
       };
     }
     # asAmneziaWg without AmneziaWG.
@@ -116,7 +116,7 @@ let
       warp = {
         enable = true;
         configFile = profile;
-        asOutbound = true;
+        asOutbound = "singBox";
         asAmneziaWg = true;
       };
       proxy.enable = true;
@@ -127,7 +127,7 @@ let
       warp = {
         enable = true;
         configFile = profile;
-        asOutbound = true;
+        asOutbound = "singBox";
       };
       proxy = {
         enable = true;
