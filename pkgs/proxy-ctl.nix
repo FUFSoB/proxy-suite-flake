@@ -80,9 +80,11 @@ let
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
   );
   # The modules both front-ends import: proxy_ctl for reads, proxy_model for the tabs and the tray menu.
+  # proxy_export: what `proxy-ctl proxy config` imports.
   pythonModules = pkgs.runCommand "proxy-suite-python-modules" { } ''
     install -Dm644 ${./proxy-ctl/proxy_ctl.py} "$out/proxy_ctl.py"
     install -Dm644 ${./proxy-ctl/proxy_model.py} "$out/proxy_model.py"
+    install -Dm644 ${./proxy-ctl/proxy_export.py} "$out/proxy_export.py"
   '';
   # A separate package: the Textual closure stays off hosts that don't enable it.
   # It imports proxy_ctl for reads and runs proxy-ctl for every change.
@@ -225,6 +227,7 @@ let
       [ -x "$probe_curl" ]
       wrapProgram "$out/bin/proxy-ctl" \
         --set PROBE_CURL "$probe_curl" \
+        --set PROXY_CTL_MODULES ${pythonModules} \
         --prefix PATH : "${
           lib.makeBinPath [
             # curl-impersonate's curl_chrome* wrappers are `#!/usr/bin/env bash`.

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import urllib.parse
 
-from proxy_inbound import build_inbounds, build_share_link, render_xray_inbound, subscription_token
+from proxy_inbound import build_inbounds, build_share_link, client_outbound, render_xray_inbound, subscription_token
 from proxy_parsing import build_outbound
 
 
@@ -357,6 +357,16 @@ class BuildInboundsTests(unittest.TestCase):
         self.assertEqual([ib["tag"] for ib in result["inbounds"]], ["a", "b"])
         self.assertEqual([entry["tag"] for entry in result["links"]], ["a", "b"])
         self.assertEqual(result["links"][1]["port"], 8443)
+        self.assertEqual(result["links"][0]["outbound"]["type"], "vless")
+        # v2rayN's socks:// is a link, but not one the outbound parsers take.
+        self.assertIsNone(result["links"][1]["outbound"])
+
+    def test_client_outbound_falls_back_to_xray(self):
+        link = build_share_link(
+            listener(transport={"type": "xhttp", "path": "/p", "host": None, "mode": "auto", "serviceName": ""}),
+            "vpn.example.com",
+        )
+        self.assertEqual(client_outbound(link, "x")["protocol"], "vless")
 
     def test_xhttp_mode_reaches_the_inbound_and_the_link(self):
         spec = listener(

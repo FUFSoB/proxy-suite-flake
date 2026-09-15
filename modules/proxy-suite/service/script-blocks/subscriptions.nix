@@ -66,17 +66,22 @@ let
       fi
     }
 
-    # $1 tag, $2 file holding the subscription URL. Writes the cache atomically.
+    # $1 tag, $2 file holding the subscription URL. Writes the cache atomically,
+    # and next to it <tag>.links: each entry's original URI, for proxy-ctl to share.
     _proxy_suite_fetch_subscription() {
-      local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json"
+      local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" links="$SUB_CACHE_DIR/$1.links"
       mkdir -p "$SUB_CACHE_DIR"
       if printf '%s' "$(cat "$src")" \
         | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} \
-            ${subscriptionBackendArg} --tag-prefix "$tag" > "$cache.tmp"; then
-        _proxy_suite_commit_subscription_cache "$cache.tmp" "$cache" "$tag"
-        return
+            ${subscriptionBackendArg} --tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"; then
+        if _proxy_suite_commit_subscription_cache "$cache.tmp" "$cache" "$tag"; then
+          mv "$links.tmp" "$links"
+          return 0
+        fi
+        rm -f "$links.tmp"
+        return 1
       fi
-      rm -f "$cache.tmp"
+      rm -f "$cache.tmp" "$links.tmp"
       echo "proxy-suite: failed to update subscription '$tag'" >&2
       return 1
     }
@@ -138,6 +143,7 @@ let
         ${mergeBlock}
         after=$(${jq} 'length' <<< "$OUTBOUNDS_JSON")
         _proxy_suite_record_outbound_source "sub:$tag" "$before" "$after"
+        _proxy_suite_record_subscription_share "$tag" "$src" "$SUB_CACHE_DIR/$tag.links"
       }
     '';
 

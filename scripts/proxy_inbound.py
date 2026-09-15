@@ -13,6 +13,8 @@ import hashlib
 import json
 import urllib.parse
 
+from proxy_parsing import build_outbound
+
 UUID_TYPES = ("vless", "vmess")
 PASSWORD_TYPES = ("trojan", "shadowsocks", "socks", "http")
 UDP_TYPES = ("shadowsocks", "socks")
@@ -313,6 +315,17 @@ def build_listener(listener: dict, server_address: str, share_links: bool) -> di
     return {"tag": tag, "type": listener["type"], "port": _share_port(listener), "inbound": inbound, "links": links}
 
 
+def client_outbound(link: str, tag: str) -> dict | None:
+    """What a client dials for this link: sing-box JSON, or XRay's where sing-box has
+    no such transport (XHTTP, ECH). None when neither parser reads the link (socks://)."""
+    for backend in ("sing-box", "xray"):
+        try:
+            return build_outbound(link, tag, backend=backend)
+        except ValueError:
+            pass
+    return None
+
+
 def subscription_token(name: str, secrets: list[str]) -> str:
     """Name of a user's subscription file, and so the secret part of its URL.
 
@@ -348,6 +361,7 @@ def build_inbounds(spec: dict, server_address: str) -> dict:
                     "type": rendered.get("type", ""),
                     "port": rendered.get("port", 0),
                     "link": link,
+                    "outbound": client_outbound(link, rendered["tag"]),
                 }
             )
             entry = by_user.setdefault(name, {"links": [], "secrets": []})

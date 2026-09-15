@@ -131,7 +131,7 @@ let
       TAG="''${TAG%.json}"
       case "$KEEP" in
         *"|$TAG|"*) ;;
-        *) rm -f "$CACHE" ;;
+        *) rm -f "$CACHE" "''${CACHE%.json}.links" ;;
       esac
     done
 

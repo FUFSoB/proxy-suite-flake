@@ -270,6 +270,21 @@ let
         }
         mv "$ENDPOINTS_TMP" "$RUNTIME_DIR/outbound-endpoints.json"
 
+        # proxy-ctl's share links: the URL each outbound was given, and its backend JSON.
+        # Credentials, so root only, whatever userControl allows.
+        SHARE_TMP="$RUNTIME_DIR/outbound-share.json.tmp"
+        (umask 077 && ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" \
+          --argjson urls "$OUTBOUND_URLS_JSON" --argjson subs "$SUBSCRIPTION_URLS_JSON" '
+          ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
+          | {outbounds: ([.[] | select(.type != "selector" and .type != "urltest")
+               | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag
+               | {key: $tag, value: {url: $urls[$tag], outbound: (($real[$tag] // $real[.tag] // .) | .tag = $tag)}}]
+               | from_entries),
+             subscriptions: $subs}
+        ' <<< "$OUTBOUNDS_JSON" > "$SHARE_TMP")
+        chmod 600 "$SHARE_TMP"
+        mv "$SHARE_TMP" "$RUNTIME_DIR/outbound-share.json"
+
         ${lib.optionalString (!pureXrayEnabled) ''
           # Delay and download: a loopback listener pinned to a selector over every real
           # exit, switched one outbound at a time through the Clash API.

@@ -89,7 +89,7 @@ class ModelTest(unittest.TestCase):
             rows, summary = model.load_tab(tab, {})
         self.assertEqual([(r["tag"], r["mark"]) for r in rows], [("a", "▸"), ("b", "★")])
         self.assertIn("Pinned: b", summary)
-        self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "T", "n"])
+        self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "T", "n", "l", "c", "Q", "J", "F", "X"])
         broken = model.Tab("x", "X", model.ROW, [], lambda _: ctl.die("backend gone"))
         self.assertEqual(model.load_tab(broken, {}), ([], "✗ backend gone"))
 

@@ -61,6 +61,15 @@ class FetchSubscriptionTests(unittest.TestCase):
         obs = run_fetcher(payload, tag_prefix="mysub")
         self.assertTrue(obs[0]["tag"].startswith("mysub-"))
 
+    def test_links_map_tags_to_lines(self):
+        lines = [VLESS_URI, INVALID_URI, VLESS_XHTTP_URI]
+        links: dict[str, str] = {}
+        obs = parse_subscription(lines, "sub", None, "sing-box", links)
+        self.assertEqual(links, {obs[0]["tag"]: VLESS_URI})
+        links = {}
+        hybrid = parse_hybrid_subscription(lines, "sub", None, links)
+        self.assertEqual(links, {hybrid["singBox"][0]["tag"]: VLESS_URI, hybrid["xray"][0]["tag"]: VLESS_XHTTP_URI})
+
     def test_remark_used_in_tag(self):
         uri_with_remark = VLESS_URI + "#My Server DE"
         payload = _make_b64_payload(uri_with_remark)

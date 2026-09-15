@@ -352,8 +352,15 @@ TABS = [
             Action("u", "unpin: let the selection pick", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
             Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
             Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
-            Action("n", "add a runtime outbound…", lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1)], prompt="<tag> <url>"),
+            Action("n", "add a runtime outbound…", lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1)], prompt="<tag> <url or JSON>"),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
+            # Credentials: proxy-ctl refuses these without root, and the dialog says so.
+            Action("l", "its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
+            Action("c", "copy its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
+            Action("Q", "its URL as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
+            Action("J", "its JSON", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--json"], when=ROW, mode="dialog"),
+            Action("F", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=ROW, mode="dialog"),
+            Action("X", "client config with every outbound and rule", lambda r, *_: ["proxy", "config"], mode="dialog"),
         ],
     ),
     Tab(
@@ -368,6 +375,9 @@ TABS = [
             Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
             Action("n", "add a runtime subscription…", lambda r, t, _: ["proxy", "subs", "add", *t.split(None, 1)], prompt="<tag> <url>"),
             Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
+            Action("k", "its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
+            Action("y", "copy its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="copy"),
+            Action("Q", "its URL as QR", lambda r, *_: ["proxy", "subs", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
         ],
     ),
     Tab(
@@ -419,6 +429,8 @@ TABS = [
             # Without subscriptions.baseUrl there is only a file path, with a hint after it: nothing to encode or copy.
             Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
             Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
+            Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=ROW, mode="dialog"),
+            Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
         ],
     ),

@@ -109,7 +109,7 @@
           printf '%s\n' '#!/bin/sh'
           printf '%s\n' 'if [ "$1" = start ] && [ "$2" = proxy-suite-outbound-reload.service ]; then'
           printf '%s\n' '  ls "$RUNTIME_OUTBOUNDS_DIR" > "$OUTBOUND_INVENTORY_FILE.spool"'
-          printf '%s\n' '  jq --rawfile spool "$OUTBOUND_INVENTORY_FILE.spool" '"'"'($spool | split("\n") | map(select(endswith(".url")) | rtrimstr(".url"))) as $new | .tags = (.tags + $new | unique) | .sources = reduce $new[] as $t (.sources; .[$t] = "runtime")'"'"' "$OUTBOUND_INVENTORY_FILE" > "$OUTBOUND_INVENTORY_FILE.tmp"'
+          printf '%s\n' '  jq --rawfile spool "$OUTBOUND_INVENTORY_FILE.spool" '"'"'($spool | split("\n") | map(select(endswith(".url") or endswith(".json")) | sub("\\.(url|json)$"; ""))) as $new | .tags = (.tags + $new | unique) | .sources = reduce $new[] as $t (.sources; .[$t] = "runtime")'"'"' "$OUTBOUND_INVENTORY_FILE" > "$OUTBOUND_INVENTORY_FILE.tmp"'
           printf '%s\n' '  mv "$OUTBOUND_INVENTORY_FILE.tmp" "$OUTBOUND_INVENTORY_FILE"'
           printf '%s\n' 'fi'
           printf '%s\n' 'exit 0'
@@ -183,6 +183,18 @@
         ! run proxy outbounds add spool-one http://example.com:1 2>/dev/null
         run proxy outbounds rm spool-one | grep -q 'Removed outbound: spool-one'
         [ ! -e obd/spool-one.url ]
+
+        # JSON, as `link --json` prints it, lands as <tag>.json without its own tag; stdin too.
+        run proxy outbounds add from-json '{"type":"trojan","tag":"x","server":"t.test","server_port":443,"password":"p"}' \
+          | grep -q 'Added outbound: from-json'
+        [ "$(jq -r 'has("tag"), .server' obd/from-json.json | paste -sd,)" = "false,t.test" ]
+        printf '%s' '{"protocol":"vless","settings":{}}' | run proxy outbounds add from-stdin - | grep -q 'Added outbound: from-stdin'
+        ! run proxy outbounds add from-json '{"type":"trojan"}' 2>/dev/null
+        ! run proxy outbounds add bad-json '{"server":"t.test"}' 2>/dev/null
+        ! run proxy outbounds add bad-json '{nope' 2>/dev/null
+        [ ! -e obd/bad-json.json ]
+        run proxy outbounds rm from-json | grep -q 'Removed outbound: from-json'
+        [ ! -e obd/from-json.json ]
 
         # Subscriptions use the same spool machinery, verified by cache file.
         printf '%s\n' '[{},{}]' > cache/extra.json
@@ -410,6 +422,15 @@
       export SING_BOX=${pkgs.sing-box}/bin/sing-box
       export PYTHONDONTWRITEBYTECODE=1
       python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
+      touch "$out"
+    '';
+
+  # proxy_export: the running config made portable, and sing-box still accepts it.
+  proxy-export-unit =
+    pkgs.runCommand "proxy-suite-proxy-export-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      export SING_BOX=${pkgs.sing-box}/bin/sing-box
+      export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+      python ${../../pkgs/proxy-ctl}/test_proxy_export.py
       touch "$out"
     '';
 

@@ -112,10 +112,12 @@ A group without a verb shows its status or list.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url>        add an outbound at runtime
+  proxy outbounds add <tag> <url|json|->  add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin)
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
+  proxy outbounds link <tag> [--qr|--json|--config]
+                                         its URL, QR code, backend JSON, or a client config for it (sudo)
   proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
   proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
@@ -123,6 +125,8 @@ A group without a verb shows its status or list.
   proxy subs [list|update]               subscription caches; update refetches them
   proxy subs add <tag> <url>             add a subscription at runtime
   proxy subs rm <tag>                    remove a runtime subscription
+  proxy subs link <tag> [--qr]           its URL (sudo)
+  proxy config [--raw]                   client config to import elsewhere; --raw: as running (sudo)
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
   proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
@@ -151,7 +155,9 @@ A group without a verb shows its status or list.
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--qr]      client share link
+  inbounds link <tag> [user] [--qr|--json]
+                                         client share link, or the client's outbound JSON
+  inbounds link <tag> --server-json      the server's inbound JSON (sudo)
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days]                  traffic per user (sudo, or userControl)
 ```

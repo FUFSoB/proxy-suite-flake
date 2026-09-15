@@ -53,10 +53,12 @@ A group without a verb shows its status or list.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url>        add an outbound at runtime
+  proxy outbounds add <tag> <url|json|->  add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin)
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
+  proxy outbounds link <tag> [--qr|--json|--config]
+                                         its URL, QR code, backend JSON, or a client config for it (sudo)
   proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
   proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
@@ -64,6 +66,8 @@ A group without a verb shows its status or list.
   proxy subs [list|update]               subscription caches; update refetches them
   proxy subs add <tag> <url>             add a subscription at runtime
   proxy subs rm <tag>                    remove a runtime subscription
+  proxy subs link <tag> [--qr]           its URL (sudo)
+  proxy config [--raw]                   client config to import elsewhere; --raw: as running (sudo)
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
   proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
@@ -92,7 +96,9 @@ A group without a verb shows its status or list.
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--qr]      client share link
+  inbounds link <tag> [user] [--qr|--json]
+                                         client share link, or the client's outbound JSON
+  inbounds link <tag> --server-json      the server's inbound JSON (sudo)
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days]                  traffic per user (sudo, or userControl)
 """
@@ -317,15 +323,22 @@ COMPLETE = {
             "tun": "global TUN mode",
             "tproxy": "global TProxy mode",
             "auto": "what autoProxy routed",
+            "config": "client config to import elsewhere",
         }
     },
+    "proxy config": {"flags": {"--raw": "the config as it runs here"}},
     "proxy outbounds": {
         "words": {
             "list": "outbounds, where each came from, and the pick",
-            "add": "add an outbound at runtime",
+            "add": "add an outbound at runtime: a URL or JSON",
             "rm": "remove a runtime outbound",
             "test": "TCP ping, real delay, download speed",
+            "link": "its URL, QR code, JSON or client config",
         }
+    },
+    "proxy outbounds link": {
+        "args": _outbound_choices,
+        "flags": {"--qr": "print a QR code", "--json": "backend JSON", "--config": "client config for this server"},
     },
     "proxy outbounds rm": {"args": lambda: _names(_runtime_tags("outbound"))},
     "proxy outbounds test": {
@@ -345,8 +358,10 @@ COMPLETE = {
             "update": "refetch the subscriptions",
             "add": "add a subscription at runtime",
             "rm": "remove a runtime subscription",
+            "link": "its URL",
         }
     },
+    "proxy subs link": {"args": lambda: _names(_sub_tags() + _runtime_tags("subscription")), "flags": {"--qr": "print a QR code"}},
     "proxy subs rm": {"args": lambda: _names(_runtime_tags("subscription"))},
     "proxy tun": {"words": TOGGLE},
     "proxy tproxy": {"words": TOGGLE},
@@ -407,7 +422,10 @@ COMPLETE = {
             "stats": "traffic per user",
         }
     },
-    "inbounds link": {"args": _inbound_link_choices, "flags": {"--qr": "print a QR code"}},
+    "inbounds link": {
+        "args": _inbound_link_choices,
+        "flags": {"--qr": "print a QR code", "--json": "the client's outbound JSON", "--server-json": "the server's inbound JSON"},
+    },
     "inbounds sub": {
         "args": lambda: _names(_s(x["user"]) for x in read_json(env("INBOUNDS_SUBS_FILE"))),
         "flags": {"--qr": "print a QR code"},
@@ -689,6 +707,8 @@ def cmd_proxy(verb="status", *args):
         must("stop", "proxy-suite-socks")
     elif verb == "outbounds":
         cmd_outbounds(*args)
+    elif verb == "config":
+        _config_export(*args)
     elif verb == "pin":
         cmd_pin(*args)
     elif verb == "unpin":
@@ -706,7 +726,7 @@ def cmd_proxy(verb="status", *args):
     elif verb in ("probe", "learn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|tun|tproxy|auto]")
+        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|tun|tproxy|auto|config]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -718,8 +738,10 @@ def cmd_outbounds(verb="list", *args):
         _runtime_entry_rm("outbound", *args)
     elif verb == "test":
         cmd_outbounds_test(*args)
+    elif verb == "link":
+        _outbound_link(*args)
     else:
-        usage("proxy outbounds [list|add <tag> <url>|rm <tag>|test [tag...]]")
+        usage("proxy outbounds [list|add <tag> <url|json|->|rm <tag>|test [tag...]|link <tag>]")
 
 
 def _outbound_inventory():
@@ -946,6 +968,92 @@ def _outbounds_list():
         print(f" {mark}{tag:<34} {rep(tag)}{_s(sources.get(tag) or '-')}")
 
 
+# --- sharing ------------------------------------------------------------------
+#
+# The socks start script writes outbound-share.json, root only: the URL each outbound
+# was given (none for one declared as JSON, WARP or SSH) and its backend JSON. A URL is
+# never rebuilt from JSON. `proxy config` turns the running config into one another
+# device can import (proxy_export).
+
+
+def _read_root_json(path, what):
+    if not os.path.isfile(path):
+        die(f"No {what} yet - is proxy-suite-socks running?")
+    if not readable(path):
+        die(f"Cannot read {path} - re-run with sudo.")
+    return read_json(path)
+
+
+def _share_args(args, flags, noun):
+    rest = [a for a in args if not a.startswith("-")]
+    given = [a for a in args if a.startswith("-")]
+    for flag in given:
+        if flag not in flags:
+            die(f"Unknown option: {flag}")
+    if len(rest) != 1 or len(given) > 1:
+        usage(f"{noun} link <tag> [{'|'.join(flags)}]")
+    return rest[0], given[0] if given else ""
+
+
+def _json_text(value):
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def _outbound_link(*args):
+    tag, flag = _share_args(args, ("--qr", "--json", "--config"), "proxy outbounds")
+    if flag == "--config":
+        _config_export(only=tag)
+        return
+    entry = (_read_root_json(_runtime_file("outbound-share.json"), "outbounds").get("outbounds") or {}).get(tag)
+    if entry is None:
+        die(f"Unknown outbound: {tag}")
+    if flag == "--json":
+        print(_json_text(_proxy_export().portable_outbound(entry.get("outbound") or {})))
+    elif not entry.get("url"):
+        die(f"{tag} has no URL (it was not given as one) - use --json.")
+    else:
+        _emit(_s(entry["url"]), flag == "--qr")
+
+
+def _subscription_link(*args):
+    tag, flag = _share_args(args, ("--qr",), "proxy subs")
+    url = (_read_root_json(_runtime_file("outbound-share.json"), "subscriptions").get("subscriptions") or {}).get(tag)
+    if not url:
+        die(f"Unknown subscription: {tag}")
+    _emit(_s(url), flag == "--qr")
+
+
+def _proxy_export():
+    # Not PYTHONPATH: that would reach every command `apps run` starts.
+    sys.path.append(env("PROXY_CTL_MODULES", os.path.dirname(os.path.abspath(__file__))))
+    import proxy_export
+
+    return proxy_export
+
+
+def _config_export(*args, only=None):
+    proxy_export = _proxy_export()
+
+    for arg in args:
+        if arg != "--raw":
+            usage("proxy config [--raw]")
+    cfg = _read_root_json(_runtime_file("config.json"), "running config")
+    if "--raw" in args:
+        sidecar = _runtime_file("xray-sidecar.json")
+        print(_json_text({"sing-box": cfg, "xray": read_json(sidecar)} if os.path.isfile(sidecar) else cfg))
+        return
+    if only is not None and only not in _outbound_tags():
+        die(f"Unknown outbound: {only}")
+    try:
+        cfg, warnings = proxy_export.portable(cfg, only)
+    except ValueError as e:
+        die(f"Cannot export: {e}")
+    print(_json_text(cfg))
+    sys.stdout.flush()
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+
 def cmd_pin(tag="", *_):
     if not tag:
         if not (os.isatty(0) and os.isatty(1)):
@@ -978,8 +1086,9 @@ def cmd_unpin(*_):
 
 # --- runtime outbounds and subscriptions --------------------------------------
 #
-# One URL per file in a spool directory the userControl group may write. The
-# backend reads them at start, which the reload unit triggers.
+# One entry per file in a spool directory the userControl group may write: <tag>.url,
+# or for an outbound <tag>.json, one sing-box or XRay outbound as `link --json` prints
+# it. The backend reads them at start, which the reload unit triggers.
 
 
 def _runtime_dir(kind):
@@ -997,7 +1106,29 @@ def _runtime_tags(kind):
         names = os.listdir(_runtime_dir(kind))
     except OSError:
         return []
-    return sorted(n[: -len(".url")] for n in names if n.endswith(".url"))
+    exts = (".url", ".json") if kind == "outbound" else (".url",)
+    return sorted(os.path.splitext(n)[0] for n in names if n.endswith(exts))
+
+
+def _runtime_path(kind, tag):
+    """The file behind a runtime entry, or its .url spelling when there is none."""
+    for ext in (".url", ".json") if kind == "outbound" else (".url",):
+        path = os.path.join(_runtime_dir(kind), tag + ext)
+        if os.path.exists(path):
+            return path
+    return os.path.join(_runtime_dir(kind), f"{tag}.url")
+
+
+def _runtime_json_outbound(text):
+    """One outbound object from `text`, the tag left to the entry's name."""
+    try:
+        ob = json.loads(text)
+    except ValueError as e:
+        die(f"Not a URL, and not valid JSON: {e}")
+    if not isinstance(ob, dict) or not ("type" in ob or "protocol" in ob):
+        die('JSON must be one outbound object: sing-box ("type") or XRay ("protocol").')
+    ob.pop("tag", None)
+    return json.dumps(ob, ensure_ascii=False)
 
 
 def _check_runtime_tag(kind, tag):
@@ -1015,12 +1146,20 @@ def _check_runtime_tag(kind, tag):
 
 
 def _runtime_entry_add(kind, tag="", url="", *_):
+    what = "<url|json|->" if kind == "outbound" else "<url>"
     if not tag or not url:
-        usage(f"proxy {_runtime_noun(kind)} add <tag> <url>")
+        usage(f"proxy {_runtime_noun(kind)} add <tag> {what}")
     _check_runtime_tag(kind, tag)
-    if re.search(r"\s", url):
+    if kind == "outbound" and url == "-":
+        url = sys.stdin.read()
+    ext = ".url"
+    if kind == "outbound" and url.lstrip().startswith("{"):
+        url, ext = _runtime_json_outbound(url), ".json"
+    elif re.search(r"\s", url.strip()):
         die("A URL cannot contain whitespace.")
-    path = os.path.join(_runtime_dir(kind), f"{tag}.url")
+    else:
+        url = url.strip()
+    path = os.path.join(_runtime_dir(kind), tag + ext)
     old = os.umask(0o027)
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -1036,7 +1175,7 @@ def _runtime_entry_add(kind, tag="", url="", *_):
 def _runtime_entry_rm(kind, tag="", *_):
     if not tag:
         usage(f"proxy {_runtime_noun(kind)} rm <tag>")
-    path = os.path.join(_runtime_dir(kind), f"{tag}.url")
+    path = _runtime_path(kind, tag)
     if not os.path.exists(path):
         die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
     try:
@@ -1059,7 +1198,7 @@ def _subscription_cache(tag):
 
 
 def _runtime_entry_verify(kind, tag):
-    """Only the backend parses the URL, so confirm the entry actually came up."""
+    """Only the backend parses the entry, so confirm it actually came up."""
     if kind == "outbound":
         if tag in _outbound_tags():
             print(f"Added outbound: {tag}")
@@ -1135,13 +1274,15 @@ def cmd_subscription(verb="list", *args):
         _runtime_entry_add("subscription", *args)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("subscription", *args)
+    elif verb == "link":
+        _subscription_link(*args)
     elif verb == "update":
         if not svc_exists("proxy-suite-subscription-update"):
             die("The proxy is not enabled in this configuration.")
         must("start", "proxy-suite-subscription-update")
         print("Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update")
     else:
-        usage("proxy subs [list|update|add <tag> <url>|rm <tag>]")
+        usage("proxy subs [list|update|add <tag> <url>|rm <tag>|link <tag>]")
 
 
 # --- proxy auto: reachability probe -------------------------------------------
@@ -2212,7 +2353,20 @@ def _inbound_links():
     return read_json(path)
 
 
-def _inbound_link_for(tag, user="", *_):
+def _inbound_server_json(tag):
+    """The XRay inbound as the server runs it, secrets and all."""
+    path = os.path.join(os.path.dirname(env("INBOUNDS_LINKS_FILE", "/run/proxy-suite-inbounds/links.json")), "config.json")
+    if not os.path.isfile(path):
+        die("No inbound config yet - is proxy-suite-inbounds running?")
+    if not readable(path):
+        die(f"Cannot read {path} - re-run with sudo.")
+    inbound = next((x for x in read_json(path).get("inbounds") or [] if x.get("tag") == tag), None)
+    if inbound is None:
+        die(f"Unknown inbound: {tag}")
+    print(_json_text(inbound))
+
+
+def _inbound_link_for(tag, user="", *_, field="link"):
     matches = [x for x in _inbound_links() if x.get("tag") == tag and (not user or x.get("user") == user)]
     if not matches:
         die(f"Unknown inbound, or no share link for it: {tag}")
@@ -2222,7 +2376,11 @@ def _inbound_link_for(tag, user="", *_):
         for x in matches:
             print(f"  {_s(x.get('user'))}", file=sys.stderr)
         sys.exit(1)
-    return _s(matches[0].get("link"))
+    if field == "link":
+        return _s(matches[0].get("link"))
+    if matches[0].get(field) is None:
+        die(f"No client JSON for {tag}: proxy-suite cannot parse its link.")
+    return matches[0][field]
 
 
 def _human_bytes(b):
@@ -2326,10 +2484,15 @@ def cmd_inbounds(verb="list", *args):
         for x in _inbound_links():
             print(row.format(*(_s(x.get(k)) for k in ("tag", "user", "type", "port")), state))
     elif verb in ("link", "qr"):
-        rest = [a for a in args if a != "--qr"]
+        rest = [a for a in args if not a.startswith("--")]
         if not rest:
-            usage("inbounds link <tag> [user] [--qr]")
-        _emit(_inbound_link_for(*rest), verb == "qr" or "--qr" in args)
+            usage("inbounds link <tag> [user] [--qr|--json|--server-json]")
+        if "--server-json" in args:
+            _inbound_server_json(rest[0])
+        elif "--json" in args:
+            print(_json_text(_inbound_link_for(*rest, field="outbound")))
+        else:
+            _emit(_inbound_link_for(*rest), verb == "qr" or "--qr" in args)
     elif verb == "stats":
         _inbound_stats(args[0] if args else "7")
     elif verb == "sub":

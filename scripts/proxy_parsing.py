@@ -276,8 +276,13 @@ def _subscription_tag(line: str, tag_prefix: str, index: int, seen_tags: set[str
 
 
 def parse_subscription(
-    lines: list[str], tag_prefix: str, routing_mark: int | None, backend: str = "sing-box"
+    lines: list[str],
+    tag_prefix: str,
+    routing_mark: int | None,
+    backend: str = "sing-box",
+    links: dict[str, str] | None = None,
 ) -> list[dict]:
+    """links, when given, collects tag -> the line it came from, to share it back."""
     outbounds = []
     seen_tags: set[str] = set()
 
@@ -296,12 +301,14 @@ def parse_subscription(
 
         seen_tags.add(tag)
         outbounds.append(outbound)
+        if links is not None:
+            links[tag] = line
 
     return outbounds
 
 
 def parse_hybrid_subscription(
-    lines: list[str], tag_prefix: str, routing_mark: int | None = None
+    lines: list[str], tag_prefix: str, routing_mark: int | None = None, links: dict[str, str] | None = None
 ) -> dict[str, list[dict]]:
     outbounds: dict[str, list[dict]] = {"singBox": [], "xray": []}
     seen_tags: set[str] = set()
@@ -317,6 +324,8 @@ def parse_hybrid_subscription(
             outbound = build_outbound(line, tag, routing_mark, "sing-box")
             outbounds["singBox"].append(outbound)
             seen_tags.add(tag)
+            if links is not None:
+                links[tag] = line
             continue
         except Exception as sing_box_exc:
             sing_box_error = sing_box_exc
@@ -333,5 +342,7 @@ def parse_hybrid_subscription(
 
         outbounds["xray"].append(outbound)
         seen_tags.add(tag)
+        if links is not None:
+            links[tag] = line
 
     return outbounds

@@ -99,12 +99,51 @@ let
             ob=$(_proxy_suite_parse_url "$tag" "$url") || return 1
             OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
           '';
+      # Raw JSON gets the tag and the routing mark a Nix-declared one gets (rawOutboundJson).
+      singBoxMark = lib.optionalString (routingMark != null) " | .routing_mark = ${toString routingMark}";
+      xrayMark = lib.optionalString (
+        routingMark != null
+      ) " | .streamSettings.sockopt.mark = ${toString routingMark}";
+      jsonAddBlock =
+        if hybridEnabled then
+          ''
+            case "$kind" in
+              xray) _proxy_suite_add_xray_sidecar_ob "$ob" "$tag" ;;
+              sing-box) _proxy_suite_add_sing_box_ob "$(${jq} -c '.${singBoxMark}' <<< "$ob")" ;;
+              *) echo "proxy-suite: outbound '$tag' is neither sing-box nor XRay JSON" >&2; return 1 ;;
+            esac
+          ''
+        else
+          let
+            want = if pureXrayEnabled then "xray" else "sing-box";
+          in
+          ''
+            if [ "$kind" != ${want} ]; then
+              echo "proxy-suite: outbound '$tag' is not ${want} JSON" >&2
+              return 1
+            fi
+            OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob${
+              if pureXrayEnabled then xrayMark else singBoxMark
+            }]' <<< "$OUTBOUNDS_JSON")
+          '';
     in
     ''
       OUTBOUND_SOURCES_JSON='{}'
+      # What proxy-ctl shares back: tag -> the URL it was given, sub tag -> its URL.
+      OUTBOUND_URLS_JSON='{}'
+      SUBSCRIPTION_URLS_JSON='{}'
 
       _proxy_suite_record_tag_source() {
         OUTBOUND_SOURCES_JSON=$(${jq} --arg t "$1" --arg s "$2" '.[$t] = $s' <<< "$OUTBOUND_SOURCES_JSON")
+      }
+
+      # $1 sub tag, $2 file holding its URL, $3 its links file (absent for a cache
+      # written before links existed: those entries share as JSON until the next update).
+      _proxy_suite_record_subscription_share() {
+        SUBSCRIPTION_URLS_JSON=$(${jq} --arg t "$1" --rawfile u "$2" '.[$t] = ($u | rtrimstr("\n"))' <<< "$SUBSCRIPTION_URLS_JSON")
+        if [ -s "$3" ]; then
+          OUTBOUND_URLS_JSON=$(${jq} --slurpfile l "$3" '. + $l[0]' <<< "$OUTBOUND_URLS_JSON") || true
+        fi
       }
 
       # $1 source label, $2 array length before the add, $3 after. Subscriptions
@@ -142,18 +181,28 @@ let
         local tag="$1" url="$2" source="$3" pref="''${4:-auto}" ob
         ${addBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
+        OUTBOUND_URLS_JSON=$(${jq} --arg t "$tag" --arg u "$url" '.[$t] = $u' <<< "$OUTBOUND_URLS_JSON")
       }
 
-      # Every runtime outbound, as "<tag>\t<url file>" lines. proxy-ctl refuses
+      # $1 tag, $2 file holding one sing-box or XRay outbound, $3 source label.
+      _proxy_suite_add_json_outbound() {
+        local tag="$1" source="$3" ob kind
+        ob=$(${jq} -ce --arg t "$tag" 'select(type == "object") | .tag = $t' "$2" 2>/dev/null) || return 1
+        kind=$(${jq} -r 'if has("protocol") then "xray" elif has("type") then "sing-box" else "" end' <<< "$ob")
+        ${jsonAddBlock}
+        _proxy_suite_record_tag_source "$tag" "$source"
+      }
+
+      # Every runtime outbound, as "<tag>\t<file>" lines: <tag>.url or <tag>.json. proxy-ctl refuses
       # the reserved names, but the spool is group-writable, so check again here:
       # a second outbound tagged "proxy" would quietly shadow the real one.
       _proxy_suite_runtime_outbounds() {
         local f tag
         [ -d "${runtimeOutboundsDir}" ] || return 0
-        for f in "${runtimeOutboundsDir}"/*.url; do
+        for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json; do
           [ -e "$f" ] || continue
           tag="''${f##*/}"
-          tag="''${tag%.url}"
+          tag="''${tag%.*}"
           case "$tag" in
             proxy | direct | block)
               echo "proxy-suite: warning: ignoring runtime outbound '$tag': reserved name" >&2
@@ -356,8 +405,10 @@ let
     # outbounds added at runtime
     while IFS=$'\t' read -r RUNTIME_OB_TAG RUNTIME_OB_SRC; do
       [ -n "$RUNTIME_OB_TAG" ] || continue
-      _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(cat "$RUNTIME_OB_SRC")" runtime \
-        || echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2
+      case "$RUNTIME_OB_SRC" in
+        *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
+        *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(cat "$RUNTIME_OB_SRC")" runtime ;;
+      esac || echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2
     done < <(_proxy_suite_runtime_outbounds)
   '';
 

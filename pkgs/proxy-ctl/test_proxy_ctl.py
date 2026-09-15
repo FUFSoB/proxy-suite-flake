@@ -540,6 +540,61 @@ class OutboundTestTest(EnvTest):
         self.assertIn("enable userControl, or run with sudo", err)
 
 
+class ShareTest(EnvTest):
+    def setUp(self):
+        super().setUp()
+        os.environ["OUTBOUND_INVENTORY_FILE"] = self.write("outbounds.json", {"tags": ["vps", "warp"], "sources": {}})
+        os.environ["INBOUNDS_ENABLED"] = "1"
+        os.environ["INBOUNDS_LINKS_FILE"] = self.write(
+            "inbounds/links.json", [{"tag": "in", "user": "u", "link": "vless://x@h:443", "outbound": {"type": "vless"}}]
+        )
+        self.write("inbounds/config.json", {"inbounds": [{"tag": "in", "protocol": "vless"}]})
+        self.share = self.write(
+            "outbound-share.json",
+            {
+                "outbounds": {
+                    "vps": {"url": "vless://x@vps.test:443", "outbound": {"type": "vless", "tag": "vps", "server": "vps.test"}},
+                    "warp": {"url": None, "outbound": {"type": "socks", "tag": "warp", "server": "127.0.0.1"}},
+                },
+                "subscriptions": {"community": "https://sub.test/t"},
+            },
+        )
+        self.write(
+            "config.json",
+            {"outbounds": [{"type": "vless", "tag": "vps", "server": "vps.test"}, {"type": "socks", "tag": "warp", "server": "127.0.0.1"},
+                           {"type": "direct", "tag": "direct"}], "route": {"final": "vps"}},
+        )
+
+    def test_outbound_link(self):
+        self.assertEqual(ok(ctl.cmd_outbounds, "link", "vps"), "vless://x@vps.test:443\n")
+        self.assertEqual(json.loads(ok(ctl.cmd_outbounds, "link", "warp", "--json"))["server"], "127.0.0.1")
+        status, _, err = run(ctl.cmd_outbounds, "link", "warp")
+        self.assertNotEqual(status, 0)
+        self.assertIn("use --json", err)
+        self.assertNotEqual(run(ctl.cmd_outbounds, "link", "nope")[0], 0)
+        self.assertNotEqual(run(ctl.cmd_outbounds, "link", "vps", "--bogus")[0], 0)
+        self.assertEqual(ok(ctl.cmd_subscription, "link", "community"), "https://sub.test/t\n")
+
+    def test_config(self):
+        status, out, err = run(ctl.cmd_proxy, "config")
+        self.assertEqual(status, 0, err)
+        self.assertEqual([o["tag"] for o in json.loads(out)["outbounds"]], ["vps", "direct"])
+        self.assertIn("left out warp", err)
+        self.assertIn('"tag": "warp"', ok(ctl.cmd_proxy, "config", "--raw"))
+        self.assertNotEqual(run(ctl.cmd_outbounds, "link", "nope", "--config")[0], 0)
+
+    def test_inbound_json(self):
+        self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "--json")), {"type": "vless"})
+        self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "--server-json"))["protocol"], "vless")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_unreadable(self):
+        os.chmod(self.share, 0)
+        status, _, err = run(ctl.cmd_outbounds, "link", "vps")
+        self.assertNotEqual(status, 0)
+        self.assertIn("re-run with sudo", err)
+
+
 class BadExitTest(EnvTest):
     def test_shown_from_state(self):
         os.environ.update(
