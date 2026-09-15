@@ -188,15 +188,15 @@ in
       true
     )
 
-    # Runtime spool dirs are group-writable and setgid, so proxy-ctl needs no sudo.
+    # Runtime spool dirs are root-only unless userControl grants outbounds (see user-control.nix).
     (
       assert
         builtins.any (
-          rule: builtins.match "d /var/lib/proxy-suite/outbounds\\.d 2770 root .*" rule != null
+          rule: builtins.match "d /var/lib/proxy-suite/outbounds\\.d 0700 root root -" rule != null
         ) minimal.config.systemd.tmpfiles.rules;
       assert
         builtins.any (
-          rule: builtins.match "d /var/lib/proxy-suite/subscriptions\\.d 2770 root .*" rule != null
+          rule: builtins.match "d /var/lib/proxy-suite/subscriptions\\.d 0700 root root -" rule != null
         ) minimal.config.systemd.tmpfiles.rules;
       true
     )

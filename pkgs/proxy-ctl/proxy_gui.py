@@ -67,6 +67,7 @@ GLOBAL_SHORTCUTS = [
     ("w", "How is a domain routed"),
     ("<Shift>l", "Follow all logs"),
     ("o", "Output of the last command"),
+    ("<Control>e", "Run actions as root (pkexec)"),
     ("F5 r", "Refresh now"),
     ("<Control>question", "Keyboard shortcuts"),
     ("<Control>w", "Close the window (the tray keeps running)"),
@@ -637,6 +638,10 @@ class OutputDialog(Adw.Dialog):
         self.stop = Gtk.Button(label="Stop", css_classes=["destructive-action"], visible=False, valign=Gtk.Align.CENTER)
         self.stop.connect("clicked", lambda *_: self.terminate())
         header.pack_end(self.stop)
+        self.retry_with = None  # () -> run it again as root
+        self.retry = Gtk.Button(label="Retry as Root", css_classes=["suggested-action"], visible=False, valign=Gtk.Align.CENTER)
+        self.retry.connect("clicked", lambda *_: (self.close(), self.retry_with()))
+        header.pack_end(self.retry)
         self.spinner = Adw.Spinner(visible=False)
         header.pack_end(self.spinner)
         self.result = Gtk.Label(visible=False, valign=Gtk.Align.CENTER)
@@ -676,14 +681,16 @@ class OutputDialog(Adw.Dialog):
             self.tags[name].set_property("foreground_rgba", rgba(dark_color if dark else light_color))
         self.tags["dim"].set_property("foreground_rgba", rgba("#9a9996" if dark else "#77767b"))
 
-    def running(self, proc):
+    def running(self, proc, stoppable=True):
         self.proc = proc
-        self.stop.set_visible(True)
+        self.stop.set_visible(stoppable)  # a run as root is not ours to stop
         self.spinner.set_visible(True)
 
-    def finished(self, status=0):
+    def finished(self, status=0, retry=None):
         self.stop.set_visible(False)
         self.spinner.set_visible(False)
+        self.retry.set_visible(retry is not None)
+        self.retry_with = retry
         if status == -signal.SIGTERM:
             text, classes = "stopped", ["dim-label"]
         elif status:
@@ -733,6 +740,7 @@ class Window(Adw.ApplicationWindow):
         self.pages = {}
         self.typed = {}  # action label -> what was last typed there
         self.last_output = None  # (title, text)
+        self.last_retry = None  # () -> the last run again as root, when only root could do it
 
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView(top_bar_style=Adw.ToolbarStyle.RAISED)
@@ -748,11 +756,16 @@ class Window(Adw.ApplicationWindow):
         self.refresh_stack.add_named(Adw.Spinner(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER), "busy")
         self.busy_timer = None
         header.pack_start(self.refresh_stack)
+        self.root_badge = Gtk.Image(icon_name="dialog-password-symbolic", tooltip_text="Actions run as root (Ctrl+E)", visible=app.elevated(), css_classes=["warning"])
+        header.pack_start(self.root_badge)
         menu = Gio.Menu()
         section = Gio.Menu()
         section.append("How is a domain routed…", "win.where")
         section.append("Follow all logs", "win.logs")
         section.append("Output of the last command", "win.last-output")
+        menu.append_section(None, section)
+        section = Gio.Menu()
+        section.append("Run actions as root", "app.elevated")
         menu.append_section(None, section)
         section = Gio.Menu()
         section.append("Keyboard Shortcuts", "win.shortcuts")
@@ -807,6 +820,7 @@ class Window(Adw.ApplicationWindow):
             action.connect("activate", callback)
             self.add_action(action)
         app.set_accels_for_action("win.filter", ["<Control>f"])
+        app.set_accels_for_action("app.elevated", ["<Control>e"])
         app.set_accels_for_action("win.shortcuts", ["<Control>question"])
         app.set_accels_for_action("app.reload", ["F5"])
         app.set_accels_for_action("app.quit", ["<Control>q"])
@@ -910,7 +924,10 @@ class Window(Adw.ApplicationWindow):
 
     def show_last_output(self):
         if self.last_output:
-            OutputDialog(self, *self.last_output).present(self)
+            dialog = OutputDialog(self, *self.last_output)
+            dialog.retry.set_visible(self.last_retry is not None)
+            dialog.retry_with = self.last_retry
+            dialog.present(self)
         else:
             self.toast("Nothing has run yet.")
         return True
@@ -950,9 +967,12 @@ class Window(Adw.ApplicationWindow):
         dialog.present(self)
         entry.grab_focus()
 
-    def toast(self, message, output=None):
+    def toast(self, message, output=None, retry=None):
         toast = Adw.Toast(title=GLib.markup_escape_text(message), timeout=6)
-        if output:
+        if retry:  # one button: the output stays a keypress away (o)
+            toast.set_button_label("Retry as Root")
+            toast.connect("button-clicked", lambda *_: retry())
+        elif output:
             toast.set_button_label("Output")
             toast.connect("button-clicked", lambda *_: OutputDialog(self, *output).present(self))
         self.toasts.add_toast(toast)
@@ -1023,6 +1043,12 @@ class ProxySuiteGui(Adw.Application):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             self.add_action(action)
+        elevated = Gio.SimpleAction.new_stateful("elevated", None, GLib.Variant.new_boolean(False))
+        elevated.connect("change-state", self.on_elevated)
+        self.add_action(elevated)
+        retry = Gio.SimpleAction.new("retry-root", GLib.VariantType.new("as"))
+        retry.connect("activate", lambda _, argv: self.run_argv("run", argv.unpack(), None, root=True))
+        self.add_action(retry)
         self.hold()  # the tray and notifications outlive the window
         try:
             from proxy_sni import StatusNotifierItem
@@ -1057,6 +1083,14 @@ class ProxySuiteGui(Adw.Application):
         Adw.Application.do_shutdown(self)
 
     # --- window ------------------------------------------------------------------------------
+
+    def elevated(self):
+        return self.lookup_action("elevated").get_state().get_boolean()
+
+    def on_elevated(self, action, value):
+        action.set_state(value)
+        if self.window:
+            self.window.root_badge.set_visible(value.get_boolean())
 
     def present(self, tab=None):
         if self.window is None:
@@ -1169,9 +1203,12 @@ class ProxySuiteGui(Adw.Application):
         dialog.connect("response", lambda _, r: r == "run" and then())
         dialog.present(parent)
 
-    def run_argv(self, mode, argv, win):
-        """run: a toast; dialog, suspend, pause: output streamed into a dialog; copy: the last line to the clipboard."""
-        command = f"proxy-ctl {shlex.join(argv)}"
+    def run_argv(self, mode, argv, win, root=False):
+        """run: a toast; dialog, suspend, pause: output streamed into a dialog; copy: the last line to the clipboard.
+        root, or the elevated toggle: through pkexec. Never `apps run`, which is per user."""
+        root = (root or self.elevated()) and argv[:1] != ["apps"]
+        command = f"{'pkexec ' if root else ''}proxy-ctl {shlex.join(argv)}"
+        retry_argv = argv
         qr = "--qr" in argv
         if qr:
             argv = [a for a in argv if a != "--qr"]
@@ -1181,14 +1218,14 @@ class ProxySuiteGui(Adw.Application):
             dialog.present(win)
         elif win is not None:
             win.toast(f"… {command}")
-        threading.Thread(target=self.stream, args=(command, argv, mode, win, dialog, qr), daemon=True).start()
+        threading.Thread(target=self.stream, args=(command, argv, mode, win, dialog, qr, root, retry_argv), daemon=True).start()
 
-    def stream(self, command, argv, mode, win, dialog, qr):
+    def stream(self, command, argv, mode, win, dialog, qr, root, retry_argv):
         out = []
         try:
-            p = model.popen(argv)
+            p = model.popen(argv, "pkexec" if root else None)
             if dialog:
-                GLib.idle_add(lambda: dialog.running(p) and False)
+                GLib.idle_add(lambda: dialog.running(p, stoppable=not root) and False)
             for line in p.stdout:
                 out.append(line.rstrip("\n"))
                 if dialog:
@@ -1197,16 +1234,20 @@ class ProxySuiteGui(Adw.Application):
         except OSError as e:
             out.append(f"cannot run proxy-ctl: {e}")
             status = 127
-        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status) and False)
+        if root and status == 126 and not out:
+            out.append("authentication cancelled")  # pkexec: the password dialog was dismissed
+        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status, retry_argv) and False)
 
-    def ran(self, command, mode, win, dialog, qr, out, status):
+    def ran(self, command, mode, win, dialog, qr, out, status, retry_argv):
         last = last_line(out)
         text = "\n".join(out)
         output = (command, text)
+        retry = (lambda: self.run_argv(mode, retry_argv, win, root=True)) if model.needs_root(out, status) else None
         if win is not None:
             win.last_output = output
+            win.last_retry = retry
         if dialog:
-            dialog.finished(status)
+            dialog.finished(status, retry)
             if status == -signal.SIGTERM:
                 dialog.write("\x1b[2m(stopped)\x1b[0m")
             elif status:
@@ -1218,12 +1259,14 @@ class ProxySuiteGui(Adw.Application):
                 win.copy_text(last, f"Copied: {last}")
             else:
                 message = f"{last}  ({command})" if last else command
-                win.toast(f"exit {status}: {message}" if status else message, output if len(out) > 1 or status else None)
+                win.toast(f"exit {status}: {message}" if status else message, output if len(out) > 1 or status else None, retry)
         elif status:
             # From the tray: nothing else would say it failed.
             note = Gio.Notification.new(f"{command} failed")
             note.set_body(last or f"exit status {status}")
             note.set_default_action("app.present")
+            if retry:
+                note.add_button_with_target("Retry as Root", "app.retry-root", GLib.Variant("as", retry_argv))
             self.send_notification(None, note)
         self.reload()
 

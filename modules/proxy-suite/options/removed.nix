@@ -66,8 +66,9 @@ in
     (rm "tgWsProxy.logBackups" "Use services.proxy-suite.tgWsProxy.log.keep.")
 
     # userControl.
-    (rm "userControl.global.enable" ''Use services.proxy-suite.userControl.allow, which lists "global" by default.'')
-    (rm "userControl.perApp.enable" ''Use services.proxy-suite.userControl.allow, which lists "perApp" by default.'')
+    (rm "userControl.global.enable" ''Use services.proxy-suite.userControl.enable, with "services" in userControl.scopes.'')
+    (rm "userControl.perApp.enable" ''Use services.proxy-suite.userControl.enable, with "perApp" in userControl.scopes.'')
+    (rm "userControl.allow" "Use services.proxy-suite.userControl.enable, and userControl.scopes to limit it.")
   ]
   ++ lib.mapAttrsToList (
     old: new: rm "zapret.${old}" "Use services.proxy-suite.zapret.zapret-discord-youtube.${new}."

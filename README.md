@@ -110,6 +110,7 @@ See the [options reference](./docs/options/index.md), one page per option group.
 ```text
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
+Secrets and changes need root, or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated key=value lines)
   restart                                restart active services
@@ -125,7 +126,7 @@ A group without a verb shows its status or list.
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
-                                         its URL, QR code, backend JSON, or a client config for it (sudo)
+                                         its URL, QR code, backend JSON, or a client config for it
   proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
   proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
@@ -133,24 +134,24 @@ A group without a verb shows its status or list.
   proxy subs [list|update]               subscription caches; update refetches them
   proxy subs add <tag> <url>             add a subscription at runtime
   proxy subs rm <tag>                    remove a runtime subscription
-  proxy subs link <tag> [--qr]           its URL (sudo)
-  proxy config [--raw]                   client config to import elsewhere; --raw: as running (sudo)
+  proxy subs link <tag> [--qr]           its URL
+  proxy config [--raw]                   client config to import elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
-  proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
+  proxy auto [list]                      what autoProxy routed, and via which exit
   proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
-  proxy auto learn <domain>              probe now and route it if an exit works (sudo)
-  proxy auto queue [count]               destinations waiting to be probed (sudo, or userControl)
+  proxy auto learn <domain>              probe now and route it if an exit works
+  proxy auto queue [count]               destinations waiting to be probed
 
   zapret [status|on|off]                 DPI bypass
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
-                                         pin, forget, or never learn a host (sudo)
-  zapret auto unpin|include <domain>     undo add, or undo exclude (sudo)
-  zapret auto clear                      forget learned hosts and strategies (sudo)
+                                         pin, forget, or never learn a host
+  zapret auto unpin|include <domain>     undo add, or undo exclude
+  zapret auto clear                      forget learned hosts and strategies
   zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
-  zapret cutoff probe                    probe this line again now (sudo)
+  zapret cutoff probe                    probe this line again now
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
@@ -165,10 +166,10 @@ A group without a verb shows its status or list.
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--qr|--json]
                                          client share link, or the client's outbound JSON
-  inbounds link <tag> --server-json      the server's inbound JSON (sudo)
+  inbounds link <tag> --server-json      the server's inbound JSON
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
-                                         traffic per user, listener or exit (sudo, or userControl)
+                                         traffic per user, listener or exit
   inbounds online                        who is connected now, and when the rest were last seen
 ```
 <!-- proxy-ctl-help:end -->

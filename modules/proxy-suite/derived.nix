@@ -192,7 +192,11 @@ let
   # The cut-off networks no whitelisted name fixes go through the proxy outbound.
   zapretCutoffProxyFallback =
     zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
-  userControlEnabled = userControlCfg.allow != [ ];
+  userControlEnabled = userControlCfg.enable;
+  # Whether the group holds a scope; no scopes listed means all of them.
+  userControlAllows =
+    scope:
+    userControlEnabled && (userControlCfg.scopes == [ ] || builtins.elem scope userControlCfg.scopes);
   constants = {
     # Daemons (sing-box, XRay, the WARP tunnel, OpenSSH, tg-ws-proxy, wgcf) run as this
     # user. Its group is not the userControl group: backend configs hold credentials. Start
@@ -333,6 +337,7 @@ in
     zapretCutoffProxyFallback
     userControlCfg
     userControlEnabled
+    userControlAllows
     sshProxyCfg
     sshProxyOutboundTag
     sshProxyOutboundEnabled

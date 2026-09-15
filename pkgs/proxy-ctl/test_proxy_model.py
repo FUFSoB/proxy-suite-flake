@@ -43,6 +43,22 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(items[-1], ("", "1 failed", "bad"))
         self.assertEqual(model.status_items({})[0], ("", "Status unavailable", "bad"))
 
+    def test_root(self):
+        with mock.patch.object(model.os, "geteuid", lambda: 1000):
+            self.assertTrue(model.needs_root(["Cannot read /run/x - re-run with sudo."], 1))
+            self.assertTrue(model.needs_root(["Failed to start proxy-suite-tun.service: Access denied"], 1))
+            self.assertFalse(model.needs_root(["re-run with sudo"], 0))
+            self.assertFalse(model.needs_root(["Unknown outbound: x"], 1))
+            self.assertFalse(model.needs_root(["re-run with sudo"], -15))  # stopped, not refused
+        with mock.patch.object(model.os, "geteuid", lambda: 0):
+            self.assertFalse(model.needs_root(["re-run with sudo"], 1))
+            self.assertEqual(model.status_items({})[0], ("", "root", "warn"))
+            apps = next(t for t in model.TABS if t.id == "apps")
+            with mock.patch.object(ctl, "env", lambda name, default="": "1"):
+                self.assertFalse(apps.available({}))
+        with mock.patch.object(model.shutil, "which", lambda name: f"/nix/store/x/bin/{name}"):
+            self.assertEqual(model.elevated(["proxy", "config"], "pkexec"), ["pkexec", "/nix/store/x/bin/proxy-ctl", "proxy", "config"])
+
     def test_services_skip_the_subscription_update(self):
         rows = model.service_rows({"proxy-suite-socks": "active", ctl.SUBSCRIPTION_UPDATE: "inactive"})
         self.assertEqual([r["unit"] for r in rows], ["proxy-suite-socks"])

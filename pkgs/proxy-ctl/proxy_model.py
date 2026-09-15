@@ -8,6 +8,7 @@ die() cannot take a front end down.
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -81,6 +82,20 @@ def ROW(_):
 
 def needs_confirm(action, row):
     return action.confirm(row) if callable(action.confirm) else action.confirm
+
+
+# What proxy-ctl and systemctl print when only root may do it.
+# ponytail: matches the wording; an exit status of its own (77) if that ever drifts.
+ROOT_HINT = re.compile(r"re-run with sudo|run with sudo|run as root|Interactive authentication required|Access denied")
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def needs_root(out, status):
+    """A failed run that root could do: the front ends offer to retry it elevated."""
+    return bool(status) and status > 0 and not is_root() and any(ROOT_HINT.search(line) for line in out)
 
 
 STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐", "reloading": "◐"}
@@ -281,7 +296,7 @@ def snapshot(states):
 
 def status_items(states):
     """(label, value, style) for the status line: style is "", "ok", "warn" or "bad"."""
-    items = []
+    items = [("", "root", "warn")] if is_root() else []
     overall = ctl._overall_state(snapshot(states) if states else None)
     items.append(("", overall["label"], {"failed": "bad", "busy": "warn", "unknown": "bad"}.get(overall["badge"], "")))
     if "proxy-suite-socks" in states:
@@ -406,7 +421,7 @@ TABS = [
                 prompt="<tag> <url or JSON>",
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
-            # Credentials: proxy-ctl refuses these without root, and the dialog says so.
+            # Credentials: proxy-ctl refuses these without root or the group, and the dialog says so.
             Action("l", "its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
             Action("c", "copy its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
             Action("Q", "its URL as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
@@ -492,7 +507,8 @@ TABS = [
     Tab(
         "apps",
         "Apps",
-        _enabled("PER_APP_ROUTING_ENABLED"),
+        # `apps run` is per user (its uid, systemctl --user): nothing a root session can use.
+        lambda states: not is_root() and _enabled("PER_APP_ROUTING_ENABLED")(states),
         [("profile", "Profile"), ("route", "Route")],
         app_rows,
         actions=[
@@ -537,10 +553,16 @@ def _capture(argv):
     return p.stdout + p.stderr
 
 
-def popen(argv):
-    """proxy-ctl with its output streamed: its own process group, so stop() takes down what it spawned too."""
+def elevated(argv, via):
+    """proxy-ctl argv run as root through via (sudo, pkexec): by its full path, the one the polkit rule names."""
+    return [via, shutil.which(CTL) or CTL, *argv]
+
+
+def popen(argv, root=None):
+    """proxy-ctl with its output streamed: its own process group, so stop() takes down what it spawned too.
+    root: "pkexec" to run it as root, asking through the desktop's polkit agent."""
     return subprocess.Popen(
-        [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        elevated(argv, root) if root else [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         text=True, errors="replace", start_new_session=True,
     )
 
@@ -550,7 +572,10 @@ def stop(proc):
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except OSError:
-            proc.terminate()
+            try:
+                proc.terminate()
+            except OSError:
+                pass  # running as root: not ours to signal
 
 
 def _safe(fn, *args, fallback=None):

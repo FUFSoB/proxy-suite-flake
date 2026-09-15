@@ -2,6 +2,7 @@
 """Headless proxy-tui: arrows, the action menu and shortcuts turn into the right proxy-ctl argv."""
 
 import asyncio
+import contextlib
 import tempfile
 import unittest
 from unittest import mock
@@ -278,6 +279,38 @@ class TuiTest(unittest.TestCase):
                 await pilot.press("escape")
                 await pilot.pause()
             killpg.assert_called_once_with(4242, model.signal.SIGTERM)
+
+            # A copy only root may make offers ! to retry it under sudo, and still copies.
+            with mock.patch.object(model.os, "geteuid", lambda: 1000):
+                app.finish("proxy-ctl proxy outbounds link b", ["proxy", "outbounds", "link", "b"], None, True, ["Cannot read x - re-run with sudo."], 1)
+                self.assertIn("!: retry as root", str(app.main.query_one("#feedback").content))
+                sudo = mock.Mock(stdout=iter(["vless://b\n"]), **{"wait.return_value": 0})
+                popen = mock.Mock(return_value=sudo)
+                # proxy-tui's own subprocess only: reads in the background spawn through proxy_ctl's.
+                with mock.patch.object(app, "suspend", contextlib.nullcontext), \
+                        mock.patch.object(tui, "subprocess", mock.Mock(Popen=popen)), \
+                        mock.patch.object(model.shutil, "which", lambda name: f"/bin/{name}"), \
+                        mock.patch.object(app, "copy_to_clipboard") as copy, \
+                        mock.patch("builtins.print"):
+                    await pilot.press("exclamation_mark")
+                    await pilot.pause()
+                self.assertEqual(popen.call_args[0][0], ["sudo", "/bin/proxy-ctl", "proxy", "outbounds", "link", "b"])
+                copy.assert_called_once_with("vless://b")
+                self.assertIsNone(app.retry)
+
+                # A dialog run only root may do offers it in the dialog itself, and ! there retries.
+                dialog = tui.Output("proxy-ctl inbounds stats")
+                app.push_screen(dialog)
+                await pilot.pause()
+                self.assertFalse(dialog.check_action("retry_root", ()))
+                app.finish("proxy-ctl inbounds stats", ["inbounds", "stats"], dialog, False, ["Cannot read x - enable userControl, or run with sudo."], 1, stream_shown=True)
+                await pilot.pause()
+                self.assertIn("retry as root", str(dialog.query_one(".dialog-hint").render()))
+                with mock.patch.object(app, "action_retry_root") as retry:
+                    await pilot.press("exclamation_mark")
+                    await pilot.pause()
+                retry.assert_called_once_with()
+                self.assertIsNot(app.screen, dialog)
 
 
 if __name__ == "__main__":

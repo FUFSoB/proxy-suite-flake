@@ -61,6 +61,18 @@ in
       true
     )
     (
+      # pkexec of this proxy-ctl, and only it, keeps the admin password for a while.
+      let
+        rules = guiFixture.config.security.polkit.extraConfig;
+      in
+      assert guiFixture.config.security.polkit.enable;
+      assert
+        builtins.match ''.*action\.lookup\("program"\) === "/nix/store/[^"]*proxy-ctl/bin/proxy-ctl".*AUTH_ADMIN_KEEP.*'' rules
+        != null;
+      assert builtins.match ".*AUTH_ADMIN_KEEP.*" tuiOffFixture.config.security.polkit.extraConfig == null;
+      true
+    )
+    (
       assert !(guiManualFixture.config.systemd.user.services ? proxy-suite-gui);
       assert !(tuiOffFixture.config.systemd.user.services ? proxy-suite-gui);
       true

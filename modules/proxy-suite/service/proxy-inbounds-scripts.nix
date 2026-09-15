@@ -8,7 +8,7 @@
   proxyInboundsNeedLocalProxy,
   proxyInboundViaOutbounds,
   userControlCfg,
-  userControlEnabled,
+  userControlAllows,
   localProxyAuth,
   localProxyAuthEnabled,
   localProxyAuthPasswordSource,
@@ -91,10 +91,10 @@ let
 
   writeLinksBlock = lib.optionalString proxyInboundsCfg.shareLinks ''
     ${jq} -c '.links' <<< "$RENDERED" > "${linksFile}"
-    ${lib.optionalString userControlEnabled ''
+    ${lib.optionalString (userControlAllows "secrets") ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${linksFile}"
     ''}
-    chmod ${if userControlEnabled then "640" else "600"} "${linksFile}"
+    chmod ${if userControlAllows "secrets" then "640" else "600"} "${linksFile}"
   '';
 
   # One file per user for the web server, plus a token index for proxy-ctl. Filled aside
@@ -113,10 +113,10 @@ let
     rm -rf "$SUB_DIR"
     mv "$SUB_DIR.new" "$SUB_DIR"
     ${jq} -c '[.subscriptions[] | {user, token}]' <<< "$RENDERED" > "${subscriptionsFile}"
-    ${lib.optionalString userControlEnabled ''
+    ${lib.optionalString (userControlAllows "secrets") ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${subscriptionsFile}"
     ''}
-    chmod ${if userControlEnabled then "640" else "600"} "${subscriptionsFile}"
+    chmod ${if userControlAllows "secrets" then "640" else "600"} "${subscriptionsFile}"
   '';
 
   startInbounds = pkgs.writeShellScript "proxy-suite-inbounds" ''
@@ -177,8 +177,20 @@ let
     done < <(${jq} -r '[.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile) | strings]
       | unique[]' "$RUNTIME_DIR/config.json.tmp")
 
-    ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"
-    chmod 640 "$RUNTIME_DIR/config.json.tmp"
+    # Read by XRay as ${constants.serviceUser}, and by the userControl group: the daemon
+    # as owner then, since a file has one group.
+    ${
+      if userControlAllows "secrets" then
+        ''
+          ${pkgs.coreutils}/bin/chown ${constants.serviceUser}:${lib.escapeShellArg userControlCfg.group} "$RUNTIME_DIR/config.json.tmp"
+          chmod 440 "$RUNTIME_DIR/config.json.tmp"
+        ''
+      else
+        ''
+          ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"
+          chmod 640 "$RUNTIME_DIR/config.json.tmp"
+        ''
+    }
     mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
 
     ${writeLinksBlock}
@@ -213,11 +225,11 @@ let
           path = ../inbound-stats-add.jq;
         }
       } "$file" > "$tmp"
-    ${lib.optionalString userControlEnabled ''
+    ${lib.optionalString (userControlAllows "stats") ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$tmp" ||
         echo "proxy-suite: group ${userControlCfg.group} cannot read the stats; they stay root-only" >&2
     ''}
-    chmod ${if userControlEnabled then "640" else "600"} "$tmp"
+    chmod ${if userControlAllows "stats" then "640" else "600"} "$tmp"
     mv -f "$tmp" "$file"
   '';
 in

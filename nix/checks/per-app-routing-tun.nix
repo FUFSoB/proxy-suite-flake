@@ -148,10 +148,9 @@ in
       true
     )
 
-    # -- perAppRouting: app TUN enables nftables and user control group --
+    # -- perAppRouting: app TUN enables nftables --
     (
       assert perAppRoutingTunFixture.config.networking.nftables.enable;
-      assert perAppRoutingTunFixture.config.users.groups ? "proxy-suite";
       true
     )
   ];

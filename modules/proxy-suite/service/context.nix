@@ -56,7 +56,7 @@ let
     proxyInboundsNeedLocalProxy
     proxyInboundsGuardPrivate
     proxyInboundViaOutbounds
-    userControlEnabled
+    userControlAllows
     ;
 
   # Tool paths – defined once here and passed into sub-modules as needed.
@@ -88,9 +88,7 @@ let
 
   builders = import ./builders.nix { inherit lib pkgs; };
 
-  polkit = import ./polkit.nix {
-    inherit lib cfg userControlCfg;
-  };
+  polkit = import ./polkit.nix { inherit userControlCfg; };
 
   scripts = import ./scripts.nix {
     inherit
@@ -135,7 +133,7 @@ let
       proxyInboundsNeedLocalProxy
       proxyInboundsGuardPrivate
       proxyInboundViaOutbounds
-      userControlEnabled
+      userControlAllows
       builders
       ;
   };

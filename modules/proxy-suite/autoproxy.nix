@@ -7,10 +7,13 @@
   cfg,
   proxyCtl,
   autoProxyStateDir,
+  userControlAllows,
 }:
 
 let
   apCfg = cfg.proxy.autoProxy;
+  # The autoProxy scope's group writes the directory: `proxy auto learn` queues there.
+  stateDirMode = if userControlAllows "autoProxy" then "0771" else "0751";
   render = import ./autoproxy-render.nix { inherit pkgs; };
   jqFile =
     path:
@@ -52,7 +55,7 @@ let
       echo "sing-box has no Clash API (selection = \"first\"?); nothing to sample"
       exit 0
     fi
-    install -d -m 0751 "$state_dir"
+    install -d -m ${stateDirMode} "$state_dir"
 
     # Eleven snapshots a second apart: ten one-second deltas per connection.
     lines=$(
@@ -86,7 +89,7 @@ let
       echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
       exit 0
     fi
-    install -d -m 0751 "$state_dir"
+    install -d -m ${stateDirMode} "$state_dir"
 
     # Timer runs and learn requests take turns on the state.
     exec 9> "$state_dir/lock"
@@ -97,6 +100,8 @@ let
     if [ -e "$requests.taking" ]; then
       cat "$requests.taking" >> "$requests"
       rm -f "$requests.taking"
+      # Made here by root: the group appends to it too.
+      chmod 0660 "$requests"
     fi
 
     if [ -e "$state" ] && ! jq -e 'type == "object"' "$state" > /dev/null 2>&1; then
@@ -392,16 +397,17 @@ let
     ${render} "$index" "$state"
   '';
 
-  # Group: `proxy-ctl proxy auto list|queue` reads state.json. Set on every unit that
-  # declares the directory - systemd re-applies the ownership on each start.
+  # Group: `proxy-ctl proxy auto list|queue` reads state.json, `learn` queues requests.
+  # Set on every unit that declares the directory - systemd re-applies the ownership
+  # on each start.
   stateDirConfig = {
     StateDirectory = "proxy-suite/autoproxy";
     # 0751 and a 027 umask: sing-box (proxy-suite) can open the rule-sets, which are
     # made 0644, and nothing else.
-    StateDirectoryMode = "0751";
+    StateDirectoryMode = stateDirMode;
     UMask = "0027";
   }
-  // lib.optionalAttrs (cfg.userControl.allow != [ ]) { Group = cfg.userControl.group; };
+  // lib.optionalAttrs (userControlAllows "autoProxy") { Group = cfg.userControl.group; };
 
   mkUnit = description: args: {
     inherit description;

@@ -45,6 +45,7 @@ RESTART_SERVICES = [
 HELP = """\
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
+Secrets and changes need root, or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated key=value lines)
   restart                                restart active services
@@ -60,7 +61,7 @@ A group without a verb shows its status or list.
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
-                                         its URL, QR code, backend JSON, or a client config for it (sudo)
+                                         its URL, QR code, backend JSON, or a client config for it
   proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
   proxy unpin                            let the configured selection pick again
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
@@ -68,24 +69,24 @@ A group without a verb shows its status or list.
   proxy subs [list|update]               subscription caches; update refetches them
   proxy subs add <tag> <url>             add a subscription at runtime
   proxy subs rm <tag>                    remove a runtime subscription
-  proxy subs link <tag> [--qr]           its URL (sudo)
-  proxy config [--raw]                   client config to import elsewhere; --raw: as running (sudo)
+  proxy subs link <tag> [--qr]           its URL
+  proxy config [--raw]                   client config to import elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
-  proxy auto [list]                      what autoProxy routed, and via which exit (sudo, or userControl)
+  proxy auto [list]                      what autoProxy routed, and via which exit
   proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
-  proxy auto learn <domain>              probe now and route it if an exit works (sudo)
-  proxy auto queue [count]               destinations waiting to be probed (sudo, or userControl)
+  proxy auto learn <domain>              probe now and route it if an exit works
+  proxy auto queue [count]               destinations waiting to be probed
 
   zapret [status|on|off]                 DPI bypass
   zapret auto [list]                     hosts zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
-                                         pin, forget, or never learn a host (sudo)
-  zapret auto unpin|include <domain>     undo add, or undo exclude (sudo)
-  zapret auto clear                      forget learned hosts and strategies (sudo)
+                                         pin, forget, or never learn a host
+  zapret auto unpin|include <domain>     undo add, or undo exclude
+  zapret auto clear                      forget learned hosts and strategies
   zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
-  zapret cutoff probe                    probe this line again now (sudo)
+  zapret cutoff probe                    probe this line again now
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
@@ -100,10 +101,10 @@ A group without a verb shows its status or list.
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--qr|--json]
                                          client share link, or the client's outbound JSON
-  inbounds link <tag> --server-json      the server's inbound JSON (sudo)
+  inbounds link <tag> --server-json      the server's inbound JSON
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
-                                         traffic per user, listener or exit (sudo, or userControl)
+                                         traffic per user, listener or exit
   inbounds online                        who is connected now, and when the rest were last seen
 """
 
@@ -161,6 +162,15 @@ def lines(text):
 
 def readable(path):
     return bool(path) and os.access(path, os.R_OK)
+
+
+def ask_group():
+    """What lets a refused user in: root, or userControl's group with the scope for it."""
+    return f"join the {env('USER_CONTROL_GROUP', 'proxy-suite')} group, or re-run with sudo"
+
+
+def denied(path, what="read"):
+    die(f"Cannot {what} {path} - {ask_group()}.")
 
 
 def _run(argv, capture=False, quiet=False, stdin=None):
@@ -937,7 +947,7 @@ def cmd_outbounds_test(*args):
         try:
             endpoints = read_json(_runtime_file("outbound-endpoints.json"))
         except PermissionError:
-            notes.append("ping: cannot read the servers - enable userControl, or run with sudo.")
+            notes.append(f"ping: cannot read the servers - {ask_group()}.")
         except (OSError, ValueError):
             pass
     test = {}
@@ -1006,9 +1016,9 @@ def _outbounds_list():
 
 # --- sharing ------------------------------------------------------------------
 #
-# The socks start script writes outbound-share.json, root only: the URL each outbound
-# was given (none for one declared as JSON, WARP or SSH) and its backend JSON. A URL is
-# never rebuilt from JSON. `proxy config` turns the running config into one another
+# The socks start script writes outbound-share.json, root and userControl's group only:
+# the URL each outbound was given (none for one declared as JSON, WARP or SSH) and its
+# backend JSON. A URL is never rebuilt from JSON. `proxy config` turns the running config into one another
 # device can import (proxy_export).
 
 
@@ -1016,7 +1026,7 @@ def _read_root_json(path, what):
     if not os.path.isfile(path):
         die(f"No {what} yet - is proxy-suite-socks running?")
     if not readable(path):
-        die(f"Cannot read {path} - re-run with sudo.")
+        denied(path)
     return read_json(path)
 
 
@@ -1211,7 +1221,7 @@ def _runtime_entry_add(kind, tag="", url="", *_, detour=""):
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{url}\n")
     except OSError:
-        die(f"Cannot write {path} - join the {env('USER_CONTROL_GROUP', 'proxy-suite')} group, or re-run with sudo.")
+        denied(path, "write")
     finally:
         os.umask(old)
     _runtime_reload()
@@ -1231,7 +1241,7 @@ def _runtime_entry_rm(kind, tag="", *_):
     except FileNotFoundError:
         pass
     except OSError:
-        die(f"Cannot remove {path} - join the {env('USER_CONTROL_GROUP', 'proxy-suite')} group, or re-run with sudo.")
+        denied(path, "remove")
     _runtime_reload()
     print(f"Removed {kind}: {tag}")
 
@@ -1731,7 +1741,7 @@ def _require_autoproxy_readable(path):
     if not os.path.isdir(path):
         die("No autoProxy state yet - the prober has not completed a run.")
     if not os.access(path, os.R_OK | os.X_OK):
-        die(f"Cannot read {path} - enable userControl, or run with sudo.")
+        denied(path)
 
 
 def _autoproxy_state(path):
@@ -1866,7 +1876,7 @@ def cmd_proxy_learn(host="", *_):
         with open(requests, "a", encoding="utf-8") as f:
             f.write(f"{host}\n")
     except OSError:
-        die(f"Cannot write {requests} - re-run with sudo.")
+        denied(requests, "write")
     print(f"Probing {host} through each exit...")
     if systemctl("start", "proxy-suite-autoproxy-learn.service", quiet=True)[0]:
         sys.stdout.flush()
@@ -1911,7 +1921,7 @@ def _replace_lines(path, keep, extra=()):
         old = lines(read_text(path)) if os.path.exists(path) else []
         fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path) or ".")
     except OSError:
-        die(f"Cannot write {path} - re-run with sudo.")
+        denied(path, "write")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.writelines(f"{line}\n" for line in [*filter(keep, old), *extra])
@@ -1922,7 +1932,7 @@ def _replace_lines(path, keep, extra=()):
             os.unlink(tmp)
         except OSError:
             pass
-        die(f"Cannot replace {path} - re-run with sudo.")
+        denied(path, "replace")
 
 
 def _zapret_auto_edit(path, domain, action):
@@ -1951,10 +1961,7 @@ def _zapret_strategy_drop(domain):
 
 
 def _truncate(path):
-    try:
-        open(path, "w").close()
-    except OSError:
-        die(f"Cannot write {path} - re-run with sudo.")
+    _replace_lines(path, lambda _: False)
 
 
 def cmd_zapret_auto(verb="list", domain="", *_):
@@ -2021,7 +2028,7 @@ def cmd_zapret_cutoff(verb="status", *_):
         try:
             open(os.path.join(path, "force"), "w").close()
         except OSError:
-            die(f"Cannot write {path} - re-run with sudo.")
+            denied(path, "write")
         print("Probing this line; this takes a few minutes...")
         if systemctl("start", "proxy-suite-zapret2-cutoff.service")[0]:
             die("The probe failed. Details: journalctl -u proxy-suite-zapret2-cutoff -n 30")
@@ -2205,7 +2212,7 @@ def cmd_where(domain="", *_):
         if env("INBOUNDS_ENABLED") == "1":
             inbounds_path = "/run/proxy-suite-inbounds/config.json"
             if not readable(inbounds_path):
-                _where_row("inbounds", "routing is not readable - run with sudo")
+                _where_row("inbounds", f"routing is not readable - {ask_group()}")
             else:
                 try:
                     tag, why = _where_inbounds(read_json(inbounds_path), domain, geosite_dir)
@@ -2217,7 +2224,7 @@ def cmd_where(domain="", *_):
 
     if env("AUTOPROXY_ENABLED") == "1":
         if not readable(os.path.join(_autoproxy_dir(), "state.json")):
-            _where_row("autoProxy", "state is not readable - enable userControl, or run with sudo")
+            _where_row("autoProxy", f"state is not readable - {ask_group()}")
         else:
             domains = _autoproxy_state(_autoproxy_dir()).get("domains")
             hit = _where_in(domains if isinstance(domains, dict) else {}, domain)
@@ -2418,7 +2425,7 @@ def _inbound_links():
     if not os.path.isfile(path):
         die("No share links available. Is proxy-suite-inbounds running, and is inbounds.shareLinks enabled?")
     if not readable(path):
-        die("Share links are not readable by this user. Enable userControl, or run as root.")
+        denied(path)
     return read_json(path)
 
 
@@ -2428,7 +2435,7 @@ def _inbound_server_json(tag):
     if not os.path.isfile(path):
         die("No inbound config yet - is proxy-suite-inbounds running?")
     if not readable(path):
-        die(f"Cannot read {path} - re-run with sudo.")
+        denied(path)
     inbound = next((x for x in read_json(path).get("inbounds") or [] if x.get("tag") == tag), None)
     if inbound is None:
         die(f"Unknown inbound: {tag}")
@@ -2487,7 +2494,7 @@ def _inbound_stats(*args):
     if not os.path.exists(path):
         die("No traffic recorded yet - the collector runs every 5 minutes.")
     if not readable(path):
-        die(f"Cannot read {path} - enable userControl, or run with sudo.")
+        denied(path)
     stats = read_json(path)
     since = (_today() - datetime.timedelta(days=int(days) - 1)).isoformat()
     print(f"Traffic through the inbounds since {since}, by {kind}:")
@@ -2560,7 +2567,7 @@ def _inbound_online():
     for user, (state, addresses) in presence.items():
         print(row.format(user, state, addresses))
     sys.stdout.flush()
-    print("A user counts as online while a connection is open; one relayed through a local web server shows as never seen.", file=sys.stderr)
+    print("A user counts as online while a connection is open; one relayed through a local web server shows as never seen unless it sets X-Forwarded-For.", file=sys.stderr)
 
 
 def _inbound_subscriptions(*args):
@@ -2577,7 +2584,7 @@ def _inbound_subscriptions(*args):
     if not os.path.isfile(path):
         die("No subscriptions available. Is proxy-suite-inbounds running, and is inbounds.subscriptions enabled?")
     if not readable(path):
-        die("Subscriptions are not readable by this user. Enable userControl, or run as root.")
+        denied(path)
     subs = read_json(path)
     if not user:
         if qr:

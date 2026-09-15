@@ -25,6 +25,7 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
+        userControl.enable = true;
         amneziaWg = {
           enable = true;
           kernelModulePackage = null;

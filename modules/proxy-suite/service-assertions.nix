@@ -84,6 +84,9 @@ let
     (mkAssertion (cfg.userControl.group != derived.constants.serviceUser)
       "proxy-suite: userControl.group must not be ${derived.constants.serviceUser}, the group that can read backend configs"
     )
+    (mkAssertion (cfg.userControl.scopes == [ ] || cfg.userControl.enable)
+      "proxy-suite: userControl.scopes is set but userControl.enable is false, so the group gets nothing"
+    )
     (requireEnabled (cfg.warp.enable && cfg.warp.asOutbound != null) proxyEnabled
       "proxy-suite: warp.asOutbound requires proxy.enable = true"
     )

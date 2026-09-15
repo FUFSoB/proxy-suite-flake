@@ -1045,7 +1045,7 @@ null
 <a id="services-proxy-suite-inbounds-sharelinks"></a>
 ## services\.proxy-suite\.inbounds\.shareLinks
 
-Write client share links for ` proxy-ctl inbounds link ` (root and userControl\.group only)\.
+Write client share links for ` proxy-ctl inbounds link ` (root, and userControl\.group with the secrets scope)\.
 
 *Type:*
 boolean

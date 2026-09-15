@@ -352,7 +352,21 @@ class AutoProxyTest(EnvTest):
         finally:
             os.chmod(self.dir, 0o755)
         self.assertNotEqual(status, 0)
-        self.assertIn("enable userControl, or run with sudo", err)
+        self.assertIn("proxy-suite group, or re-run with sudo", err)
+
+
+class ZapretAutoTest(EnvTest):
+    @unittest.skipIf(os.geteuid() == 0, "root writes anything")
+    def test_clear_replaces_what_it_cannot_write(self):
+        """The group writes the state directory, not root's list files in it."""
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        auto = self.write("zapret-hosts-auto.txt", "a.example\n")
+        state = self.write("circular/state.tsv", "1\ta.example\n")
+        os.chmod(auto, 0o444)
+        os.chmod(state, 0o444)
+        ok(ctl.cmd_zapret_auto, "clear")
+        self.assertEqual(ctl.read_text(auto), "")
+        self.assertEqual(ctl.read_text(state), "")
 
 
 class InboundsTest(EnvTest):
@@ -568,7 +582,7 @@ class OutboundTestTest(EnvTest):
         os.chmod(self.write("outbound-endpoints.json", {}), 0)
         status, _, err = run(ctl.cmd_outbounds, "test", "--ping")
         self.assertEqual(status, 0)
-        self.assertIn("enable userControl, or run with sudo", err)
+        self.assertIn("proxy-suite group, or re-run with sudo", err)
 
 
 class ShareTest(EnvTest):

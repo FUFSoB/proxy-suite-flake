@@ -258,11 +258,9 @@ services.proxy-suite = {
     enable = true;
   };
   userControl = {
-    allow = [
-      "global"
-      "perApp"
-    ];
+    enable = false;
     group = "proxy-suite";
+    scopes = [ ];
   };
   warp = {
     asAmneziaWg = false;

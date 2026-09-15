@@ -36,7 +36,7 @@ in
     };
 
     openFirewall = bool true "Open every non-loopback listener port.";
-    shareLinks = bool true "Write client share links for `proxy-ctl inbounds link` (root and userControl.group only).";
+    shareLinks = bool true "Write client share links for `proxy-ctl inbounds link` (root, and userControl.group with the secrets scope).";
 
     subscriptions = {
       enable = mkEnableOption "" // {

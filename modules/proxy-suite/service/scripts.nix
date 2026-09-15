@@ -32,7 +32,7 @@
   proxyInboundsNeedLocalProxy,
   proxyInboundsGuardPrivate,
   proxyInboundViaOutbounds,
-  userControlEnabled,
+  userControlAllows,
   buildInboundPy,
   proxyInboundsFile,
   proxyInboundsSpecFile,
@@ -162,6 +162,7 @@ let
       proxyCfg
       perAppRoutingCfg
       userControlCfg
+      userControlAllows
       globalTproxy
       xrayEnabled
       hybridEnabled
@@ -199,7 +200,7 @@ let
       proxyInboundsNeedLocalProxy
       proxyInboundViaOutbounds
       userControlCfg
-      userControlEnabled
+      userControlAllows
       localProxyAuth
       localProxyAuthEnabled
       localProxyAuthPasswordSource

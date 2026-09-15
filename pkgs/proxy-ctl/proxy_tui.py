@@ -3,8 +3,11 @@
 What it shows and does lives in proxy_model, shared with proxy-suite-gui; this is the drawing.
 """
 
+import os
 import shlex
+import shutil
 import signal
+import subprocess
 
 from rich.text import Text
 from textual import events, work
@@ -51,6 +54,8 @@ GLOBAL_KEYS = [
     ("w", "how is a domain routed"),
     ("L", "follow all logs"),
     ("o", "output of the last command"),
+    ("!", "retry what just failed as root (sudo)"),
+    ("#", "switch to root: proxy-tui again under sudo"),
     ("r", "refresh now"),
     ("?", "keys"),
     ("q", "quit"),
@@ -229,13 +234,31 @@ class Menu(Dialog):
 
 
 class Output(Dialog):
-    BINDINGS = [Binding("escape,q", "dismiss", "close"), Binding("c", "copy", "copy")]
+    BINDINGS = [Binding("escape,q", "dismiss", "close"), Binding("c", "copy", "copy"), Binding("exclamation_mark", "retry_root", "retry as root")]
 
-    def __init__(self, title, text=None, wrap=True):
+    def __init__(self, title, text=None, wrap=True, retry=False):
         super().__init__()
-        self.heading, self.initial, self.wrap = title, text, wrap
+        self.heading, self.initial, self.wrap, self.retry = title, text, wrap, retry
         self.proc = None  # the streaming command, stopped when the dialog closes
         self.text = []  # plain lines, for copying
+
+    def hints(self):
+        retry = [("! retry as root", "retry_root")] if self.retry else []
+        return hint(*retry, ("c copy", "copy"), ("esc close", "dismiss"))
+
+    def offer_retry(self):
+        """The run failed where root could do it: ! and a click on the hint run it again under sudo."""
+        self.retry = True
+        if self.is_attached:
+            self.query_one(".dialog-hint").remove()
+            self.query_one(".dialog").mount(self.hints())
+
+    def check_action(self, action, parameters):
+        return self.retry if action == "retry_root" else True
+
+    def action_retry_root(self):
+        self.dismiss()
+        self.app.action_retry_root()
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog output"):
@@ -247,7 +270,7 @@ class Output(Dialog):
                 self.text.append(text.plain)
                 log.write(text)
             yield log
-            yield hint(("c copy", "copy"), ("esc close", "dismiss"))
+            yield self.hints()
 
     def write(self, line):
         if self.is_attached:
@@ -297,6 +320,8 @@ class MainScreen(Screen):
         Binding("w", "app.where"),
         Binding("L", "app.logs"),
         Binding("o", "app.last_output"),
+        Binding("exclamation_mark", "app.retry_root"),
+        Binding("number_sign", "app.switch_root"),
         Binding("r", "app.reload"),
         Binding("q", "app.quit"),
     ]
@@ -381,6 +406,7 @@ class ProxyTui(App):
         self.typed = {}  # prompt title -> what was last typed there
         self.feedback_timer = None
         self.last_output = None  # (title, text)
+        self.retry = None  # (mode, argv) of the last run that only root could do
         self.animation_level = "none"  # tab switches land at once
         self.register_theme(THEME)
         self.theme = THEME.name
@@ -529,6 +555,8 @@ class ProxyTui(App):
         return model.applicable(self.tabs[self.active_tab()], row)
 
     def check_action(self, action, parameters):
+        if action in ("retry_root", "switch_root"):
+            return not model.is_root()
         # A row action that does not apply: its key does nothing.
         if action != "act" or self.screen is not self.main:
             return True
@@ -588,7 +616,7 @@ class ProxyTui(App):
 
     def action_last_output(self):
         if self.last_output:
-            self.push_screen(Output(*self.last_output))
+            self.push_screen(Output(*self.last_output, retry=self.retry is not None))
         else:
             self.feedback("Nothing has run yet.")
 
@@ -629,14 +657,7 @@ class ProxyTui(App):
     def run_argv(self, mode, argv):
         command = f"proxy-ctl {shlex.join(argv)}"
         if mode in ("suspend", "pause"):
-            with self.suspend():
-                ctl._run_foreground([CTL, *argv])
-                if mode == "pause":
-                    try:
-                        input("\n[enter] back to proxy-tui")
-                    except (EOFError, KeyboardInterrupt):
-                        pass
-            self.action_reload()
+            self.foreground(mode, [CTL, *argv])
             return
         # A wrapped QR code no longer scans: it scrolls sideways instead.
         dialog = Output(command, wrap="--qr" not in argv) if mode == "dialog" else None
@@ -644,6 +665,16 @@ class ProxyTui(App):
             self.push_screen(dialog)
         self.feedback(f"… {command}")
         self.stream(command, argv, dialog, mode == "copy")
+
+    def foreground(self, mode, argv):
+        with self.suspend():
+            ctl._run_foreground(argv)
+            if mode == "pause":
+                try:
+                    input("\n[enter] back to proxy-tui")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+        self.action_reload()
 
     @work(thread=True)
     def stream(self, command, argv, dialog, copy=False):
@@ -660,23 +691,77 @@ class ProxyTui(App):
         except OSError as e:
             out.append(f"cannot run proxy-ctl: {e}")
             status = 127
+        self.call_from_thread(self.finish, command, argv, dialog, copy, out, status, stream_shown=True)
+
+    def finish(self, command, argv, dialog, copy, out, status, stream_shown=False):
+        """A run's end: the feedback line, the clipboard, and the dialog's tail."""
+        if dialog and not stream_shown:
+            for line in out:
+                dialog.write(line)
         last = Text.from_ansi(next((line for line in reversed(out) if line.strip()), "")).plain.strip()
         message = f"{last}  ({command})" if last else command
         self.last_output = (command, "\n".join(out))
         if status == -signal.SIGTERM and dialog:
-            self.call_from_thread(self.feedback, f"stopped: {command}", False)
+            self.feedback(f"stopped: {command}", False)
             return
         if copy and not status and last:
-            self.call_from_thread(self.copy_to_clipboard, last)
+            self.copy_to_clipboard(last)
             message = f"copied: {last}"
         if status:
             message = f"exit {status}: {message}"
             if dialog:
-                self.call_from_thread(dialog.write, f"\x1b[31m(exit status {status})\x1b[0m")
+                dialog.write(f"\x1b[31m(exit status {status})\x1b[0m")
         if len(out) > 1 and not dialog:
             message += "  · o: full output"
-        self.call_from_thread(self.feedback, message, status == 0)
-        self.call_from_thread(self.action_reload)
+        self.retry = None
+        if model.needs_root(out, status):
+            self.retry = ("dialog" if dialog else "copy" if copy else "run", argv)
+            message = f"{message}  · !: retry as root"
+            if dialog:
+                dialog.offer_retry()
+        self.feedback(message, status == 0)
+        self.action_reload()
+
+    def action_retry_root(self):
+        if not self.retry:
+            self.feedback("Nothing to retry as root.")
+            return
+        (mode, argv), self.retry = self.retry, None
+        command = f"sudo proxy-ctl {shlex.join(argv)}"
+        root_argv = model.elevated(argv, "sudo")
+        # sudo asks on the terminal, so the run happens there; the output comes back as usual.
+        out, p = [], None
+        with self.suspend():
+            print(f"$ {command}", flush=True)
+            try:
+                p = subprocess.Popen(root_argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+                for line in p.stdout:
+                    print(line, end="", flush=True)
+                    out.append(line.rstrip("\n"))
+                status = p.wait()
+            except OSError as e:
+                out.append(f"cannot run sudo: {e}")
+                status = 127
+            except KeyboardInterrupt:  # the terminal's Ctrl-C reached sudo too
+                status = p.wait() if p else 130
+        dialog = Output(command, wrap="--qr" not in argv) if mode == "dialog" else None
+        if dialog:
+            self.push_screen(dialog)
+        self.finish(command, argv, dialog, mode == "copy", out, status)
+
+    def action_switch_root(self):
+        def switch(ok):
+            if not ok:
+                return
+            with self.suspend():
+                # Asks here, once: the TUI under sudo then starts without asking again.
+                status = ctl._run_foreground(["sudo", "-v"])
+            if status:
+                self.feedback("sudo: not authenticated", False)
+            else:
+                self.exit("root")
+
+        self.push_screen(Confirm("sudo proxy-tui"), switch)
 
     def feedback(self, message, ok=None):
         icon, style = {True: ("✓ ", "green"), False: ("✗ ", "red"), None: ("", "")}[ok]
@@ -690,4 +775,6 @@ class ProxyTui(App):
 
 
 if __name__ == "__main__":
-    ProxyTui().run()
+    if ProxyTui().run() == "root":
+        # The wrapper by name: sudo resets the environment, and the wrapper sets it again.
+        os.execvp("sudo", ["sudo", shutil.which("proxy-tui") or "proxy-tui"])

@@ -5,6 +5,7 @@
   proxyCfg,
   perAppRoutingCfg,
   userControlCfg,
+  userControlAllows,
   globalTproxy,
   xrayEnabled,
   hybridEnabled,
@@ -41,6 +42,8 @@ let
 
   autoProxyRender = import ../autoproxy-render.nix { inherit pkgs; };
   runBackend = constants.runAsServiceUser pkgs constants.backendCaps;
+  userControlGroup = lib.escapeShellArg userControlCfg.group;
+  chgrp = "${pkgs.coreutils}/bin/chgrp";
 
   routeModeBlacklistTail =
     if pureXrayEnabled then
@@ -207,8 +210,9 @@ let
       AUTOPROXY_RULES_JSON='[]'
       ${lib.optionalString enableAutoProxy ''
         AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
-        # 0751: sing-box, running as ${constants.serviceUser}, reads the rule-sets inside.
-        install -d -m 0751 "$AUTOPROXY_DIR"
+        # 0751: sing-box, running as ${constants.serviceUser}, reads the rule-sets inside;
+        # 0771 with userControl's autoProxy scope, whose group queues learn requests there.
+        install -d -m ${if userControlAllows "autoProxy" then "0771" else "0751"} "$AUTOPROXY_DIR"
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
 
         # direct is always exit 0; state is keyed by tag, so shifting indices are
@@ -263,7 +267,7 @@ let
         ' <<< "$OUTBOUNDS_JSON" > "$ENDPOINTS_TMP"
         # Where each proxy server is: not credentials, but not for every local user either.
         ${
-          if userControlCfg.allow != [ ] || localProxyAuthEnabled then
+          if userControlCfg.enable || localProxyAuthEnabled then
             ''
               ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$ENDPOINTS_TMP"
               chmod 640 "$ENDPOINTS_TMP"
@@ -274,7 +278,7 @@ let
         mv "$ENDPOINTS_TMP" "$RUNTIME_DIR/outbound-endpoints.json"
 
         # proxy-ctl's share links: the URL each outbound was given, and its backend JSON.
-        # Credentials, so root only, whatever userControl allows.
+        # Credentials: root and the userControl group only.
         SHARE_TMP="$RUNTIME_DIR/outbound-share.json.tmp"
         (umask 077 && ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" \
           --argjson urls "$OUTBOUND_URLS_JSON" --argjson subs "$SUBSCRIPTION_URLS_JSON" '
@@ -285,7 +289,8 @@ let
                | from_entries),
              subscriptions: $subs}
         ' <<< "$OUTBOUNDS_JSON" > "$SHARE_TMP")
-        chmod 600 "$SHARE_TMP"
+        ${lib.optionalString (userControlAllows "secrets") ''${chgrp} ${userControlGroup} "$SHARE_TMP"''}
+        chmod ${if userControlAllows "secrets" then "640" else "600"} "$SHARE_TMP"
         mv "$SHARE_TMP" "$RUNTIME_DIR/outbound-share.json"
 
         ${lib.optionalString (!pureXrayEnabled) ''
@@ -313,7 +318,8 @@ let
         # rule-set path and reloads the file when the probe renames a new one in.
         if [ "$ROUTE_MODE" != all-bypass ]; then
           CUTOFF_RULE_SET=${lib.escapeShellArg "${constants.zapret2CutoffDir}/proxy.json"}
-          install -d -m 0755 "$(dirname "$CUTOFF_RULE_SET")"
+          # The cutoff unit owns the directory's mode (the group asks for probes there).
+          mkdir -p "$(dirname "$CUTOFF_RULE_SET")"
           [ -s "$CUTOFF_RULE_SET" ] || echo '{"version":1,"rules":[]}' > "$CUTOFF_RULE_SET"
           chmod 644 "$CUTOFF_RULE_SET"
           AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$CUTOFF_RULE_SET" \
@@ -353,11 +359,23 @@ let
           "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next"
         mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
       ''}
-      # The backend runs as ${constants.serviceUser}: its configs are group-readable.
+      # Credentials, read by the backend running as ${constants.serviceUser}. With
+      # userControl its group reads them too; a file has one group, so the daemon
+      # reads as owner then.
       for backend_config in "$RUNTIME_DIR/config.json" "$RUNTIME_DIR/xray-sidecar.json"; do
         [ -e "$backend_config" ] || continue
-        ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$backend_config"
-        chmod ${if enableLocalProxyAuth then "640" else "g+r"} "$backend_config"
+        ${
+          if userControlAllows "secrets" then
+            ''
+              ${pkgs.coreutils}/bin/chown ${constants.serviceUser}:${userControlGroup} "$backend_config"
+              chmod 440 "$backend_config"
+            ''
+          else
+            ''
+              ${chgrp} ${constants.serviceUser} "$backend_config"
+              chmod 640 "$backend_config"
+            ''
+        }
       done
       FAKE_IP_CACHE=$(${jq} -r '.experimental.cache_file.path? // empty' "$RUNTIME_DIR/config.json")
       if [ -n "$FAKE_IP_CACHE" ]; then

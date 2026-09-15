@@ -12,7 +12,7 @@
 }:
 
 let
-  inherit (import ../derived.nix { inherit lib cfg; }) constants;
+  inherit (import ../derived.nix { inherit lib cfg; }) constants userControlAllows;
   z2k = zapret2Sources.z2k;
   lists = "${z2k}/files/lists";
   dir = constants.zapret2CutoffDir;
@@ -156,6 +156,11 @@ in
       ExecStartPre = "${exempt}";
       ExecStart = "${probe}";
       ExecStopPost = "-${nft} delete table inet ${table}";
+    }
+    # The group's `proxy-ctl zapret cutoff probe` drops its `force` file here.
+    // lib.optionalAttrs (userControlAllows "zapret") {
+      Group = cfg.userControl.group;
+      StateDirectoryMode = "2775";
     };
   };
 

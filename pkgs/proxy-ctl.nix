@@ -109,7 +109,8 @@ let
             proxyCtl
             pkgs.systemd
           ]
-        }" ${envFlags}
+        }" \
+        --suffix PATH : /run/wrappers/bin ${envFlags}
     '';
   };
   guiPython = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
@@ -194,6 +195,7 @@ let
             pkgs.qrencode
           ]
         }" \
+        --suffix PATH : /run/wrappers/bin \
         --set PROXY_GUI_ICON_DIR "$out/share/proxy-suite-gui/icons" \
         --set PROXY_GUI_REFRESH ${toString guiRefreshInterval} ${envFlags}
     '';

@@ -186,13 +186,13 @@ let
     fixture:
     (import ./read-generated.nix).readDerivation
       fixture.config.systemd.services."proxy-suite-inbound-stats".serviceConfig.ExecStart;
-  noControlFixture = evalProxySuite [
+  controlFixture = evalProxySuite [
     baseModule
     {
       services.proxy-suite = {
         inbounds.enable = true;
         inbounds.listeners.vless-in = realityListener;
-        userControl.allow = [ ];
+        userControl.enable = true;
       };
     }
   ];
@@ -571,10 +571,10 @@ let
 
     # The collected stats are group-readable with userControl, root-only without.
     (
-      assert lib.hasInfix "chgrp proxy-suite \"$tmp\"" (statsScript relayFixture);
-      assert lib.hasInfix "chmod 640 \"$tmp\"" (statsScript relayFixture);
-      assert !lib.hasInfix "chgrp" (statsScript noControlFixture);
-      assert lib.hasInfix "chmod 600 \"$tmp\"" (statsScript noControlFixture);
+      assert lib.hasInfix "chgrp proxy-suite \"$tmp\"" (statsScript controlFixture);
+      assert lib.hasInfix "chmod 640 \"$tmp\"" (statsScript controlFixture);
+      assert !lib.hasInfix "chgrp" (statsScript relayFixture);
+      assert lib.hasInfix "chmod 600 \"$tmp\"" (statsScript relayFixture);
       true
     )
 

@@ -16,7 +16,7 @@ let
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
   cutoffCfg = zapretCfg.zapret2.cutoff;
-  inherit (import ./derived.nix { inherit lib cfg; }) constants;
+  inherit (import ./derived.nix { inherit lib cfg; }) constants userControlAllows;
   # Global AmneziaWG profiles only: an outbound one leaves the host's routes alone.
   awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
     builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
@@ -71,10 +71,13 @@ let
       if tunInterfaces != [ ] then runtime.mkCustomScript { inherit tunInterfaces; } else null;
   };
 
-  # nfqws2 and proxy-ctl expect the list files to exist.
+  # nfqws2 and proxy-ctl expect the list files to exist. With userControl its group
+  # edits them: proxy-ctl renames a new list in, so the directories are what it writes.
   mkPreStart = ''
     ${lib.getExe' pkgs.kmod "modprobe"} nfnetlink_queue 2>/dev/null || true
-    install -d -m 0755 ${runtime.stateDir} ${runtime.circularStateDir}
+    install -d -m ${
+      if userControlAllows "zapret" then "2775 -g ${lib.escapeShellArg cfg.userControl.group}" else "0755"
+    } ${runtime.stateDir} ${runtime.circularStateDir}
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
   '';
 

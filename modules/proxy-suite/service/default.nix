@@ -62,6 +62,7 @@ let
     perAppRoutingTproxy
     userControlCfg
     userControlEnabled
+    userControlAllows
     perAppZapretEnabled
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
@@ -129,6 +130,7 @@ let
       inherit lib pkgs cfg;
       inherit (control) proxyCtl;
       inherit (constants) autoProxyStateDir;
+      inherit userControlAllows;
     }
   );
 in
@@ -170,36 +172,51 @@ lib.mkMerge [
       "${userControlCfg.group}" = { };
     };
 
-    security.polkit.enable = lib.mkIf (cfg.enable && userControlEnabled) true;
-    security.polkit.extraConfig = lib.mkIf (cfg.enable && userControlEnabled) (
-      lib.mkAfter ''
-        polkit.addRule(function(action, subject) {
-          if (!subject.isInGroup("${userControlCfg.group}")) {
+    security.polkit.enable = lib.mkIf (cfg.enable && (userControlEnabled || cfg.gui.enable)) true;
+    # The GUI's "Retry as Root" and root toggle run proxy-ctl through pkexec: one
+    # admin password then covers the next few minutes, as sudo's does in the TUI.
+    security.polkit.extraConfig = lib.mkMerge [
+      (lib.mkIf (cfg.enable && cfg.gui.enable) (
+        lib.mkAfter ''
+          polkit.addRule(function(action, subject) {
+            if (action.id === "org.freedesktop.policykit.exec" &&
+                action.lookup("program") === "${control.proxyCtl}/bin/proxy-ctl") {
+              return polkit.Result.AUTH_ADMIN_KEEP;
+            }
             return null;
-          }
+          });
+        ''
+      ))
+      (lib.mkIf (cfg.enable && userControlEnabled) (
+        lib.mkAfter ''
+          polkit.addRule(function(action, subject) {
+            if (!subject.isInGroup("${userControlCfg.group}")) {
+              return null;
+            }
 
-          if (action.id !== "org.freedesktop.systemd1.manage-units") {
+            if (action.id !== "org.freedesktop.systemd1.manage-units") {
+              return null;
+            }
+
+            var unit = action.lookup("unit");
+            ${polkit.userControlPolkitRules}
+
             return null;
-          }
-
-          var unit = action.lookup("unit");
-          ${polkit.userControlPolkitRules}
-
-          return null;
-        });
-      ''
-    );
+          });
+        ''
+      ))
+    ];
 
     # Spool dirs for outbounds and subscriptions added at runtime. Setgid so the
-    # files proxy-ctl drops here inherit the group; without userControl only root
-    # writes them. tmpfiles rather than the start scripts, so the group can add an
+    # files proxy-ctl drops here inherit the group; without the outbounds scope
+    # only root writes them. tmpfiles rather than the start scripts, so the group can add an
     # outbound before the proxy has ever run.
     systemd.tmpfiles.rules = lib.mkIf (cfg.enable && proxyEnabled) (
       map
         (
           dir:
           "d ${dir} ${
-            if userControlEnabled then "2770 root ${userControlCfg.group}" else "0700 root root"
+            if userControlAllows "outbounds" then "2770 root ${userControlCfg.group}" else "0700 root root"
           } -"
         )
         [
