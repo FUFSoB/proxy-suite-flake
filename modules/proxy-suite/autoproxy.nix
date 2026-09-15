@@ -52,7 +52,7 @@ let
       echo "sing-box has no Clash API (selection = \"first\"?); nothing to sample"
       exit 0
     fi
-    install -d -m 0750 "$state_dir"
+    install -d -m 0751 "$state_dir"
 
     # Eleven snapshots a second apart: ten one-second deltas per connection.
     lines=$(
@@ -86,7 +86,7 @@ let
       echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
       exit 0
     fi
-    install -d -m 0750 "$state_dir"
+    install -d -m 0751 "$state_dir"
 
     # Timer runs and learn requests take turns on the state.
     exec 9> "$state_dir/lock"
@@ -114,7 +114,7 @@ let
         echo "could not update $state; it is left as it was" >&2
         return 1
       fi
-      # mktemp makes it 0600; the state dir is 0750, so group-readable is enough.
+      # mktemp makes it 0600; the state dir is 0751, so group-readable is enough.
       chmod 0640 "$tmp"
       mv -f "$tmp" "$state"
     }
@@ -396,7 +396,10 @@ let
   # declares the directory - systemd re-applies the ownership on each start.
   stateDirConfig = {
     StateDirectory = "proxy-suite/autoproxy";
-    StateDirectoryMode = "0750";
+    # 0751 and a 027 umask: sing-box (proxy-suite) can open the rule-sets, which are
+    # made 0644, and nothing else.
+    StateDirectoryMode = "0751";
+    UMask = "0027";
   }
   // lib.optionalAttrs (cfg.userControl.allow != [ ]) { Group = cfg.userControl.group; };
 

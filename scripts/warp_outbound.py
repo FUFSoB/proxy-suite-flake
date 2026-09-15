@@ -8,23 +8,14 @@ import json
 import sys
 from typing import Any
 
-
-class ConfigError(ValueError):
-    pass
+from amneziawg_config import ConfigError, conf_sections
 
 
 def parse_conf(text: str) -> tuple[dict[str, str], dict[str, str]]:
     """Return the [Interface] section and the first [Peer], keys lowercased."""
-    sections: list[tuple[str, dict[str, str]]] = []
-    for line in text.splitlines():
-        stripped = line.split("#", 1)[0].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            sections.append((stripped[1:-1].strip().lower(), {}))
-        elif "=" in stripped and sections:
-            key, value = (part.strip() for part in stripped.split("=", 1))
-            sections[-1][1][key.lower()] = value
-    interface = next((s for name, s in sections if name == "interface"), None)
-    peer = next((s for name, s in sections if name == "peer"), None)
+    sections = conf_sections(text)
+    interface = next((dict(pairs) for name, pairs in sections if name == "interface"), None)
+    peer = next((dict(pairs) for name, pairs in sections if name == "peer"), None)
     if interface is None or peer is None:
         raise ConfigError("configuration requires [Interface] and [Peer] sections")
     for section, key in ((interface, "privatekey"), (interface, "address"), (peer, "publickey"), (peer, "endpoint")):
@@ -78,7 +69,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         print(json.dumps(build(sys.stdin.read(), args.tag, args.routing_mark)))
-    except (ConfigError, ValueError) as error:
+    except ValueError as error:
         print(f"proxy-suite: warp: {error}", file=sys.stderr)
         return 1
     return 0

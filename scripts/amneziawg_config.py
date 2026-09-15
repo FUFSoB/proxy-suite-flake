@@ -284,17 +284,38 @@ def _set_interface_value(config: str, key: str, value: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _interface_keys(config: str) -> set[str]:
-    keys: set[str] = set()
-    in_interface = False
+def conf_sections(config: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Each [Section] of a WireGuard .conf, lowercased, with its key = value lines in order.
+
+    Keys are lowercased; comments (# or ;) and lines outside a section are dropped.
+    """
+    sections: list[tuple[str, list[tuple[str, str]]]] = []
     for line in config.splitlines():
         stripped = line.split("#", 1)[0].split(";", 1)[0].strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_interface = stripped.lower() == "[interface]"
-            continue
-        if in_interface and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip()
-            keys.add(re.sub(r"[^a-z0-9]", "", key.lower()))
+            sections.append((stripped[1:-1].strip().lower(), []))
+        elif "=" in stripped and sections:
+            key, value = (part.strip() for part in stripped.split("=", 1))
+            sections[-1][1].append((key.lower(), value))
+    return sections
+
+
+def section_values(config: str, section: str, key: str) -> list[str]:
+    """Every value of `key` in every `section`, in file order."""
+    return [
+        value
+        for name, pairs in conf_sections(config)
+        if name == section
+        for found, value in pairs
+        if found == key
+    ]
+
+
+def _interface_keys(config: str) -> set[str]:
+    keys: set[str] = set()
+    for name, pairs in conf_sections(config):
+        if name == "interface":
+            keys.update(re.sub(r"[^a-z0-9]", "", key) for key, _ in pairs)
     return keys
 
 
@@ -443,39 +464,15 @@ def render_settings(settings: dict[str, Any]) -> str:
             lines.append(f"{target} = {settings[source]}")
 
     obfuscation = _merge_obfuscation(settings)
-    obfuscation_map = {
-        "jc": "Jc",
-        "jmin": "Jmin",
-        "jmax": "Jmax",
-        "s1": "S1",
-        "s2": "S2",
-        "s3": "S3",
-        "s4": "S4",
-        "h1": "H1",
-        "h2": "H2",
-        "h3": "H3",
-        "h4": "H4",
-        "i1": "I1",
-        "i2": "I2",
-        "i3": "I3",
-        "i4": "I4",
-        "i5": "I5",
-        "contentPaddingAddition": "ContentPaddingAddition",
-        "rekeyAfterTime": "RekeyAfterTime",
-        "rekeyTimeout": "RekeyTimeout",
-        "rejectAfterTime": "RejectAfterTime",
-        "keepaliveTimeout": "KeepaliveTimeout",
-        "maxHandshakeAttempts": "MaxHandshakeAttempts",
-    }
-    for source, target in obfuscation_map.items():
-        if obfuscation.get(source) is not None:
-            lines.append(f"{target} = {obfuscation[source]}")
-    for source, target in {
-        "randomTrailers": "RandomTrailers",
-        "disableCookies": "DisableCookies",
-    }.items():
-        if obfuscation.get(source) is not None:
-            lines.append(f"{target} = {'on' if obfuscation[source] else 'off'}")
+    # Option names are the config keys in camelCase; the key comes last, from its secret.
+    values = {key.lower(): value for key, value in obfuscation.items()}
+    for normalized, target in VPN_INTERFACE_FIELDS.items():
+        value = values.get(normalized)
+        if normalized == "headerprotectionkey" or value is None:
+            continue
+        if isinstance(value, bool):
+            value = "on" if value else "off"
+        lines.append(f"{target} = {value}")
     if obfuscation.get("headerProtectionKey") is not None or obfuscation.get(
         "headerProtectionKeyFile"
     ) is not None:
@@ -531,17 +528,7 @@ def validate_config(config: str, allow_hooks: bool = False) -> None:
 def probe_address(config: str) -> str:
     """Return an address covered by a peer route without exposing credentials."""
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-    in_peer = False
-    for line in config.splitlines():
-        stripped = line.split("#", 1)[0].split(";", 1)[0].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_peer = stripped.lower() == "[peer]"
-            continue
-        if not in_peer or "=" not in stripped:
-            continue
-        key, value = (part.strip() for part in stripped.split("=", 1))
-        if key.lower() != "allowedips":
-            continue
+    for value in section_values(config, "peer", "allowedips"):
         for item in value.split(","):
             try:
                 networks.append(ipaddress.ip_network(item.strip(), strict=False))
@@ -561,23 +548,24 @@ def probe_address(config: str) -> str:
 
 def transport_implementation(config: str) -> str:
     """Select userspace for the upstream RandomTrailers/ranged-header defect."""
-    random_trailers = False
-    ranged_handshake_header = False
-    in_interface = False
-    for line in config.splitlines():
-        stripped = line.split("#", 1)[0].split(";", 1)[0].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_interface = stripped.lower() == "[interface]"
-            continue
-        if not in_interface or "=" not in stripped:
-            continue
-        key, value = (part.strip() for part in stripped.split("=", 1))
-        normalized_key = key.lower()
-        if normalized_key == "randomtrailers":
-            random_trailers = value.lower() in {"on", "true", "yes", "1"}
-        elif normalized_key in {"h1", "h2", "h3"}:
-            ranged_handshake_header |= re.fullmatch(r"[0-9]+\s*-\s*[0-9]+", value) is not None
+    trailers = section_values(config, "interface", "randomtrailers")
+    random_trailers = bool(trailers) and trailers[-1].lower() in {"on", "true", "yes", "1"}
+    ranged_handshake_header = any(
+        re.fullmatch(r"[0-9]+\s*-\s*[0-9]+", value) is not None
+        for key in ("h1", "h2", "h3")
+        for value in section_values(config, "interface", key)
+    )
     return "userspace" if random_trailers and ranged_handshake_header else "auto"
+
+
+def rekey_after_time(config: str) -> int:
+    """Longest wait between rekeys, in seconds; 0 when rekeying is off."""
+    values = section_values(config, "interface", "rekeyaftertime")
+    if not values:
+        return 120
+    if values[-1] == "(off)":
+        return 0
+    return int(values[-1].split("-")[-1])
 
 
 def prepare(manifest: dict[str, Any]) -> str:
@@ -619,25 +607,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest")
     parser.add_argument("--output")
-    parser.add_argument("--probe-address")
-    parser.add_argument("--transport-implementation")
+    parser.add_argument(
+        "--inspect",
+        metavar="CONFIG",
+        help="print the transport implementation, a probe address and the rekey interval",
+    )
     args = parser.parse_args()
     try:
-        if args.probe_address is not None:
-            if (
-                args.manifest is not None
-                or args.output is not None
-                or args.transport_implementation is not None
-            ):
-                raise ConfigError("--probe-address cannot be combined with rendering options")
-            print(probe_address(_read_limited(args.probe_address)))
-            return 0
-        if args.transport_implementation is not None:
+        if args.inspect is not None:
             if args.manifest is not None or args.output is not None:
-                raise ConfigError(
-                    "--transport-implementation cannot be combined with rendering options"
-                )
-            print(transport_implementation(_read_limited(args.transport_implementation)))
+                raise ConfigError("--inspect cannot be combined with rendering options")
+            config = _read_limited(args.inspect)
+            print(transport_implementation(config), probe_address(config), rekey_after_time(config))
             return 0
         if args.manifest is None or args.output is None:
             raise ConfigError("--manifest and --output are required when rendering a configuration")

@@ -47,7 +47,7 @@ in
       '';
     };
 
-    identityFile = path "Runtime path to the private key. Null uses the agent or OpenSSH defaults." "/run/secrets/proxy-suite-ssh-key";
+    identityFile = path "Runtime path to the private key; it may stay root-only, as the daemons get a copy they can read. Null uses the agent or OpenSSH defaults." "/run/secrets/proxy-suite-ssh-key";
 
     hostKey = mkOption {
       type = types.listOf types.str;
@@ -92,8 +92,8 @@ in
 
     serviceUser = mkOption {
       type = token;
-      default = null;
-      description = "Unix user running the OpenSSH unit.";
+      default = "proxy-suite-daemon";
+      description = "Unix user running the OpenSSH unit. The default, proxy-suite-daemon, runs sandboxed and keeps accepted host keys in /var/lib/proxy-suite/ssh; null runs it as root.";
       example = "proxy";
     };
 

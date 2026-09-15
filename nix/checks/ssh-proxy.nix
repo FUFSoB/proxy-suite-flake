@@ -53,7 +53,6 @@ let
     server = "ssh.example.com";
     server_port = 22;
     user = "root";
-    private_key_path = "/run/secrets/ssh-key";
     host_key = [ testHostKey ];
     routing_mark = markOf sshNativeSingBox;
   };
@@ -367,6 +366,9 @@ let
     )
     (
       assert pkgs.lib.hasInfix expectedNativeSingBoxOutbound sshNativeSingBoxStart;
+      # The daemon cannot read the key where it lives: it gets a group-readable copy.
+      assert pkgs.lib.hasInfix "install -m 0640 -g proxy-suite-daemon /run/secrets/ssh-key \"$SSH_IDENTITY\"" sshNativeSingBoxStart;
+      assert pkgs.lib.hasInfix "'.private_key_path = $key'" sshNativeSingBoxStart;
       true
     )
     # The global local-resolve route rule is gone; the native outbound resolves.
@@ -441,7 +443,16 @@ let
       true
     )
     (
-      assert pkgs.lib.hasInfix "UserKnownHostsFile=/run/secrets/ssh-known-hosts" standaloneStartScript;
+      assert pkgs.lib.hasInfix ''UserKnownHostsFile="$CREDENTIALS_DIRECTORY/known_hosts"'' standaloneStartScript;
+      true
+    )
+    # Secrets reach the unprivileged user as credentials.
+    (
+      assert
+        standaloneService.serviceConfig.LoadCredential == [
+          "identity:/run/secrets/ssh-key"
+          "known_hosts:/run/secrets/ssh-known-hosts"
+        ];
       true
     )
 

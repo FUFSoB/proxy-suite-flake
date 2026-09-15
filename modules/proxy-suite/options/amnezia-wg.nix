@@ -39,7 +39,14 @@ in
     profiles = mkOption {
       type = types.attrsOf t.profileType;
       default = { };
-      description = "Named AmneziaWG client profiles. Only one global profile can be active.";
+      description = ''
+        Named AmneziaWG client profiles. Only one global profile can be active.
+
+        A profile moves to a new source port, keeping its routes, when a handshake goes
+        unanswered: every 5 seconds while it starts (it gives up after 20), and when
+        proxy-suite-awg-NAME-watchdog sees a rekey not getting through. settings.listenPort
+        pins the port and turns that off.
+      '';
     };
   };
 }

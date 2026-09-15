@@ -10,12 +10,14 @@ import zlib
 from pathlib import Path
 from unittest.mock import patch
 
+import amneziawg_config
 from amneziawg_config import (
     ConfigError,
     decode_vpn_link,
     extract_vpn_config,
     prepare,
     probe_address,
+    rekey_after_time,
     render_settings,
     transport_implementation,
     validate_config,
@@ -414,6 +416,25 @@ class AmneziaWgConfigTests(unittest.TestCase):
             "AllowedIPs = 0.0.0.0/0", "AllowedIPs = 10.23.42.0/24"
         )
         self.assertEqual(probe_address(config), "10.23.42.1")
+
+    def test_rekey_after_time_takes_the_upper_bound(self):
+        config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+        self.assertEqual(rekey_after_time(config.replace("[Peer]", "RekeyAfterTime = 100-300\n[Peer]")), 300)
+        self.assertEqual(rekey_after_time(config.replace("[Peer]", "RekeyAfterTime = (off)\n[Peer]")), 0)
+        # Only [Interface] counts, and WireGuard's own 120 is the default.
+        self.assertEqual(rekey_after_time(config + "RekeyAfterTime = 999\n"), 120)
+
+    def test_inspect_prints_what_the_start_script_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "awg.conf"
+            path.write_text(BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1"))
+            result = subprocess.run(
+                [sys.executable, amneziawg_config.__file__, "--inspect", str(path)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout, "auto 1.1.1.1 120\n")
 
     def test_random_trailers_with_ranged_handshake_headers_forces_userspace(self):
         config = BASE_CONFIG.replace(

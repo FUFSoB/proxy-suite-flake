@@ -104,7 +104,11 @@ in
       assert pkgs.lib.hasInfix ''--arg password "$LOCAL_PROXY_PASSWORD"'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''select(.type == "mixed" and .tag == "mixed-in") | .users''
         localProxyAuthBackendJqFilter;
-      assert pkgs.lib.hasInfix ''chmod 600 "$RUNTIME_DIR/config.json"'' localProxyAuthStartScript;
+      # The password is in the config: root and the backend's group only.
+      assert pkgs.lib.hasInfix ''chgrp proxy-suite-daemon "$backend_config"'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''chmod 640 "$backend_config"'' localProxyAuthStartScript;
+      # The backend itself runs unprivileged.
+      assert pkgs.lib.hasInfix "setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon" localProxyAuthStartScript;
       true
     )
 

@@ -135,6 +135,15 @@ in
 lib.mkMerge [
   autoProxyUnits
   {
+    # See constants.serviceUser.
+    users.users.${constants.serviceUser} = {
+      isSystemUser = true;
+      group = constants.serviceUser;
+      description = "proxy-suite daemons";
+    };
+    users.groups.${constants.serviceUser} = { };
+  }
+  {
     environment.systemPackages = [
       control.proxyCtl
     ]

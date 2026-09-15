@@ -213,7 +213,7 @@ services.proxy-suite = {
       port = 22;
       user = null;
     };
-    serviceUser = null;
+    serviceUser = "proxy-suite-daemon";
     strictHostKeyChecking = "accept-new";
   };
   tgWsProxy = {
@@ -258,6 +258,7 @@ services.proxy-suite = {
     asOutbound = false;
     configFile = null;
     enable = false;
+    generatorUrl = null;
   };
   zapret = {
     cidrExemption = {

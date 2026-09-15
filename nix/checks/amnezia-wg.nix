@@ -70,6 +70,9 @@ let
   homeService = awgOnly.config.systemd.services.proxy-suite-awg-home;
   workService = awgOnly.config.systemd.services.proxy-suite-awg-work;
   ctl = mkProxyCtlDerived awgOnly;
+  homeWatchdog = awgOnly.config.systemd.services.proxy-suite-awg-home-watchdog;
+  homeWatchdogScript = generated.readDerivation homeWatchdog.serviceConfig.ExecStart;
+  homeStart = generated.readDerivation homeService.serviceConfig.ExecStart;
 
   sourceFixture = evalProxySuite [
     {
@@ -190,6 +193,12 @@ in
       assert homeService.serviceConfig.NoNewPrivileges;
       assert builtins.length homeService.serviceConfig.ExecStartPre == 1;
       assert !(homeService.serviceConfig ? ExecStopPost);
+      # A silent handshake moves the interface to a new port: at start, and from the watchdog.
+      assert pkgs.lib.hasInfix "set \"$interface\" listen-port 0" homeStart;
+      assert pkgs.lib.hasInfix "--inspect" homeStart;
+      assert homeWatchdog.bindsTo == [ "proxy-suite-awg-home.service" ];
+      assert homeWatchdog.wantedBy == [ "proxy-suite-awg-home.service" ];
+      assert pkgs.lib.hasInfix "rekey + 10" homeWatchdogScript;
       true
     )
     (

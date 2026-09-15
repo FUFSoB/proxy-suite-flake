@@ -5,6 +5,7 @@
   proxyCfg,
   sshProxyCfg,
   warpCfg,
+  constants,
   pureXrayEnabled,
   hybridEnabled,
   collapseNamedOutbounds,
@@ -305,9 +306,6 @@ let
         server_port = sshProxyCfg.server.port;
         user = sshProxyCfg.server.user;
       }
-      // lib.optionalAttrs (sshProxyCfg.identityFile != null) {
-        private_key_path = sshProxyCfg.identityFile;
-      }
       // lib.optionalAttrs (sshProxyCfg.hostKey != [ ]) {
         host_key = sshProxyCfg.hostKey;
       }
@@ -355,6 +353,13 @@ let
     ''
       # outbound: ${sshProxyTag} (${if pureXrayEnabled then "OpenSSH SOCKS5 listener" else "native SSH"})
       OB_JSON=$(cat "${jsonFile}")
+      ${lib.optionalString (!pureXrayEnabled && sshProxyCfg.identityFile != null) ''
+        # sing-box opens the key as ${constants.serviceUser}, which cannot read a key in a
+        # home directory: it gets a copy only root and its group can read.
+        SSH_IDENTITY="$RUNTIME_DIR/ssh-identity"
+        install -m 0640 -g ${constants.serviceUser} ${lib.escapeShellArg sshProxyCfg.identityFile} "$SSH_IDENTITY"
+        OB_JSON=$(${jq} --arg key "$SSH_IDENTITY" '.private_key_path = $key' <<< "$OB_JSON")
+      ''}
       ${hostKeyFileBlock}
       ${
         if hybridEnabled then

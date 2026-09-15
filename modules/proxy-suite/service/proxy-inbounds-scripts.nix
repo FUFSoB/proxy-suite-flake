@@ -29,6 +29,8 @@ let
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
   subsCfg = proxyInboundsCfg.subscriptions;
   xray = "${proxyInboundsCfg.package}/bin/xray";
+  # Only listeners: no marks, no transparent sockets.
+  runXray = constants.runAsServiceUser pkgs [ "net_bind_service" ];
 
   needsLocalProxyAuth = proxyInboundsNeedLocalProxy && localProxyAuthEnabled;
 
@@ -144,13 +146,39 @@ let
            (.outbounds[] | select(.tag == "proxy") | .settings.servers[0].users)
              = [{user:$user,pass:$password}]
          else . end' \
-      ${proxyInboundsFile} > "$RUNTIME_DIR/config.json"
-    chmod 600 "$RUNTIME_DIR/config.json"
+      ${proxyInboundsFile} > "$RUNTIME_DIR/config.json.tmp"
+
+    # XRay runs as ${constants.serviceUser}. A certificate or key it cannot read (an ACME
+    # key, say) is copied in, which means a renewal needs a restart; give the user read
+    # access to keep XRay's own reload.
+    CERT_DIR="$RUNTIME_DIR/tls"
+    rm -rf "$CERT_DIR"
+    index=0
+    while IFS= read -r source; do
+      [ -n "$source" ] || continue
+      if ! ${runXray} ${pkgs.coreutils}/bin/test -r "$source"; then
+        [ -d "$CERT_DIR" ] || install -d -m 0750 -g ${constants.serviceUser} "$CERT_DIR"
+        index=$((index + 1))
+        copy="$CERT_DIR/$index-$(basename "$source")"
+        install -m 0640 -g ${constants.serviceUser} "$source" "$copy"
+        echo "proxy-suite: ${constants.serviceUser} cannot read $source; XRay uses a copy until the next restart" >&2
+        ${jq} --arg from "$source" --arg to "$copy" '
+          (.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile)
+            | select(. == $from)) = $to
+        ' "$RUNTIME_DIR/config.json.tmp" > "$RUNTIME_DIR/config.json.next"
+        mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json.tmp"
+      fi
+    done < <(${jq} -r '[.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile) | strings]
+      | unique[]' "$RUNTIME_DIR/config.json.tmp")
+
+    ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"
+    chmod 640 "$RUNTIME_DIR/config.json.tmp"
+    mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
 
     ${writeLinksBlock}
     ${writeSubscriptionsBlock}
 
-    exec ${xray} run -c "$RUNTIME_DIR/config.json"
+    exec ${runXray} ${xray} run -c "$RUNTIME_DIR/config.json"
   '';
 
   # Adds XRay's per-user counters to the daily totals, read and reset in one call.

@@ -9,6 +9,7 @@
 
 let
   w = derived.warpCfg;
+  inherit (derived.constants) serviceUser runAsServiceUser unprivilegedServiceConfig;
   listener = cfg.proxy.listener;
   auth = listener.auth;
   scriptsDir = builtins.path {
@@ -33,9 +34,10 @@ let
       pkgs.writeText "proxy-suite-warp" auth.password
     else
       null;
-  userinfo = lib.optionalString (auth.username != null && passwordSource != null) ''
+  withProxyAuth = auth.username != null && passwordSource != null;
+  userinfo = lib.optionalString withProxyAuth ''
     userinfo=$(${pkgs.jq}/bin/jq -rn --arg u ${lib.escapeShellArg auth.username} \
-      --rawfile p ${lib.escapeShellArg passwordSource} '"\($u | @uri):\($p | rtrimstr("\n") | @uri)@"')
+      --rawfile p "$CREDENTIALS_DIRECTORY/proxy-password" '"\($u | @uri):\($p | rtrimstr("\n") | @uri)@"')
   '';
 
   registerScript = pkgs.writeShellScript "proxy-suite-warp" ''
@@ -49,18 +51,22 @@ let
     ${lib.optionalString (w.generatorUrl != null) ''
 
       # Fallback: a third-party generator registers from abroad and hands the profile back.
+      # curl follows HTTPS_PROXY when it is set.
       generate() {
-        body=$(${pkgs.curl}/bin/curl --noproxy '*' -fsS --max-time 60 -A proxy-suite \
+        body=$(${pkgs.curl}/bin/curl -fsS --max-time 60 -A proxy-suite \
           ${lib.escapeShellArg w.generatorUrl}) || return 1
         case "$body" in
           "[Interface]"*) printf '%s\n' "$body" ;;
           *) ${pkgs.jq}/bin/jq -er '.content | @base64d' <<< "$body" ;;
-        esac > wgcf-profile.conf.tmp || return 1
-        grep -q '^PrivateKey' wgcf-profile.conf.tmp || return 1
+        esac > wgcf-profile.conf.tmp || { rm -f wgcf-profile.conf.tmp; return 1; }
+        grep -q '^PrivateKey' wgcf-profile.conf.tmp || { rm -f wgcf-profile.conf.tmp; return 1; }
         mv wgcf-profile.conf.tmp wgcf-profile.conf
       }
     ''}
     ${
+      let
+        fallbacks = lib.optionalString (w.generatorUrl != null) " || generate";
+      in
       if cfg.proxy.enable then
         ''
           # The API is blocked in some countries, so the local proxy goes first. It may
@@ -71,12 +77,15 @@ let
           done
           userinfo=
           ${userinfo}
-          HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" register || register${
-            lib.optionalString (w.generatorUrl != null) " || generate"
+          proxied() {
+            HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" "$@"
+          }
+          proxied register || register${fallbacks}${
+            lib.optionalString (w.generatorUrl != null) " || proxied generate"
           }
         ''
       else
-        "register${lib.optionalString (w.generatorUrl != null) " || generate"}"
+        "register${fallbacks}"
     }
   '';
 
@@ -88,10 +97,50 @@ let
     server = cfg.proxy.dns.local.address;
     server_port = cfg.proxy.dns.local.port;
   };
+  mark = cfg.proxy.tproxy.proxyMark;
+  probe = port: url: ''
+    ${pkgs.curl}/bin/curl -s --noproxy "" -x socks5h://127.0.0.1:${toString port} -m "$timeout" \
+      -o /dev/null ${url}'';
 
   # Some lines drop a share of fresh WARP handshakes for good, and sing-box retries on the
-  # same source port forever. A new process binds a new port, so the probe exits after
-  # repeated failures and systemd starts the tunnel again.
+  # same source port forever. A new process binds a new port, so the watchdog exits when
+  # WARP stops answering and systemd starts the tunnel again. A healthy WARP handshake takes
+  # a fraction of a second, so a start gets 15 seconds; a running tunnel gets three misses.
+  # The "direct-in" listener reaches Cloudflare through the uplink with the backend's mark (not
+  # urlTest.url, which is picked to be blocked here): when that fails too, WARP could not work
+  # from a new port either.
+  watchdogScript = pkgs.writeShellScript "proxy-suite-warp" ''
+    set -uo pipefail
+    ${cfg.proxy.singBox.package}/bin/sing-box run -c "$RUNTIME_DIRECTORY/config.json" &
+    singbox=$!
+
+    healthy=0
+    failures=0
+    uplink_down=0
+    since=0
+    while sleep $(( healthy ? 10 : 2 )); do
+      kill -0 "$singbox" 2>/dev/null || { wait "$singbox"; exit 1; }
+      timeout=$(( healthy ? 10 : 4 ))
+      if ${probe w.tunnelPort "-f ${lib.escapeShellArg cfg.proxy.urlTest.url}"}; then
+        (( healthy )) || echo "proxy-suite: WARP is answering" >&2
+        healthy=1 failures=0 uplink_down=0
+        continue
+      fi
+      if ! ${probe w.directPort "https://1.1.1.1/cdn-cgi/trace"}; then
+        (( uplink_down )) || echo "proxy-suite: the uplink is down; waiting for it before judging WARP" >&2
+        uplink_down=1 failures=0 since=$SECONDS
+        continue
+      fi
+      uplink_down=0
+      if (( healthy ? ++failures >= 3 : SECONDS - since >= 15 )); then
+        echo "proxy-suite: WARP is not answering; restarting the tunnel on a new source port" >&2
+        kill "$singbox"
+        wait "$singbox"
+        exit 1
+      fi
+    done
+  '';
+
   tunnelScript = pkgs.writeShellScript "proxy-suite-warp" ''
     set -euo pipefail
     profile=${lib.escapeShellArg w.profilePath}
@@ -100,29 +149,27 @@ let
       until [ -s "$profile" ]; do sleep 5; done
     fi
 
-    # The profile is a secret, so it is converted here rather than baked into the store.
-    endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag warp --routing-mark ${toString cfg.proxy.tproxy.proxyMark} < "$profile")
-    ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
+    # The profile is a secret, so it is converted here, as root, rather than baked into
+    # the store; sing-box itself runs as ${serviceUser}.
+    endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag warp --routing-mark ${toString mark} < "$profile")
+    (umask 027 && ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
       log: {level: "warn"},
       dns: {servers: [${builtins.toJSON dnsServer}]},
-      route: {default_domain_resolver: "local", final: "warp"},
-      inbounds: [{type: "socks", tag: "socks-in", listen: "127.0.0.1", listen_port: ${toString w.tunnelPort}}],
+      route: {
+        default_domain_resolver: "local",
+        rules: [{inbound: ["direct-in"], outbound: "direct"}],
+        final: "warp"
+      },
+      inbounds: [
+        {type: "socks", tag: "socks-in", listen: "127.0.0.1", listen_port: ${toString w.tunnelPort}},
+        {type: "socks", tag: "direct-in", listen: "127.0.0.1", listen_port: ${toString w.directPort}}
+      ],
+      outbounds: [{type: "direct", tag: "direct", routing_mark: ${toString mark}}],
       endpoints: [$ep]
-    }' > "$RUNTIME_DIRECTORY/config.json"
+    }' > "$RUNTIME_DIRECTORY/config.json")
+    ${pkgs.coreutils}/bin/chgrp ${serviceUser} "$RUNTIME_DIRECTORY" "$RUNTIME_DIRECTORY/config.json"
 
-    ${cfg.proxy.singBox.package}/bin/sing-box run -c "$RUNTIME_DIRECTORY/config.json" &
-    singbox=$!
-
-    failures=0
-    while sleep 10; do
-      kill -0 "$singbox" 2>/dev/null || { wait "$singbox"; exit 1; }
-      if ${pkgs.curl}/bin/curl -sf --noproxy "" -x socks5h://127.0.0.1:${toString w.tunnelPort} -m 10 -o /dev/null ${lib.escapeShellArg cfg.proxy.urlTest.url}; then
-        failures=0
-      elif (( ++failures >= 3 )); then
-        echo "proxy-suite: WARP stopped answering; restarting the tunnel on a new source port" >&2
-        exit 1
-      fi
-    done
+    exec ${runAsServiceUser pkgs [ "net_admin" ]} ${watchdogScript}
   '';
 in
 {
@@ -145,7 +192,7 @@ in
           Restart = "always";
           RestartSec = 2;
           RuntimeDirectory = "proxy-suite-warp-tunnel";
-          RuntimeDirectoryMode = "0700";
+          RuntimeDirectoryMode = "0750";
           UMask = "0077";
         };
       };
@@ -161,7 +208,7 @@ in
         # Retried until it registers. Not a oneshot: a slow or failed registration must not
         # hold up or fail a switch.
         startLimitIntervalSec = 0;
-        serviceConfig = {
+        serviceConfig = unprivilegedServiceConfig [ ] // {
           Type = "simple";
           RemainAfterExit = true;
           Restart = "on-failure";
@@ -170,6 +217,7 @@ in
           StateDirectoryMode = "0700";
           WorkingDirectory = "/var/lib/proxy-suite/warp";
           UMask = "0077";
+          LoadCredential = lib.optional (cfg.proxy.enable && withProxyAuth) "proxy-password:${passwordSource}";
           ExecStart = registerScript;
         };
       };

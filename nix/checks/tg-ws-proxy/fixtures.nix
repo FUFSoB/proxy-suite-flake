@@ -66,8 +66,19 @@ let
   ];
   tgWithGlobalTunServiceConfig =
     tgWithGlobalTun.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig;
-  tgWithGlobalTunBypassUp = generated.readDerivation tgWithGlobalTunServiceConfig.ExecStartPre;
-  tgWithGlobalTunBypassDown = generated.readDerivation tgWithGlobalTunServiceConfig.ExecStopPost;
+  tgWithGlobalTunModule =
+    let
+      inherit (tgWithGlobalTun) pkgs;
+      cfg = tgWithGlobalTun.config.services.proxy-suite;
+    in
+    import ../../../modules/proxy-suite/tg-ws-proxy.nix {
+      inherit (pkgs) lib;
+      inherit pkgs cfg;
+      packages = import ../../../pkgs/default.nix { inherit pkgs; };
+      derived = import ../../../modules/proxy-suite/derived.nix { inherit (pkgs) lib; inherit cfg; };
+    };
+  tgWithGlobalTunBypassUp = generated.readDerivation tgWithGlobalTunModule.bypassUpScript;
+  tgWithGlobalTunBypassDown = generated.readDerivation tgWithGlobalTunModule.bypassDownScript;
   tgWithGlobalTunRules = mkRoutingRules tgWithGlobalTun;
 
   tgWithGlobalTproxy = evalProxySuite [
@@ -134,6 +145,7 @@ in
     tgWithGlobalTunServiceConfig
     tgWithGlobalTunBypassUp
     tgWithGlobalTunBypassDown
+    tgWithGlobalTunModule
     tgWithGlobalTunRules
     tgWithGlobalTproxyNft
     invalidTgWsProxyAssertions

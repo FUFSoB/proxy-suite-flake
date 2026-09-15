@@ -111,6 +111,7 @@ let
       proxyCfg
       sshProxyCfg
       warpCfg
+      constants
       pureXrayEnabled
       hybridEnabled
       collapseNamedOutbounds

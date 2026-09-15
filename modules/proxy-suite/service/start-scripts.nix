@@ -40,6 +40,7 @@ let
     ;
 
   autoProxyRender = import ../autoproxy-render.nix { inherit pkgs; };
+  runBackend = constants.runAsServiceUser pkgs constants.backendCaps;
 
   routeModeBlacklistTail =
     if pureXrayEnabled then
@@ -205,7 +206,8 @@ let
       AUTOPROXY_RULES_JSON='[]'
       ${lib.optionalString enableAutoProxy ''
         AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
-        install -d -m 0750 "$AUTOPROXY_DIR"
+        # 0751: sing-box, running as ${constants.serviceUser}, reads the rule-sets inside.
+        install -d -m 0751 "$AUTOPROXY_DIR"
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
 
         # direct is always exit 0; state is keyed by tag, so shifting indices are
@@ -312,6 +314,7 @@ let
           CUTOFF_RULE_SET=${lib.escapeShellArg "${constants.zapret2CutoffDir}/proxy.json"}
           install -d -m 0755 "$(dirname "$CUTOFF_RULE_SET")"
           [ -s "$CUTOFF_RULE_SET" ] || echo '{"version":1,"rules":[]}' > "$CUTOFF_RULE_SET"
+          chmod 644 "$CUTOFF_RULE_SET"
           AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$CUTOFF_RULE_SET" \
             '. + [{type: "local", format: "source", tag: "zapret-cutoff", path: $p}]' <<< "$AUTOPROXY_RULE_SETS_JSON")
           AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-cutoff"], outbound: "proxy"}]' <<< "$AUTOPROXY_RULES_JSON")
@@ -340,9 +343,12 @@ let
         --arg xray_dns_remote_client ${lib.escapeShellArg proxyCfg.dns.remote.address} \
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json"
-      ${lib.optionalString enableLocalProxyAuth ''
-        chmod 600 "$RUNTIME_DIR/config.json"
-      ''}
+      # The backend runs as ${constants.serviceUser}: its configs are group-readable.
+      for backend_config in "$RUNTIME_DIR/config.json" "$RUNTIME_DIR/xray-sidecar.json"; do
+        [ -e "$backend_config" ] || continue
+        ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$backend_config"
+        chmod ${if enableLocalProxyAuth then "640" else "g+r"} "$backend_config"
+      done
 
       ${
         if hybridEnabled then
@@ -358,7 +364,7 @@ let
               trap _proxy_suite_cleanup_xray_sidecar EXIT
               trap 'exit 143' INT TERM
 
-              ${xray} run -c "$RUNTIME_DIR/xray-sidecar.json" &
+              ${runBackend} ${xray} run -c "$RUNTIME_DIR/xray-sidecar.json" &
               XRAY_SIDECAR_PID="$!"
               ${pkgs.coreutils}/bin/sleep 0.2
               if ! kill -0 "$XRAY_SIDECAR_PID" 2>/dev/null; then
@@ -367,7 +373,7 @@ let
                 exit "$XRAY_SIDECAR_STATUS"
               fi
 
-              ${singBox} run -c "$RUNTIME_DIR/config.json" &
+              ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json" &
               SING_BOX_PID="$!"
               # Either one going away breaks the outbounds: exit, and let systemd restart both.
               SING_BOX_STATUS=0
@@ -375,11 +381,11 @@ let
               exit "$(( SING_BOX_STATUS == 0 ? 1 : SING_BOX_STATUS ))"
             fi
 
-            exec ${singBox} run -c "$RUNTIME_DIR/config.json"
+            exec ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json"
           ''
         else
           ''
-            exec ${backendBin} run -c "$RUNTIME_DIR/config.json"
+            exec ${runBackend} ${backendBin} run -c "$RUNTIME_DIR/config.json"
           ''
       }
     '';

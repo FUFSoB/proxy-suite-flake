@@ -221,7 +221,7 @@ Listen port\.
 <a id="services-proxy-suite-tgwsproxy-log-file"></a>
 ## services\.proxy-suite\.tgWsProxy\.log\.file
 
-Rotating log file\. Null logs to stderr\.
+Rotating log file, written as the proxy-suite-daemon user; /var/log/proxy-suite-tg-ws-proxy is created for it\. Null logs to stderr\.
 
 *Type:*
 null or string
@@ -235,7 +235,7 @@ null
 *Example:*
 
 ```nix
-"/var/log/tg-ws-proxy.log"
+"/var/log/proxy-suite-tg-ws-proxy/tg-ws-proxy.log"
 ```
 
 <a id="services-proxy-suite-tgwsproxy-log-keep"></a>

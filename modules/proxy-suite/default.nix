@@ -141,14 +141,15 @@ in
         )
 
         (lib.mkIf cfg.tgWsProxy.enable (
-          import ./tg-ws-proxy.nix {
+          (import ./tg-ws-proxy.nix {
             inherit
               lib
               pkgs
               packages
               cfg
+              derived
               ;
-          }
+          }).config
         ))
 
         # SingBox dials SSH natively, so it needs no OpenSSH unit. XRay has no SSH
@@ -159,6 +160,7 @@ in
               lib
               pkgs
               cfg
+              derived
               ;
           }
         ))

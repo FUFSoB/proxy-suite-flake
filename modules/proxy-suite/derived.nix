@@ -44,6 +44,8 @@ let
         "/var/lib/proxy-suite/warp/wgcf-profile.conf";
     # Loopback SOCKS listener of proxy-suite-warp-tunnel, which the "warp" outbound dials.
     tunnelPort = 18538;
+    # Its "direct-in" listener, which tells a blocked WARP from a dead uplink.
+    directPort = 18539;
   };
   warpOutboundTag = "warp";
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound;
@@ -148,6 +150,47 @@ let
     zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
   userControlEnabled = userControlCfg.allow != [ ];
   constants = {
+    # Daemons (sing-box, XRay, the WARP tunnel, OpenSSH, tg-ws-proxy, wgcf) run as this
+    # user. Its group is not the userControl group: backend configs hold credentials. Start
+    # scripts still read secrets and program routing as root, then exec the daemon through
+    # runAsServiceUser with only the capabilities it needs.
+    serviceUser = "proxy-suite-daemon";
+    runAsServiceUser =
+      pkgs: caps:
+      let
+        keep = lib.concatMapStrings (cap: ",+${cap}") caps;
+      in
+      "${pkgs.util-linux}/bin/setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon --clear-groups"
+      + " --inh-caps=-all${keep} --ambient-caps=-all${keep} --bounding-set=-all${keep} --no-new-privs --";
+    # The same for a unit that needs no root at all; "+" ExecStartPre/ExecStopPost
+    # commands still run privileged.
+    unprivilegedServiceConfig =
+      caps:
+      let
+        systemdCaps = map (cap: "CAP_${lib.toUpper cap}") caps;
+      in
+      {
+        User = "proxy-suite-daemon";
+        Group = "proxy-suite-daemon";
+        AmbientCapabilities = systemdCaps;
+        CapabilityBoundingSet = systemdCaps;
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "full";
+        ProtectHome = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+      };
+    # Socket marks and IP_TRANSPARENT, TUN and auto_redirect, listeners below 1024, ICMP.
+    backendCaps = [
+      "net_admin"
+      "net_bind_service"
+      "net_raw"
+    ];
+
     zapret2StateDir = "/var/lib/proxy-suite/zapret2";
     zapret2CutoffDir = "/var/lib/proxy-suite/zapret2/cutoff";
     # Conntrack bit on the cutoff probe's own connections, which zapret2 leaves alone.

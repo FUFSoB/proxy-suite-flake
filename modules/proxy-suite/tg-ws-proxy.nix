@@ -4,6 +4,7 @@
   pkgs,
   packages,
   cfg,
+  derived,
 }:
 
 let
@@ -84,20 +85,32 @@ let
   '';
 in
 {
-  systemd.services.proxy-suite-tg-ws-proxy = {
+  # For the checks: ExecStartPre/ExecStopPost carry these behind "+".
+  inherit bypassUpScript bypassDownScript;
+
+  config.systemd.services.proxy-suite-tg-ws-proxy = {
     description = "Telegram MTProto WebSocket proxy";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      ExecStart = startScript;
-      LoadCredential = lib.optional (t.secretFile != null) "tg_ws_proxy_secret:${t.secretFile}";
-      Restart = "on-failure";
-      RestartSec = 5;
-    }
-    // lib.optionalAttrs transparentBypassEnabled {
-      ExecStartPre = bypassUpScript;
-      ExecStopPost = bypassDownScript;
-    };
+    serviceConfig =
+      derived.constants.unprivilegedServiceConfig [
+        "net_bind_service"
+      ]
+      // {
+        ExecStart = startScript;
+        LoadCredential = lib.optional (t.secretFile != null) "tg_ws_proxy_secret:${t.secretFile}";
+        Restart = "on-failure";
+        RestartSec = 5;
+      }
+      // lib.optionalAttrs (t.log.file != null) {
+        # A writable home for log.file.
+        LogsDirectory = "proxy-suite-tg-ws-proxy";
+      }
+      // lib.optionalAttrs transparentBypassEnabled {
+        # Policy routing and nftables: privileged.
+        ExecStartPre = "+${bypassUpScript}";
+        ExecStopPost = "+${bypassDownScript}";
+      };
   };
 }

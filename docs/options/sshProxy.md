@@ -147,7 +147,7 @@ null
 <a id="services-proxy-suite-sshproxy-identityfile"></a>
 ## services\.proxy-suite\.sshProxy\.identityFile
 
-Runtime path to the private key\. Null uses the agent or OpenSSH defaults\.
+Runtime path to the private key; it may stay root-only, as the daemons get a copy they can read\. Null uses the agent or OpenSSH defaults\.
 
 *Type:*
 null or string
@@ -269,7 +269,7 @@ null
 <a id="services-proxy-suite-sshproxy-serviceuser"></a>
 ## services\.proxy-suite\.sshProxy\.serviceUser
 
-Unix user running the OpenSSH unit\.
+Unix user running the OpenSSH unit\. The default, proxy-suite-daemon, runs sandboxed and keeps accepted host keys in /var/lib/proxy-suite/ssh; null runs it as root\.
 
 *Type:*
 null or string matching the pattern \[^\[:space:]]+
@@ -277,7 +277,7 @@ null or string matching the pattern \[^\[:space:]]+
 *Default:*
 
 ```nix
-null
+"proxy-suite-daemon"
 ```
 
 *Example:*

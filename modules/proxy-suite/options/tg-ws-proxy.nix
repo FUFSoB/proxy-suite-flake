@@ -109,8 +109,8 @@ in
       file = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Rotating log file. Null logs to stderr.";
-        example = "/var/log/tg-ws-proxy.log";
+        description = "Rotating log file, written as the proxy-suite-daemon user; /var/log/proxy-suite-tg-ws-proxy is created for it. Null logs to stderr.";
+        example = "/var/log/proxy-suite-tg-ws-proxy/tg-ws-proxy.log";
       };
 
       maxSizeMiB = mkOption {

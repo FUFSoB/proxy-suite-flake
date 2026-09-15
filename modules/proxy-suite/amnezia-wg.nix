@@ -25,38 +25,37 @@ let
         profile.settings
       ]
     );
-  inlineVpnFile = name: profile: pkgs.writeText "proxy-suite-awg" profile.vpn;
-  sourceKind =
+  source =
     profile:
     if profile.configFile != null then
-      "configFile"
+      {
+        kind = "configFile";
+        path = profile.configFile;
+      }
     else if profile.vpnFile != null then
-      "vpnFile"
+      {
+        kind = "vpnFile";
+        path = profile.vpnFile;
+      }
     else if profile.vpn != null then
-      "vpn"
+      {
+        kind = "vpn";
+        path = pkgs.writeText "proxy-suite-awg" profile.vpn;
+      }
     else
-      "settings";
-  sourcePath =
-    name: profile:
-    if profile.configFile != null then
-      profile.configFile
-    else if profile.vpnFile != null then
-      profile.vpnFile
-    else if profile.vpn != null then
-      inlineVpnFile name profile
-    else
-      null;
+      {
+        kind = "settings";
+        inherit (profile) settings;
+      };
   manifestFor =
-    name: profile:
+    profile:
     pkgs.writeText "proxy-suite-awg" (
       builtins.toJSON (
         {
-          kind = sourceKind profile;
           allowConfigHooks = profile.allowConfigHooks;
           vpnContainer = profile.vpnContainer;
         }
-        // lib.optionalAttrs (sourcePath name profile != null) { path = sourcePath name profile; }
-        // lib.optionalAttrs (profile.settings != null) { settings = profile.settings; }
+        // source profile
       )
     );
   configTool = "${
@@ -69,11 +68,42 @@ let
   runtimeConfig = name: profile: "${runtimeDir name}/${profile.interfaceName}.conf";
   # Keep proxy backend sockets (proxyMark) out of AWG's default-route table.
   proxyBypassRulePriority = 8998;
+  bypassRule =
+    family: action:
+    "${pkgs.iproute2}/bin/ip ${family} rule ${action} pref ${toString proxyBypassRulePriority} fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main";
+  clearBypassRules = lib.concatMapStrings (family: ''
+    while ${bypassRule family "del"} 2>/dev/null; do :; done
+  '') [ "-4" "-6" ];
+
+  # Some lines drop a share of fresh flows for good, handshakes included. A new source port
+  # is a new flow, and moving the interface to one keeps its routes, so traffic never leaks
+  # past the tunnel while it tries again. A pinned ListenPort is left alone.
+  mkHandshakeHelpers = profile: ''
+    awg=${awgCfg.toolsPackage}/bin/awg
+    interface=${lib.escapeShellArg profile.interfaceName}
+
+    # Seconds since the newest handshake of any peer; a large number before the first.
+    handshake_age() {
+      local latest
+      latest=$("$awg" show "$interface" latest-handshakes 2>/dev/null \
+        | ${pkgs.gawk}/bin/awk '$2 > max { max = $2 } END { print max + 0 }')
+      if (( latest == 0 )); then echo 1000000; else echo $(( $(${pkgs.coreutils}/bin/date +%s) - latest )); fi
+    }
+
+    new_source_port() {
+      ${
+        if profile.settings != null && profile.settings.listenPort != null then
+          ":"
+        else
+          ''"$awg" set "$interface" listen-port 0 || true''
+      }
+    }
+  '';
 
   mkService =
     name: profile:
     let
-      manifest = manifestFor name profile;
+      manifest = manifestFor profile;
       configPath = runtimeConfig name profile;
       prepare = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
@@ -83,36 +113,17 @@ let
       '';
       proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
-
-        add_bypass_rule() {
-          local family="$1"
-          while ${pkgs.iproute2}/bin/ip "$family" rule del \
-            pref ${toString proxyBypassRulePriority} \
-            fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; do :; done
-          if ! ${pkgs.iproute2}/bin/ip "$family" rule add \
-            pref ${toString proxyBypassRulePriority} \
-            fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; then
-            # IPv4 is required, or the proxy backend is captured by AWG; IPv6 is best-
-            # effort.
-            if [ "$family" = "-4" ]; then
-              echo "proxy-suite: unable to install the AWG proxy-backend bypass rule" >&2
-              return 1
-            fi
-          fi
-        }
-
-        add_bypass_rule -4
-        add_bypass_rule -6
+        ${clearBypassRules}
+        # IPv4 is required, or the proxy backend is captured by AWG; IPv6 is best-effort.
+        if ! ${bypassRule "-4" "add"} 2>/dev/null; then
+          echo "proxy-suite: unable to install the AWG proxy-backend bypass rule" >&2
+          exit 1
+        fi
+        ${bypassRule "-6" "add"} 2>/dev/null || true
       '';
       proxyBypassDown = pkgs.writeShellScript "proxy-suite-awg" ''
         set +e
-
-        while ${pkgs.iproute2}/bin/ip -4 rule del \
-          pref ${toString proxyBypassRulePriority} \
-          fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; do :; done
-        while ${pkgs.iproute2}/bin/ip -6 rule del \
-          pref ${toString proxyBypassRulePriority} \
-          fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main 2>/dev/null; do :; done
+        ${clearBypassRules}
       '';
       start = pkgs.writeShellScript "proxy-suite-awg" ''
         set -Eeuo pipefail
@@ -149,8 +160,8 @@ let
           ${pkgs.kmod}/bin/modprobe amneziawg 2>/dev/null || true
         ''}
 
-        implementation="$(${pkgs.python3}/bin/python3 ${configTool} \
-          --transport-implementation ${lib.escapeShellArg configPath})"
+        read -r implementation probe _ < <(${pkgs.python3}/bin/python3 ${configTool} \
+          --inspect ${lib.escapeShellArg configPath})
         # The 3.1 kernel module dropped RandomTrailers packets with ranged H1-H3 (seen on 20260812);
         # userspace carries the fix.
         if [[ "$implementation" == userspace ]]; then
@@ -162,13 +173,16 @@ let
             ${awgCfg.toolsPackage}/bin/awg-quick up ${lib.escapeShellArg configPath}
         fi
 
-        probe="$(${pkgs.python3}/bin/python3 ${configTool} --probe-address ${lib.escapeShellArg configPath})"
-        for _ in $(${pkgs.coreutils}/bin/seq 1 15); do
+        ${mkHandshakeHelpers profile}
+        # A handshake is retried every 5 seconds: each retry after the first gets a new port.
+        for attempt in $(${pkgs.coreutils}/bin/seq 1 20); do
           ${pkgs.iputils}/bin/ping -n -c 1 -W 1 "$probe" >/dev/null 2>&1 || true
-          if ${awgCfg.toolsPackage}/bin/awg show ${lib.escapeShellArg profile.interfaceName} latest-handshakes 2>/dev/null \
-            | ${pkgs.gawk}/bin/awk '$2 + 0 > 0 { found = 1 } END { exit !found }'; then
+          if (( $(handshake_age) < 1000000 )); then
             trap - ERR
             exit 0
+          fi
+          if (( attempt % 5 == 0 )); then
+            new_source_port
           fi
         done
 
@@ -232,6 +246,63 @@ let
       };
     };
 
+  # Runs alongside a started profile. Its pings keep traffic flowing, and traffic makes
+  # WireGuard rekey every RekeyAfterTime (120 seconds by default); a handshake older than that
+  # on two checks in a row is a rekey that is not getting through, so the interface moves to
+  # a new port.
+  mkWatchdog =
+    name: profile:
+    let
+      watchdog = pkgs.writeShellScript "proxy-suite-awg" ''
+        set -uo pipefail
+        read -r _ probe rekey < <(${pkgs.python3}/bin/python3 ${configTool} \
+          --inspect ${lib.escapeShellArg (runtimeConfig name profile)}) || exit 1
+        if (( rekey == 0 )); then
+          echo "proxy-suite: AmneziaWG profile '${name}' never rekeys; nothing to watch" >&2
+          exec ${pkgs.coreutils}/bin/sleep infinity
+        fi
+        ${mkHandshakeHelpers profile}
+        stale=0
+        while sleep 15; do
+          ${pkgs.iputils}/bin/ping -n -c 1 -W 2 "$probe" >/dev/null 2>&1 || true
+          if (( $(handshake_age) <= rekey + 10 )); then
+            stale=0
+          elif (( ++stale >= 2 )); then
+            echo "proxy-suite: AmneziaWG profile '${name}' is not rekeying; moving to a new source port" >&2
+            new_source_port
+            stale=0
+          fi
+        done
+      '';
+    in
+    {
+      description = "proxy-suite AmneziaWG client profile ${name} watchdog";
+      bindsTo = [ "${serviceName name}.service" ];
+      after = [ "${serviceName name}.service" ];
+      wantedBy = [ "${serviceName name}.service" ];
+      serviceConfig = {
+        ExecStart = watchdog;
+        Restart = "on-failure";
+        RestartSec = 5;
+        CapabilityBoundingSet = [
+          "CAP_NET_ADMIN"
+          "CAP_NET_RAW"
+        ];
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "full";
+        ProtectHome = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+      };
+    };
+
   profileAssertions = lib.concatMap (
     name:
     let
@@ -268,8 +339,8 @@ let
       {
         assertion =
           obfuscation == null
-          || ((obfuscation.headerProtectionKey != null) != (obfuscation.headerProtectionKeyFile != null))
-          || (obfuscation.headerProtectionKey == null && obfuscation.headerProtectionKeyFile == null);
+          || obfuscation.headerProtectionKey == null
+          || obfuscation.headerProtectionKeyFile == null;
         message = "proxy-suite: AmneziaWG profile '${name}': set at most one header-protection key source";
       }
     ]
@@ -298,6 +369,9 @@ in
   systemd.services = lib.mkMerge [
     (lib.mapAttrs' (
       name: profile: lib.nameValuePair (serviceName name) (mkService name profile)
+    ) profiles)
+    (lib.mapAttrs' (
+      name: profile: lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog name profile)
     ) profiles)
     (lib.mkIf cfg.proxy.tun.enable {
       proxy-suite-tun.conflicts = map (name: "${name}.service") serviceNames;

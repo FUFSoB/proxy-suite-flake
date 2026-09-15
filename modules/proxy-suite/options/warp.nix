@@ -39,8 +39,9 @@ in
       default = false;
       description = ''
         Add WARP as an outbound tagged "warp": a SOCKS hop to proxy-suite-warp-tunnel, which
-        runs WARP as a sing-box WireGuard endpoint on 127.0.0.1:18538 and restarts it on a new
-        source port when the handshake stops being answered.
+        runs WARP as a sing-box WireGuard endpoint on 127.0.0.1:18538, as the proxy-suite-daemon user.
+        The tunnel starts again on a new source port when WARP does not answer within 15 seconds
+        of a start, or misses three probes later on, unless the uplink itself is down.
       '';
     };
 
@@ -48,7 +49,8 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Add an AmneziaWG profile named "warp" (`proxy-ctl awg on warp`). Requires amneziaWg.enable.
+        Add an AmneziaWG profile named "warp" (`proxy-ctl awg on warp`). Requires amneziaWg.enable,
+        and excludes asOutbound: both would use the same WARP key.
       '';
     };
   };

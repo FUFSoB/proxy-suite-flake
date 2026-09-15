@@ -109,6 +109,18 @@ let
         asAmneziaWg = true;
       };
     }
+    # Both modes at once: two sessions on one WARP key.
+    {
+      enable = true;
+      amneziaWg.enable = true;
+      warp = {
+        enable = true;
+        configFile = profile;
+        asOutbound = true;
+        asAmneziaWg = true;
+      };
+      proxy.enable = true;
+    }
     # Tag collision with a declared outbound.
     {
       enable = true;
@@ -201,6 +213,23 @@ in
         hasInfix "register || register || generate" generatorRegister
         && hasInfix "'https://gen.example.com/api/warp?mode=awg2'" generatorRegister
         && !(hasInfix "generate()" autoRegister);
+      true
+    )
+    # Registration runs as the service user; the generator is tried through the proxy last.
+    (
+      assert
+        auto.config.systemd.services."proxy-suite-warp".serviceConfig.User == "proxy-suite-daemon"
+        && hasInfix "register || register || generate || proxied generate" generatorRegister;
+      true
+    )
+    # sing-box runs as the service user with only net_admin, under a watchdog that can tell a
+    # dead uplink (the marked direct-in listener) from a silent WARP.
+    (
+      assert
+        hasInfix "--reuid=proxy-suite-daemon" singBoxTunnel
+        && hasInfix "--ambient-caps=-all,+net_admin --bounding-set" singBoxTunnel
+        && hasInfix ''{type: "socks", tag: "direct-in", listen: "127.0.0.1", listen_port: 18539}'' singBoxTunnel
+        && hasInfix ''{type: "direct", tag: "direct", routing_mark: ${markOf singBox}}'' singBoxTunnel;
       true
     )
     (

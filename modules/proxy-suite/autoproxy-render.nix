@@ -23,6 +23,8 @@ pkgs.writeShellScript "proxy-suite-autoproxy" ''
       [(.domains // {}) | to_entries[] | select(.value.exit == $t) | .key] as $d
       | {version: 1, rules: (if ($d | length) > 0 then [{domain_suffix: $d}] else [] end)}
     ' "$2" > "$path.tmp"
+    # sing-box reads it as proxy-suite-daemon through the 0751 state dir.
+    chmod 644 "$path.tmp"
     mv -f "$path.tmp" "$path"
   done
 ''
