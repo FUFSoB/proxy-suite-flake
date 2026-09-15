@@ -56,6 +56,16 @@ let
     configFile = null;
   };
   autoTunnel = tunnelOf auto;
+  generator = mkFixture "sing-box" {
+    asOutbound = true;
+    configFile = null;
+    generatorUrl = "https://gen.example.com/api/warp?mode=awg2";
+  };
+  registerOf =
+    fixture:
+    generated.readDerivation fixture.config.systemd.services."proxy-suite-warp".serviceConfig.ExecStart;
+  autoRegister = registerOf auto;
+  generatorRegister = registerOf generator;
 
   amneziaWg = evalProxySuite [
     {
@@ -183,6 +193,14 @@ in
       assert
         hasInfix "profile=/var/lib/proxy-suite/warp/wgcf-profile.conf" autoTunnel
         && hasInfix "until [ -s \"$profile\" ]" autoTunnel;
+      true
+    )
+    # A generator only backs up wgcf, fetched directly with the URL quoted.
+    (
+      assert
+        hasInfix "register || register || generate" generatorRegister
+        && hasInfix "'https://gen.example.com/api/warp?mode=awg2'" generatorRegister
+        && !(hasInfix "generate()" autoRegister);
       true
     )
     (

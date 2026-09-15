@@ -46,7 +46,20 @@ let
       [ -s wgcf-account.toml ] || wgcf register --accept-tos
       wgcf generate
     }
+    ${lib.optionalString (w.generatorUrl != null) ''
 
+      # Fallback: a third-party generator registers from abroad and hands the profile back.
+      generate() {
+        body=$(${pkgs.curl}/bin/curl --noproxy '*' -fsS --max-time 60 -A proxy-suite \
+          ${lib.escapeShellArg w.generatorUrl}) || return 1
+        case "$body" in
+          "[Interface]"*) printf '%s\n' "$body" ;;
+          *) ${pkgs.jq}/bin/jq -er '.content | @base64d' <<< "$body" ;;
+        esac > wgcf-profile.conf.tmp || return 1
+        grep -q '^PrivateKey' wgcf-profile.conf.tmp || return 1
+        mv wgcf-profile.conf.tmp wgcf-profile.conf
+      }
+    ''}
     ${
       if cfg.proxy.enable then
         ''
@@ -58,10 +71,12 @@ let
           done
           userinfo=
           ${userinfo}
-          HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" register || register
+          HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" register || register${
+            lib.optionalString (w.generatorUrl != null) " || generate"
+          }
         ''
       else
-        "register"
+        "register${lib.optionalString (w.generatorUrl != null) " || generate"}"
     }
   '';
 

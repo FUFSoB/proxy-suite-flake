@@ -33,6 +33,11 @@ class WarpOutboundTest(unittest.TestCase):
         self.assertEqual((ob["peers"][0]["address"], ob["peers"][0]["port"]), ("2606:4700:d0::a29f:c001", 500))
         self.assertNotIn("routing_mark", ob)
 
+    def test_awg3_keepalive_range(self):
+        # Generator AWG 3 profiles range the keepalive; sing-box gets the lower bound.
+        ob = build(WGCF.replace("[Peer]", "RekeyAfterTime = 100-120\n[Peer]\nPersistentKeepalive = 25-35"), "warp", None)
+        self.assertEqual(ob["peers"][0]["persistent_keepalive_interval"], 25)
+
     def test_rejects_missing_peer(self):
         with self.assertRaises(ConfigError):
             build(WGCF.split("[Peer]")[0], "warp", None)

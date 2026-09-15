@@ -54,7 +54,8 @@ def build(text: str, tag: str, routing_mark: int | None) -> dict[str, Any]:
         "allowed_ips": _split(peer.get("allowedips", "")) or ["0.0.0.0/0", "::/0"],
     }
     if peer.get("persistentkeepalive"):
-        sb_peer["persistent_keepalive_interval"] = int(peer["persistentkeepalive"])
+        # AWG 3 profiles give a range ("25-35"); sing-box takes one value.
+        sb_peer["persistent_keepalive_interval"] = int(peer["persistentkeepalive"].split("-")[0])
     if peer.get("presharedkey"):
         sb_peer["pre_shared_key"] = peer["presharedkey"]
     endpoint: dict[str, Any] = {
