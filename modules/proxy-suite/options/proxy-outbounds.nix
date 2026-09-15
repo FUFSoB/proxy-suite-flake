@@ -68,6 +68,18 @@ in
       example = "urltest";
     };
 
+    selectionExclude = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = ''
+        Outbound tags selection never picks on its own: hops other outbounds chain through
+        (`detour`), or exits only routing rules name. Subscription entries, `warp`, `ssh-proxy`
+        and AmneziaWG tags work too. A pin still reaches them, and so does a selector switched by
+        hand.
+      '';
+      example = [ "ru-vps" "warp" ];
+    };
+
     urlTest = {
       url = mkOption {
         type = types.str;

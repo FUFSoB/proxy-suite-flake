@@ -53,7 +53,9 @@ A group without a verb shows its status or list.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url|json|->  add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin)
+  proxy outbounds add <tag> <url|json|-> [--detour <tag>]
+                                         add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
+                                         chained through another outbound with --detour
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
@@ -349,6 +351,7 @@ COMPLETE = {
             "link": "its URL, QR code, JSON or client config",
         }
     },
+    "proxy outbounds add": {"flags": {"--detour": "chain it through another outbound"}},
     "proxy outbounds link": {
         "args": _outbound_choices,
         "flags": {"--qr": "print a QR code", "--json": "backend JSON", "--config": "client config for this server"},
@@ -748,7 +751,15 @@ def cmd_outbounds(verb="list", *args):
     if verb == "list":
         _outbounds_list()
     elif verb == "add":
-        _runtime_entry_add("outbound", *args)
+        args = list(args)
+        detour = ""
+        if "--detour" in args:
+            i = args.index("--detour")
+            detour = args[i + 1] if i + 1 < len(args) else ""
+            del args[i : i + 2]
+            if not detour:
+                usage("proxy outbounds add <tag> <url|json|-> [--detour <tag>]")
+        _runtime_entry_add("outbound", *args, detour=detour)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("outbound", *args)
     elif verb == "test":
@@ -963,6 +974,8 @@ def _outbounds_list():
     inventory = _outbound_inventory()
     pinned = _s(inventory.get("pinned") or "")
     sources = inventory.get("sources") or {}
+    detours = inventory.get("detours") or {}
+    excluded = set(inventory.get("excluded") or [])
     current = _outbound_current()
     reputation = _reputation_by_tag()
 
@@ -980,7 +993,8 @@ def _outbounds_list():
             mark = "*"
         elif not pinned and tag == current:
             mark = ">"
-        print(f" {mark}{tag:<34} {rep(tag)}{_s(sources.get(tag) or '-')}")
+        notes = ([f"via {_s(detours[tag])}"] if tag in detours else []) + (["never picked"] if tag in excluded else [])
+        print(f" {mark}{tag:<34} {rep(tag)}{', '.join([_s(sources.get(tag) or '-'), *notes])}")
 
 
 # --- sharing ------------------------------------------------------------------
@@ -1160,11 +1174,14 @@ def _check_runtime_tag(kind, tag):
         die(f"A subscription named '{tag}' is declared in the configuration.")
 
 
-def _runtime_entry_add(kind, tag="", url="", *_):
-    what = "<url|json|->" if kind == "outbound" else "<url>"
+def _runtime_entry_add(kind, tag="", url="", *_, detour=""):
+    what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url>"
     if not tag or not url:
         usage(f"proxy {_runtime_noun(kind)} add <tag> {what}")
     _check_runtime_tag(kind, tag)
+    # The start script checks the chain again, and leaves the outbound out if it breaks later.
+    if detour and (detour == tag or detour not in _outbound_tags()):
+        die(f"Cannot chain through '{detour}': not an outbound. See: proxy-ctl proxy outbounds")
     if kind == "outbound" and url == "-":
         url = sys.stdin.read()
     ext = ".url"
@@ -1177,6 +1194,10 @@ def _runtime_entry_add(kind, tag="", url="", *_):
     path = os.path.join(_runtime_dir(kind), tag + ext)
     old = os.umask(0o027)
     try:
+        # The hop first: the entry is what the start script looks for.
+        if detour:
+            with open(os.path.join(_runtime_dir(kind), f"{tag}.detour"), "w", encoding="utf-8") as f:
+                f.write(f"{detour}\n")
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{url}\n")
     except OSError:
@@ -1195,6 +1216,8 @@ def _runtime_entry_rm(kind, tag="", *_):
         die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
     try:
         os.unlink(path)
+        if kind == "outbound" and os.path.exists(os.path.join(_runtime_dir(kind), f"{tag}.detour")):
+            os.unlink(os.path.join(_runtime_dir(kind), f"{tag}.detour"))
     except FileNotFoundError:
         pass
     except OSError:

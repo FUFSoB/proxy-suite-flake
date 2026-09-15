@@ -8,8 +8,6 @@
   hasRuleSet,
   dnsHasRuleSet,
   dnsServerByTag,
-  mkBadFixtureRaw,
-  mkFailingAssertions,
 }:
 
 let
@@ -21,8 +19,6 @@ let
       minimal
       mkRoutingRules
       mkTProxyConfig
-      mkBadFixtureRaw
-      mkFailingAssertions
       ;
   };
   inherit (fixtures)
@@ -38,7 +34,6 @@ let
     proxyDirectConfig
     urlTestCustomStartScript
     noProxyBackendDefaultFixture
-    invalidCoreProxyAssertions
     blockGeoRules
     routingOrDomainRules
     routingOrGeoIPRules
@@ -71,7 +66,6 @@ let
       ruDefaultConfig
       urlTestCustomStartScript
       noProxyBackendDefaultFixture
-      invalidCoreProxyAssertions
       ;
   };
 in

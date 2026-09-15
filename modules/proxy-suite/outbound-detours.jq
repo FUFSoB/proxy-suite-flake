@@ -5,7 +5,8 @@
 # the backend: sing-box sets detour, XRay sockopt.dialerProxy. In hybrid, .xray holds the
 # sidecar's outbounds, each also standing in .outbounds as a loopback SOCKS hop: a
 # sing-box outbound may chain through either, a sidecar one only through another
-# sidecar one, since the sidecar cannot dial through sing-box.
+# sidecar one, since the sidecar cannot dial through sing-box. Each error is
+# {tag, message}, the tag being the outbound that cannot be chained.
 def dialer($h): .streamSettings.sockopt.dialerProxy = $h;
 
 ([.outbounds[].tag]) as $tags
@@ -19,14 +20,14 @@ def dialer($h): .streamSettings.sockopt.dialerProxy = $h;
   ) | from_entries) as $hops
 | .errors = (
     [$hops | to_entries[] | select(.value as $v | $tags | index([$v]) | not)
-     | "outbound '\(.key)' chains through '\(.value)', which is not an outbound"]
+     | {tag: .key, message: "outbound '\(.key)' chains through '\(.value)', which is not an outbound"}]
     + [$hops | keys[] as $t
        | select([limit($hops | length + 1; $t | recurse($hops[.] // empty))][1:] | any(. == $t))
-       | "outbound '\($t)' chains back to itself"]
+       | {tag: $t, message: "outbound '\($t)' chains back to itself"}]
     + (if $kind == "hybrid" then
         [$hops | to_entries[]
          | select((.key as $t | $xtags | index([$t])) and (.value as $v | $xtags | index([$v]) | not))
-         | "outbound '\(.key)' runs on XRay and can only chain through another XRay outbound, not '\(.value)'"]
+         | {tag: .key, message: "outbound '\(.key)' runs on XRay and can only chain through another XRay outbound, not '\(.value)'"}]
        else [] end)
   )
 | if .errors != [] then .

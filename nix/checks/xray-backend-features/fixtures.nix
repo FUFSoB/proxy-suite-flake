@@ -16,6 +16,9 @@ let
       singBoxCfg = null;
       proxyCfg = null;
       sshProxyCfg = null;
+      warpCfg = null;
+      awgOutbounds = null;
+      constants = null;
       hybridEnabled = null;
       collapseNamedOutbounds = null;
       selectionMode = null;
@@ -128,18 +131,6 @@ let
           address = "1.1.1.1";
           port = 853;
         };
-        outbounds = [
-          {
-            tag = "primary";
-            url = "http://proxy.example.com:8080";
-          }
-        ];
-      };
-    }
-    {
-      enable = true;
-      proxy = {
-        enable = true;
         outbounds = [
           {
             tag = "primary";

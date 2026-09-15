@@ -269,14 +269,11 @@ let
 
   proxyInboundAssertions = [
     (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
-      "proxy-suite: inbounds via targets are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies cannot be named here because their tags only exist at runtime; use via = \"proxy\" to reach those."
+      "proxy-suite: inbounds via targets, or the hops they chain through, are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies, warp, ssh-proxy and AmneziaWG outbounds cannot be named here because the inbound service does not run them; use via = \"proxy\" to reach those."
     )
     (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
       "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
     )
-    (mkAssertion (
-      !proxyInboundsEnabled || builtins.all (ob: ob.detour == null) derived.proxyInboundViaOutbounds
-    ) "proxy-suite: inbounds via targets a chained outbound (one with detour), which the inbound service cannot render; use via = \"proxy\"")
     (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
       "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
     )

@@ -116,6 +116,31 @@ let
     ++ blockRules
     ++ proxyGeoRules;
 
+  # DNS follows the routing: a name that goes through the proxy is looked up through it, so
+  # the ISP's resolver never sees it and cannot spoof the answer; a direct one is looked up
+  # locally. In the routing's order; block entries resolve however the final says.
+  mkDnsRules =
+    server: domains: geosites:
+    lib.optional (domains != [ ]) {
+      domain_suffix = domains;
+      inherit server;
+    }
+    ++ lib.optional (geosites != [ ]) {
+      rule_set = map (s: "geosite-${s}") geosites;
+      inherit server;
+    };
+  dnsServerFor = category: if category == "direct" then "local" else "remote";
+  singBoxDnsRules =
+    lib.concatMap (
+      rule:
+      lib.optionals (customRuleCategory rule.outbound != "block") (
+        mkDnsRules (dnsServerFor (customRuleCategory rule.outbound)) rule.domains rule.geosites
+      )
+    ) customRules
+    ++ mkDnsRules "remote" r.proxy.domains [ ]
+    ++ mkDnsRules "local" direct.domains direct.geosites
+    ++ mkDnsRules "remote" [ ] r.proxy.geosites;
+
   singBoxRouteModeRules = {
     common = commonRules;
     custom = customRouteRules;
@@ -132,5 +157,6 @@ in
     geoIPRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
+    singBoxDnsRules
     ;
 }

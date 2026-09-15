@@ -56,8 +56,6 @@ let
       hasRuleSet
       dnsHasRuleSet
       dnsServerByTag
-      mkBadFixtureRaw
-      mkFailingAssertions
       ;
   };
   inherit (coreProxyChecks) ruDefaultConfig;

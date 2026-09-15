@@ -122,7 +122,8 @@
         printf '%s\n' '["community"]' > tags.json
         jq -n '{tags:["own-vps","community-de"],
                 sources:{"own-vps":"static","community-de":"sub:community"},
-                pinned:"community-de", selection:"urltest"}' > inventory.json
+                pinned:"community-de", selection:"urltest",
+                detours:{"community-de":"own-vps"}, excluded:["own-vps"]}' > inventory.json
 
         run() {
           env \
@@ -153,6 +154,9 @@
         grep -q 'Pinned:    community-de' listing
         grep -q '\*community-de' listing
         grep -q 'own-vps  *static' listing
+        # What each one chains through, and what selection leaves alone.
+        grep -q 'community-de  *sub:community, via own-vps$' listing
+        grep -q 'own-vps  *static, never picked$' listing
         # The old spelling still dispatches.
         run outbounds | cmp - listing
 
@@ -183,6 +187,14 @@
         ! run proxy outbounds add spool-one http://example.com:1 2>/dev/null
         run proxy outbounds rm spool-one | grep -q 'Removed outbound: spool-one'
         [ ! -e obd/spool-one.url ]
+
+        # --detour leaves the hop next to the entry, and only names an outbound that exists.
+        ! run proxy outbounds add bad-hop http://example.com:1 --detour nope 2>/dev/null
+        [ ! -e obd/bad-hop.url ]
+        run proxy outbounds add chained http://example.com:1 --detour own-vps | grep -q 'Added outbound: chained'
+        [ "$(cat obd/chained.detour)" = own-vps ]
+        run proxy outbounds rm chained > /dev/null
+        [ ! -e obd/chained.detour ]
 
         # JSON, as `link --json` prints it, lands as <tag>.json without its own tag; stdin too.
         run proxy outbounds add from-json '{"type":"trojan","tag":"x","server":"t.test","server_port":443,"password":"p"}' \
@@ -631,7 +643,7 @@
           and .outbounds[0].detour == null and .outbounds[2].detour == "x1"' <<<"$r" > /dev/null
         r="$(d '{"outbounds":{"x1":"sb"},"subscriptions":{}}' '{"x1":"static","sb":"static"}' hybrid \
           '{"outbounds":[{"tag":"x1"},{"tag":"sb"}],"xray":[{"tag":"x1"}]}')"
-        jq -e '.errors == ["outbound '"'x1'"' runs on XRay and can only chain through another XRay outbound, not '"'sb'"'"]' <<<"$r" > /dev/null
+        jq -e '[.errors[].message] == ["outbound '"'x1'"' runs on XRay and can only chain through another XRay outbound, not '"'sb'"'"]' <<<"$r" > /dev/null
         # A missing hop and a loop are errors, and nothing is rewritten.
         r="$(d '{"outbounds":{"a":"b","b":"a","c":"gone"},"subscriptions":{}}' '{"a":"static","b":"static","c":"static"}' sing-box \
           '{"outbounds":[{"tag":"a"},{"tag":"b"},{"tag":"c"}],"xray":[]}')"

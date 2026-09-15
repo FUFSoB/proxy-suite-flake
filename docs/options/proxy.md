@@ -81,6 +81,7 @@ Part of the [proxy-suite options reference](./index.md).
         - [ips](#services-proxy-suite-proxy-routing-rules-ips)
         - [outbound](#services-proxy-suite-proxy-routing-rules-outbound)
   - [selection](#services-proxy-suite-proxy-selection)
+  - [selectionExclude](#services-proxy-suite-proxy-selectionexclude)
   - singBox
     - [package](#services-proxy-suite-proxy-singbox-package)
     - [clashApiPort](#services-proxy-suite-proxy-singbox-clashapiport)
@@ -345,9 +346,9 @@ null
 In TUN mode (global and per-app), answer A queries from the TUN with a fake address and
 AAAA ones with nothing; sing-box maps the address back to the name when the connection
 comes\. Saves a lookup per new site and no real lookup leaves for proxied names\. Names that
-proxy\.dns\.singBox\.rules or the direct geosites send elsewhere keep real answers\. Mappings
-do not survive a restart: an app holding a fake address fails until it looks the name up
-again\. sing-box and hybrid backends; XRay’s TUN already uses its own fake DNS\.
+proxy\.dns\.singBox\.rules or the direct routing lists send elsewhere keep real answers\. The
+addresses handed out are kept in /var/lib/proxy-suite/fakeip, so they survive a restart\.
+sing-box and hybrid backends; XRay’s TUN already uses its own fake DNS\.
 
 *Type:*
 boolean
@@ -444,7 +445,9 @@ one of “udp”, “tcp”, “tls”
 <a id="services-proxy-suite-proxy-dns-remote"></a>
 ## services\.proxy-suite\.proxy\.dns\.remote
 
-Resolver used through the proxy; the DNS default when proxy\.routing\.default is proxy\.
+Resolver used through the proxy; the DNS default when proxy\.routing\.default is proxy\. On
+sing-box, names the routing sends through the proxy are always looked up here, so the ISP
+never sees them, and direct ones locally\.
 
 *Type:*
 submodule
@@ -1399,6 +1402,32 @@ one of “first”, “selector”, “urltest”
 
 ```nix
 "urltest"
+```
+
+<a id="services-proxy-suite-proxy-selectionexclude"></a>
+## services\.proxy-suite\.proxy\.selectionExclude
+
+Outbound tags selection never picks on its own: hops other outbounds chain through
+(` detour `), or exits only routing rules name\. Subscription entries, ` warp `, ` ssh-proxy `
+and AmneziaWG tags work too\. A pin still reaches them, and so does a selector switched by
+hand\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "ru-vps"
+  "warp"
+]
 ```
 
 <a id="services-proxy-suite-proxy-singbox-package"></a>

@@ -24,6 +24,11 @@ def _die(message, status=1):
     sys.exit(message)
 
 
+# Clash API calls and systemctl spawns that several readers repeat within one load.
+MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_autoproxy_next_run", "svc_state")
+# proxy_ctl as the CLI has it, before the patching below: its own tests put these back.
+CLI_FUNCTIONS = {name: getattr(ctl, name) for name in ("die", *MEMOIZED)}
+
 ctl.die = _die
 
 _memo = {}  # (reader, args) -> result, cleared at the start of every load
@@ -39,8 +44,7 @@ def _per_load(fn):
     return wrapped
 
 
-# Clash API calls and systemctl spawns that several readers repeat within one load.
-for _name in ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_autoproxy_next_run", "svc_state"):
+for _name in MEMOIZED:
     setattr(ctl, _name, _per_load(getattr(ctl, _name)))
 
 

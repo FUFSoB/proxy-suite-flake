@@ -24,7 +24,11 @@ in
     remote = mkOption {
       type = t.dnsUpstreamType;
       default = cloudflare;
-      description = "Resolver used through the proxy; the DNS default when proxy.routing.default is proxy.";
+      description = ''
+        Resolver used through the proxy; the DNS default when proxy.routing.default is proxy. On
+        sing-box, names the routing sends through the proxy are always looked up here, so the ISP
+        never sees them, and direct ones locally.
+      '';
       example = {
         type = "tls";
         address = "1.1.1.1";
@@ -64,9 +68,9 @@ in
           In TUN mode (global and per-app), answer A queries from the TUN with a fake address and
           AAAA ones with nothing; sing-box maps the address back to the name when the connection
           comes. Saves a lookup per new site and no real lookup leaves for proxied names. Names that
-          proxy.dns.singBox.rules or the direct geosites send elsewhere keep real answers. Mappings
-          do not survive a restart: an app holding a fake address fails until it looks the name up
-          again. sing-box and hybrid backends; XRay's TUN already uses its own fake DNS.
+          proxy.dns.singBox.rules or the direct routing lists send elsewhere keep real answers. The
+          addresses handed out are kept in /var/lib/proxy-suite/fakeip, so they survive a restart.
+          sing-box and hybrid backends; XRay's TUN already uses its own fake DNS.
         '';
       };
 

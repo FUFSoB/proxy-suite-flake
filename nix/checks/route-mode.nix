@@ -95,7 +95,8 @@ in
       assert pkgs.lib.hasInfix "all-bypass)" routeModeStartScript;
       assert pkgs.lib.hasInfix ".route.rules = (sing_box_preserved_rules + $route_rules)"
         routeModeBackendJqFilter;
-      assert pkgs.lib.hasInfix ".dns.rules = []" routeModeBackendJqFilter;
+      # all-proxy and all-bypass keep proxy.dns.singBox.rules and fake IP.
+      assert pkgs.lib.hasInfix ".dns.rules = .dns.rules[:0]" routeModeBackendJqFilter;
       true
     )
 
@@ -153,7 +154,7 @@ in
         shellValueByPrefix minimalProxyCtlWrapper "export RUNTIME_SUBS_DIR="
         == "/var/lib/proxy-suite/subscriptions.d";
       assert pkgs.lib.hasInfix "proxy pin [tag]" minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix "proxy outbounds add <tag> <url>" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "proxy outbounds add <tag> <url|json|->" minimalProxyCtlScript;
       true
     )
   ];

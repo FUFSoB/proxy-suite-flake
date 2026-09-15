@@ -174,6 +174,7 @@ services.proxy-suite = {
       rules = [ ];
     };
     selection = "first";
+    selectionExclude = [ ];
     singBox = {
       clashApiPort = 9090;
       package = pkgs.sing-box;

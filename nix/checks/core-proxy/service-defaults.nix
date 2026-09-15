@@ -7,7 +7,6 @@
   ruDefaultConfig,
   urlTestCustomStartScript,
   noProxyBackendDefaultFixture,
-  invalidCoreProxyAssertions,
 }:
 
 {
@@ -53,6 +52,5 @@
       assert !(noProxyBackendDefaultFixture.config.systemd.services ? "proxy-suite-socks");
       true
     )
-  ]
-  ++ invalidCoreProxyAssertions;
+  ];
 }

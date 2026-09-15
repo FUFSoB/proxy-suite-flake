@@ -104,8 +104,21 @@ let
   proxyInboundViaTags = lib.unique (
     builtins.filter (via: !builtins.elem via builtinTags) (map (ib: ib.via) proxyInbounds)
   );
+  # The pinned outbounds and every hop they chain through, which the inbound service renders
+  # too. A hop that is not a static outbound (a subscription entry, warp) has no tag here.
+  proxyInboundViaHops =
+    tags:
+    let
+      hops = lib.unique (
+        builtins.filter (hop: hop != null && !builtins.elem hop tags) (
+          map (ob: ob.detour) (builtins.filter (ob: builtins.elem ob.tag tags) proxyCfg.outbounds)
+        )
+      );
+    in
+    if hops == [ ] then tags else proxyInboundViaHops (tags ++ hops);
+  proxyInboundViaChain = proxyInboundViaHops proxyInboundViaTags;
   proxyInboundViaOutbounds = builtins.filter (
-    ob: builtins.elem ob.tag proxyInboundViaTags
+    ob: builtins.elem ob.tag proxyInboundViaChain
   ) proxyCfg.outbounds;
 
   proxyInboundUdpTypes = [
@@ -242,6 +255,8 @@ let
     outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
 
     inboundStatsApiPort = 18536;
+    # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
+    fakeIpCacheDir = "/var/lib/proxy-suite/fakeip";
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
     inboundStatsFile = "/var/lib/proxy-suite/inbound-stats.json";
@@ -275,7 +290,7 @@ let
   # Subscription tags are deliberately not accepted: they only exist at runtime.
   invalidInboundViaTargets = builtins.filter (
     tag: !builtins.elem tag outboundTags
-  ) proxyInboundViaTags;
+  ) proxyInboundViaChain;
 
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (

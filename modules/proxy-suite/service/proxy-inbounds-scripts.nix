@@ -54,6 +54,10 @@ let
   mkViaOutboundBlock =
     ob:
     let
+      # A chained one dials through its hop, which the chain put in this config too.
+      dialerBlock = lib.optionalString (ob.detour != null) ''
+        OB_JSON=$(${jq} -c --arg hop ${lib.escapeShellArg ob.detour} '.streamSettings.sockopt.dialerProxy = $hop' <<< "$OB_JSON")
+      '';
       urlSource =
         if ob.urlFile != null then
           ob.urlFile
@@ -70,6 +74,7 @@ let
             builtins.toJSON (ob.xrayJson // { inherit (ob) tag; })
           )
         })
+        ${dialerBlock}
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       ''
     else
@@ -78,6 +83,7 @@ let
         URL=$(cat ${lib.escapeShellArg urlSource})
         OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} \
           --backend xray --tag ${lib.escapeShellArg ob.tag})
+        ${dialerBlock}
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
       '';
 

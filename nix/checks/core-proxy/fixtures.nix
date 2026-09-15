@@ -5,8 +5,6 @@
   minimal,
   mkRoutingRules,
   mkTProxyConfig,
-  mkBadFixtureRaw,
-  mkFailingAssertions,
 }:
 
 let
@@ -138,21 +136,6 @@ let
     }
   ];
 
-  invalidCoreProxyAssertions = mkFailingAssertions mkBadFixtureRaw [
-    [
-      {
-        system.stateVersion = "26.05";
-        services.proxy-suite = {
-          enable = true;
-          proxy = {
-            enable = true;
-            backend = "sing-box";
-          };
-        };
-      }
-    ]
-  ];
-
   blockGeoRules = mkRoutingRules (evalProxySuite [
     baseModule
     {
@@ -188,7 +171,6 @@ in
     urlTestCustomFixture
     urlTestCustomStartScript
     noProxyBackendDefaultFixture
-    invalidCoreProxyAssertions
     blockGeoRules
     routingOrDomainRules
     routingOrGeoIPRules

@@ -338,6 +338,7 @@ let
         --arg xray_loglevel "$XRAY_LOGLEVEL" \
         --arg xray_bind_interface "$XRAY_TUN_BIND_INTERFACE" \
         --arg xray_single_proxy_tag "$XRAY_SINGLE_PROXY_TAG" \
+        --argjson xray_selectable "$SELECTABLE_TAGS_JSON" \
         --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
         --arg xray_dns_local_client ${lib.escapeShellArg proxyCfg.dns.local.address} \
         --arg xray_dns_remote_client ${lib.escapeShellArg proxyCfg.dns.remote.address} \
@@ -349,6 +350,10 @@ let
         ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$backend_config"
         chmod ${if enableLocalProxyAuth then "640" else "g+r"} "$backend_config"
       done
+      FAKE_IP_CACHE=$(${jq} -r '.experimental.cache_file.path? // empty' "$RUNTIME_DIR/config.json")
+      if [ -n "$FAKE_IP_CACHE" ]; then
+        install -d -m 0700 -o ${constants.serviceUser} -g ${constants.serviceUser} "$(dirname "$FAKE_IP_CACHE")"
+      fi
 
       ${
         if hybridEnabled then

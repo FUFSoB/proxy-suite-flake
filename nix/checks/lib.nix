@@ -176,21 +176,33 @@ let
       };
     };
   };
-  mkFixture =
+  # A bad fixture must fail on its own merits. Without a root file system and with a boot
+  # loader, NixOS's own assertions fail every system, so any case passed as bad.
+  mkBootableToplevel =
+    modules:
+    forceEval
+      (evalProxySuite (
+        [
+          {
+            fileSystems."/" = {
+              device = "none";
+              fsType = "tmpfs";
+            };
+            boot.loader.grub.enable = false;
+          }
+        ]
+        ++ modules
+      )).config.system.build.toplevel.drvPath;
+  mkBadFixture = modules: mkBootableToplevel ([ baseModule ] ++ modules);
+  mkBadFixtureRaw = mkBootableToplevel;
+  mkBadProxySuiteFixture =
     proxySuiteConfig:
-    evalProxySuite [
+    mkBootableToplevel [
       {
         system.stateVersion = "26.05";
         services.proxy-suite = proxySuiteConfig;
       }
     ];
-  mkBadFixture =
-    modules:
-    forceEval ((evalProxySuite ([ baseModule ] ++ modules)).config.system.build.toplevel.drvPath);
-  mkBadFixtureRaw =
-    modules: forceEval ((evalProxySuite modules).config.system.build.toplevel.drvPath);
-  mkBadProxySuiteFixture =
-    proxySuiteConfig: forceEval ((mkFixture proxySuiteConfig).config.system.build.toplevel.drvPath);
   mkFailingAssertions =
     evaluate: cases:
     map (
@@ -247,7 +259,6 @@ in
     lineContaining
     shellValueByPrefix
     baseModule
-    mkFixture
     mkBadFixture
     mkBadFixtureRaw
     mkBadProxySuiteFixture

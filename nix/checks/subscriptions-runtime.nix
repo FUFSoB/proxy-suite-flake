@@ -78,7 +78,7 @@ in
     (
       assert pkgs.lib.hasInfix ''PROXY_TAG="$PINNED_OUTBOUND"'' subscriptionFirstSelectionStartScript;
       assert
-        pkgs.lib.hasInfix ''map(if .tag == $t then .tag = "proxy" else . end)''
+        pkgs.lib.hasInfix ''map(if .tag == $t then .tag = "proxy" else . end''
           subscriptionFirstSelectionStartScript;
       true
     )
@@ -147,8 +147,8 @@ in
 
     # The fetcher's output must land in the cache, not after a stray newline.
     (
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" > "$cache.tmp"'' subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" > "$cache.tmp"'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"'' subscriptionOnlyUpdateScript;
       true
     )
 

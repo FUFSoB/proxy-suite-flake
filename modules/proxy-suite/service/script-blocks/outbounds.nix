@@ -441,13 +441,18 @@ let
   mkBackendOutboundBlock = if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock;
 
   runtimeOutboundsBlock = ''
-    # outbounds added at runtime
+    # outbounds added at runtime, and the hop each one chains through (<tag>.detour)
+    RUNTIME_DETOURS_JSON='{}'
     while IFS=$'\t' read -r RUNTIME_OB_TAG RUNTIME_OB_SRC; do
       [ -n "$RUNTIME_OB_TAG" ] || continue
       case "$RUNTIME_OB_SRC" in
         *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
         *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(cat "$RUNTIME_OB_SRC")" runtime ;;
-      esac || echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2
+      esac || { echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2; continue; }
+      if [ -s "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" ]; then
+        RUNTIME_DETOURS_JSON=$(${jq} -c --arg t "$RUNTIME_OB_TAG" --rawfile h "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" \
+          '.[$t] = ($h | rtrimstr("\n"))' <<< "$RUNTIME_DETOURS_JSON")
+      fi
     done < <(_proxy_suite_runtime_outbounds)
   '';
 
@@ -465,26 +470,43 @@ let
       "xray"
     else
       "sing-box";
-  detourBlock = lib.optionalString (detours.outbounds != { } || detours.subscriptions != { }) ''
+  # Always there: `proxy-ctl proxy outbounds add --detour` chains runtime outbounds too. A
+  # declared chain that cannot be built fails the start. A runtime one is left out with a
+  # warning, like any other runtime outbound that does not come up, rather than going out
+  # unchained; whatever chained through it is checked again.
+  detourBlock = ''
     # outbound chaining
-    DETOUR_RESULT=$(${jq} -c --argjson xob "${
-      if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"
-    }" '{outbounds: ., xray: $xob}' <<< "$OUTBOUNDS_JSON" \
-      | ${jq} -c -f ${
-        builtins.path {
-          name = "proxy-suite-outbound-detours";
-          path = ../../outbound-detours.jq;
-        }
-      } \
-        --argjson d ${lib.escapeShellArg (builtins.toJSON detours)} \
-        --argjson sources "$OUTBOUND_SOURCES_JSON" \
-        --arg kind ${detourKind})
-    if ${jq} -e '.errors != []' <<< "$DETOUR_RESULT" >/dev/null; then
-      ${jq} -r '.errors[] | "proxy-suite: " + .' <<< "$DETOUR_RESULT" >&2
-      exit 1
-    fi
-    OUTBOUNDS_JSON=$(${jq} -c '.outbounds' <<< "$DETOUR_RESULT")
-    ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c '.xray' <<< "$DETOUR_RESULT")''}
+    DETOURS_JSON=$(${jq} -c --argjson runtime "$RUNTIME_DETOURS_JSON" '.outbounds = $runtime + .outbounds' \
+      <<< ${lib.escapeShellArg (builtins.toJSON detours)})
+    while [ "$DETOURS_JSON" != '{"outbounds":{},"subscriptions":{}}' ]; do
+      DETOUR_RESULT=$(${jq} -c --argjson xob "${
+        if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"
+      }" '{outbounds: ., xray: $xob}' <<< "$OUTBOUNDS_JSON" \
+        | ${jq} -c -f ${
+          builtins.path {
+            name = "proxy-suite-outbound-detours";
+            path = ../../outbound-detours.jq;
+          }
+        } \
+          --argjson d "$DETOURS_JSON" \
+          --argjson sources "$OUTBOUND_SOURCES_JSON" \
+          --arg kind ${detourKind})
+      DETOUR_DROP=$(${jq} -c --argjson sources "$OUTBOUND_SOURCES_JSON" \
+        '[.errors[] | select($sources[.tag] == "runtime")] | unique_by(.tag)' <<< "$DETOUR_RESULT")
+      if ${jq} -e --argjson sources "$OUTBOUND_SOURCES_JSON" 'any(.errors[]; $sources[.tag] != "runtime")' <<< "$DETOUR_RESULT" >/dev/null; then
+        ${jq} -r '.errors[] | "proxy-suite: " + .message' <<< "$DETOUR_RESULT" >&2
+        exit 1
+      fi
+      if [ "$DETOUR_DROP" = '[]' ]; then
+        OUTBOUNDS_JSON=$(${jq} -c '.outbounds' <<< "$DETOUR_RESULT")
+        ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c '.xray' <<< "$DETOUR_RESULT")''}
+        break
+      fi
+      ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime outbound '"'"'\(.tag)'"'"': \(.message)"' <<< "$DETOUR_DROP" >&2
+      OUTBOUNDS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '[.[] | select(.tag as $t | $drop | any(.tag == $t) | not)]' <<< "$OUTBOUNDS_JSON")
+      ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '[.[] | select(.tag as $t | $drop | any(.tag == $t) | not)]' <<< "$XRAY_OUTBOUNDS_JSON")''}
+      DETOURS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '.outbounds |= with_entries(select(.key as $t | $drop | any(.tag == $t) | not))' <<< "$DETOURS_JSON")
+    done
   '';
 
   requireOutboundsBlock = ''
@@ -510,14 +532,32 @@ let
     fi
   '';
 
-  # proxy-ctl reads this unprivileged: tags, where each came from, and the pin.
+  # What selection may pick on its own: all but proxy.selectionExclude. A pin and a
+  # selector switched by hand still reach the excluded ones.
+  selectableBlock = ''
+    SELECTABLE_TAGS_JSON=$(${jq} -c --argjson ex ${lib.escapeShellArg (builtins.toJSON proxyCfg.selectionExclude)} \
+      'map(select(. as $t | $ex | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
+    if [ -z "$PINNED_OUTBOUND" ] && [ "$(${jq} 'length' <<< "$SELECTABLE_TAGS_JSON")" -eq 0 ]; then
+      echo "proxy-suite: every outbound is in proxy.selectionExclude, so there is nothing to select; pin one, or exclude fewer" >&2
+      exit 1
+    fi
+  '';
+
+  # proxy-ctl reads this unprivileged: tags, where each came from, the pin, what each one
+  # chains through, and what selection leaves alone.
   inventoryBlock = ''
     ${jq} -n \
       --argjson tags "$OUTBOUND_TAGS_JSON" \
       --argjson sources "$OUTBOUND_SOURCES_JSON" \
       --arg pinned "$PINNED_OUTBOUND" \
       --arg selection ${lib.escapeShellArg selectionMode} \
-      '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection}' \
+      --argjson obs "$OUTBOUNDS_JSON" \
+      --argjson xobs "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}" \
+      --argjson selectable "$SELECTABLE_TAGS_JSON" \
+      '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
+        detours: ([($xobs + $obs)[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
+          | select($h != null) | {key: .tag, value: $h}] | from_entries),
+        excluded: ($tags - $selectable)}' \
       > "$RUNTIME_DIR/outbounds.json"
     chmod 644 "$RUNTIME_DIR/outbounds.json"
   '';
@@ -548,15 +588,15 @@ let
             # which is the same path a single-outbound config already takes.
             if [ -n "$PINNED_OUTBOUND" ]; then
               XRAY_SINGLE_PROXY_TAG="proxy-suite-ob-$PINNED_OUTBOUND"
-            elif [ "$(${jq} 'length' <<< "$OUTBOUNDS_JSON")" -eq 1 ]; then
-              XRAY_SINGLE_PROXY_TAG="$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")"
+            elif [ "$(${jq} 'length' <<< "$SELECTABLE_TAGS_JSON")" -eq 1 ]; then
+              XRAY_SINGLE_PROXY_TAG="proxy-suite-ob-$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")"
             fi
           ''
         else if collapseNamedOutbounds then
           ''
             PROXY_TAG="$PINNED_OUTBOUND"
             if [ -z "$PROXY_TAG" ]; then
-              PROXY_TAG=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
+              PROXY_TAG=$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")
             fi
             OUTBOUNDS_JSON=$(${jq} --arg t "$PROXY_TAG" \
               'map(if .tag == $t then .tag = "proxy" else . end
@@ -568,7 +608,7 @@ let
             TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
             DEFAULT_TAG="$PINNED_OUTBOUND"
             if [ -z "$DEFAULT_TAG" ]; then
-              DEFAULT_TAG=$(${jq} -r '.[0].tag' <<< "$OUTBOUNDS_JSON")
+              DEFAULT_TAG=$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")
             fi
             WRAPPER=$(${jq} -n \
               --argjson tags "$TAGS" \
@@ -588,7 +628,7 @@ let
                 '{type:"selector",tag:"proxy",outbounds:$tags,default:$default}')
             else
               WRAPPER=$(${jq} -n \
-                --argjson tags "$TAGS" \
+                --argjson tags "$SELECTABLE_TAGS_JSON" \
                 --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
                 --arg interval ${lib.escapeShellArg proxyCfg.urlTest.interval} \
                 --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
@@ -614,6 +654,7 @@ let
     + detourBlock
     + requireOutboundsBlock
     + pinBlock
+    + selectableBlock
     + inventoryBlock
     + wrapperBlock
     + exitTagsBlock;

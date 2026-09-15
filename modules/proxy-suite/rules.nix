@@ -84,6 +84,7 @@ let
     geoIPRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
+    singBoxDnsRules
     ;
 
   xrayRules = import ./rules/xray.nix {
@@ -111,6 +112,7 @@ in
     geoIPRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
+    singBoxDnsRules
     xrayRoutingRules
     xrayRouteModeRules
     routeModeRules

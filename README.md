@@ -118,7 +118,9 @@ A group without a verb shows its status or list.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url|json|->  add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin)
+  proxy outbounds add <tag> <url|json|-> [--detour <tag>]
+                                         add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
+                                         chained through another outbound with --detour
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)

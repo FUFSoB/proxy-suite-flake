@@ -20,7 +20,6 @@ let
   inherit (constants)
     xrayDnsBridgePorts
     ;
-  direct = rules.direct;
   defaultTunAutoRouteTableIndex = constants.tunAutoRouteTableIndex;
   defaultTunAutoRouteRulePriority = constants.tunAutoRouteRulePriority;
 
@@ -62,14 +61,7 @@ let
       # The route mode keeps the user's rules and fake IP, and may drop what sits between.
       rules =
         proxyCfg.dns.singBox.rules
-        ++ lib.optional (builtins.elem "google" proxyCfg.routing.proxy.geosites) {
-          rule_set = [ "geosite-google" ];
-          server = "remote";
-        }
-        ++ lib.optional (direct.geosites != [ ]) {
-          rule_set = map (s: "geosite-${s}") direct.geosites;
-          server = "local";
-        }
+        ++ rules.singBoxDnsRules
         # Only what apps ask through the TUN: the XRay sidecar's and sing-box's own lookups
         # need real addresses.
         ++ lib.optional fakeIp {
@@ -119,14 +111,19 @@ let
       enableClashApi ? clashApiEnabled,
       enableXrayDnsBridge ? hybridEnabled,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
+      # Names the fake IP cache: TUN configs only.
+      fakeIpCache ? null,
     }:
+    let
+      fakeIp = fakeIpCache != null && proxyCfg.dns.fakeIp.enable;
+    in
+    lib.recursiveUpdate (
     {
       log.level = "warn";
 
       dns = mkDnsConfig {
         localDetour = if forceLocalDnsViaProxy then "proxy" else null;
-        inherit useOutboundRoutingMark;
-        fakeIp = enableTun && proxyCfg.dns.fakeIp.enable;
+        inherit useOutboundRoutingMark fakeIp;
       };
 
       inbounds =
@@ -190,7 +187,17 @@ let
         auto_detect_interface = true;
       };
     }
-    // lib.optionalAttrs enableClashApi clashApiBlock;
+    // lib.optionalAttrs enableClashApi clashApiBlock)
+    # Fake addresses handed out survive a restart, so apps still holding one keep working. The
+    # start script creates the directory; nothing else is stored, since TUN configs have no
+    # Clash API to switch a selector with.
+    (lib.optionalAttrs fakeIp {
+      experimental.cache_file = {
+        enabled = true;
+        path = "${constants.fakeIpCacheDir}/${fakeIpCache}.db";
+        store_fakeip = true;
+      };
+    });
 in
 {
   tproxy = mkConfig {
@@ -211,6 +218,7 @@ in
     forceLocalDnsViaProxy = false;
     enableClashApi = false;
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
+    fakeIpCache = "tun";
   };
 
   perAppTun = mkConfig {
@@ -225,5 +233,6 @@ in
     useOutboundRoutingMark = globalTproxy.enable;
     enableClashApi = false;
     xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
+    fakeIpCache = "per-app-tun";
   };
 }

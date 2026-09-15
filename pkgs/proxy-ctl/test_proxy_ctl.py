@@ -5,12 +5,24 @@ import datetime
 import io
 import json
 import os
+import shutil
 import socket
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
 import proxy_ctl as ctl
+
+
+def setUpModule():
+    """proxy_model, once imported into the same run, patches proxy_ctl for the front ends;
+    these tests want it the way the CLI runs."""
+    model = sys.modules.get("proxy_model")
+    for name, fn in (model.CLI_FUNCTIONS if model else {}).items():
+        patcher = mock.patch.object(ctl, name, fn)
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
 
 
 def run(fn, *args):
@@ -642,6 +654,7 @@ class BadExitTest(EnvTest):
 class WhereTest(EnvTest):
     """The route walk has to agree with sing-box and XRay, rule-sets included."""
 
+    @unittest.skipUnless(shutil.which(os.environ.get("SING_BOX", "sing-box")), "sing-box not found; set SING_BOX")
     def test_sing_box_walk(self):
         rs = self.write("rs.json", {"version": 1, "rules": [{"domain_suffix": ["youtube.com"]}]})
         config = {

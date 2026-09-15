@@ -131,6 +131,8 @@ let
         services.proxy-suite.tgWsProxy = {
           enable = true;
           secretFile = "/run/secrets/tg-ws-proxy";
+          # Only read when there is a log file to rotate.
+          log.file = "/var/log/proxy-suite-tg-ws-proxy/tg-ws-proxy.log";
           log.keep = 0;
         };
       }
