@@ -49,6 +49,8 @@ let
         users
         flow
         method
+        serverPassword
+        serverPasswordFile
         transport
         tls
         reality

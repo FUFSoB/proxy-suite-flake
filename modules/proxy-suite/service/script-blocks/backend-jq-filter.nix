@@ -121,12 +121,15 @@ else
   ''
   + lib.optionalString proxyInboundsGuardPrivate ''
     # inbounds.routing.blockPrivate, enforced here because the listener passes names unresolved.
-    # Last, so only traffic falling through to a direct final is resolved. Local mixed-
-    # in clients lose names that resolve private.
-    | if (.route.final // "direct") == "direct" then
-        .route.rules += [
-          {inbound: ["mixed-in"], action: "resolve"},
-          {inbound: ["mixed-in"], ip_is_private: true, action: "reject"}
-        ]
+    # Just before the first direct rule (or last, for a direct final), so names that the
+    # proxy rules above take stay unresolved and none reaches a direct dial unchecked. Local
+    # mixed-in clients lose names that resolve private.
+    | [{inbound: ["mixed-in"], action: "resolve"},
+       {inbound: ["mixed-in"], ip_is_private: true, action: "reject"}] as $guard
+    | (.route.rules | map((.outbound? // "") == "direct") | index(true)) as $first_direct
+    | if $first_direct != null then
+        .route.rules = .route.rules[:$first_direct] + $guard + .route.rules[$first_direct:]
+      elif (.route.final // "direct") == "direct" then
+        .route.rules += $guard
       else . end
   ''

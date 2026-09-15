@@ -16,6 +16,7 @@ let
   inherit (constants)
     tunAutoRouteTableIndex
     tunAutoRouteRulePriority
+    xrayTunServiceUserRulePriority
     xrayTunPerAppTproxyRulePriority
     xrayTunPerAppTunRulePriority
     xrayGlobalTunIPv6Address
@@ -57,6 +58,8 @@ in
 
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
+    while ${ip} -4 rule del pref ${toString xrayTunServiceUserRulePriority} 2>/dev/null; do :; done
+    while ${ip} -6 rule del pref ${toString xrayTunServiceUserRulePriority} 2>/dev/null; do :; done
     while ${ip} -4 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
     while ${ip} -6 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
     while ${ip} -6 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
@@ -77,6 +80,9 @@ in
       ${ip} -4 rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
       ${ip} -6 rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
     ''}
+    service_uid=$(${pkgs.coreutils}/bin/id -u ${constants.serviceUser})
+    ${ip} -4 rule add pref ${toString xrayTunServiceUserRulePriority} uidrange "$service_uid-$service_uid" lookup main
+    ${ip} -6 rule add pref ${toString xrayTunServiceUserRulePriority} uidrange "$service_uid-$service_uid" lookup main
     ${ip} -4 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
     ${ip} -6 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
   '';
@@ -135,6 +141,16 @@ in
       inherit ip;
       family = "-6";
       priority = xrayTunPerAppTunRulePriority;
+    }}
+    ${builders.mkIpRuleDeleteByPriority {
+      inherit ip;
+      family = "-4";
+      priority = xrayTunServiceUserRulePriority;
+    }}
+    ${builders.mkIpRuleDeleteByPriority {
+      inherit ip;
+      family = "-6";
+      priority = xrayTunServiceUserRulePriority;
     }}
     ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
     ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}

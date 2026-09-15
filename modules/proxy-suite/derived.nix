@@ -94,11 +94,13 @@ let
   # Names pass unresolved unless XRay dials itself (a direct listener, or pure XRay).
   proxyInboundsResolveInSingBox = !pureXrayEnabled && !lib.any (ib: ib.via == "direct") proxyInbounds;
 
+  # Even when XRay resolves (a direct listener), it hands sing-box the name, which sing-box
+  # looks up again: guard there too.
   proxyInboundsGuardPrivate =
     proxyInboundsEnabled
     && proxyInboundsCfg.routing.blockPrivate
     && proxyInboundsNeedLocalProxy
-    && proxyInboundsResolveInSingBox;
+    && !pureXrayEnabled;
 
   # Other vias name static outbounds, rendered into the inbound service's own config.
   proxyInboundViaTags = lib.unique (
@@ -129,10 +131,13 @@ let
   # Loopback listeners are fronted locally; their ports stay closed.
   proxyInboundsPublic = builtins.filter (
     ib:
-    !builtins.elem ib.listener.address [
-      "127.0.0.1"
-      "::1"
-    ]
+    !(
+      lib.hasPrefix "127." ib.listener.address
+      || builtins.elem ib.listener.address [
+        "::1"
+        "localhost"
+      ]
+    )
   ) proxyInbounds;
   # h3-only xhttp listeners are UDP-only, leaving the TCP port to a web server.
   proxyInboundIsH3Only =
@@ -266,6 +271,9 @@ let
 
     tunAutoRouteTableIndex = 2022;
     tunAutoRouteRulePriority = 9000;
+    # Keeps proxy-suite's own daemons (the inbound XRay, replies to its clients included)
+    # out of the pure-XRay global TUN.
+    xrayTunServiceUserRulePriority = 8995;
     xrayTunPerAppTproxyRulePriority = 8996;
     xrayTunPerAppTunRulePriority = 8997;
 

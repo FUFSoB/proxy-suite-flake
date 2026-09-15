@@ -14,6 +14,9 @@ let
   overrideInbounds = builtins.filter (ib: ib.via != defaultVia) proxyInbounds;
   defaultInboundTags = map (ib: ib.tag) (builtins.filter (ib: ib.via == defaultVia) proxyInbounds);
 
+  # A blocked listener stays blocked: neither serverAddress nor the proxy exceptions open it.
+  exceptionInboundTags = map (ib: ib.tag) (builtins.filter (ib: ib.via != "block") proxyInbounds);
+
   blockPrivateRule = lib.optional proxyInboundsCfg.routing.blockPrivate {
     type = "field";
     ruleTag = "inbound-block-private";
@@ -30,19 +33,35 @@ let
     addr != null
     && (lib.hasInfix ":" addr || builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" addr != null);
 
-  serverAddressRule = lib.optional (proxyInboundsCfg.serverAddress != null) (
-    {
-      type = "field";
-      ruleTag = "inbound-server-address-direct";
-      outboundTag = "direct";
-    }
-    // (
-      if serverAddressIsIp then
-        { ip = [ proxyInboundsCfg.serverAddress ]; }
-      else
-        { domain = [ "full:${proxyInboundsCfg.serverAddress}" ]; }
-    )
+  # Only the ports clients dial there: the rest of this host (wildcard services the
+  # firewall keeps from the internet) must not be reachable through it.
+  serverAddressPorts = lib.unique (
+    map (
+      ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port
+    ) proxyInbounds
+    ++ lib.optionals proxyInboundsCfg.subscriptions.enable [
+      80
+      443
+    ]
   );
+
+  serverAddressRule =
+    lib.optional (proxyInboundsCfg.serverAddress != null && exceptionInboundTags != [ ])
+      (
+        {
+          type = "field";
+          ruleTag = "inbound-server-address-direct";
+          inboundTag = exceptionInboundTags;
+          port = lib.concatMapStringsSep "," toString serverAddressPorts;
+          outboundTag = "direct";
+        }
+        // (
+          if serverAddressIsIp then
+            { ip = [ proxyInboundsCfg.serverAddress ]; }
+          else
+            { domain = [ "full:${proxyInboundsCfg.serverAddress}" ]; }
+        )
+      );
 
   blockRuRules = lib.optionals proxyInboundsCfg.routing.blockRu [
     {
@@ -61,23 +80,29 @@ let
 
   inboundProxy = proxyInboundsCfg.routing.proxy;
 
-  proxyDomainRule = lib.optional (inboundProxy.domains != [ ] || inboundProxy.geosites != [ ]) {
-    type = "field";
-    ruleTag = "inbound-proxy-domain";
-    domain =
-      map (domain: "domain:${domain}") inboundProxy.domains
-      ++ map (name: "geosite:${name}") inboundProxy.geosites;
-    inboundTag = map (ib: ib.tag) proxyInbounds;
-    outboundTag = "proxy";
-  };
+  proxyDomainRule =
+    lib.optional
+      (exceptionInboundTags != [ ] && (inboundProxy.domains != [ ] || inboundProxy.geosites != [ ]))
+      {
+        type = "field";
+        ruleTag = "inbound-proxy-domain";
+        domain =
+          map (domain: "domain:${domain}") inboundProxy.domains
+          ++ map (name: "geosite:${name}") inboundProxy.geosites;
+        inboundTag = exceptionInboundTags;
+        outboundTag = "proxy";
+      };
 
-  proxyIpRule = lib.optional (inboundProxy.ips != [ ] || inboundProxy.geoips != [ ]) {
-    type = "field";
-    ruleTag = "inbound-proxy-ip";
-    ip = inboundProxy.ips ++ map (name: "geoip:${name}") inboundProxy.geoips;
-    inboundTag = map (ib: ib.tag) proxyInbounds;
-    outboundTag = "proxy";
-  };
+  proxyIpRule =
+    lib.optional
+      (exceptionInboundTags != [ ] && (inboundProxy.ips != [ ] || inboundProxy.geoips != [ ]))
+      {
+        type = "field";
+        ruleTag = "inbound-proxy-ip";
+        ip = inboundProxy.ips ++ map (name: "geoip:${name}") inboundProxy.geoips;
+        inboundTag = exceptionInboundTags;
+        outboundTag = "proxy";
+      };
 
   # Only when the default egress is a proxy, and only for its listeners.
   zapretDirectEnabled =

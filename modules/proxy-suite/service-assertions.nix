@@ -309,13 +309,22 @@ let
       )
       "proxy-suite: a proxyInbounds listener port collides with proxy.tproxy.port (${toString globalTproxy.port})"
     )
+    (mkAssertion
+      (
+        !proxyInboundsEnabled
+        || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
+          [ derived.constants.inboundStatsApiPort ]
+          ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
+        )
+      )
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the inbounds' stats API on ${toString derived.constants.inboundStatsApiPort}, or 18533-18535)"
+    )
   ]
   ++ lib.concatMap (
     ib:
     let
       l = ib.listener;
       prefix = "proxy-suite: inbounds listener '${ib.tag}'";
-      firstUser = if l.users == [ ] then null else builtins.head l.users;
       needsUuid = builtins.elem l.type [
         "vless"
         "vmess"
@@ -327,6 +336,13 @@ let
         "http"
       ];
       tlsTerminated = l.tls.enable || l.type == "trojan";
+      multiUserShadowsocks = l.type == "shadowsocks" && builtins.length l.users > 1;
+      eachUser =
+        condition: fields: message:
+        mkAssertion (
+          !condition
+          || lib.all (user: builtins.length (builtins.filter (f: user.${f} != null) fields) == 1) l.users
+        ) message;
     in
     [
       (exactlyOneOf proxyInboundsEnabled [
@@ -340,14 +356,58 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.type == null || l.users != [ ]
       ) "${prefix}: at least one entry in users is required")
-      (exactlyOneOf (proxyInboundsEnabled && needsUuid && firstUser != null) [
-        firstUser.uuid
-        firstUser.uuidFile
-      ] "${prefix}: ${toString l.type} users need exactly one of uuid or uuidFile")
-      (exactlyOneOf (proxyInboundsEnabled && needsPassword && firstUser != null) [
-        firstUser.password
-        firstUser.passwordFile
-      ] "${prefix}: ${toString l.type} users need exactly one of password or passwordFile")
+      # XRay refuses to start on a repeated email, which is the user's name.
+      (uniqueValues (proxyInboundsEnabled && l.type != null) (builtins.filter (n: n != "") (
+        map (user: user.name) l.users
+      )) "${prefix}: users must each have a distinct name")
+      (eachUser (proxyInboundsEnabled && needsUuid) [
+        "uuid"
+        "uuidFile"
+      ] "${prefix}: ${toString l.type} users each need exactly one of uuid or uuidFile")
+      (eachUser (proxyInboundsEnabled && needsPassword) [
+        "password"
+        "passwordFile"
+      ] "${prefix}: ${toString l.type} users each need exactly one of password or passwordFile")
+      (mkAssertion (
+        !proxyInboundsEnabled || !multiUserShadowsocks || lib.hasPrefix "2022-blake3-aes-" l.method
+      ) "${prefix}: shadowsocks with more than one user needs a 2022-blake3-aes-* method")
+      (exactlyOneOf (proxyInboundsEnabled && multiUserShadowsocks)
+        [
+          l.serverPassword
+          l.serverPasswordFile
+        ]
+        "${prefix}: shadowsocks with more than one user needs exactly one of serverPassword or serverPasswordFile"
+      )
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || !l.reality.enable
+        || builtins.elem l.transport.type [
+          "raw"
+          "xhttp"
+          "grpc"
+        ]
+      ) "${prefix}: reality only runs over the raw, xhttp and grpc transports")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.xrayJson == null || (l.xrayJson.port or l.port) == l.port
+      ) "${prefix}: xrayJson.port and port differ; the firewall and the port checks go by port")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || !proxyInboundsCfg.shareLinks
+        || !l.reality.enable
+        || builtins.elem l.type [
+          "vless"
+          "trojan"
+        ]
+      ) "${prefix}: share links carry reality only for vless and trojan; set inbounds.shareLinks = false to serve it anyway")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || !proxyInboundsCfg.shareLinks
+        || !l.tls.enable
+        || !builtins.elem l.type [
+          "shadowsocks"
+          "socks"
+        ]
+      ) "${prefix}: share links cannot carry tls for ${toString l.type}; set inbounds.shareLinks = false to serve it anyway")
       (exactlyOneOf (proxyInboundsEnabled && l.reality.enable) [
         l.reality.privateKey
         l.reality.privateKeyFile

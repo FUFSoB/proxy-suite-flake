@@ -158,7 +158,7 @@ let
       port = mkOption {
         type = types.port;
         default = 443;
-        description = "Bound port.";
+        description = "Bound port. A raw-JSON listener's port must match it: the firewall and the port checks go by this one.";
       };
 
       sharePort = mkOption {
@@ -194,9 +194,12 @@ let
       method = mkOption {
         type = types.str;
         default = "2022-blake3-aes-128-gcm";
-        description = "Shadowsocks cipher. 2022 ciphers take a base64 key of matching length as password.";
+        description = "Shadowsocks cipher. 2022 ciphers take a base64 key of matching length as password; more than one user needs a 2022-blake3-aes cipher and serverPassword.";
         example = "aes-128-gcm";
       };
+
+      serverPassword = nullStr "Server key of a multi-user shadowsocks 2022 listener, shared by its users. Ends up in the Nix store; prefer serverPasswordFile." "c2VydmVyLWtleS0xNmJ5dGU=";
+      serverPasswordFile = nullStr "Runtime path to the server key." "/run/secrets/proxy-inbound-ss-server-key";
 
       transport = mkOption {
         type = transportType;
@@ -219,14 +222,14 @@ let
       xrayJson = mkOption {
         type = types.nullOr types.attrs;
         default = null;
-        description = "Raw XRay inbound, built into the store; tag is overridden.";
+        description = "Raw XRay inbound, built into the store; tag is overridden and port, if left out, filled in.";
         example = {
           protocol = "dokodemo-door";
           settings.port = 8080;
         };
       };
 
-      jsonFile = nullStr "Runtime path to a raw XRay inbound (no share link); tag is overridden." "/run/secrets/proxy-inbound-vless.json";
+      jsonFile = nullStr "Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in." "/run/secrets/proxy-inbound-vless.json";
     };
   };
 in

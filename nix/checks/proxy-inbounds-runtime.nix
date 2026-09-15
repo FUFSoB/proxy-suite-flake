@@ -8,7 +8,8 @@ let
   # deployments keep these in a secret manager.
   uuid = "b831381d-6324-4d53-ad4f-8cda48b30811";
   ssPassword = "dGhpcy1pcy1hLTE2Ynl0ZS1rZXk=";
-  serverAddress = "192.168.0.1";
+  # Public addresses: blockPrivate would refuse the origin on a private one.
+  serverAddress = "11.0.0.1";
 
   network = address: {
     networking.useDHCP = false;
@@ -72,7 +73,7 @@ pkgs.testers.runNixOSTest {
       {
         imports = [
           proxySuiteModule
-          (network "192.168.0.2")
+          (network "11.0.0.2")
         ];
 
         services.proxy-suite = {
@@ -105,7 +106,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\" and .port == 8443)' {cfg}")
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"ss-in\" and .port == 8388)' {cfg}")
         # Credentials live only in the runtime config, never in the store.
-        server.succeed(f"test $(stat -c %a {cfg}) = 600")
+        server.succeed(f"test $(stat -c %a {cfg}) = 640")
         server.fail("grep -r '${uuid}' /nix/store/*-proxy-suite-inbounds")
 
     with subtest("safety rules are present and ordered first"):

@@ -147,6 +147,7 @@ let
       enableAutoProxy ? false,
       enableOutboundTest ? false,
       enableZapretCutoff ? false,
+      excludeServiceUserFromTun ? false,
     }:
     pkgs.writeShellScript "proxy-suite-core" ''
       set -euo pipefail
@@ -344,6 +345,14 @@ let
         --arg xray_dns_remote_client ${lib.escapeShellArg proxyCfg.dns.remote.address} \
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json"
+      ${lib.optionalString excludeServiceUserFromTun ''
+        # proxy-suite's own daemons (the inbound XRay, replies to its clients included)
+        # stay out of the TUN; the uid is only known on this host.
+        SERVICE_UID=$(${pkgs.coreutils}/bin/id -u ${constants.serviceUser})
+        ${jq} --argjson uid "$SERVICE_UID" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = [$uid]' \
+          "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next"
+        mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
+      ''}
       # The backend runs as ${constants.serviceUser}: its configs are group-readable.
       for backend_config in "$RUNTIME_DIR/config.json" "$RUNTIME_DIR/xray-sidecar.json"; do
         [ -e "$backend_config" ] || continue
@@ -416,6 +425,8 @@ let
     xrayTunDnsRuntime = pureXrayEnabled;
     xraySidecarBasePort = xraySidecarBasePorts.tun;
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
+    # Pure XRay's TUN routes by ip rules instead: see xrayTunUpScript.
+    excludeServiceUserFromTun = !pureXrayEnabled;
   };
 
   startPerAppTun = mkStartScript {

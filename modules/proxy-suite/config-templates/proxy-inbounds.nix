@@ -76,7 +76,20 @@ in
     {
       protocol = "freedom";
       tag = "direct";
-      settings = { };
+      # Checked on the address actually dialed, so a name resolving private is caught too
+      # (routing's geoip:private sees only literal IPs under AsIs). Explicit either way:
+      # XRay's own default blocks private for vless/vmess/trojan/shadowsocks only, which
+      # left socks/http open and ignored blockPrivate = false.
+      settings.finalRules =
+        if derived.proxyInboundsCfg.routing.blockPrivate then
+          [
+            {
+              action = "block";
+              ip = [ "geoip:private" ];
+            }
+          ]
+        else
+          [ { action = "allow"; } ];
     }
     {
       protocol = "blackhole";

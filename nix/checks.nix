@@ -8,7 +8,17 @@
 }:
 
 let
-  pkgs = import nixpkgs { inherit system; };
+  nixpkgsPkgs = import nixpkgs { inherit system; };
+  # lib.hasInfix matches ".*infix.*", which std::regex backtracks through recursively: on
+  # the ~100 KB proxy-ctl script that overflows the evaluator's stack. Splitting on the
+  # bare infix walks the text flat. Only the checks' own pkgs; the modules keep lib as is.
+  pkgs = nixpkgsPkgs // {
+    lib = nixpkgsPkgs.lib.extend (
+      _: super: {
+        hasInfix = infix: content: builtins.length (builtins.split (super.escapeRegex infix) content) > 1;
+      }
+    );
+  };
   parserChecks = import ./checks/parsers.nix { inherit pkgs; };
   checkLib = import ./checks/lib.nix {
     inherit

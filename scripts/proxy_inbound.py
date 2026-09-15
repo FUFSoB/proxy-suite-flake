@@ -50,6 +50,13 @@ def _user_secret(user: dict, listener_type: str, tag: str) -> str:
     return _resolve(user.get("password"), user.get("passwordFile"), "password", tag)
 
 
+def _server_secret(listener: dict, tag: str) -> str:
+    """Server key of a multi-user shadowsocks 2022 listener."""
+    return _resolve(
+        listener.get("serverPassword"), listener.get("serverPasswordFile"), "server password", tag
+    )
+
+
 def _b64(value: str) -> str:
     """base64 without padding, as share links carry it."""
     return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
@@ -150,8 +157,10 @@ def render_xray_inbound(listener: dict) -> dict:
         users = listener["users"]
         if len(users) == 1:
             settings["password"] = _user_secret(users[0], listener_type, tag)
+            settings["email"] = users[0].get("name") or f"{tag}-0"
         else:
-            # Multi-user shadowsocks needs the 2022 ciphers.
+            # Multi-user is 2022-blake3-aes only: the server key, then one key per user.
+            settings["password"] = _server_secret(listener, tag)
             settings["clients"] = _clients(listener, tag)
     elif listener_type in ("socks", "http"):
         settings = {"auth": "password", "accounts": _accounts(listener, tag)}
@@ -240,10 +249,11 @@ def _vmess_link(listener: dict, secret: str, server_address: str, label: str) ->
         "id": secret,
         "aid": "0",
         "scy": "auto",
-        "net": transport["type"],
+        # Clients know plain TCP as "tcp", and take gRPC's service name from path.
+        "net": "tcp" if transport["type"] == "raw" else transport["type"],
         "type": "none",
         "host": transport.get("host") or "",
-        "path": transport["path"],
+        "path": transport["serviceName"] if transport["type"] == "grpc" else transport["path"],
         "tls": "tls" if (tls["enable"] or reality["enable"]) else "",
         "sni": tls.get("serverName") or server_address,
     }
@@ -272,7 +282,15 @@ def build_share_link(listener: dict, server_address: str, user_index: int = 0) -
         return _vmess_link(listener, secret, server_address, label)
 
     if listener_type == "shadowsocks":
-        userinfo = _b64(f"{listener['method']}:{secret}")
+        if len(users) > 1:
+            # SIP022 multi-user: the client presents the server key and its own.
+            secret = f"{_server_secret(listener, tag)}:{secret}"
+        method = listener["method"]
+        # SIP002: 2022 ciphers take the userinfo percent-encoded, the older ones base64.
+        if method.startswith("2022-"):
+            userinfo = f"{method}:{urllib.parse.quote(secret, safe='')}"
+        else:
+            userinfo = _b64(f"{method}:{secret}")
         return f"ss://{userinfo}@{endpoint}#{fragment}"
 
     if listener_type in ("socks", "http"):
@@ -280,7 +298,8 @@ def build_share_link(listener: dict, server_address: str, user_index: int = 0) -
             userinfo = _b64(f"{user_name}:{secret}")
             return f"socks://{userinfo}@{endpoint}#{fragment}"
         credentials = urllib.parse.quote(user_name, safe="") + ":" + urllib.parse.quote(secret, safe="")
-        return f"http://{credentials}@{endpoint}#{fragment}"
+        scheme = "https" if listener["tls"]["enable"] else "http"
+        return f"{scheme}://{credentials}@{endpoint}#{fragment}"
 
     params = _link_transport_params(listener)
     params.update(_link_security_params(listener, server_address))
@@ -298,13 +317,16 @@ def build_listener(listener: dict, server_address: str, share_links: bool) -> di
     """
     tag = listener["tag"]
 
+    raw = listener.get("xrayJson")
     if listener.get("jsonFile") is not None:
         with open(listener["jsonFile"], encoding="utf-8") as handle:
-            inbound = json.load(handle)
-        return {"tag": tag, "inbound": {**inbound, "tag": tag}, "links": []}
-
-    if listener.get("xrayJson") is not None:
-        return {"tag": tag, "inbound": {**listener["xrayJson"], "tag": tag}, "links": []}
+            raw = json.load(handle)
+    if raw is not None:
+        # The firewall and the port checks go by the listener's port, so the JSON must agree.
+        port = raw.get("port", listener["port"])
+        if port != listener["port"]:
+            raise ValueError(f"listener '{tag}': its JSON listens on port {port}, but port is {listener['port']}")
+        return {"tag": tag, "inbound": {**raw, "tag": tag, "port": port}, "links": []}
 
     inbound = render_xray_inbound(listener)
     links = (

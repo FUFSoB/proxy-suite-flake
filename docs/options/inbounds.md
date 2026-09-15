@@ -22,6 +22,8 @@ Part of the [proxy-suite options reference](./index.md).
         - [publicKey](#services-proxy-suite-inbounds-listeners-name-reality-publickey)
         - [serverNames](#services-proxy-suite-inbounds-listeners-name-reality-servernames)
         - [shortIds](#services-proxy-suite-inbounds-listeners-name-reality-shortids)
+      - [serverPassword](#services-proxy-suite-inbounds-listeners-name-serverpassword)
+      - [serverPasswordFile](#services-proxy-suite-inbounds-listeners-name-serverpasswordfile)
       - [sharePort](#services-proxy-suite-inbounds-listeners-name-shareport)
       - [tls](#services-proxy-suite-inbounds-listeners-name-tls)
         - [enable](#services-proxy-suite-inbounds-listeners-name-tls-enable)
@@ -178,7 +180,7 @@ null
 <a id="services-proxy-suite-inbounds-listeners-name-jsonfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.jsonFile
 
-Runtime path to a raw XRay inbound (no share link); tag is overridden\.
+Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in\.
 
 *Type:*
 null or string
@@ -198,7 +200,7 @@ null
 <a id="services-proxy-suite-inbounds-listeners-name-method"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.method
 
-Shadowsocks cipher\. 2022 ciphers take a base64 key of matching length as password\.
+Shadowsocks cipher\. 2022 ciphers take a base64 key of matching length as password; more than one user needs a 2022-blake3-aes cipher and serverPassword\.
 
 *Type:*
 string
@@ -218,7 +220,7 @@ string
 <a id="services-proxy-suite-inbounds-listeners-name-port"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.port
 
-Bound port\.
+Bound port\. A raw-JSON listener’s port must match it: the firewall and the port checks go by this one\.
 
 *Type:*
 16 bit unsigned integer; between 0 and 65535 (both inclusive)
@@ -375,6 +377,46 @@ list of string
 [
   "0123abcd"
 ]
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-serverpassword"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.serverPassword
+
+Server key of a multi-user shadowsocks 2022 listener, shared by its users\. Ends up in the Nix store; prefer serverPasswordFile\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"c2VydmVyLWtleS0xNmJ5dGU="
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-serverpasswordfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.serverPasswordFile
+
+Runtime path to the server key\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"/run/secrets/proxy-inbound-ss-server-key"
 ```
 
 <a id="services-proxy-suite-inbounds-listeners-name-shareport"></a>
@@ -789,7 +831,7 @@ null
 <a id="services-proxy-suite-inbounds-listeners-name-xrayjson"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.xrayJson
 
-Raw XRay inbound, built into the store; tag is overridden\.
+Raw XRay inbound, built into the store; tag is overridden and port, if left out, filled in\.
 
 *Type:*
 null or (attribute set)

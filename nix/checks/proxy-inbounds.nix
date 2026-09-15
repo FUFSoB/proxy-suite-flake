@@ -49,6 +49,18 @@ let
   };
   mixedConfig = mkInboundsConfig mixedFixture;
 
+  # A blocked listener gets neither the proxy exceptions nor serverAddress.
+  blockedFixture = mkInbounds {
+    serverAddress = "vpn.example.com";
+    routing.proxy.domains = [ "telegram.org" ];
+    listeners.open = realityListener;
+    listeners.shut = realityListener // {
+      port = 8443;
+      via = "block";
+    };
+  };
+  blockedConfig = mkInboundsConfig blockedFixture;
+
   # Two listeners, two different servers.
   pinnedFixture = evalProxySuite [
     {
@@ -124,7 +136,7 @@ let
       type = "vless";
       port = 10002;
       sharePort = 443;
-      address = "127.0.0.1";
+      address = "127.0.0.53";
       users = [ { uuidFile = "/run/secrets/ws"; } ];
       transport = {
         type = "ws";
@@ -215,7 +227,76 @@ let
     else
       throw "proxy-inbounds check: expected an assertion matching '${fragment}', got: ${builtins.toJSON (map (a: a.message) failed)}";
 
+  mkRejectsListener =
+    listener:
+    mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.bad = listener;
+        };
+      }
+    );
+
+  ssUsers = [
+    {
+      name = "a";
+      passwordFile = "/run/secrets/a";
+    }
+    {
+      name = "b";
+      passwordFile = "/run/secrets/b";
+    }
+  ];
+
   failing = [
+    (mkRejectsListener (
+      realityListener // { port = 18536; }
+    ) "collides with a port proxy-suite uses internally")
+    # Every user is checked, not only the first.
+    (mkRejectsListener (
+      realityListener // { users = realityListener.users ++ [ { name = "second"; } ]; }
+    ) "users each need exactly one of uuid or uuidFile")
+    (mkRejectsListener {
+      type = "shadowsocks";
+      users = ssUsers;
+    } "needs exactly one of serverPassword or serverPasswordFile")
+    (mkRejectsListener {
+      type = "trojan";
+      users = map (u: u // { name = "same"; }) ssUsers;
+      tls = {
+        certificateFile = "/c";
+        keyFile = "/k";
+      };
+    } "users must each have a distinct name")
+    (mkRejectsListener {
+      type = "shadowsocks";
+      method = "2022-blake3-chacha20-poly1305";
+      serverPasswordFile = "/run/secrets/server";
+      users = ssUsers;
+    } "needs a 2022-blake3-aes-* method")
+    (mkRejectsListener (
+      realityListener
+      // {
+        flow = null;
+        transport.type = "ws";
+      }
+    ) "reality only runs over the raw, xhttp and grpc transports")
+    (mkRejectsListener {
+      xrayJson = {
+        protocol = "dokodemo-door";
+        port = 8080;
+      };
+    } "xrayJson.port and port differ")
+    (mkRejectsListener (
+      realityListener
+      // {
+        type = "vmess";
+        flow = null;
+      }
+    ) "share links carry reality only for vless and trojan")
+
     (mkRejects (
       baseProxy
       // {
@@ -392,6 +473,24 @@ let
         (ruleByTag namedConfig "inbound-server-address-direct").domain == [ "full:vpn.example.ru" ];
       true
     )
+    # Names that resolve private are refused where XRay dials them itself.
+    (
+      assert
+        (lib.findFirst (ob: ob.tag == "direct") null relayConfig.outbounds).settings.finalRules == [
+          {
+            action = "block";
+            ip = [ "geoip:private" ];
+          }
+        ];
+      true
+    )
+    # Only the listener ports, not every service on this host.
+    (
+      assert (ruleByTag namedConfig "inbound-server-address-direct").port == "443";
+      true
+    )
+    (assert (ruleByTag blockedConfig "inbound-proxy-domain").inboundTag == [ "open" ]; true)
+    (assert (ruleByTag blockedConfig "inbound-server-address-direct").inboundTag == [ "open" ]; true)
     # No address to exempt when it is detected at runtime instead.
     (assert !builtins.elem "inbound-server-address-direct" (ruleTags relayConfig); true)
     (

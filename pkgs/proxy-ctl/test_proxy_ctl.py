@@ -690,6 +690,11 @@ class WhereTest(EnvTest):
         self.assertEqual(ctl._where_inbounds(config, "rr1.googlevideo.com", "")[0], "proxy")
         self.assertEqual(ctl._where_inbounds(config, "youtube.com", ""), ("direct", "inbound-zapret-direct-domain (full:youtube.com)"))
         self.assertEqual(ctl._where_inbounds(config, "example.org", "")[0], "proxy")
+        config["routing"]["rules"][2] |= {"inboundTag": ["relay"], "port": "443"}
+        self.assertEqual(
+            ctl._where_inbounds(config, "youtube.com", "")[1],
+            "inbound-zapret-direct-domain (full:youtube.com, listeners relay, ports 443)",
+        )
 
 
 class StatusSnapshotTest(EnvTest):

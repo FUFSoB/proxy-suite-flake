@@ -2144,7 +2144,12 @@ def _where_inbounds(config, domain, geosite_dir):
                     and _where_rule_set_match({"path": os.path.join(geosite_dir, f"geosite-{value}.srs"), "format": "binary"}, domain))
             )
             if matched:
-                return _s(rule.get("outboundTag")), f"{_s(rule.get('ruleTag'))} ({entry})"
+                # A rule held to some listeners or ports says so: the rest go on down the list.
+                scope = "".join(
+                    [f", listeners {','.join(map(_s, rule['inboundTag']))}" if rule.get("inboundTag") else ""]
+                    + [f", ports {_s(rule['port'])}" if rule.get("port") else ""]
+                )
+                return _s(rule.get("outboundTag")), f"{_s(rule.get('ruleTag'))} ({entry}{scope})"
     return "", ""
 
 

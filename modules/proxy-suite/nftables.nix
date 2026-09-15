@@ -6,6 +6,7 @@
 }:
 
 let
+  inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
   perAppTun = cfg.perAppRouting.tun;
@@ -48,6 +49,9 @@ let
               chain prerouting {
                   type filter hook prerouting priority mangle; policy accept;
                   ip daddr $RESERVED_IP return
+                  # Connections to this host itself (inbounds, sshd on a public address)
+                  # are served here, not taken by the tproxy socket.
+                  fib daddr type local return
                   # Packets re-entering via loopback after output marking should not
                   # be skipped just because the host has an RFC1918 source address.
                   iifname != "lo" ip saddr $RESERVED_IP return
@@ -60,6 +64,10 @@ let
                   ip daddr $RESERVED_IP return
         ${tproxyLocalSubnetLines}
                   meta mark ${toString globalTproxy.proxyMark} return
+                  # Replies to connections from outside, and proxy-suite's own daemons (the
+                  # inbound XRay dials unmarked, lacking CAP_NET_ADMIN), leave as they are.
+                  ct direction reply return
+                  meta skuid "${serviceUser}" return
     ${tgWsProxyBypassMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ip protocol tcp meta mark set ${toString globalTproxy.fwmark}
                   ip protocol udp meta mark set ${toString globalTproxy.fwmark}
               }
