@@ -1,6 +1,7 @@
 # Assembles proxy-suite systemd services from the sub-modules.
 {
   config,
+  options,
   lib,
   pkgs,
   packages,
@@ -136,6 +137,11 @@ let
 in
 lib.mkMerge [
   autoProxyUnits
+  # The GUI's pkexec needs its setuid wrapper, off by default since nixpkgs 26.11 (and
+  # always there before, where the option does not exist).
+  (lib.optionalAttrs (options.security.polkit ? enablePkexecWrapper) {
+    security.polkit.enablePkexecWrapper = lib.mkIf (cfg.enable && cfg.gui.enable) true;
+  })
   {
     # See constants.serviceUser.
     users.users.${constants.serviceUser} = {

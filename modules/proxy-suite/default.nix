@@ -10,6 +10,7 @@
 
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -84,6 +85,7 @@ in
         (import ./service {
           inherit
             config
+            options
             lib
             pkgs
             packages
