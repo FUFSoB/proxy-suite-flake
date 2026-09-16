@@ -51,6 +51,11 @@ let
   # The sing-box tunnel; asOutbound = "interface" comes in through the AmneziaWG profile list.
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound == "singBox";
 
+  # Two ports per "singBox" AmneziaWG outbound, above the autoProxy prober's own
+  # listeners (proxy.autoProxy.probeBasePort, 18540 by default, one per exit):
+  # both bind loopback, so an overlap leaves whichever unit starts second dead.
+  awgTunnelBasePort = 18600;
+
   # AmneziaWG profiles are either global (proxy-ctl awg on) or outbounds tagged with their name.
   awgProfiles = lib.optionalAttrs cfg.amneziaWg.enable cfg.amneziaWg.profiles;
   awgGlobalProfiles = lib.filterAttrs (_: profile: profile.asOutbound == null) awgProfiles;
@@ -65,8 +70,8 @@ let
       kind = profile.asOutbound;
       interface = profile.interfaceName;
       # Loopback listeners of a "singBox" tunnel, as warpCfg.tunnelPort/directPort.
-      tunnelPort = 18540 + 2 * index;
-      directPort = 18541 + 2 * index;
+      tunnelPort = awgTunnelBasePort + 2 * index;
+      directPort = awgTunnelBasePort + 1 + 2 * index;
     }
   ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
   awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;

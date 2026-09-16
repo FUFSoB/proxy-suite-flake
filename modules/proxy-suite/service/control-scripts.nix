@@ -102,6 +102,18 @@ let
       if ${curl} -sf -X PUT "${clashApi}/proxies/proxy" \
         -H "Content-Type: application/json" \
         -d "$(${jq} -cn --arg name "$tag" '{name:$name}')" >/dev/null 2>&1; then
+        # A live switch skips the restart that rewrites the inventory, and the pin
+        # is only ever read from there: without this the outbound reads as merely
+        # current, and the front ends offer no unpin until the next restart.
+        if [ -f "${outboundInventoryFile}" ]; then
+          INVENTORY_TMP=$(mktemp "${outboundInventoryFile}.XXXXXX")
+          if ${jq} --arg t "$tag" '.pinned = $t' "${outboundInventoryFile}" > "$INVENTORY_TMP"; then
+            chmod 644 "$INVENTORY_TMP"
+            mv -f "$INVENTORY_TMP" "${outboundInventoryFile}"
+          else
+            rm -f "$INVENTORY_TMP"
+          fi
+        fi
         ${restartActiveBlock tunConsumers}
         exit 0
       fi

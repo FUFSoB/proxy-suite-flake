@@ -36,6 +36,7 @@ Part of the [proxy-suite options reference](./index.md).
         - [mode](#services-proxy-suite-inbounds-listeners-name-transport-mode)
         - [path](#services-proxy-suite-inbounds-listeners-name-transport-path)
         - [serviceName](#services-proxy-suite-inbounds-listeners-name-transport-servicename)
+        - [trustedXForwardedFor](#services-proxy-suite-inbounds-listeners-name-transport-trustedxforwardedfor)
         - [type](#services-proxy-suite-inbounds-listeners-name-transport-type)
       - [type](#services-proxy-suite-inbounds-listeners-name-type)
       - [users](#services-proxy-suite-inbounds-listeners-name-users)
@@ -642,6 +643,36 @@ string
 
 ```nix
 "GunService"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-transport-trustedxforwardedfor"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.trustedXForwardedFor
+
+Header names that mark a request as coming from the web server in front (ws, httpupgrade,
+xhttp, grpc)\. When one of them is present, XRay takes the client address from
+“X-Forwarded-For” instead of the socket\. Needed for a listener on a loopback ` address `:
+XRay otherwise sees 127\.0\.0\.1, which it refuses to record, so ` proxy-ctl inbounds online `
+shows every user as never seen and the stats keep no last-seen time\.
+
+Set it only when the web server in front sets both the named header and “X-Forwarded-For”
+on every request it forwards, overwriting whatever the client sent: any client that can
+reach the listener directly could otherwise claim any address\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "X-Real-IP"
+]
 ```
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-type"></a>

@@ -141,6 +141,25 @@ class SingBoxTest(unittest.TestCase):
         cfg, _ = export.portable(base, only="vps")
         self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["proxy", "direct", "block"])
 
+    def test_kept_loopback_hop_leaves_no_dangling_reference(self):
+        """Asking for a loopback hop drops it, so nothing may still point at it:
+        sing-box stops with "default outbound not found" (which `check` does not catch)."""
+        base = sing_box_config()
+        # No group named "proxy", so the export has to choose the target itself.
+        base["outbounds"] = [
+            {"type": "socks", "tag": "warp", "server": "127.0.0.1", "server_port": 40000, "detour": "vps"},
+            base["outbounds"][0],
+            *base["outbounds"][6:],
+        ]
+        base["route"] = {"rules": [{"domain": ["a.test"], "outbound": "warp"}], "final": "warp"}
+        cfg, warnings = export.portable(base, only="warp")
+        tags = {o["tag"] for o in cfg["outbounds"]}
+        self.assertNotIn("warp", tags)
+        referenced = {r["outbound"] for r in cfg["route"]["rules"]} | {cfg["route"]["final"]}
+        for o in cfg["outbounds"]:
+            referenced |= set(o.get("outbounds") or [])
+        self.assertEqual(referenced - tags, set(), warnings)
+
     def test_nothing_portable(self):
         base = sing_box_config()
         base["outbounds"] = base["outbounds"][2:4] + base["outbounds"][6:]

@@ -275,4 +275,39 @@ lib.mkMerge [
 
     systemd.timers = mkNamedUnits timerEntries;
   }
+
+  # A certificate or key XRay cannot read is copied in at start (proxy-inbounds-scripts.nix),
+  # and a copy never sees a renewal: restart the inbounds when a declared one changes.
+  # ponytail: files named only inside xrayJson are not watched; declare tls.* for those.
+  (
+    let
+      certFiles = lib.unique (
+        lib.concatMap (
+          l:
+          lib.filter (f: f != null) [
+            l.tls.certificateFile
+            l.tls.keyFile
+          ]
+        ) (builtins.attrValues cfg.inbounds.listeners)
+      );
+    in
+    lib.mkIf (cfg.enable && proxyInboundsEnabled && certFiles != [ ]) {
+      systemd.paths.proxy-suite-inbounds-certs = {
+        description = "proxy-suite - watch the inbounds' TLS certificates for renewals";
+        wantedBy = [ "paths.target" ];
+        pathConfig.PathChanged = certFiles;
+      };
+      systemd.services.proxy-suite-inbounds-certs = {
+        description = "proxy-suite - restart the inbounds onto a renewed certificate";
+        serviceConfig.Type = "oneshot";
+        script = ''
+          # XRay reloads the files it reads itself; only copies go stale.
+          [ -d /run/proxy-suite-inbounds/tls ] || exit 0
+          # A renewal writes the chain and the key one after the other.
+          sleep 10
+          ${pkgs.systemd}/bin/systemctl try-restart proxy-suite-inbounds.service
+        '';
+      };
+    }
+  )
 ]

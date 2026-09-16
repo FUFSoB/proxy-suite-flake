@@ -27,6 +27,26 @@ def _qs(query: str) -> dict:
     return dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
 
 
+# Panels write the unset half of a share link as "&sni=&host=&path=", so a blank
+# parameter is an absent one: "sni=" must fall back to the server name, not blank
+# out the SNI, and "host=" must not become an empty Host header.
+def _param(params: dict, name: str, default: str = "") -> str:
+    return params.get(name) or default
+
+
+# sing-box stores a port as uint16 and refuses to start on anything else, so one
+# bad share link would otherwise take the whole config down with it, the same way
+# an unknown transport or fingerprint would (see _check_transport below).
+def _port(value) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid port '{value}'") from None
+    if not 1 <= port <= 65535:
+        raise ValueError(f"port {port} is out of range (1-65535)")
+    return port
+
+
 def _split_host_port(hostpart: str) -> tuple[str, str]:
     host, separator, port = hostpart.rpartition(":")
     if not separator or not host or not port:
@@ -155,10 +175,17 @@ SING_BOX_FINGERPRINTS = {
 }
 
 
+# Panels write alpn either as "h2,http/1.1" or as a JSON list; str() on the list
+# would hand sing-box "['h2'" as an ALPN value and break the handshake.
+def _alpn(value) -> list:
+    values = value if isinstance(value, list) else str(value).split(",")
+    return [str(a).strip() for a in values if str(a).strip()]
+
+
 def _mk_tls(
     server_name: str,
     fp: "str | None" = None,
-    alpn: "str | None" = None,
+    alpn=None,
     backend: str = "sing-box",
 ) -> dict:
     tls: dict = {"enabled": True, "server_name": server_name}
@@ -169,20 +196,22 @@ def _mk_tls(
             )
         tls["utls"] = {"enabled": True, "fingerprint": fp}
     if alpn:
-        tls["alpn"] = alpn.split(",")
+        tls["alpn"] = _alpn(alpn)
     return tls
 
 
+# SOCKS4 authenticates with a bare userid, so "socks4://me@host:1080" carries a
+# username and no password; dropping it made the outbound connect anonymously.
 def _mk_auth(userinfo: str) -> "tuple[str | None, str | None]":
-    if userinfo and ":" in userinfo:
-        username, _, password = userinfo.partition(":")
-        return urllib.parse.unquote(username), urllib.parse.unquote(password)
-    return None, None
+    if not userinfo:
+        return None, None
+    username, separator, password = userinfo.partition(":")
+    return urllib.parse.unquote(username), urllib.parse.unquote(password) if separator else None
 
 
 def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
-    security = params.get("security", "none")
+    security = _param(params, "security", "none")
 
     if "ech" in params and backend != "xray":
         raise ValueError(
@@ -191,22 +220,22 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
         )
 
     normalized_transport = _check_transport(
-        params.get("type", "tcp"), backend, "VLESS"
+        _param(params, "type", "tcp"), backend, "VLESS"
     )
 
     ob: dict = {
         "type": "vless",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "uuid": userinfo,
         "packet_encoding": "xudp",
     }
 
     if security == "reality":
         ob["tls"] = _mk_tls(
-            params.get("sni", host),
-            fp=params.get("fp") or "chrome",
+            _param(params, "sni", host),
+            fp=_param(params, "fp", "chrome"),
             backend=backend,
         )
         ob["tls"]["reality"] = {
@@ -218,7 +247,7 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
             ob["tls"]["reality"]["spider_x"] = params["spx"]
     elif security == "tls":
         ob["tls"] = _mk_tls(
-            params.get("sni", host),
+            _param(params, "sni", host),
             fp=params.get("fp"),
             alpn=params.get("alpn"),
             backend=backend,
@@ -228,8 +257,8 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
 
     tr = _mk_transport(
         normalized_transport,
-        path=params.get("path", "/"),
-        host_header=params.get("host", host),
+        path=_param(params, "path", "/"),
+        host_header=_param(params, "host", host),
         service_name=params.get("serviceName", ""),
         mode=params.get("mode", ""),
         extra=params.get("extra", ""),
@@ -257,7 +286,7 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
         data = json.loads(base64.urlsafe_b64decode(b64 + pad))
 
     host = str(data["add"])
-    port = int(data["port"])
+    port = _port(data["port"])
     net = _check_transport(str(data.get("net", "tcp")), backend, "VMess")
     tls_field = str(data.get("tls", ""))
     sni = str(data.get("sni") or data.get("host") or host)
@@ -268,15 +297,16 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
         "server": host,
         "server_port": port,
         "uuid": data["id"],
-        "security": data.get("scy", "auto"),
-        "alter_id": int(data.get("aid", 0)),
+        # Panels write unset fields as "": that is the default, not a value.
+        "security": data.get("scy") or "auto",
+        "alter_id": int(data.get("aid") or 0),
     }
 
     if tls_field in ("tls", "reality"):
         ob["tls"] = _mk_tls(
             sni,
             fp=str(data["fp"]) if data.get("fp") else None,
-            alpn=str(data["alpn"]) if data.get("alpn") else None,
+            alpn=data.get("alpn") or None,
             backend=backend,
         )
 
@@ -297,16 +327,16 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
 
 def parse_trojan(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "trojan")
-    transport = _check_transport(params.get("type", "tcp"), backend, "Trojan")
+    transport = _check_transport(_param(params, "type", "tcp"), backend, "Trojan")
 
     ob: dict = {
         "type": "trojan",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "password": urllib.parse.unquote(userinfo),
         "tls": _mk_tls(
-            params.get("sni", host),
+            _param(params, "sni", host),
             fp=params.get("fp"),
             alpn=params.get("alpn"),
             backend=backend,
@@ -315,8 +345,8 @@ def parse_trojan(url: str, tag: str, backend: str = "sing-box") -> dict:
 
     tr = _mk_transport(
         transport,
-        path=params.get("path", "/"),
-        host_header=params.get("host", host),
+        path=_param(params, "path", "/"),
+        host_header=_param(params, "host", host),
         service_name=params.get("serviceName", ""),
     )
     if tr is not None:
@@ -368,7 +398,7 @@ def parse_shadowsocks(url: str, tag: str) -> dict:
         "type": "shadowsocks",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "method": method,
         "password": password,
     }
@@ -382,11 +412,11 @@ def parse_hysteria2(url: str, tag: str) -> dict:
         "type": "hysteria2",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "password": urllib.parse.unquote(userinfo),
         "tls": {
             "enabled": True,
-            "server_name": params.get("sni", host),
+            "server_name": _param(params, "sni", host),
             "insecure": params.get("insecure", "0") == "1",
         },
     }
@@ -400,20 +430,20 @@ def parse_hysteria2(url: str, tag: str) -> dict:
 def parse_tuic(url: str, tag: str) -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "tuic")
     uuid, _, password = userinfo.partition(":")
-    alpn = [a for a in params.get("alpn", "h3").split(",") if a]
+    alpn = _alpn(_param(params, "alpn", "h3"))
 
     return {
         "type": "tuic",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "uuid": uuid,
         "password": urllib.parse.unquote(password),
-        "congestion_control": params.get("congestion_control", "bbr"),
-        "udp_relay_mode": params.get("udp_relay_mode", "native"),
+        "congestion_control": _param(params, "congestion_control", "bbr"),
+        "udp_relay_mode": _param(params, "udp_relay_mode", "native"),
         "tls": {
             "enabled": True,
-            "server_name": params.get("sni", host),
+            "server_name": _param(params, "sni", host),
             "alpn": alpn,
         },
     }
@@ -431,7 +461,7 @@ def parse_anytls(url: str, tag: str) -> dict:
         "type": "anytls",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "password": urllib.parse.unquote(userinfo),
         "tls": tls,
     }
@@ -445,13 +475,14 @@ def parse_naive(url: str, tag: str) -> dict:
         "type": "naive",
         "tag": tag,
         "server": host,
-        "server_port": int(port),
+        "server_port": _port(port),
         "tls": {"enabled": True, "server_name": params.get("sni") or host},
     }
     username, password = _mk_auth(userinfo)
     if username is not None:
         ob["username"] = username
-        ob["password"] = password
+        if password is not None:
+            ob["password"] = password
     if scheme == "naive+quic":
         ob["quic"] = True
     return ob
@@ -466,9 +497,10 @@ def parse_socks(url: str, tag: str) -> dict:
     username, password = _mk_auth(userinfo)
     if username is not None:
         ob["username"] = username
-        ob["password"] = password
+        if password is not None:
+            ob["password"] = password
     ob["server"] = host
-    ob["server_port"] = int(port)
+    ob["server_port"] = _port(port)
 
     return ob
 
@@ -481,9 +513,10 @@ def parse_http_proxy(url: str, tag: str) -> dict:
     username, password = _mk_auth(userinfo)
     if username is not None:
         ob["username"] = username
-        ob["password"] = password
+        if password is not None:
+            ob["password"] = password
     ob["server"] = host
-    ob["server_port"] = int(port)
+    ob["server_port"] = _port(port)
 
     if scheme == "https":
         ob["tls"] = {"enabled": True, "server_name": host}

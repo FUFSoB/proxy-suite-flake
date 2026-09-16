@@ -40,7 +40,10 @@ let
     xraySidecarBasePorts
     ;
 
-  autoProxyRender = import ../autoproxy-render.nix { inherit pkgs; };
+  autoProxyRender = import ../autoproxy-render.nix {
+    inherit pkgs;
+    inherit (constants) serviceUser;
+  };
   runBackend = constants.runAsServiceUser pkgs constants.backendCaps;
   userControlGroup = lib.escapeShellArg userControlCfg.group;
   chgrp = "${pkgs.coreutils}/bin/chgrp";
@@ -171,9 +174,13 @@ let
       ${hybridRuntimeHelpersBlock routingMark xraySidecarBasePort xrayDnsBridgePort}
       ${subscriptionCacheHelpersBlock}
       ${lib.optionalString enableLocalProxyAuth ''
-        umask 077
         LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
-        ${writeProxychainsConfigBlock}
+        # The umask stays in the subshell: left set, it also narrowed everything
+        # written below, and autoProxy's state.json is group-readable by design.
+        (
+          umask 077
+          ${writeProxychainsConfigBlock}
+        )
       ''}
       ${lib.optionalString xrayEnabled ''
         if [ -r "${xrayLoglevelFile}" ]; then
@@ -210,7 +217,7 @@ let
       AUTOPROXY_RULES_JSON='[]'
       ${lib.optionalString enableAutoProxy ''
         AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
-        # 0751: sing-box, running as ${constants.serviceUser}, reads the rule-sets inside;
+        # 0751: sing-box, running as ${constants.serviceUser}, reaches the rules/ inside;
         # 0771 with userControl's autoProxy scope, whose group queues learn requests there.
         install -d -m ${if userControlAllows "autoProxy" then "0771" else "0751"} "$AUTOPROXY_DIR"
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
@@ -225,7 +232,7 @@ let
           | to_entries
           | map({i: .key, tag: .value, port: ($base + .key),
                  rule_set: ("autoproxy-" + (.key | tostring)),
-                 path: ($dir + "/rs-" + (.key | tostring) + ".json")})
+                 path: ($dir + "/rules/rs-" + (.key | tostring) + ".json")})
         ' <<< "$EXIT_TAGS_JSON")
         printf '%s\n' "$PROBE_EXITS_JSON" > "$RUNTIME_DIR/probe-exits.json"
         # proxy-ctl reads it unprivileged; it holds tags and loopback ports only.

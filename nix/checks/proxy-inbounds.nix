@@ -568,6 +568,13 @@ let
     (assert !builtins.elem "proxy-suite-socks.service" (service exitFixture).after; true)
     # Not `requires`: direct-routed listeners keep serving if the client is down.
     (assert (service relayFixture).requires == [ ]; true)
+    # A stop collects what XRay counted since the last timer run.
+    (
+      assert
+        (service relayFixture).serviceConfig.ExecStop
+        == relayFixture.config.systemd.services."proxy-suite-inbound-stats".serviceConfig.ExecStart;
+      true
+    )
 
     # The collected stats are group-readable with userControl, root-only without.
     (

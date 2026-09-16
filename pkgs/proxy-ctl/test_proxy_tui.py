@@ -3,6 +3,8 @@
 
 import asyncio
 import contextlib
+import io
+import signal
 import tempfile
 import unittest
 from unittest import mock
@@ -59,6 +61,19 @@ class TuiTest(unittest.TestCase):
             _subscription_proxy_count_text=lambda path: "3",
         ):
             self.assertEqual(model.subscription_rows({})[0]["updated"], "0m ago")
+
+    def test_retry_root_leaves_sigint_to_sudo(self):
+        """Ctrl-C at sudo's password prompt is sudo's: raised here it would take the TUI down with it."""
+        app = mock.MagicMock(retry=("run", ["proxy", "on"]))
+        app.suspend.return_value = contextlib.nullcontext()
+        before, during = signal.getsignal(signal.SIGINT), []
+        with mock.patch.object(tui.subprocess, "Popen") as popen, contextlib.redirect_stdout(io.StringIO()):
+            popen.return_value.stdout = iter(["done\n"])
+            popen.return_value.wait.side_effect = lambda: during.append(signal.getsignal(signal.SIGINT)) or 0
+            tui.ProxyTui.action_retry_root(app)
+        self.assertEqual(during, [signal.SIG_IGN])
+        self.assertEqual(signal.getsignal(signal.SIGINT), before)
+        self.assertEqual(app.finish.call_args.args[-2:], (["done"], 0))
 
     def test_filter_sort_pack(self):
         rows = [{"key": "a", "host": "a.example", "kind": "learned"}, {"key": "b", "host": "learned.org", "kind": "pinned"}]
@@ -197,6 +212,15 @@ class TuiTest(unittest.TestCase):
             await self.settle(app, pilot)
             self.assertIn("Nothing here yet.   n: add a runtime subscription", str(app.main.query_one("#subs-summary").content))
 
+            # A tab that cannot read its state says so instead, and how to get the rights for it.
+            with mock.patch.object(ctl, "_runtime_hidden", lambda kind: "/var/lib/proxy-suite/subscriptions.d"), \
+                    mock.patch.object(model.os, "geteuid", lambda: 1000):
+                app.action_reload()
+                await self.settle(app, pilot)
+                summary = str(app.main.query_one("#subs-summary").content)
+            self.assertIn("✗ Cannot read /var/lib/proxy-suite/subscriptions.d", summary)
+            self.assertIn("#: run proxy-tui as root", summary)
+
             # zapret: an excluded host can be included again, not forgotten.
             # Brackets in a summary are text, not markup.
             self.env["ZAPRET_CUTOFF_ENABLED"] = "1"
@@ -282,6 +306,12 @@ class TuiTest(unittest.TestCase):
 
             # A copy only root may make offers ! to retry it under sudo, and still copies.
             with mock.patch.object(model.os, "geteuid", lambda: 1000):
+                # The bar is one line: a long error is ellipsized, what to press next is not.
+                app.finish("proxy-ctl proxy tun on", ["proxy", "tun", "on"], None, False, [f"Cannot read {'x' * 300} - re-run with sudo."], 1)
+                content = str(app.main.query_one("#feedback").content)
+                self.assertIn("!: retry as root", content)
+                self.assertIn("…", content)
+
                 app.finish("proxy-ctl proxy outbounds link b", ["proxy", "outbounds", "link", "b"], None, True, ["Cannot read x - re-run with sudo."], 1)
                 self.assertIn("!: retry as root", str(app.main.query_one("#feedback").content))
                 sudo = mock.Mock(stdout=iter(["vless://b\n"]), **{"wait.return_value": 0})

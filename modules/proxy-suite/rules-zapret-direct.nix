@@ -87,11 +87,28 @@ let
     ++ (if syncZapretDirectUserIps then zapretCfg.zapret-discord-youtube.excludeIps else [ ])
   );
 
+  # A zapret hostlist marks an exact-match entry with "^" (nfqws syntax, used by
+  # list-general.txt for the DoH resolvers). No proxy backend has such a prefix, so
+  # "^dns.google" copied straight through matches nothing and the entry silently
+  # stops bypassing; as a plain suffix it covers the name itself, which is the point.
+  # The generated nfqws hostlists keep the prefix: only the routing sync drops it.
+  stripExactPrefix = lib.removePrefix "^";
+
   zapretDirectDomains =
     if syncZapretDirectDomains then
-      subtractItems (lib.unique (zapretDefaultDomains ++ zapretCfg.zapret-discord-youtube.domains ++ zapretCustomDomains)) (
-        lib.unique (zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains)
-      )
+      subtractItems
+        (lib.unique (
+          map stripExactPrefix (
+            zapretDefaultDomains ++ zapretCfg.zapret-discord-youtube.domains ++ zapretCustomDomains
+          )
+        ))
+        (
+          lib.unique (
+            map stripExactPrefix (
+              zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains
+            )
+          )
+        )
     else
       [ ];
   zapretDirectIps =

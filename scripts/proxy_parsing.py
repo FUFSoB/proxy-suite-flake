@@ -211,6 +211,12 @@ def build_outbound(
     return outbound
 
 
+# A subscription is a list of share links; the biggest real ones are tens of KiB.
+# Read runs as root at service start, so a server that never stops sending must not
+# take the whole proxy down with it.
+MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
+
+
 def fetch_raw(url: str) -> bytes:
     # urlopen also speaks file:, ftp: and data:. This runs as root over a URL that
     # reaches it from a group-writable spool, so only the two a subscription is
@@ -222,12 +228,17 @@ def fetch_raw(url: str) -> bytes:
         headers={"User-Agent": "v2rayN/6.0"},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return response.read()
+        data = response.read(MAX_SUBSCRIPTION_BYTES + 1)
+    if len(data) > MAX_SUBSCRIPTION_BYTES:
+        raise ValueError(f"subscription is larger than {MAX_SUBSCRIPTION_BYTES} bytes")
+    return data
 
 
 def decode_subscription(data: bytes) -> list[str]:
     text = None
-    stripped = data.strip()
+    # Line-wrapped and URL-safe base64 both occur; the lenient decoder would drop
+    # "-" and "_" as junk instead of reading them as "+" and "/".
+    stripped = b"".join(data.split()).translate(bytes.maketrans(b"-_", b"+/"))
     try:
         pad = b"=" * (-len(stripped) % 4)
         decoded = base64.b64decode(stripped + pad).decode("utf-8")

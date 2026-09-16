@@ -121,7 +121,6 @@ CELL_STYLES = {
     "pinned": "cyan",
     "excluded": "dim",
     "queued": "yellow",
-    "online": "green",
 }
 
 
@@ -496,6 +495,9 @@ class ProxyTui(App):
     def fill(self, tab_id, states, visible, status, rows, summary):
         self.loaded[tab_id] = (states, visible, status, rows, summary)
         self.states, self.status = states, status
+        # A read root could do: ! retries runs, not reads, so the way out is the whole TUI under sudo.
+        if summary.startswith("✗") and model.needs_root(summary.splitlines(), 1):
+            summary += "\n#: run proxy-tui as root (sudo)"
         self.show_status()
         if visible != self.shown:
             self.show_tabs(visible)
@@ -711,15 +713,14 @@ class ProxyTui(App):
             message = f"exit {status}: {message}"
             if dialog:
                 dialog.write(f"\x1b[31m(exit status {status})\x1b[0m")
-        if len(out) > 1 and not dialog:
-            message += "  · o: full output"
+        hints = ["o: full output"] if len(out) > 1 and not dialog else []
         self.retry = None
         if model.needs_root(out, status):
             self.retry = ("dialog" if dialog else "copy" if copy else "run", argv)
-            message = f"{message}  · !: retry as root"
+            hints.append("!: retry as root")
             if dialog:
                 dialog.offer_retry()
-        self.feedback(message, status == 0)
+        self.feedback(message, status == 0, hints)
         self.action_reload()
 
     def action_retry_root(self):
@@ -730,20 +731,25 @@ class ProxyTui(App):
         command = f"sudo proxy-ctl {shlex.join(argv)}"
         root_argv = model.elevated(argv, "sudo")
         # sudo asks on the terminal, so the run happens there; the output comes back as usual.
-        out, p = [], None
+        out = []
         with self.suspend():
             print(f"$ {command}", flush=True)
             try:
                 p = subprocess.Popen(root_argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
-                for line in p.stdout:
-                    print(line, end="", flush=True)
-                    out.append(line.rstrip("\n"))
-                status = p.wait()
             except OSError as e:
-                out.append(f"cannot run sudo: {e}")
-                status = 127
-            except KeyboardInterrupt:  # the terminal's Ctrl-C reached sudo too
-                status = p.wait() if p else 130
+                p, status, out = None, 127, [f"cannot run sudo: {e}"]
+            if p:
+                # Ctrl-C at sudo's password prompt is sudo's to handle: raised here it would
+                # escape the app and take the TUI down. Set after the fork, so sudo inherits
+                # the handler it needs, as ctl._run_foreground does.
+                old = signal.signal(signal.SIGINT, signal.SIG_IGN)
+                try:
+                    for line in p.stdout:
+                        print(line, end="", flush=True)
+                        out.append(line.rstrip("\n"))
+                    status = p.wait()
+                finally:
+                    signal.signal(signal.SIGINT, old)
         dialog = Output(command, wrap="--qr" not in argv) if mode == "dialog" else None
         if dialog:
             self.push_screen(dialog)
@@ -763,10 +769,15 @@ class ProxyTui(App):
 
         self.push_screen(Confirm("sudo proxy-tui"), switch)
 
-    def feedback(self, message, ok=None):
+    def feedback(self, message, ok=None, hints=()):
+        """The bar is one line: what to press next is pinned, so only the message is ellipsized."""
         icon, style = {True: ("✓ ", "green"), False: ("✗ ", "red"), None: ("", "")}[ok]
+        text = Text(icon + message, style=style, no_wrap=True, overflow="ellipsis")
+        if tail := "".join(f"  · {h}" for h in hints):
+            text.truncate(max(len(icon) + 1, self.size.width - 2 - len(tail)), overflow="ellipsis")
+            text.append(tail, ACCENT)  # a rich style: the theme's ansi_* names are markup, not rich colors
         bar = self.main.query_one("#feedback", Static)
-        bar.update(Text(icon + message, style=style, no_wrap=True, overflow="ellipsis"))
+        bar.update(text)
         bar.display = True
         if self.feedback_timer:
             self.feedback_timer.stop()

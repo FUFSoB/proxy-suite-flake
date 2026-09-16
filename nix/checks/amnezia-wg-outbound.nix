@@ -117,12 +117,12 @@ in
     )
     # "singBox": a tunnel unit behind a loopback SOCKS hop, fed the prepared profile.
     (
-      assert hasInfix ''"server":"127.0.0.1","server_port":18542,"tag":"plain","type":"socks"''
+      assert hasInfix ''"server":"127.0.0.1","server_port":18602,"tag":"plain","type":"socks"''
         singBoxStart;
       assert hasInfix "_proxy_suite_record_tag_source plain awg" singBoxStart;
       assert hasInfix "--output \"$profile\"" plainTunnel && !(hasInfix "--outbound-fwmark" plainTunnel);
       assert hasInfix "warp_outbound.py --tag plain --routing-mark 2" plainTunnel;
-      assert hasInfix "listen_port: 18542" plainTunnel;
+      assert hasInfix "listen_port: 18602" plainTunnel;
       assert hasInfix ''detour: "plain"'' plainTunnel;
       assert !(services ? proxy-suite-awg-plain-watchdog);
       true

@@ -79,6 +79,17 @@ class BuildOutboundTests(unittest.TestCase):
         )
         self.assertEqual(ob["server_port"], 23576)
 
+    def test_port_out_of_range_is_rejected(self):
+        """sing-box stores it as uint16 and refuses to start, so one bad entry in a
+        subscription would take every other outbound down with it."""
+        for url in (
+            "vless://uuid@example.com:70000?type=tcp",
+            "trojan://pw@example.com:0",
+            "ss://YWVzLTI1Ni1nY206cHc@example.com:99999",
+        ):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "out of range"):
+                build_outbound(url, "test-outbound")
+
     def test_reality_empty_fingerprint_falls_back_to_chrome(self):
         # sing-box's REALITY client refuses to start without a uTLS block.
         ob = run_parser(
@@ -192,6 +203,33 @@ class BuildOutboundTests(unittest.TestCase):
         ob = run_parser(f"vmess://{encoded}#Subscription Remark")
         self.assertEqual(ob["type"], "vmess")
         self.assertEqual(ob["server"], "vmess.example.com")
+
+    def test_vmess_blank_fields_are_defaults(self):
+        payload = {"add": "vmess.example.com", "port": 443, "id": "u", "aid": "", "scy": ""}
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        ob = run_parser(f"vmess://{encoded}")
+        self.assertEqual((ob["alter_id"], ob["security"]), (0, "auto"))
+
+    def test_socks4_keeps_its_bare_userid(self):
+        ob = run_parser("socks4://me@10.0.0.1:1080")
+        self.assertEqual((ob["version"], ob["username"]), ("4", "me"))
+        self.assertNotIn("password", ob)
+
+    def test_blank_parameters_fall_back_to_the_server(self):
+        # Panels emit "&sni=&host=&path=" for everything left unset.
+        ob = run_parser("vless://uuid@example.com:443?security=tls&sni=&type=ws&host=&path=")
+        self.assertEqual(ob["tls"]["server_name"], "example.com")
+        self.assertEqual(ob["transport"]["headers"]["Host"], "example.com")
+        self.assertEqual(ob["transport"]["path"], "/")
+        tuic = run_parser("tuic://uuid:pw@example.com:443?alpn=&congestion_control=&udp_relay_mode=")
+        self.assertEqual(tuic["tls"]["alpn"], ["h3"])
+        self.assertEqual((tuic["congestion_control"], tuic["udp_relay_mode"]), ("bbr", "native"))
+
+    def test_vmess_alpn_list_and_string_agree(self):
+        as_list = run_parser(vmess_url({"tls": "tls", "alpn": ["h2", "http/1.1"]}))
+        as_text = run_parser(vmess_url({"tls": "tls", "alpn": "h2, http/1.1"}))
+        self.assertEqual(as_list["tls"]["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(as_text["tls"]["alpn"], ["h2", "http/1.1"])
 
     def test_trojan(self):
         ob = run_parser("trojan://secret@example.com:443?sni=tls.example.com&fp=chrome")

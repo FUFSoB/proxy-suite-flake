@@ -51,6 +51,15 @@ class FetchSubscriptionTests(unittest.TestCase):
         types = {ob["type"] for ob in obs}
         self.assertEqual(types, {"vless", "shadowsocks", "hysteria2"})
 
+    def test_urlsafe_and_wrapped_base64_payloads(self):
+        text = "\n".join([VLESS_URI, SS_URI, HY2_URI]).encode() + b"~?>"
+        urlsafe = base64.urlsafe_b64encode(text).rstrip(b"=")
+        self.assertTrue(b"-" in urlsafe or b"_" in urlsafe)
+        std = base64.b64encode(text)
+        wrapped = b"\r\n".join(std[i : i + 76] for i in range(0, len(std), 76))
+        for payload in (urlsafe, wrapped):
+            self.assertEqual(len(run_fetcher(payload)), 3)
+
     def test_plain_text_payload(self):
         payload = "\n".join([VLESS_URI, SS_URI]).encode()
         obs = run_fetcher(payload)

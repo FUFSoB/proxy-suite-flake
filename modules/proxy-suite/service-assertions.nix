@@ -56,6 +56,23 @@ let
     condition: value: disallowed: message:
     mkAssertion (!(condition && builtins.elem value disallowed)) message;
 
+  # Every loopback listener proxy-suite opens with a fixed port of its own, which
+  # the autoProxy prober's range must stay clear of.
+  reservedLoopbackPorts =
+    builtins.attrValues constants.xrayDnsBridgePorts
+    ++ [
+      constants.inboundStatsApiPort
+      constants.outboundTestPort
+    ]
+    ++ lib.optionals derived.warpOutboundEnabled [
+      derived.warpCfg.tunnelPort
+      derived.warpCfg.directPort
+    ]
+    ++ lib.concatMap (ob: [
+      ob.tunnelPort
+      ob.directPort
+    ]) (builtins.filter (ob: ob.kind == "singBox") derived.awgOutbounds);
+
   featureAssertions = [
     # Declaring no outbound at all is legal: they can be added at runtime with
     # `proxy-ctl proxy outbounds add`. Only a warning here; the backend still
@@ -321,6 +338,22 @@ let
         )
       )
       "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the inbounds' stats API on ${toString derived.constants.inboundStatsApiPort}, or 18533-18535)"
+    )
+    # The prober opens one loopback listener per exit from probeBasePort; the WARP
+    # and AmneziaWG tunnels open two each from their own bases. They all bind
+    # 127.0.0.1, so an overlap leaves whichever unit starts second dead.
+    (mkAssertion
+      (
+        !(proxyEnabled && proxyCfg.autoProxy.enable)
+        || !lib.any (
+          port:
+          port >= proxyCfg.autoProxy.probeBasePort
+          && port < proxyCfg.autoProxy.probeBasePort + proxyCfg.autoProxy.maxExits
+        ) reservedLoopbackPorts
+      )
+      "proxy-suite: proxy.autoProxy.probeBasePort ${toString proxyCfg.autoProxy.probeBasePort} and the next ${toString proxyCfg.autoProxy.maxExits} ports cover one proxy-suite already listens on (${
+        lib.concatMapStringsSep ", " toString reservedLoopbackPorts
+      }); move probeBasePort"
     )
   ]
   ++ lib.concatMap (

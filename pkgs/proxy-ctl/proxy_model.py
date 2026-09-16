@@ -212,17 +212,28 @@ def subscription_rows(_):
             count = ctl._subscription_proxy_count_text(cache) if cached else "-"
             updated = ctl._ago(int(os.path.getmtime(cache)), int(time.time())) + " ago" if cached else "-"
             rows.append({"key": t, "tag": t, "proxies": count, "updated": updated, "source": source})
+    # Nothing visible and the runtime entries out of reach: an error, not an empty tab.
+    if not rows and (hidden := ctl._runtime_hidden("subscription")):
+        ctl.denied(hidden)
     return rows
 
 
 def subscription_summary():
     text = f"{ctl.SUBSCRIPTION_UPDATE}: {ctl.svc_state(ctl.SUBSCRIPTION_UPDATE) or 'unknown'}"
     next_run = ctl._timer_next_run(f"{ctl.SUBSCRIPTION_UPDATE}.timer")
-    return text + (f", next update {ctl._in_time(next_run)}" if next_run else "")
+    text += f", next update {ctl._in_time(next_run)}" if next_run else ""
+    # The path is left out: an empty tab already names it in its "✗ Cannot read" line.
+    if ctl._runtime_hidden("subscription"):
+        text += f"\nRuntime subscriptions are not listed - {ctl.ask_group()}."
+    return text
 
 
 def autoproxy_rows(_):
-    state = ctl._autoproxy_state(ctl._autoproxy_dir())
+    path = ctl._autoproxy_dir()
+    # Unreadable is not empty: without the autoProxy scope the state stays root-only.
+    if blocked := ctl._autoproxy_unreadable(path):
+        ctl.denied(blocked)
+    state = ctl._autoproxy_state(path)
     domains = state.get("domains") or {}
     rows = [
         {"key": d, "domain": d, "kind": "routed", "detail": f"via {ctl._s((v or {}).get('exit'))}"}
@@ -271,15 +282,13 @@ def _cutoff_status():
 
 
 def inbound_rows(_):
-    links = ctl._inbound_links()
-    # One XRay API call per load, and only while this tab loads; empty when the API is not answering.
-    presence = _safe(ctl._inbound_presence, fallback=None) or {}
-    rows = []
-    for x in links:
-        row = {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
-        row["online"] = (presence.get(row["user"]) or ("",))[0]
-        rows.append(row)
-    return rows
+    # No presence column: XRay keys the online map by user alone (no inbound dimension),
+    # so a per-listener row could only repeat the same verdict once per listener. The
+    # "who is online" action shows it once per user, which is the shape the data has.
+    return [
+        {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
+        for x in ctl._inbound_links()
+    ]
 
 
 def app_rows(_):
@@ -485,7 +494,7 @@ TABS = [
         "inbounds",
         "Inbounds",
         _enabled("INBOUNDS_ENABLED"),
-        [("tag", "Tag"), ("user", "User"), ("type", "Type"), ("port", "Port"), ("online", "Online")],
+        [("tag", "Tag"), ("user", "User"), ("type", "Type"), ("port", "Port")],
         inbound_rows,
         summary=lambda: f"proxy-suite-inbounds: {ctl.svc_state('proxy-suite-inbounds') or 'unknown'}",
         actions=[

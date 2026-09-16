@@ -105,7 +105,12 @@ let
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startInbounds;
         runtimeDirectory = serviceNames.inbounds;
-        extraServiceConfig = xrayAssetEnv;
+        # The collector's file.
+        stateDirectory = "proxy-suite";
+        # While XRay still runs: what it counted since the last timer run.
+        extraServiceConfig = xrayAssetEnv // {
+          ExecStop = scripts.collectInboundStats;
+        };
       };
     }
     {
@@ -246,8 +251,9 @@ let
       enable = proxyEnabled;
       name = "proxy-suite-outbound-pin@";
       value = mkOneshotService {
-        description = "Pin the proxy-suite outbound to %i";
-        execStart = "${scripts.pinOutboundScript} %i";
+        # %I: proxy-ctl systemd-escapes the tag, so "ssh-proxy" arrives as ssh\x2dproxy.
+        description = "Pin the proxy-suite outbound to %I";
+        execStart = "${scripts.pinOutboundScript} %I";
         stateDirectory = "proxy-suite";
         extraServiceConfig.RemainAfterExit = false;
       };

@@ -23,7 +23,14 @@ def listener(**overrides):
         "users": [{"name": "", "uuid": "uuid-1", "uuidFile": None, "password": None, "passwordFile": None}],
         "flow": None,
         "method": "2022-blake3-aes-128-gcm",
-        "transport": {"type": "raw", "path": "/", "host": None, "mode": None, "serviceName": ""},
+        "transport": {
+            "type": "raw",
+            "path": "/",
+            "host": None,
+            "mode": None,
+            "serviceName": "",
+            "trustedXForwardedFor": [],
+        },
         "tls": {"enable": False, "certificateFile": None, "keyFile": None, "serverName": None},
         "reality": {
             "enable": False,
@@ -144,6 +151,16 @@ class RenderInboundTests(unittest.TestCase):
         self.assertEqual(
             stream["tlsSettings"]["certificates"][0],
             {"certificateFile": "/cert.pem", "keyFile": "/key.pem"},
+        )
+
+    def test_trusted_x_forwarded_for_reaches_sockopt(self):
+        """Without it XRay sees the web server's loopback address and records nobody online."""
+        plain = {"type": "ws", "path": "/", "host": None, "serviceName": "", "trustedXForwardedFor": []}
+        self.assertNotIn("sockopt", render_xray_inbound(listener(transport=plain))["streamSettings"])
+        behind = dict(plain, trustedXForwardedFor=["X-Real-IP"])
+        self.assertEqual(
+            render_xray_inbound(listener(transport=behind))["streamSettings"]["sockopt"],
+            {"trustedXForwardedFor": ["X-Real-IP"]},
         )
 
     def test_grpc_transport(self):

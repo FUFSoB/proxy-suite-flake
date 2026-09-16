@@ -14,7 +14,10 @@ let
   apCfg = cfg.proxy.autoProxy;
   # The autoProxy scope's group writes the directory: `proxy auto learn` queues there.
   stateDirMode = if userControlAllows "autoProxy" then "0771" else "0751";
-  render = import ./autoproxy-render.nix { inherit pkgs; };
+  render = import ./autoproxy-render.nix {
+    inherit pkgs;
+    inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser;
+  };
   jqFile =
     path:
     builtins.path {
@@ -213,13 +216,24 @@ let
     round1=$(jq -r .r1 <<<"$rounds")
     round2=$(jq -r .r2 <<<"$rounds")
 
+    # Every probe goes through here: a zero exit with nothing on stdout is no verdict
+    # either, and empty is the one answer that slips through the checks downstream --
+    # jq reads it as no input at all, so `.verdict // "error"' yields "" rather than
+    # "error", and `--argjson r ""' then kills the run. Stdin is the caller's loop.
+    probe_json() {
+      local out
+      out=$(proxy-ctl proxy auto probe --json "$@" < /dev/null 2>/dev/null || true)
+      [ -n "$out" ] || out='{}'
+      printf '%s' "$out"
+    }
+
     walk() {
       local out first verdict
-      out=$(proxy-ctl proxy auto probe --json --exits "$round1" "$1" 2>/dev/null || echo '{}')
+      out=$(probe_json --exits "$round1" "$1")
       verdict=$(jq -r '.verdict // "error"' <<<"$out")
       if { [ "$verdict" = both-fail ] || [ "$verdict" = unreachable ]; } && [ -n "$round2" ]; then
         first=$out
-        out=$(proxy-ctl proxy auto probe --json --exits "$round2" "$1" 2>/dev/null || echo '{}')
+        out=$(probe_json --exits "$round2" "$1")
         # Round 1's refusals count against its exits too (see record).
         out=$(jq -c --argjson f "$first" '.exits = ($f.exits // []) + (.exits // [])' <<<"$out")
       fi
@@ -234,7 +248,7 @@ let
       # --- 3. re-check remembered exits, once per TTL ---
       # Probed routes only; slowness routes are judged by the sampler (4b).
       while IFS=$'\t' read -r dom host exit; do
-        out=$(proxy-ctl proxy auto probe --json --exits "$exit" "$host" 2>/dev/null || echo '{}')
+        out=$(probe_json --exits "$exit" "$host")
         verdict=$(jq -r '.verdict // "error"' <<<"$out")
         if [ "$verdict" = destination ] && [ "$(jq -r '.exit // ""' <<<"$out")" = "$exit" ]; then
           update --arg d "$dom" --argjson now "$now" '.domains[$d].at = $now'
@@ -293,14 +307,17 @@ let
       # --- 4b. what the sampler saw crawl (see autoproxy-slow-judge.jq) ---
       if [ -s "$state_dir/samples" ]; then
         mv -f "$state_dir/samples" "$state_dir/samples.taking"
+        # Not `|| echo '[]'`: a grep that matches nothing fails the pipeline after
+        # jq already printed [], and "[]\n[]" is no JSON for --argjson.
         obs=$(
           grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}'$'\t' "$state_dir/samples.taking" |
             ${lib.optionalString (excludePattern != "") "grep -vE '(^|\\.)(${excludePattern})'$'\\t' |"}
             to_reg |
             jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
               | {d: .[0], h: .[1], exit: .[2], slow: (.[3] == "slow"), peak: (.[4] | tonumber)})' ||
-            echo '[]'
+            true
         )
+        [ -n "$obs" ] || obs='[]'
         rm -f "$state_dir/samples.taking"
         before=$(jq -c '.domains' "$state")
         update --argjson o "$obs" --argjson now "$now" --argjson ttl "$ttl" --argjson hits 3 \
@@ -317,7 +334,7 @@ let
           while IFS= read -r tag; do
             [[ ",$tried," != *",$tag,"* ]] || continue
             tried="''${tried:+$tried,}$tag"
-            out=$(proxy-ctl proxy auto probe --json --via "$tag" "$host" < /dev/null 2>/dev/null || echo '{}')
+            out=$(probe_json --via "$tag" "$host")
             verdict=$(jq -r '.verdict // ""' <<<"$out" 2>/dev/null || true)
             if [ "$verdict" = ok ]; then
               via=$tag
@@ -402,8 +419,8 @@ let
   # on each start.
   stateDirConfig = {
     StateDirectory = "proxy-suite/autoproxy";
-    # 0751 and a 027 umask: sing-box (proxy-suite) can open the rule-sets, which are
-    # made 0644, and nothing else.
+    # 0751 and a 027 umask: sing-box (proxy-suite-daemon) reaches the rule-sets through
+    # rules/, which its group reads (autoproxy-render.nix), and nothing else.
     StateDirectoryMode = stateDirMode;
     UMask = "0027";
   }

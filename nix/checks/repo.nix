@@ -588,6 +588,41 @@
       touch "$out"
     '';
 
+  # A probe that exits 0 printing nothing: jq reads "" as no input at all, so the
+  # "error" guard downstream saw "" instead of "error" and let it through to
+  # `--argjson r ""`, which failed every autoProxy run until the state changed.
+  # The helper is taken from the module, so it is the code the runner really uses.
+  autoproxy-probe-json =
+    pkgs.runCommand "proxy-suite-autoproxy-probe-json-check"
+      {
+        nativeBuildInputs = [
+          pkgs.jq
+          pkgs.gnused
+          pkgs.coreutils
+        ];
+      }
+      ''
+        sed -n '/^    probe_json() {$/,/^    }$/p' ${../../modules/proxy-suite/autoproxy.nix} > helper.sh
+        test -s helper.sh
+
+        mkdir -p stub
+        printf '%s\n' '#!/bin/sh' 'exit 0' > stub/proxy-ctl
+        chmod +x stub/proxy-ctl
+        export PATH="$PWD/stub:$PATH"
+
+        set -euo pipefail
+        . ./helper.sh
+        # $out is the derivation's; the helper's own "out" is local to it.
+        res=$(probe_json --exits direct example.test)
+        test "$res" = '{}'
+        # What the callers ask, and what used to come back empty.
+        test "$(jq -r '.verdict // "error"' <<<"$res")" = error
+        # And an update() built from it still runs.
+        jq -e -n --argjson r "$res" '$r == {}' > /dev/null
+
+        touch "$out"
+      '';
+
   # Per-user inbound traffic collection; `proxy-ctl inbounds stats` is in proxy-ctl-unit.
   inbound-stats =
     pkgs.runCommand "proxy-suite-inbound-stats-check"

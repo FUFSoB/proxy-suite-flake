@@ -69,6 +69,23 @@ let
         description = "gRPC service name.";
         example = "GunService";
       };
+
+      trustedXForwardedFor = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          Header names that mark a request as coming from the web server in front (ws, httpupgrade,
+          xhttp, grpc). When one of them is present, XRay takes the client address from
+          "X-Forwarded-For" instead of the socket. Needed for a listener on a loopback `address`:
+          XRay otherwise sees 127.0.0.1, which it refuses to record, so `proxy-ctl inbounds online`
+          shows every user as never seen and the stats keep no last-seen time.
+
+          Set it only when the web server in front sets both the named header and "X-Forwarded-For"
+          on every request it forwards, overwriting whatever the client sent: any client that can
+          reach the listener directly could otherwise claim any address.
+        '';
+        example = [ "X-Real-IP" ];
+      };
     };
   };
 

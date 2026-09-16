@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """proxy_model without a front end: the status line and the tray menu turn state into the right proxy-ctl argv."""
 
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -73,12 +75,23 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(model.toggle_argv(row), ["awg", "on", "warp"])  # a global profile named warp
             self.assertIn("ctrl+r", keys())
 
-    def test_inbound_presence(self):
-        links = [{"tag": "vless", "user": "alice", "type": "vless", "port": 443}, {"tag": "vless", "user": "bob", "type": "vless", "port": 443}]
-        with mock.patch.object(ctl, "_inbound_links", lambda: links), mock.patch.object(ctl, "_inbound_presence", lambda: {"alice": ("online", "10.0.0.2")}):
-            self.assertEqual([r["online"] for r in model.inbound_rows({})], ["online", ""])
-        with mock.patch.object(ctl, "_inbound_links", lambda: links), mock.patch.object(ctl, "_inbound_presence", lambda: ctl.die("API silent")):
-            self.assertEqual([r["online"] for r in model.inbound_rows({})], ["", ""])
+    def test_inbound_rows_carry_no_presence(self):
+        """XRay keys the online map by user, not by inbound, so a per-listener row
+        could only repeat one verdict per listener; it must not claim to have one."""
+        links = [
+            {"tag": "ws", "user": "alice", "type": "vless", "port": 443},
+            {"tag": "reality", "user": "alice", "type": "vless", "port": 2053},
+        ]
+        called = []
+        with mock.patch.object(ctl, "_inbound_links", lambda: links), mock.patch.object(
+            ctl, "_inbound_presence", lambda: called.append(1) or {}
+        ):
+            rows = model.inbound_rows({})
+        self.assertEqual([r["tag"] for r in rows], ["ws", "reality"])
+        self.assertNotIn("online", rows[0])
+        # And the tab no longer pays for the API call on every load.
+        self.assertEqual(called, [])
+        self.assertNotIn("online", [c for c, _ in next(t for t in model.TABS if t.id == "inbounds").columns])
 
     def test_tray_menu(self):
         states = {
@@ -135,6 +148,39 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(probe.argv(rows[1], "example.com", {}), ["proxy", "auto", "probe", "example.com", "--via", "b-backend"])
         broken = model.Tab("x", "X", model.ROW, [], lambda _: ctl.die("backend gone"))
         self.assertEqual(model.load_tab(broken, {}), ([], "✗ backend gone"))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_unreadable_is_not_empty(self):
+        """A tab that cannot read its state says so; "Nothing here yet." would be a lie."""
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "state.json")
+            with open(state, "w") as f:
+                f.write("{}")
+            tab = next(t for t in model.TABS if t.id == "autoproxy")
+            with mock.patch.object(ctl, "_autoproxy_dir", lambda: tmp), mock.patch.object(ctl, "_status_autoproxy", lambda: ""):
+                self.assertIn("Nothing here yet.", model.load_tab(tab, {})[1])  # readable and empty: really empty
+                os.chmod(state, 0)
+                model.new_load()
+                self.assertIn(f"✗ Cannot read {state}", model.load_tab(tab, {})[1])
+                os.chmod(tmp, 0o751)  # a stranger to the group: past the dir, stopped at the state
+                model.new_load()
+                self.assertIn(f"✗ Cannot read {state}", model.load_tab(tab, {})[1])
+                os.chmod(tmp, 0)
+                model.new_load()
+                self.assertIn(f"✗ Cannot read {tmp}", model.load_tab(tab, {})[1])
+            os.chmod(tmp, 0o700)
+
+            subs = next(t for t in model.TABS if t.id == "subs")
+            runtime = os.path.join(tmp, "subscriptions.d")
+            os.mkdir(runtime, 0o700)
+            env = {"RUNTIME_SUBS_DIR": runtime, "SUB_CACHE_DIR": tmp}
+            with mock.patch.object(ctl, "env", lambda name, default="": env.get(name, default)), mock.patch.object(ctl, "_sub_tags", list):
+                model.new_load()
+                self.assertIn("Nothing here yet.", model.load_tab(subs, {})[1])
+                os.chmod(runtime, 0)
+                model.new_load()
+                self.assertIn(f"✗ Cannot read {runtime}", model.load_tab(subs, {})[1])
+            os.chmod(runtime, 0o700)
 
 
 if __name__ == "__main__":

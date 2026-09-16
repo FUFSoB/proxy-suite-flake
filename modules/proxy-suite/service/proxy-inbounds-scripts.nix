@@ -200,13 +200,14 @@ let
   '';
 
   # Adds XRay's counters to the daily totals, read and reset in one call, and notes who
-  # is online.
-  # ponytail: a restart of the inbounds loses what was counted since the last run, at
-  # most one timer interval; collect from ExecStop if that matters.
+  # is online. Run by a timer, and by the inbounds' ExecStop, so a restart loses nothing.
   collectInboundStats = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     file=${lib.escapeShellArg constants.inboundStatsFile}
     api=--server=127.0.0.1:${toString constants.inboundStatsApiPort}
+    # A timer run and a stop can overlap: each reads and resets part, and both rewrite the file.
+    exec 9> "$file.lock"
+    ${pkgs.util-linux}/bin/flock 9
     if ! reading=$(${xray} api statsquery "$api" -pattern "" -reset 2> /dev/null); then
       echo "the inbounds' stats API is not answering; nothing collected"
       exit 0

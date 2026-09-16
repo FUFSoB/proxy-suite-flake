@@ -101,9 +101,13 @@ def portable_sing_box(cfg, only=None):
             if o.get("default") in dropped:
                 o.pop("default")
     tags = {o["tag"] for o in obs}
-    if not any(o.get("type") not in SING_BOX_SYSTEM for o in obs):
+    survivors = [o["tag"] for o in obs if o.get("type") not in SING_BOX_SYSTEM]
+    if not survivors:
         raise ValueError("no outbound here can be used from another device")
-    target = "proxy" if "proxy" in tags else keep or next(o["tag"] for o in obs if o.get("type") not in SING_BOX_SYSTEM)
+    # `keep` is dropped when it is itself a loopback hop, kept in the chain only to be
+    # chained through; a rule still pointing at it stops sing-box on the other device
+    # with "default outbound not found".
+    target = "proxy" if "proxy" in tags else keep if keep in tags else survivors[0]
     # A group left empty (every exit it had was dropped) routes through what remains.
     for o in obs:
         if o.get("type") in GROUPS and not o["outbounds"]:
@@ -166,6 +170,8 @@ def portable_xray(cfg, only=None):
     remaining = [o["tag"] for o in obs if o.get("protocol") not in XRAY_SYSTEM]
     if not remaining:
         raise ValueError("no outbound here can be used from another device")
+    # As in portable_sing_box: `keep` is gone when it was a loopback hop.
+    target = keep if keep in remaining else remaining[0]
     cfg["outbounds"] = obs
 
     mixed = next((i for i in cfg.get("inbounds") or [] if i.get("tag") == "mixed-in"), {})
@@ -187,13 +193,13 @@ def portable_xray(cfg, only=None):
                 rule.pop("outboundTag")
                 rule["balancerTag"] = "proxy"
             else:
-                rule["outboundTag"] = keep or remaining[0]
+                rule["outboundTag"] = target
         rules.append(rule)
     routing["rules"] = rules
     if keep:
         # The selector is a tag prefix, which would also pick the hops `keep` chains through.
         for balancer in routing.get("balancers") or []:
-            balancer["selector"] = [keep]
+            balancer["selector"] = [target]
     for key in ("api", "stats", "policy"):
         cfg.pop(key, None)
     return cfg, warnings

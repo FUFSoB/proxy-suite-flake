@@ -107,6 +107,11 @@ def _xray_stream(listener: dict, tag: str) -> dict:
             settings["mode"] = transport["mode"]
         stream[settings_key] = settings
 
+    # Behind a web server the socket address is loopback, which XRay will not record as
+    # online; the forwarded address is only trusted when one of these headers is present.
+    if transport.get("trustedXForwardedFor"):
+        stream["sockopt"] = {"trustedXForwardedFor": transport["trustedXForwardedFor"]}
+
     reality = listener["reality"]
     tls = listener["tls"]
     if reality["enable"]:

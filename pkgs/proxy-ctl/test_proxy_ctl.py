@@ -68,6 +68,17 @@ class EnvTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
 
+class ClashApiTest(EnvTest):
+    def test_unset_api_reads_as_unreachable(self):
+        # selection = "first" and the XRay backend leave the API off; a bare
+        # path is not a URL, and it used to escape as a traceback out of
+        # `status`, `where` and `proxy outbounds`.
+        for value in ("", "127.0.0.1:9090"):
+            with self.subTest(api=value), mock.patch.dict(os.environ, {"CLASH_API": value}):
+                self.assertEqual(ctl._clash("GET", "/proxies/proxy", timeout=1), (0, None))
+                self.assertEqual(ctl._outbound_current(), "")
+
+
 # The verdict table, fed tuples measured on a real censored network.
 class ProbeVerdictTest(unittest.TestCase):
     def expect(self, want, direct, via):

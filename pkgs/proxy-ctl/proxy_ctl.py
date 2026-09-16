@@ -826,10 +826,12 @@ def _clash(method, path, body=None, timeout=10):
     # The API is on loopback: never through the shell's HTTP(S)_PROXY.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(
-        f"{env('CLASH_API')}{path}", data=data, method=method, headers={"Content-Type": "application/json"}
-    )
     try:
+        # Building the request is part of reaching the API: an unset or malformed
+        # CLASH_API is "unreachable", not a traceback out of `status` or `where`.
+        request = urllib.request.Request(
+            f"{env('CLASH_API')}{path}", data=data, method=method, headers={"Content-Type": "application/json"}
+        )
         with opener.open(request, timeout=timeout) as r:
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
@@ -1143,6 +1145,12 @@ def _runtime_dir(kind):
     return env("RUNTIME_SUBS_DIR", "/var/lib/proxy-suite/subscriptions.d")
 
 
+def _runtime_hidden(kind):
+    """The runtime entry dir when it cannot be listed, empty otherwise: the URLs in it make it root-only."""
+    path = _runtime_dir(kind)
+    return path if os.path.isdir(path) and not os.access(path, os.R_OK | os.X_OK) else ""
+
+
 def _runtime_noun(kind):
     return "outbounds" if kind == "outbound" else "subs"
 
@@ -1315,7 +1323,10 @@ def _subscription_row(tag, source):
 def _subscription_list():
     static = _sub_tags()
     runtime = _runtime_tags("subscription")
+    hidden = _runtime_hidden("subscription")
     if not static and not runtime:
+        if hidden:
+            denied(hidden)
         print("No subscriptions configured.")
         return
     print(f"  {'TAG':<30} {'LAST UPDATED':<22} {'PROXIES':<9} SOURCE")
@@ -1323,6 +1334,8 @@ def _subscription_list():
         _subscription_row(tag, "static")
     for tag in runtime:
         _subscription_row(tag, "runtime")
+    if hidden:
+        print(f"  (runtime subscriptions are not listed: cannot read {hidden} - {ask_group()})")
     next_run = _timer_next_run(f"{SUBSCRIPTION_UPDATE}.timer")
     if next_run:
         print()
@@ -1736,12 +1749,27 @@ def _require_autoproxy():
         die("proxy.autoProxy is not enabled in this configuration.")
 
 
+def _autoproxy_unreadable(path):
+    """The path a refused read stops at, empty when the state is readable or simply not there yet.
+
+    The state dir is 0751, opened to 0771 for the autoProxy scope's group, and
+    state.json inside it stays 0640: a member gets past the directory and a
+    stranger does not, so both are checked.
+    """
+    if not os.path.isdir(path):
+        return ""
+    if not os.access(path, os.R_OK | os.X_OK):
+        return path
+    state = os.path.join(path, "state.json")
+    return state if os.path.exists(state) and not readable(state) else ""
+
+
 def _require_autoproxy_readable(path):
     """Root-only without userControl: say so rather than show an empty queue."""
     if not os.path.isdir(path):
         die("No autoProxy state yet - the prober has not completed a run.")
-    if not os.access(path, os.R_OK | os.X_OK):
-        denied(path)
+    if blocked := _autoproxy_unreadable(path):
+        denied(blocked)
 
 
 def _autoproxy_state(path):
@@ -2045,16 +2073,16 @@ def cmd_zapret_cutoff(verb="status", *_):
     except OSError:
         egress = ""
     print(f"Probed:  {datetime.datetime.fromtimestamp(ts):%Y-%m-%d %H:%M} from {egress}")
-    asn = _tsv(os.path.join(path, "asn.txt"))
-    cut = sum(1 for row in asn if row[0][:1].isdigit())
+    # Same test as the probe's own awk (cutoff.nix): a row is a network only when
+    # its first field is entirely digits, so the count and the list cannot disagree.
+    cut = [row[0] for row in _tsv(os.path.join(path, "asn.txt")) if row[0].isdigit()]
     if not cut:
         print("Cutoff:  none on this line")
         return
-    print(f"Cutoff:  {cut} network(s)")
+    print(f"Cutoff:  {len(cut)} network(s)")
     names = {row[0]: row[1] if len(row) > 1 else "" for row in _tsv(os.path.join(path, "sni.txt")) if row[0].isdigit()}
-    for row in asn:
-        if row[0].isdigit():
-            print(f"  AS{row[0]:<8} {names.get(row[0], 'no name - proxy fallback')}")
+    for asn in cut:
+        print(f"  AS{asn:<8} {names.get(asn, 'no name - proxy fallback')}")
 
 
 # --- where --------------------------------------------------------------------
@@ -2567,7 +2595,11 @@ def _inbound_online():
     for user, (state, addresses) in presence.items():
         print(row.format(user, state, addresses))
     sys.stdout.flush()
-    print("A user counts as online while a connection is open; one relayed through a local web server shows as never seen unless it sets X-Forwarded-For.", file=sys.stderr)
+    print(
+        "A user counts as online while a connection is open. Behind a web server that needs the "
+        "listener's transport.trustedXForwardedFor, or everyone reads as never seen.",
+        file=sys.stderr,
+    )
 
 
 def _inbound_subscriptions(*args):

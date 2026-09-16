@@ -130,6 +130,8 @@ in
         reloadSvc = routeModeFixture.config.systemd.services."proxy-suite-outbound-reload";
       in
       assert pinSvc.serviceConfig.RemainAfterExit == false;
+      # proxy-ctl escapes the tag into the instance name; the script needs it back.
+      assert pkgs.lib.hasSuffix " %I" pinSvc.serviceConfig.ExecStart;
       assert
         routeModeFixture.config.systemd.services."proxy-suite-outbound-unpin".serviceConfig.ExecStart
         == "${routeModeControlScripts.pinOutboundScript}";
