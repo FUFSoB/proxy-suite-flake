@@ -1,8 +1,16 @@
 # proxy-suite-flake
 
-Declarative proxy stack for NixOS, built for dealing with Roskomnadzor and the usual Russian ISP nonsense. Configure it in Nix, rebuild, and it runs as systemd services.
+Declarative proxy stack for NixOS, on either side of the connection: as a client that routes this host's traffic through outbounds, as a server that accepts clients on its own inbounds, or both at once. Configure it in Nix, rebuild, and it runs as systemd services.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2) and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy).
+> [!IMPORTANT]
+> This project is for study and research purposes only: learning how proxies, tunnels and traffic routing work. It comes with no warranty, and the authors are not responsible for how it is used.
+
+> [!NOTE]
+> This project is developed with AI assistance: much of the code and documentation was written with AI tools, then reviewed and tested on real-world setups.
+
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2) and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy); see their repositories for their own licenses and documentation.
+
+Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [3x-ui](https://github.com/MHSanaei/3x-ui) and other similar projects.
 
 ## Features
 
@@ -58,7 +66,7 @@ services.proxy-suite = {
     zapret.enable = true;
   };
 
-  zapret.enable = true;
+  zapret.enable = true; # default is zapret-discord-youtube
 
   sshProxy = {
     enable = true;
@@ -85,7 +93,7 @@ services.proxy-suite = {
   # Registers with wgcf on first start. The exit is Cloudflare, but geolocated to your own country.
   warp = {
     enable = true;
-    asOutbound = "singBox"; # tag "warp"; "interface" runs it as an AmneziaWG profile
+    asOutbound = "singBox"; # tag is "warp"; asOutbound = "interface" runs it as an AmneziaWG profile
     # asAmneziaWg = true; # or a global profile instead: proxy-ctl awg on warp
   };
 

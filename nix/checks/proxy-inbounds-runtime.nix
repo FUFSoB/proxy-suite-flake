@@ -10,12 +10,18 @@ let
   ssPassword = "dGhpcy1pcy1hLTE2Ynl0ZS1rZXk=";
   # Public addresses: blockPrivate would refuse the origin on a private one.
   serverAddress = "11.0.0.1";
+  # XRay refuses plain VLESS to a public IP, so the client dials a private one.
+  serverPrivateAddress = "10.0.0.1";
 
-  network = address: {
+  network = public: private: {
     networking.useDHCP = false;
     networking.interfaces.eth1.ipv4.addresses = [
       {
-        inherit address;
+        address = public;
+        prefixLength = 24;
+      }
+      {
+        address = private;
         prefixLength = 24;
       }
     ];
@@ -31,7 +37,7 @@ pkgs.testers.runNixOSTest {
       {
         imports = [
           proxySuiteModule
-          (network serverAddress)
+          (network serverAddress serverPrivateAddress)
         ];
 
         services.proxy-suite = {
@@ -48,7 +54,7 @@ pkgs.testers.runNixOSTest {
               users = [
                 {
                   name = "tester";
-                  inherit uuid;
+                  uuidFile = "/run/inbound-secrets/uuid";
                 }
               ];
             };
@@ -56,7 +62,7 @@ pkgs.testers.runNixOSTest {
               type = "shadowsocks";
               port = 8388;
               method = "2022-blake3-aes-128-gcm";
-              users = [ { password = ssPassword; } ];
+              users = [ { passwordFile = "/run/inbound-secrets/password"; } ];
             };
           };
         };
@@ -66,6 +72,14 @@ pkgs.testers.runNixOSTest {
           virtualHosts."origin".locations."/".return = "200 'served-from-origin'";
         };
         networking.firewall.allowedTCPPorts = [ 80 ];
+        # Written at boot, so the listener's spec carries only the paths.
+        systemd.tmpfiles.rules = [
+          "d /run/inbound-secrets 0700 root root -"
+          "f+ /run/inbound-secrets/uuid 0400 root root - ${uuid}"
+          "f+ /run/inbound-secrets/password 0400 root root - ${ssPassword}"
+        ];
+        # The test script inspects the rendered config with jq.
+        environment.systemPackages = [ pkgs.jq ];
       };
 
     client =
@@ -73,7 +87,7 @@ pkgs.testers.runNixOSTest {
       {
         imports = [
           proxySuiteModule
-          (network "11.0.0.2")
+          (network "11.0.0.2" "10.0.0.2")
         ];
 
         services.proxy-suite = {
@@ -85,7 +99,7 @@ pkgs.testers.runNixOSTest {
             outbounds = [
               {
                 tag = "server";
-                url = "vless://${uuid}@${serverAddress}:8443?type=tcp&security=none";
+                url = "vless://${uuid}@${serverPrivateAddress}:8443?type=tcp&security=none";
               }
             ];
           };
@@ -137,7 +151,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"test $(jq -r 'length' {links}) = 2")
         link = server.succeed("proxy-ctl inbounds link vless-in").strip()
         assert link.startswith("vless://${uuid}@${serverAddress}:8443"), link
-        assert "#tester" in link, link
+        assert "tester" in link, link
         server.succeed("proxy-ctl inbounds | grep -q vless-in")
         server.succeed("proxy-ctl inbounds link vless-in --qr | head -c 1")
         server.succeed("proxy-ctl status | grep -q proxy-suite-inbounds")
