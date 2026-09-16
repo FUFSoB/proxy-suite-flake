@@ -3,9 +3,9 @@
   lib,
   pkgs,
   builders,
-  pureXrayEnabled,
   perAppRoutingTun,
   perAppRoutingTproxy,
+  ipv6,
   constants,
   perAppTunChainFile,
   perAppTproxyRulesFile,
@@ -17,8 +17,8 @@
 
 let
   inherit (constants)
-    xrayPerAppTunIPv6Address
-    xrayPerAppTunIPv6RoutePrefix
+    perAppTunIPv6Address
+    perAppTunIPv6RoutePrefix
     ;
 
   perAppTunWaitForInterface = pkgs.writeShellScript "proxy-suite-per-app" ''
@@ -37,8 +37,8 @@ let
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg perAppRoutingTun.address}
-    tun6_cidr=${lib.escapeShellArg xrayPerAppTunIPv6Address}
-    tun6_route_prefix=${lib.escapeShellArg xrayPerAppTunIPv6RoutePrefix}
+    tun6_cidr=${lib.escapeShellArg perAppTunIPv6Address}
+    tun6_route_prefix=${lib.escapeShellArg perAppTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
 
@@ -68,12 +68,21 @@ let
     # No uplink src, as in xrayTunUpScript: it goes stale when the uplink address changes.
     ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
     ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ${lib.optionalString pureXrayEnabled ''
-      ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
-      ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
-      ${ip} -6 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
-      ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
-    ''}
+    ${
+      if ipv6 then
+        ''
+          ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
+          ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+          ${ip} -6 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
+        ''
+      else
+        ''
+          # No IPv6 in the app TUN: unreachable, so wrapped apps fall back to IPv4 instead of
+          # leaving directly.
+          ${ip} -6 route replace unreachable default table ${toString perAppRoutingTun.routeTable}
+        ''
+    }
+    ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
   '';
 
   perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
@@ -102,29 +111,31 @@ let
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}
-    ${builders.mkIpRuleDeleteByFwmark {
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = perAppRoutingTproxy.fwmark;
       table = perAppRoutingTproxy.routeTable;
     }}
-    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = perAppRoutingTproxy.routeTable; }}
 
     ${nft} -f ${perAppTproxyRulesFile}
-    ${ip} route replace local default dev lo table ${toString perAppRoutingTproxy.routeTable}
-    ${ip} rule add fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable}
+    ${builders.mkTproxyRoutingUp {
+      inherit ip;
+      inherit ipv6;
+      fwmark = perAppRoutingTproxy.fwmark;
+      table = perAppRoutingTproxy.routeTable;
+    }}
   '';
 
   perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set +e
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "proxy_suite_per_app_tproxy"; }}
-    ${builders.mkIpRuleDeleteByFwmark {
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = perAppRoutingTproxy.fwmark;
       table = perAppRoutingTproxy.routeTable;
     }}
-    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = perAppRoutingTproxy.routeTable; }}
   '';
 in
 {

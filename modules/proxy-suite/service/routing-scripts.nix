@@ -9,7 +9,7 @@
   globalTun,
   globalTproxy,
   perAppRoutingTun,
-  perAppRoutingTproxy,
+  ipv6,
 }:
 
 let
@@ -18,12 +18,11 @@ let
     tunAutoRouteRulePriority
     xrayTunMarkBypassRulePriority
     xrayTunServiceUserRulePriority
-    xrayTunPerAppTproxyRulePriority
     xrayTunPerAppTunRulePriority
     xrayTunDnsRulePriority
     xrayTunMainRulePriority
-    xrayGlobalTunIPv6Address
-    xrayGlobalTunIPv6RoutePrefix
+    globalTunIPv6Address
+    globalTunIPv6RoutePrefix
     ;
 
   deleteXrayTunRules = lib.concatMapStrings (
@@ -31,8 +30,7 @@ let
     lib.concatMapStrings (priority: builders.mkIpRuleDeleteByPriority { inherit ip family priority; }) [
       xrayTunMarkBypassRulePriority
       xrayTunServiceUserRulePriority
-      xrayTunPerAppTproxyRulePriority
-      xrayTunPerAppTunRulePriority
+        xrayTunPerAppTunRulePriority
       xrayTunDnsRulePriority
       xrayTunMainRulePriority
       tunAutoRouteRulePriority
@@ -62,8 +60,8 @@ in
     set -euo pipefail
 
     tun_cidr=${lib.escapeShellArg globalTun.address}
-    tun6_cidr=${lib.escapeShellArg xrayGlobalTunIPv6Address}
-    tun6_route_prefix=${lib.escapeShellArg xrayGlobalTunIPv6RoutePrefix}
+    tun6_cidr=${lib.escapeShellArg globalTunIPv6Address}
+    tun6_route_prefix=${lib.escapeShellArg globalTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
 
@@ -89,15 +87,14 @@ in
     tun_route_prefix="$(cidr_network "$tun_cidr")"
 
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg globalTun.interface}
-    ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg globalTun.interface}
+    ${lib.optionalString ipv6 ''${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg globalTun.interface}''}
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg globalTun.interface} src "$tun_addr" table ${toString tunAutoRouteTableIndex}
     # No uplink src: it goes stale when the uplink address changes, and XRay's own sockets
     # (routed by uid and mark, not bound to an interface) pick theirs from main.
     ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
-    ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
-    ${ip} -6 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
-    ${lib.optionalString perAppRoutingTproxy.enable ''
-      ${ip} -4 rule add pref ${toString xrayTunPerAppTproxyRulePriority} fwmark ${toString perAppRoutingTproxy.fwmark} table ${toString perAppRoutingTproxy.routeTable}
+    ${lib.optionalString ipv6 ''
+      ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
+      ${ip} -6 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
     ''}
     ${lib.optionalString perAppRoutingTun.enable ''
       ${ip} -4 rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
@@ -122,29 +119,31 @@ in
     # Start from a clean policy-routing state.  `ip rule add` permits duplicate
     # rules on some iproute2 versions, and a stale rule can keep packets routed
     # into a dead local table after a failed restart.
-    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "singbox"; }}
-    ${builders.mkIpRuleDeleteByFwmark {
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "singbox"; }}
+    ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = globalTproxy.fwmark;
       table = globalTproxy.routeTable;
     }}
-    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = globalTproxy.routeTable; }}
 
     ${nft} -f ${nftablesRulesFile}
-    ${ip} route replace local default dev lo table ${toString globalTproxy.routeTable}
-    ${ip} rule add fwmark ${toString globalTproxy.fwmark} table ${toString globalTproxy.routeTable}
+    ${builders.mkTproxyRoutingUp {
+      inherit ip;
+      inherit ipv6;
+      fwmark = globalTproxy.fwmark;
+      table = globalTproxy.routeTable;
+    }}
   '';
 
   tproxyDownScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set +e
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "ip"; table = "singbox"; }}
-    ${builders.mkIpRuleDeleteByFwmark {
+    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "singbox"; }}
+    ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = globalTproxy.fwmark;
       table = globalTproxy.routeTable;
     }}
-    ${builders.mkIpLocalDefaultRouteDelete { inherit ip; table = globalTproxy.routeTable; }}
   '';
 
   tunCleanupScript = pkgs.writeShellScript "proxy-suite-routing" ''

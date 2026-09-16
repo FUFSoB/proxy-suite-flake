@@ -145,7 +145,6 @@ let
       cfg
       singBoxCfg
       proxyCfg
-      pureXrayEnabled
       perAppRoutingCfg
       perAppRoutingTun
       perAppRoutingTproxy

@@ -23,7 +23,7 @@ if pureXrayEnabled then
       end;
     def xray_preserved_rules:
       [.routing.rules[]
-       | select(((.ruleTag? // "") == "dns-hijack") or ((.ruleTag? // "") == "dns-upstream-direct"))];
+       | select((.ruleTag? // "") | . == "dns-hijack" or . == "dns-upstream-direct" or . == "dns-upstream-remote")];
     def xray_final_rule($tag; $single_tag):
       if $tag == "proxy" and "${selectionMode}" == "urltest" then
         {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)
@@ -38,18 +38,33 @@ if pureXrayEnabled then
          + [.dns.servers[] | select((.tag? // "") == $dns_final)]
          + [.dns.servers[] | select((.tag? // "") != "fakedns" and (.tag? // "") != $dns_final)])
       end;
+    # Names of proxy servers, which XRay's DNS resolves once a dial has a domainStrategy.
+    def xray_server_names:
+      [.outbounds[].settings
+       | (.vnext[]?.address, .servers[]?.address, .address?)
+       | strings | select(test("^[0-9.]+$|:|^localhost$") | not)]
+      | unique;
+    # A copy of "local" answering only for them: routed direct by its tag, so looking up a
+    # proxy server never waits on that proxy.
+    def xray_pin_server_names:
+      xray_server_names as $names
+      | if $names == [] then .
+        else .dns.servers += [.dns.servers[] | select((.tag? // "") == "local")
+                              | . + {domains: ($names | map("full:" + .)), skipFallback: true}]
+        end;
     .outbounds = ($obs + .outbounds)
       | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
       | if $auth_enabled then
           (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
           | (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.accounts) = [{user:$user,pass:$password}]
         else . end
+      | .dns.servers = xray_dns_server_order($dns_final)
+      | xray_pin_server_names
       | if $xray_tun_dns_runtime then
-          .dns.servers = xray_dns_server_order($dns_final)
-          # Without a domainStrategy a dial resolves through the system resolver, which under
-          # the TUN (resolved's upstream queries included) hands out fake IPs. XRay's own DNS
-          # client skips fakedns.
-          | .outbounds |= map(
+          # Without a domainStrategy a dial resolves through the system resolver, whose upstream
+          # queries the TUN answers with fake IPs and TProxy sends through the proxy being
+          # dialed. XRay's own DNS client skips fakedns.
+          .outbounds |= map(
               if .protocol == "blackhole" or .protocol == "dns" or .protocol == "loopback" then .
               else .streamSettings.sockopt.domainStrategy //= "UseIPv4v6" end)
         else . end

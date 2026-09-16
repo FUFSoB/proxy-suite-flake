@@ -197,6 +197,8 @@ let
       mkBadFixture
       mkFailingAssertions
       mkTunConfig
+      mkTProxyConfig
+      mkTProxyNftRules
       dnsServerByTag
       checkConstants
       ;

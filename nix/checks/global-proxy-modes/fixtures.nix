@@ -4,6 +4,8 @@
   mkBadFixture,
   mkFailingAssertions,
   mkTunConfig,
+  mkTProxyConfig,
+  mkTProxyNftRules,
 }:
 
 let
@@ -40,6 +42,48 @@ let
     tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
   tproxyManualStartScript = generated.readDerivation tproxyManualServiceConfig.ExecStart;
   tproxyManualStopScript = generated.readDerivation tproxyManualServiceConfig.ExecStop;
+  tproxyManualConfig = mkTProxyConfig tproxyManualFixture;
+  tproxyManualNftRules = mkTProxyNftRules tproxyManualFixture;
+
+  tproxyIPv4OnlyFixture = evalProxySuite [
+    baseModule
+    {
+      networking.enableIPv6 = false;
+      services.proxy-suite.proxy = {
+        tproxy.enable = true;
+        tun.enable = true;
+      };
+      services.proxy-suite.perAppRouting = {
+        enable = true;
+        tun.enable = true;
+      };
+    }
+  ];
+  tproxyIPv4OnlyStartScript = generated.readDerivation
+    tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig.ExecStart;
+  tproxyIPv4OnlyConfig = mkTProxyConfig tproxyIPv4OnlyFixture;
+  tproxyIPv4OnlyNftRules = mkTProxyNftRules tproxyIPv4OnlyFixture;
+  ipv4OnlyTunConfig = mkTunConfig tproxyIPv4OnlyFixture;
+  ipv4OnlyPerAppTunUpScript = generated.readDerivation
+    tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStartPost;
+
+  # XRay's TUN configures IPv6 itself: with it off, its up script must not touch IPv6 addresses.
+  xrayIPv4OnlyFixture = evalProxySuite [
+    baseModule
+    (
+      { lib, ... }:
+      {
+        networking.enableIPv6 = false;
+        services.proxy-suite.proxy = {
+          backend = lib.mkForce "xray";
+          tun.enable = true;
+        };
+      }
+    )
+  ];
+  xrayIPv4OnlyTunConfig = mkTunConfig xrayIPv4OnlyFixture;
+  xrayIPv4OnlyTunUpScript = generated.readDerivation
+    xrayIPv4OnlyFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost;
 
   tproxyAutostartFixture = evalProxySuite [
     baseModule
@@ -101,6 +145,15 @@ in
     tproxyManualFixture
     tproxyManualStartScript
     tproxyManualStopScript
+    tproxyManualConfig
+    tproxyManualNftRules
+    tproxyIPv4OnlyStartScript
+    tproxyIPv4OnlyConfig
+    tproxyIPv4OnlyNftRules
+    ipv4OnlyTunConfig
+    ipv4OnlyPerAppTunUpScript
+    xrayIPv4OnlyTunConfig
+    xrayIPv4OnlyTunUpScript
     tproxyWithFirewall
     tunAutostartFixture
     tunCleanupScript

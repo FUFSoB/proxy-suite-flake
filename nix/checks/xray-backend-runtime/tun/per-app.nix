@@ -23,13 +23,12 @@
       assert
         perAppTunInbound.settings.gateway == [
           "172.20.0.1/30"
-          checkConstants.xrayPerAppTunIPv6Address
+          checkConstants.perAppTunIPv6Address
         ];
       assert perAppTunInbound.sniffing.destOverride == [ "fakedns" ];
       assert perAppTunInbound.sniffing.metadataOnly == false;
       assert xrayPerAppTunConfig.routing.domainStrategy == "IPIfNonMatch";
       assert (builtins.head xrayPerAppTunConfig.dns.servers).address == "fakedns";
-      assert xrayPerAppTunConfig.dns.tag == "dns-in";
       assert builtins.length xrayPerAppTunConfig.fakedns == 2;
       assert perAppTunDirectOutbound.streamSettings.sockopt.mark == 2;
       assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayPerAppTunStartScript;
@@ -38,7 +37,7 @@
       assert pkgs.lib.hasInfix "--routing-mark 2" xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix "xray_tun_dns_runtime" xrayPerAppTunStartScript;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayPerAppTunUpScript;
-      assert pkgs.lib.hasInfix checkConstants.xrayPerAppTunIPv6Address xrayPerAppTunUpScript;
+      assert pkgs.lib.hasInfix checkConstants.perAppTunIPv6Address xrayPerAppTunUpScript;
       assert !(pkgs.lib.hasInfix "uplink_addr" xrayPerAppTunUpScript);
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' xrayPerAppTunUpScript;

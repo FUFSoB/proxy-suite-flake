@@ -34,10 +34,11 @@ in
     localSubnets = mkOption {
       type = types.listOf types.str;
       default = [ "192.168.0.0/16" ];
-      description = "Subnets that bypass interception (DNS excepted): your LAN, VM bridges.";
+      description = "Subnets that bypass interception (DNS excepted): your LAN, VM bridges. IPv6 CIDRs work too.";
       example = [
         "192.168.0.0/16"
         "10.0.0.0/8"
+        "fd00::/8"
       ];
     };
   };

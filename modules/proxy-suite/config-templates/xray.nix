@@ -15,8 +15,8 @@ let
     perAppRoutingTun
     ;
   inherit (constants)
-    xrayGlobalTunIPv6Address
-    xrayPerAppTunIPv6Address
+    globalTunIPv6Address
+    perAppTunIPv6Address
     ;
 
   fakeDnsPools = [
@@ -40,8 +40,11 @@ let
     queryStrategy = "UseIP";
   };
 
-  mkTunDnsConfig =
+  # XRay routes each server's own queries by that server's tag: the backend filter pins
+  # the proxy servers' names to "local", so reaching them never needs the proxy itself.
+  mkDnsConfig =
     {
+      fakeDns ? false,
       preferRemote ? (proxyCfg.routing.default == "proxy"),
     }:
     let
@@ -52,15 +55,15 @@ let
     in
     {
       queryStrategy = "UseIP";
-      tag = "dns-in";
-      servers = [
-        {
+      servers =
+        lib.optional fakeDns {
           address = "fakedns";
           tag = "fakedns";
         }
-        (mkDnsServer primaryTag primaryUpstream)
-        (mkDnsServer secondaryTag secondaryUpstream)
-      ];
+        ++ [
+          (mkDnsServer primaryTag primaryUpstream)
+          (mkDnsServer secondaryTag secondaryUpstream)
+        ];
     };
 
   mkSniffing =
@@ -88,22 +91,41 @@ let
 
   standardSniffing = mkSniffing { };
 
-  tunDnsHijackRule = {
+  target =
+    tag:
+    if tag == "proxy" && proxyCfg.selection == "urltest" then
+      { balancerTag = "proxy"; }
+    else
+      { outboundTag = tag; };
+
+  dnsHijackRule = inboundTag: {
     type = "field";
-    inboundTag = [ "tun-in" ];
+    inherit inboundTag;
     network = "tcp,udp";
     port = 53;
     outboundTag = "dns-out";
     ruleTag = "dns-hijack";
   };
 
-  tunDnsUpstreamRule = {
-    type = "field";
-    inboundTag = [ "dns-in" ];
-    network = "tcp,udp";
-    outboundTag = "direct";
-    ruleTag = "dns-upstream-direct";
-  };
+  # As sing-box: remote through the proxy, local direct.
+  dnsUpstreamRules = [
+    {
+      type = "field";
+      inboundTag = [ "local" ];
+      network = "tcp,udp";
+      outboundTag = "direct";
+      ruleTag = "dns-upstream-direct";
+    }
+    (
+      {
+        type = "field";
+        inboundTag = [ "remote" ];
+        network = "tcp,udp";
+        ruleTag = "dns-upstream-remote";
+      }
+      // target "proxy"
+    )
+  ];
 
   finalRule =
     tag:
@@ -112,12 +134,7 @@ let
       network = "tcp,udp";
       ruleTag = "final-default";
     }
-    // (
-      if tag == "proxy" && proxyCfg.selection == "urltest" then
-        { balancerTag = "proxy"; }
-      else
-        { outboundTag = tag; }
-    );
+    // target tag;
 
   directOutbound =
     useOutboundRoutingMark:
@@ -146,17 +163,9 @@ let
     }:
     let
       tunSniffing = mkSniffing { fakeDnsOnly = enableTunFakeDns; };
-      dnsConfig =
-        if enableTunFakeDns then
-          mkTunDnsConfig { }
-        else
-          {
-            servers = [
-              (mkDnsServer "remote" proxyCfg.dns.remote)
-              (mkDnsServer "local" proxyCfg.dns.local)
-            ];
-          };
-      tunOutbounds = lib.optionals enableTunFakeDns [
+      tproxyInboundTags = [ "tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "tproxy-in6";
+      # Every config takes packets for any destination, DNS included.
+      dnsOutbounds = [
         {
           protocol = "dns";
           tag = "dns-out";
@@ -172,16 +181,15 @@ let
         }
       ];
       routingRules =
-        lib.optionals enableTunFakeDns [
-          tunDnsUpstreamRule
-          tunDnsHijackRule
-        ]
+        dnsUpstreamRules
+        ++ lib.optional enableTun (dnsHijackRule [ "tun-in" ])
+        ++ lib.optional enableTProxy (dnsHijackRule tproxyInboundTags)
         ++ rules.xrayRoutingRules
         ++ [ (finalRule (if (proxyCfg.routing.default == "proxy") then "proxy" else "direct")) ];
     in
     {
       log.loglevel = "warning";
-      dns = dnsConfig;
+      dns = mkDnsConfig { fakeDns = enableTunFakeDns; };
       inbounds =
         lib.optional enableMixed {
           tag = "mixed-in";
@@ -195,10 +203,9 @@ let
           };
           sniffing = standardSniffing;
         }
-        ++ lib.optional enableTProxy {
-          tag = "tproxy-in";
+        ++ lib.zipListsWith (tag: listen: {
+          inherit tag listen;
           protocol = "tunnel";
-          listen = "127.0.0.1";
           port = globalTproxy.port;
           settings = {
             allowedNetwork = "tcp,udp";
@@ -206,19 +213,19 @@ let
           };
           streamSettings.sockopt.tproxy = "tproxy";
           sniffing = standardSniffing;
-        }
+        }) (lib.optionals enableTProxy tproxyInboundTags) [ "127.0.0.1" "::1" ]
         ++ lib.optional enableTun {
           tag = "tun-in";
           protocol = "tun";
           settings = {
             name = tunInterface;
             mtu = tunMtu;
-            gateway = [ tunAddress ] ++ lib.optionals (tunIPv6Address != null) [ tunIPv6Address ];
+            gateway = [ tunAddress ] ++ lib.optional (proxyCfg.ipv6 && tunIPv6Address != null) tunIPv6Address;
             userLevel = 0;
           };
           sniffing = tunSniffing;
         };
-      outbounds = tunOutbounds ++ [
+      outbounds = dnsOutbounds ++ [
         (directOutbound useOutboundRoutingMark)
         {
           protocol = "blackhole";
@@ -267,7 +274,7 @@ in
     enableTun = true;
     tunInterface = globalTun.interface;
     tunAddress = globalTun.address;
-    tunIPv6Address = xrayGlobalTunIPv6Address;
+    tunIPv6Address = globalTunIPv6Address;
     tunMtu = globalTun.mtu;
     useOutboundRoutingMark = true;
     enableTunFakeDns = true;
@@ -277,7 +284,7 @@ in
     enableTun = true;
     tunInterface = perAppRoutingTun.interface;
     tunAddress = perAppRoutingTun.address;
-    tunIPv6Address = xrayPerAppTunIPv6Address;
+    tunIPv6Address = perAppTunIPv6Address;
     tunMtu = perAppRoutingTun.mtu;
     useOutboundRoutingMark = true;
     enableTunFakeDns = true;

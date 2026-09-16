@@ -100,7 +100,7 @@ let
 
   perAppTproxyUserRuleStart = mkUserRuleStart {
     name = "per-app-tproxy";
-    nftFamily = "ip";
+    nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tproxy";
     nftChain = "output";
     sliceName = perAppTproxySliceName;
@@ -109,7 +109,7 @@ let
   };
   perAppTproxyUserRuleStop = mkUserRuleStop {
     name = "per-app-tproxy";
-    nftFamily = "ip";
+    nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tproxy";
     nftChain = "output";
   };

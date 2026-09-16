@@ -140,6 +140,7 @@ services.proxy-suite = {
       strategy = null;
     };
     enable = false;
+    ipv6 = true;
     listener = {
       address = "127.0.0.1";
       auth = {

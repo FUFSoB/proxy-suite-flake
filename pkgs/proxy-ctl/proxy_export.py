@@ -186,7 +186,8 @@ def portable_xray(cfg, only=None):
     balanced = bool(routing.get("balancers"))
     rules = []
     for rule in routing.get("rules") or []:
-        if set(rule.get("inboundTag") or []) - {"mixed-in"}:
+        # "local" and "remote" are DNS servers' own queries: a proxy's name resolves direct.
+        if set(rule.get("inboundTag") or []) - {"mixed-in", "local", "remote"}:
             continue
         if rule.get("outboundTag") in dropped:
             if balanced:

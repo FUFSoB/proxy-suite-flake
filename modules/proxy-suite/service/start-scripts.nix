@@ -413,6 +413,9 @@ let
     configFile = tproxyFile;
     routingMark = globalTproxy.proxyMark;
     enableLocalProxyAuth = localProxyAuthEnabled;
+    # TProxy takes the system resolver's own upstream queries too, so a proxy server's name
+    # has to resolve inside XRay, as under the TUN.
+    xrayTunDnsRuntime = pureXrayEnabled && globalTproxy.enable;
     xraySidecarBasePort = xraySidecarBasePorts.socks;
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
     # Only the socks unit: relayed traffic reaches it, and the prober needs one home.

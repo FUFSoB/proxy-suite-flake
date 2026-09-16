@@ -42,7 +42,9 @@ let
   xrayJqFilterRuntimeCheck =
     pkgs.runCommand "proxy-suite-xray-jq-filter-runtime-check" { nativeBuildInputs = [ pkgs.jq ]; }
       ''
-        OBS='[{"protocol":"freedom","tag":"proxy-suite-ob-primary"}]'
+        OBS='[{"protocol":"freedom","tag":"proxy-suite-ob-primary"},
+          {"protocol":"vless","tag":"proxy-suite-ob-edge","settings":{"vnext":[{"address":"edge.example.com","port":443}]}},
+          {"protocol":"trojan","tag":"proxy-suite-ob-ip","settings":{"servers":[{"address":"203.0.113.1","port":443}]}}]'
 
         check_runtime() {
           local name="$1"
@@ -72,6 +74,9 @@ let
               and .dns.servers[0].tag == "fakedns"
               and ([.routing.rules[] | select((.ruleTag? // "") == "dns-hijack")] | length) == 1
               and ([.routing.rules[] | select((.ruleTag? // "") == "dns-upstream-direct")] | length) == 1
+              and ([.routing.rules[] | select((.ruleTag? // "") == "dns-upstream-remote")] | length) == 1
+              and ([.dns.servers[] | select(.domains?)] == [.dns.servers[] | select(.tag == "local" and (has("domains") | not))
+                    | . + {domains: ["full:edge.example.com"], skipFallback: true}])
               and ([.outbounds[] | select(.streamSettings.sockopt.interface?)] | length) == 0
               and ([.outbounds[] | select(.protocol == "freedom" or .tag == "proxy-suite-ob-primary") | .streamSettings.sockopt.domainStrategy] | all(. == "UseIPv4v6"))
               and ([.outbounds[] | select(.protocol == "dns") | .streamSettings.sockopt.domainStrategy?] | all(. == null))

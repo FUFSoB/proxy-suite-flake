@@ -29,8 +29,8 @@
         tunHasDnsHijackRule = builtins.any (
           rule: (rule ? ruleTag) && rule.ruleTag == "dns-hijack"
         ) xrayTunConfig.routing.rules;
-        tunHasDnsUpstreamRule = builtins.any (
-          rule: (rule ? ruleTag) && rule.ruleTag == "dns-upstream-direct"
+        tunDnsUpstreamRules = builtins.filter (
+          rule: builtins.elem (rule.ruleTag or "") [ "dns-upstream-direct" "dns-upstream-remote" ]
         ) xrayTunConfig.routing.rules;
       in
       assert tunInbound.protocol == "tun";
@@ -38,7 +38,7 @@
       assert
         tunInbound.settings.gateway == [
           "172.19.0.1/30"
-          checkConstants.xrayGlobalTunIPv6Address
+          checkConstants.globalTunIPv6Address
         ];
       assert tunInbound.sniffing.destOverride == [ "fakedns" ];
       assert tunInbound.sniffing.metadataOnly == false;
@@ -46,9 +46,9 @@
       assert tunHasFinalRuleTag;
       assert tunHasDirectGeositeRule;
       assert tunHasDnsHijackRule;
-      assert tunHasDnsUpstreamRule;
+      # Servers route by their own tags: local direct, remote through the proxy.
+      assert map (rule: rule.inboundTag) tunDnsUpstreamRules == [ [ "local" ] [ "remote" ] ];
       assert xrayTunConfig.dns.queryStrategy == "UseIP";
-      assert xrayTunConfig.dns.tag == "dns-in";
       assert (builtins.head xrayTunConfig.dns.servers).address == "fakedns";
       assert (builtins.head xrayTunConfig.dns.servers).tag == "fakedns";
       assert (builtins.elemAt xrayTunConfig.dns.servers 1).tag == "remote";
@@ -69,7 +69,7 @@
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayTunStartScript;
       assert pkgs.lib.hasInfix "xray_tun_dns_runtime" xrayTunStartScript;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayTunUpScript;
-      assert pkgs.lib.hasInfix checkConstants.xrayGlobalTunIPv6Address xrayTunUpScript;
+      assert pkgs.lib.hasInfix checkConstants.globalTunIPv6Address xrayTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix
@@ -83,9 +83,6 @@
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
         "-6 route replace default dev singtun0 table ${toString checkConstants.tunAutoRouteTableIndex}"
-        xrayTunUpScript;
-      assert pkgs.lib.hasInfix
-        "rule add pref ${toString checkConstants.xrayTunPerAppTproxyRulePriority} fwmark 17 table 102"
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
         "rule add pref ${toString checkConstants.xrayTunPerAppTunRulePriority} fwmark 16 table 101"
@@ -120,7 +117,6 @@
       ) [
         checkConstants.xrayTunMarkBypassRulePriority
         checkConstants.xrayTunServiceUserRulePriority
-        checkConstants.xrayTunPerAppTproxyRulePriority
         checkConstants.xrayTunPerAppTunRulePriority
         checkConstants.xrayTunDnsRulePriority
         checkConstants.xrayTunMainRulePriority

@@ -5,7 +5,6 @@
   cfg,
   singBoxCfg,
   proxyCfg,
-  pureXrayEnabled,
   perAppRoutingCfg,
   perAppRoutingTun,
   perAppRoutingTproxy,
@@ -60,7 +59,6 @@ let
       lib
       pkgs
       builders
-      pureXrayEnabled
       perAppRoutingTun
       perAppRoutingTproxy
       constants
@@ -71,6 +69,7 @@ let
       seqBin
       sleepBin
       ;
+    inherit (proxyCfg) ipv6;
   };
   inherit (backendScripts)
     perAppTunUpScript

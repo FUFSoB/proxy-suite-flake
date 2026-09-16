@@ -1,4 +1,5 @@
 {
+  config,
   lib,
   proxySuiteUpstream,
   ...
@@ -44,6 +45,19 @@ in
         also be enabled (proxy.tun.enable or proxy.tproxy.enable).
       '';
       example = "tun";
+    };
+
+    ipv6 = mkOption {
+      type = types.bool;
+      default = config.networking.enableIPv6;
+      defaultText = literalExpression "config.networking.enableIPv6";
+      description = ''
+        Carry IPv6 in the transparent modes: TProxy through a second listener on ::1, the TUNs
+        (global and per-app) through an IPv6 address of their own. Off, TProxy leaves IPv6
+        alone and the TUNs block it, so apps fall back to IPv4. On an uplink without IPv6,
+        set proxy.dns.strategy = "ipv4_only" too: a direct IPv6 destination would otherwise
+        fail after the connection seems open, instead of falling back to IPv4.
+      '';
     };
 
     listener = {

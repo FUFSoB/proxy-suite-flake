@@ -100,6 +100,8 @@ let
       enableTun ? false,
       tunInterface ? globalTun.interface,
       tunAddress ? globalTun.address,
+      # With proxy.ipv6: both families in the TUN, so strict_route rejects neither.
+      tunIPv6Address ? null,
       tunMtu ? globalTun.mtu,
       tunAutoRoute ? true,
       tunAutoRouteTableIndex ? defaultTunAutoRouteTableIndex,
@@ -139,18 +141,28 @@ let
           listen = proxyCfg.listener.address;
           listen_port = proxyCfg.listener.port;
         }
-        ++ lib.optional enableTProxy {
-          type = "tproxy";
-          tag = "tproxy-in";
-          listen = "127.0.0.1";
-          listen_port = globalTproxy.port;
-        }
+        ++ lib.optionals enableTProxy (
+          [
+            {
+              type = "tproxy";
+              tag = "tproxy-in";
+              listen = "127.0.0.1";
+              listen_port = globalTproxy.port;
+            }
+          ]
+          ++ lib.optional proxyCfg.ipv6 {
+            type = "tproxy";
+            tag = "tproxy-in6";
+            listen = "::1";
+            listen_port = globalTproxy.port;
+          }
+        )
         ++ lib.optional enableTun (
           {
             type = "tun";
             tag = "tun-in";
             interface_name = tunInterface;
-            address = [ tunAddress ];
+            address = [ tunAddress ] ++ lib.optional (proxyCfg.ipv6 && tunIPv6Address != null) tunIPv6Address;
             mtu = tunMtu;
             auto_route = tunAutoRoute;
             auto_redirect = tunAutoRedirect;
@@ -211,6 +223,7 @@ in
     enableTun = true;
     tunInterface = globalTun.interface;
     tunAddress = globalTun.address;
+    tunIPv6Address = constants.globalTunIPv6Address;
     tunMtu = globalTun.mtu;
     tunAutoRoute = true;
     tunAutoRedirect = true;
@@ -225,6 +238,7 @@ in
     enableTun = true;
     tunInterface = perAppRoutingTun.interface;
     tunAddress = perAppRoutingTun.address;
+    tunIPv6Address = constants.perAppTunIPv6Address;
     tunMtu = perAppRoutingTun.mtu;
     tunAutoRoute = false;
     tunAutoRedirect = false;

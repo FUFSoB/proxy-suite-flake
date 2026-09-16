@@ -285,7 +285,6 @@ let
     # clients included) stay out of the TUN.
     xrayTunMarkBypassRulePriority = 8992;
     xrayTunServiceUserRulePriority = 8993;
-    xrayTunPerAppTproxyRulePriority = 8994;
     xrayTunPerAppTunRulePriority = 8995;
     # DNS stays in the TUN for fakedns, even to a LAN resolver.
     xrayTunDnsRulePriority = 8996;
@@ -293,10 +292,10 @@ let
     # replies to connections from there leave the way they came.
     xrayTunMainRulePriority = 8997;
 
-    xrayGlobalTunIPv6Address = "fd66:19::1/64";
-    xrayGlobalTunIPv6RoutePrefix = "fd66:19::/64";
-    xrayPerAppTunIPv6Address = "fd66:20::1/64";
-    xrayPerAppTunIPv6RoutePrefix = "fd66:20::/64";
+    globalTunIPv6Address = "fd66:19::1/64";
+    globalTunIPv6RoutePrefix = "fd66:19::/64";
+    perAppTunIPv6Address = "fd66:20::1/64";
+    perAppTunIPv6RoutePrefix = "fd66:20::/64";
 
     xrayDnsBridgePorts = {
       socks = 18533;

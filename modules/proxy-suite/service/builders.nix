@@ -247,11 +247,39 @@ rec {
   mkIpLocalDefaultRouteDelete =
     {
       ip,
+      family ? "",
       table,
     }:
     ''
-      ${ip} route del local default dev lo table ${toString table} 2>/dev/null || true
+      ${ip} ${
+        lib.optionalString (family != "") "${family} "
+      }route del local default dev lo table ${toString table} 2>/dev/null || true
     '';
+
+  # The TProxy fwmark rule and local route: IPv4 always, IPv6 with proxy.ipv6.
+  # Cleanup drops both families, whatever the setting was.
+  mkTproxyRoutingDown =
+    {
+      ip,
+      fwmark,
+      table,
+    }:
+    lib.concatMapStrings (family: ''
+      ${mkIpRuleDeleteByFwmark { inherit ip family fwmark table; }}
+      ${mkIpLocalDefaultRouteDelete { inherit ip family table; }}
+    '') [ "-4" "-6" ];
+
+  mkTproxyRoutingUp =
+    {
+      ip,
+      ipv6,
+      fwmark,
+      table,
+    }:
+    lib.concatMapStrings (family: ''
+      ${ip} ${family} route replace local default dev lo table ${toString table}
+      ${ip} ${family} rule add fwmark ${toString fwmark} table ${toString table}
+    '') ([ "-4" ] ++ lib.optional ipv6 "-6");
 
   mkIpLinkDelete =
     {

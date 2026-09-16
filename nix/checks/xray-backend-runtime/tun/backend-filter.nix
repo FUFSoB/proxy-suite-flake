@@ -22,6 +22,8 @@
         !(pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.users'' xrayBackendJqFilter);
       assert pkgs.lib.hasInfix "xray_preserved_rules" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "dns-upstream-direct" xrayBackendJqFilter;
+      assert pkgs.lib.hasInfix "dns-upstream-remote" xrayBackendJqFilter;
+      assert pkgs.lib.hasInfix "xray_pin_server_names" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "xray_dns_server_order" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "dns-hijack" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "del(.routing.balancers)" xrayBackendJqFilter;

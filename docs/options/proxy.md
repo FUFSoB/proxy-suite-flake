@@ -34,6 +34,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [rules](#services-proxy-suite-proxy-dns-singbox-rules)
       - [servers](#services-proxy-suite-proxy-dns-singbox-servers)
     - [strategy](#services-proxy-suite-proxy-dns-strategy)
+  - [ipv6](#services-proxy-suite-proxy-ipv6)
   - listener
     - [address](#services-proxy-suite-proxy-listener-address)
     - auth
@@ -587,6 +588,24 @@ null
 
 ```nix
 "ipv4_only"
+```
+
+<a id="services-proxy-suite-proxy-ipv6"></a>
+## services\.proxy-suite\.proxy\.ipv6
+
+Carry IPv6 in the transparent modes: TProxy through a second listener on ::1, the TUNs
+(global and per-app) through an IPv6 address of their own\. Off, TProxy leaves IPv6
+alone and the TUNs block it, so apps fall back to IPv4\. On an uplink without IPv6,
+set proxy\.dns\.strategy = “ipv4_only” too: a direct IPv6 destination would otherwise
+fail after the connection seems open, instead of falling back to IPv4\.
+
+*Type:*
+boolean
+
+*Default:*
+
+```nix
+config.networking.enableIPv6
 ```
 
 <a id="services-proxy-suite-proxy-listener-address"></a>
@@ -1622,7 +1641,7 @@ signed integer
 <a id="services-proxy-suite-proxy-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.localSubnets
 
-Subnets that bypass interception (DNS excepted): your LAN, VM bridges\.
+Subnets that bypass interception (DNS excepted): your LAN, VM bridges\. IPv6 CIDRs work too\.
 
 *Type:*
 list of string
@@ -1641,6 +1660,7 @@ list of string
 [
   "192.168.0.0/16"
   "10.0.0.0/8"
+  "fd00::/8"
 ]
 ```
 

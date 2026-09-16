@@ -77,6 +77,7 @@ def xray_config():
         "routing": {
             "rules": [
                 {"type": "field", "inboundTag": ["tproxy-in"], "outboundTag": "direct"},
+                {"type": "field", "inboundTag": ["local"], "outboundTag": "direct"},
                 {"type": "field", "domain": ["geosite:google"], "outboundTag": "proxy-suite-ob-warp"},
                 {"type": "field", "network": "tcp,udp", "balancerTag": "proxy"},
             ],
@@ -188,6 +189,7 @@ class XrayTest(unittest.TestCase):
         self.assertEqual(
             cfg["routing"]["rules"],
             [
+                {"type": "field", "inboundTag": ["local"], "outboundTag": "direct"},
                 {"type": "field", "domain": ["geosite:google"], "balancerTag": "proxy"},
                 {"type": "field", "network": "tcp,udp", "balancerTag": "proxy"},
             ],

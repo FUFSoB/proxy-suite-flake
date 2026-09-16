@@ -89,8 +89,8 @@ let
       globalTun
       globalTproxy
       perAppRoutingTun
-      perAppRoutingTproxy
       ;
+    inherit (proxyCfg) ipv6;
   };
 
   serviceUnits = import ./units.nix {
