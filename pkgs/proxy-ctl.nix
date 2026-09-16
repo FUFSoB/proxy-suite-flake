@@ -102,6 +102,7 @@ let
     ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
+      # /run/wrappers/bin first: the store's sudo, earlier on a PATH, refuses to run without setuid.
       wrapProgram "$out/bin/proxy-tui" \
         --prefix PYTHONPATH : ${pythonModules} \
         --prefix PATH : "${
@@ -110,7 +111,7 @@ let
             pkgs.systemd
           ]
         }" \
-        --suffix PATH : /run/wrappers/bin ${envFlags}
+        --prefix PATH : /run/wrappers/bin ${envFlags}
     '';
   };
   guiPython = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
@@ -184,6 +185,7 @@ let
       runHook postInstall
     '';
     postFixup = ''
+      # /run/wrappers/bin first: the store's pkexec, earlier on a PATH, refuses to run without setuid.
       makeWrapper ${guiPython}/bin/python3 "$out/bin/proxy-suite-gui" \
         --add-flags "$out/lib/proxy-suite-gui/proxy_gui.py" \
         "''${gappsWrapperArgs[@]}" \
@@ -195,7 +197,7 @@ let
             pkgs.qrencode
           ]
         }" \
-        --suffix PATH : /run/wrappers/bin \
+        --prefix PATH : /run/wrappers/bin \
         --set PROXY_GUI_ICON_DIR "$out/share/proxy-suite-gui/icons" \
         --set PROXY_GUI_REFRESH ${toString guiRefreshInterval} ${envFlags}
     '';

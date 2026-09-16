@@ -496,7 +496,7 @@ class ProxyTui(App):
         self.loaded[tab_id] = (states, visible, status, rows, summary)
         self.states, self.status = states, status
         # A read root could do: ! retries runs, not reads, so the way out is the whole TUI under sudo.
-        if summary.startswith("✗") and model.needs_root(summary.splitlines(), 1):
+        if model.needs_root(summary.splitlines(), 1):
             summary += "\n#: run proxy-tui as root (sudo)"
         self.show_status()
         if visible != self.shown:

@@ -73,12 +73,12 @@ in
       true
     )
 
-    # selection=first renames the pinned outbound - or the first one, absent a
-    # pin - to "proxy" at start, rather than collapsing at eval time.
+    # selection=first puts "proxy" in front of the pinned outbound - or the first one,
+    # absent a pin - at start, keeping every tag for rules that name one.
     (
       assert pkgs.lib.hasInfix ''PROXY_TAG="$PINNED_OUTBOUND"'' subscriptionFirstSelectionStartScript;
       assert
-        pkgs.lib.hasInfix ''map(if .tag == $t then .tag = "proxy" else . end''
+        pkgs.lib.hasInfix ''[{type:"selector",tag:"proxy",outbounds:[$t],default:$t}] + .''
           subscriptionFirstSelectionStartScript;
       true
     )

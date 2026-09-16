@@ -244,16 +244,15 @@ let
         ob.url
         ob.singBoxJson
         ob.xrayJson
-        ob.json
       ]
-      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, xrayJson, or json"
+      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, or xrayJson"
     )
     (mkAssertion (
       !singBoxEnabled || hybridEnabled || ob.xrayJson == null
     ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
     (mkAssertion (
-      !xrayEnabled || hybridEnabled || (ob.singBoxJson == null && ob.json == null)
-    ) "proxy-suite: outbound '${ob.tag}': singBoxJson/json require proxy.backend = sing-box or hybrid")
+      !xrayEnabled || hybridEnabled || ob.singBoxJson == null
+    ) "proxy-suite: outbound '${ob.tag}': singBoxJson requires proxy.backend = sing-box or hybrid")
     (mkAssertion (
       !(ob.backend == "xray") || xrayEnabled
     ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
@@ -284,7 +283,7 @@ let
   # A pinned outbound is rendered by the XRay renderer inside the inbound
   # service, so a sing-box-only definition cannot serve as one.
   singBoxOnlyPinnedTags = map (ob: ob.tag) (
-    builtins.filter (ob: ob.singBoxJson != null || ob.json != null) derived.proxyInboundViaOutbounds
+    builtins.filter (ob: ob.singBoxJson != null) derived.proxyInboundViaOutbounds
   );
 
   proxyInboundAssertions = [

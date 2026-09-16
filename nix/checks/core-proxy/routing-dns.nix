@@ -16,7 +16,7 @@
 
 {
   assertions = [
-    # -- routing rule entries with domains and geoips preserve both matchers --
+    # -- routing rule entries with domains and geoips preserve both matchers, and the named outbound --
     (
       assert builtins.length routingOrDomainRules == 1;
       true
@@ -26,11 +26,11 @@
       true
     )
     (
-      assert (builtins.head routingOrDomainRules).outbound == "proxy";
+      assert (builtins.head routingOrDomainRules).outbound == "primary";
       true
     )
     (
-      assert (builtins.head routingOrGeoIPRules).outbound == "proxy";
+      assert (builtins.head routingOrGeoIPRules).outbound == "primary";
       true
     )
 

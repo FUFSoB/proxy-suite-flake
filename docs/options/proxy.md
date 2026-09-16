@@ -1384,7 +1384,7 @@ list of string
 <a id="services-proxy-suite-proxy-routing-rules-outbound"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.outbound
 
-Outbound tag, or “proxy”, “direct”, “block”\. With selection = “first” every proxy tag means “proxy”\.
+Outbound tag, or “proxy”, “direct”, “block”\.
 
 *Type:*
 string

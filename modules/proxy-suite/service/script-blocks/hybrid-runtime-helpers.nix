@@ -19,46 +19,39 @@ lib.optionalString hybridEnabled ''
     OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
   }
 
-  _proxy_suite_next_xray_sidecar_port() {
-    local port="$XRAY_SIDECAR_NEXT_PORT"
-    XRAY_SIDECAR_NEXT_PORT=$((XRAY_SIDECAR_NEXT_PORT + 1))
-    printf '%s\n' "$port"
+  # $1 a JSON array of XRay outbounds, each tagged. One jq pass for the lot: each gets a
+  # loopback SOCKS inbound on the sidecar and stands in sing-box as a hop to it.
+  _proxy_suite_add_xray_sidecar_obs() {
+    local batch
+    batch=$(${jq} -c \
+      --argjson base "$XRAY_SIDECAR_NEXT_PORT" \
+      --argjson mark ${toString xraySidecarRoutingMark} '
+      to_entries | map(
+        ($base + .key) as $port
+        | ("proxy-suite-xray-" + ($port | tostring)) as $auth
+        | .value.tag as $tag
+        | {outbound: (.value
+             | .streamSettings.sockopt.mark = $mark
+             | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")),
+           inbound: {tag: ($tag + "-inbound"), listen: "127.0.0.1", port: $port, protocol: "socks",
+             settings: {auth: "password", udp: true, accounts: [{user: $auth, pass: $auth}]}},
+           rule: {type: "field", inboundTag: [$tag + "-inbound"], outboundTag: $tag},
+           hop: ({type: "socks", tag: $tag, server: "127.0.0.1", server_port: $port, version: "5",
+             username: $auth, password: $auth}${
+               lib.optionalString (routingMark != null) " + {routing_mark: ${toString routingMark}}"
+             })})
+      | {outbounds: map(.outbound), inbounds: map(.inbound), rules: map(.rule), hops: map(.hop)}
+    ' <<< "$1")
+    XRAY_SIDECAR_NEXT_PORT=$((XRAY_SIDECAR_NEXT_PORT + $(${jq} '.outbounds | length' <<< "$batch")))
+    XRAY_OUTBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.outbounds' <<< "$XRAY_OUTBOUNDS_JSON")
+    XRAY_INBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.inbounds' <<< "$XRAY_INBOUNDS_JSON")
+    XRAY_ROUTE_RULES_JSON=$(${jq} -c --argjson b "$batch" '. + $b.rules' <<< "$XRAY_ROUTE_RULES_JSON")
+    OUTBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.hops' <<< "$OUTBOUNDS_JSON")
   }
 
+  # $1 one XRay outbound, $2 its tag.
   _proxy_suite_add_xray_sidecar_ob() {
-    local ob="$1" tag="$2" port auth inbound_tag sing_ob inbound route_rule
-    port="$(_proxy_suite_next_xray_sidecar_port)"
-    auth="proxy-suite-xray-$port"
-    inbound_tag="$tag-inbound"
-    ob=$(${jq} \
-      --arg tag "$tag" \
-      --argjson mark ${toString xraySidecarRoutingMark} \
-      '.tag = $tag
-       | .streamSettings = (.streamSettings // {})
-       | .streamSettings.sockopt = (.streamSettings.sockopt // {})
-       | .streamSettings.sockopt.mark = $mark
-       | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")' \
-      <<< "$ob")
-    XRAY_OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$XRAY_OUTBOUNDS_JSON")
-    inbound=$(${jq} -n \
-      --arg tag "$inbound_tag" \
-      --arg auth "$auth" \
-      --argjson port "$port" \
-      '{tag:$tag,listen:"127.0.0.1",port:$port,protocol:"socks",settings:{auth:"password",udp:true,accounts:[{user:$auth,pass:$auth}]}}')
-    XRAY_INBOUNDS_JSON=$(${jq} --argjson inbound "$inbound" '. + [$inbound]' <<< "$XRAY_INBOUNDS_JSON")
-    route_rule=$(${jq} -n \
-      --arg inbound "$inbound_tag" \
-      --arg outbound "$tag" \
-      '{type:"field",inboundTag:[$inbound],outboundTag:$outbound}')
-    XRAY_ROUTE_RULES_JSON=$(${jq} --argjson rule "$route_rule" '. + [$rule]' <<< "$XRAY_ROUTE_RULES_JSON")
-    sing_ob=$(${jq} -n \
-      --arg tag "$tag" \
-      --arg auth "$auth" \
-      --argjson port "$port" \
-      '{type:"socks",tag:$tag,server:"127.0.0.1",server_port:$port,version:"5",username:$auth,password:$auth${
-        lib.optionalString (routingMark != null) ",routing_mark:${toString routingMark}"
-      }}')
-    OUTBOUNDS_JSON=$(${jq} --argjson ob "$sing_ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+    _proxy_suite_add_xray_sidecar_obs "$(${jq} -c --arg tag "$2" '[.tag = $tag]' <<< "$1")"
   }
 
   _proxy_suite_write_xray_sidecar_config() {

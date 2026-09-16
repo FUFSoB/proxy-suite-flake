@@ -30,14 +30,10 @@ let
     else
       "proxy";
 
-  # In "first" mode the start script renames the first outbound to "proxy",
-  # so any per-outbound routing tag that isn't direct/block/proxy must map
-  # to "proxy" instead of the original tag (which won't exist in sing-box).
+  # Pure XRay's urltest prefixes every outbound for its balancer.
   resolveTag =
     tag:
-    if derived.collapseNamedOutbounds && !builtins.elem tag derived.builtinTags then
-      "proxy"
-    else if
+    if
       derived.pureXrayEnabled
       && derived.selectionMode == "urltest"
       && !builtins.elem tag derived.builtinTags

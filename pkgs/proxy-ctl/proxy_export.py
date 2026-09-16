@@ -76,9 +76,8 @@ def _dropped(exits, keep):
 
 
 def _backend_tag(tags, only, prefix=""):
-    """The tag `only` has in the backend: as given, prefixed by the XRay wrapper, or the
-    outbound collapsed into "proxy"."""
-    for tag in (only, prefix + only, "proxy"):
+    """The tag `only` has in the backend: as given, or prefixed by the XRay wrapper."""
+    for tag in (only, prefix + only):
         if tag in tags:
             return tag
     raise ValueError(f"no outbound {only} in the running config")

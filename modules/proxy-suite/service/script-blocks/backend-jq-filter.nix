@@ -16,7 +16,8 @@ if pureXrayEnabled then
         {balancerTag:"proxy"}
       end;
     def xray_rewrite_proxy_rule($single_tag):
-      if $single_tag != "" and (.balancerTag? // "") == "proxy" then
+      # "proxy" is a balancer in urltest and no outbound at all in "first": either way, the one exit.
+      if $single_tag != "" and ((.balancerTag? // .outboundTag? // "") == "proxy") then
         .outboundTag = $single_tag | del(.balancerTag)
       else
         .

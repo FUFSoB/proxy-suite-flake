@@ -5,6 +5,7 @@ Configuration arrives through the environment the Nix wrapper sets.
 
 import datetime
 import http.client
+import importlib
 import json
 import os
 import re
@@ -625,6 +626,15 @@ def _status_tray():
     print(f"awg_profiles={','.join(snapshot['awg']['profiles'])}")
 
 
+def _status_tab(tab_id=""):
+    """A front end's tab as JSON [rows, summary]: how the GUI reads, through pkexec, what only root can."""
+    model = _module("proxy_model")
+    tab = next((t for t in model.TABS if t.id == tab_id), None)
+    if tab is None:
+        usage(f"status --tab <{'|'.join(t.id for t in model.TABS)}>")
+    print(json.dumps(model.load_tab(tab, model._read_states())))
+
+
 def _status_json():
     snapshot = _status_snapshot()
     if snapshot["proxy"]["active"]:
@@ -699,6 +709,9 @@ def cmd_status(*args):
         return
     if args[:1] == ("--tray",):
         _status_tray()
+        return
+    if args[:1] == ("--tab",):
+        _status_tab(*args[1:2])
         return
     print("proxy-suite services:")
     for svc in _snapshot_units():
@@ -814,7 +827,7 @@ def _require_outbound_inventory():
 def _outbound_current():
     """What the backend dials right now, when it exposes a selector.
 
-    Empty otherwise, which is normal for selection = "first" and for XRay.
+    Empty otherwise, which is normal for XRay.
     """
     status, body = _clash("GET", "/proxies/proxy", timeout=5)
     now = body.get("now") if status == 200 and isinstance(body, dict) else None
@@ -1071,12 +1084,14 @@ def _subscription_link(*args):
     _emit(_s(url), flag == "--qr")
 
 
-def _proxy_export():
+def _module(name):
     # Not PYTHONPATH: that would reach every command `apps run` starts.
     sys.path.append(env("PROXY_CTL_MODULES", os.path.dirname(os.path.abspath(__file__))))
-    import proxy_export
+    return importlib.import_module(name)
 
-    return proxy_export
+
+def _proxy_export():
+    return _module("proxy_export")
 
 
 def _config_export(*args, only=None):

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """proxy_model without a front end: the status line and the tray menu turn state into the right proxy-ctl argv."""
 
+import contextlib
+import io
+import json
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -148,6 +152,35 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(probe.argv(rows[1], "example.com", {}), ["proxy", "auto", "probe", "example.com", "--via", "b-backend"])
         broken = model.Tab("x", "X", model.ROW, [], lambda _: ctl.die("backend gone"))
         self.assertEqual(model.load_tab(broken, {}), ([], "✗ backend gone"))
+        # outbounds.d is root-only: the inventory still says which are runtime, so they can be removed.
+        inventory["sources"] = {"a": "runtime"}
+        with mock.patch.object(ctl, "_outbound_current", lambda: ""), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []), mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
+            rows, _ = model.load_tab(tab, {})
+        self.assertEqual([(r["source"], r["runtime"]) for r in rows], [("runtime", True), ("-", False)])
+
+    def test_load_tab_as_root(self):
+        """The GUI's root read: proxy-ctl status --tab through pkexec, and what a refusal says."""
+        tab = next(t for t in model.TABS if t.id == "routing")
+        with mock.patch.object(ctl, "_route_mode_current", lambda: "default"), mock.patch.object(ctl, "_route_mode_default", lambda: "rules"):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ctl._status_tab("routing")
+            self.assertEqual(json.loads(out.getvalue()), list(model.load_tab(tab, {})))
+        with self.assertRaises(SystemExit) as e:
+            ctl._status_tab("nope")
+        self.assertIn("status --tab <services|", str(e.exception))
+
+        def ran(returncode, stdout="", stderr=""):
+            return mock.patch.object(model.subprocess, "run", lambda argv, **_: subprocess.CompletedProcess(argv, returncode, stdout, stderr))
+
+        with ran(0, '[[{"key": "a"}], "ok"]'):
+            self.assertEqual(model.load_tab_as_root(tab, "pkexec"), ([{"key": "a"}], "ok"))
+        with ran(126):
+            self.assertEqual(model.load_tab_as_root(tab, "pkexec"), (None, "authentication cancelled"))
+        with ran(127, stderr="pkexec must be setuid root\n"):  # not a refusal: asked again next refresh
+            self.assertEqual(model.load_tab_as_root(tab, "pkexec"), (None, "pkexec must be setuid root"))
+        with ran(1, stderr="boom\nUsage: proxy-ctl status\n"):
+            self.assertEqual(model.load_tab_as_root(tab, "pkexec"), (None, "Usage: proxy-ctl status"))
 
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable_is_not_empty(self):

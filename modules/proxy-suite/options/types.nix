@@ -22,7 +22,7 @@ let
     options = {
       outbound = mkOption {
         type = types.str;
-        description = ''Outbound tag, or "proxy", "direct", "block". With selection = "first" every proxy tag means "proxy".'';
+        description = ''Outbound tag, or "proxy", "direct", "block".'';
         example = "vps-de";
       };
     }

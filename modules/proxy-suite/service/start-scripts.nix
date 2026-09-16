@@ -235,11 +235,11 @@ let
 
       ${lib.optionalString enableOutboundTest ''
         # proxy-ctl proxy outbounds test. Servers for its ping, keyed by the user's tag:
-        # the wrapper may have renamed one outbound "proxy" or prefixed them all, and a
+        # XRay's urltest wrapper prefixes them all, and a
         # hybrid XRay outbound is a sing-box socks hop whose real server is the sidecar's.
         # A loopback hop (the WARP tunnel, XRay's SSH listener) has no server worth timing.
         ENDPOINTS_TMP="$RUNTIME_DIR/outbound-endpoints.json.tmp"
-        ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" '
+        ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" '
           def endpoint:
             if .server then {server, port: .server_port}
             elif .settings.address then {server: .settings.address, port: .settings.port}
@@ -249,7 +249,7 @@ let
           def udp: (.type // .protocol) as $t | (["hysteria", "hysteria2", "tuic"] | index($t) != null) or .quic? == true;
           ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | [.[] | select(.type != "selector" and .type != "urltest")
-             | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag
+             | (.tag | ltrimstr("proxy-suite-ob-")) as $tag
              | ($real[.tag] // .) | select(endpoint != null and (endpoint.server | test("^(127\\.|::1$|localhost$)") | not))
              | {key: $tag, value: (endpoint + {network: (if udp then "udp" else "tcp" end)})}]
           | from_entries
@@ -269,11 +269,11 @@ let
         # proxy-ctl's share links: the URL each outbound was given, and its backend JSON.
         # Credentials: root and the userControl group only.
         SHARE_TMP="$RUNTIME_DIR/outbound-share.json.tmp"
-        (umask 077 && ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" --arg collapsed "''${PROXY_TAG:-}" \
+        (umask 077 && ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" \
           --argjson urls "$OUTBOUND_URLS_JSON" --argjson subs "$SUBSCRIPTION_URLS_JSON" '
           ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | {outbounds: ([.[] | select(.type != "selector" and .type != "urltest")
-               | (.tag | ltrimstr("proxy-suite-ob-") | if . == "proxy" then $collapsed else . end) as $tag
+               | (.tag | ltrimstr("proxy-suite-ob-")) as $tag
                | {key: $tag, value: {url: $urls[$tag], outbound: (($real[$tag] // $real[.tag] // .) | .tag = $tag)}}]
                | from_entries),
              subscriptions: $subs}
@@ -291,10 +291,10 @@ let
             listen: "127.0.0.1", listen_port: ${toString outboundTestPort}}]' <<< "$PROBE_INBOUNDS_JSON")
           PROBE_PIN_RULES_JSON=$(${jq} -c \
             '. + [{inbound: ["proxy-suite-test-in"], outbound: "proxy-suite-test"}]' <<< "$PROBE_PIN_RULES_JSON")
-          ${jq} -n --argjson tags "$EXIT_TAGS_JSON" --arg collapsed "''${PROXY_TAG:-}" \
+          ${jq} -n --argjson tags "$EXIT_TAGS_JSON" \
             --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} '
             {port: ${toString outboundTestPort}, selector: "proxy-suite-test", url: $url,
-             outbounds: ($tags | map({key: (if . == "proxy" then $collapsed else . end), value: .}) | from_entries)}
+             outbounds: ($tags | map({key: ., value: .}) | from_entries)}
           ' > "$RUNTIME_DIR/outbound-test.json"
           # Tags and a loopback port only.
           chmod 644 "$RUNTIME_DIR/outbound-test.json"

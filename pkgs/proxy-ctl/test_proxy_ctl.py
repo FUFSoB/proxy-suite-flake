@@ -70,7 +70,7 @@ class EnvTest(unittest.TestCase):
 
 class ClashApiTest(EnvTest):
     def test_unset_api_reads_as_unreachable(self):
-        # selection = "first" and the XRay backend leave the API off; a bare
+        # The XRay backend leaves the API off; a bare
         # path is not a URL, and it used to escape as a traceback out of
         # `status`, `where` and `proxy outbounds`.
         for value in ("", "127.0.0.1:9090"):
@@ -529,8 +529,7 @@ class OutboundTestTest(EnvTest):
                 "port": 18537,
                 "selector": "proxy-suite-test",
                 "url": "https://t.test/204",
-                # selection = "first": the backend knows the pick as "proxy".
-                "outbounds": {"own-vps": "proxy", "de": "de", "wg": "wg"},
+                "outbounds": {"own-vps": "own-vps", "de": "de", "wg": "wg"},
             },
         )
         self.calls = []
@@ -563,10 +562,10 @@ class OutboundTestTest(EnvTest):
         self.assertRegex(out, r"(?m)^  TAG +PING +DELAY +DOWNLOAD$")
         self.assertRegex(out, r"(?m)^  own-vps +udp +88 ms +12\.3 Mbit/s$")
         self.assertRegex(out, r"(?m)^  de +- +failed +12\.3 Mbit/s$")
-        self.assertTrue(any(c[1].startswith("/proxies/proxy/delay?") and "t.test" in c[1] for c in self.calls))
+        self.assertTrue(any(c[1].startswith("/proxies/own-vps/delay?") and "t.test" in c[1] for c in self.calls))
         # Downloads switch the test selector, one outbound at a time, in order.
         puts = [c for c in self.calls if c[0] == "PUT"]
-        self.assertEqual([c[2]["name"] for c in puts], ["proxy", "de", "wg"])
+        self.assertEqual([c[2]["name"] for c in puts], ["own-vps", "de", "wg"])
         self.assertEqual({c[1] for c in puts}, {"/proxies/proxy-suite-test"})
 
     def test_default_and_arguments(self):

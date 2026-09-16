@@ -66,7 +66,7 @@ GLOBAL_SHORTCUTS = [
     ("w", "How is a domain routed"),
     ("<Shift>l", "Follow all logs"),
     ("o", "Output of the last command"),
-    ("<Control>e", "Run actions as root (pkexec)"),
+    ("<Control>e", "Read and run as root (pkexec)"),
     ("F5 r", "Refresh now"),
     ("<Control>question", "Keyboard shortcuts"),
     ("<Control>w", "Close the window (the tray keeps running)"),
@@ -755,7 +755,7 @@ class Window(Adw.ApplicationWindow):
         self.refresh_stack.add_named(Adw.Spinner(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER), "busy")
         self.busy_timer = None
         header.pack_start(self.refresh_stack)
-        self.root_badge = Gtk.Image(icon_name="dialog-password-symbolic", tooltip_text="Actions run as root (Ctrl+E)", visible=app.elevated(), css_classes=["warning"])
+        self.root_badge = Gtk.Image(icon_name="dialog-password-symbolic", tooltip_text="Reads and actions run as root (Ctrl+E)", visible=app.elevated(), css_classes=["warning"])
         header.pack_start(self.root_badge)
         menu = Gio.Menu()
         section = Gio.Menu()
@@ -764,7 +764,7 @@ class Window(Adw.ApplicationWindow):
         section.append("Output of the last command", "win.last-output")
         menu.append_section(None, section)
         section = Gio.Menu()
-        section.append("Run actions as root", "app.elevated")
+        section.append("Read and run as root", "app.elevated")
         menu.append_section(None, section)
         section = Gio.Menu()
         section.append("Keyboard Shortcuts", "win.shortcuts")
@@ -1027,6 +1027,7 @@ class ProxySuiteGui(Adw.Application):
         self.pending = False
         self.generation = 0
         self.failed = None  # units in failed state at the last load; None before the first
+        self.root_read_refused = False  # pkexec for a tab read was dismissed: not asked again until Ctrl+E flips
         self.timer = None
 
     def do_startup(self):
@@ -1088,8 +1089,10 @@ class ProxySuiteGui(Adw.Application):
 
     def on_elevated(self, action, value):
         action.set_state(value)
+        self.root_read_refused = False
         if self.window:
             self.window.root_badge.set_visible(value.get_boolean())
+        self.reload()  # tabs only root can read
 
     def present(self, tab=None):
         if self.window is None:
@@ -1129,9 +1132,9 @@ class ProxySuiteGui(Adw.Application):
         if window:
             window.set_busy(True)
         tab = window.pages[window.stack.get_visible_child_name()].tab if window and window.stack.get_visible_child_name() else None
-        threading.Thread(target=self.load, args=(self.generation, tab), daemon=True).start()
+        threading.Thread(target=self.load, args=(self.generation, tab, self.elevated()), daemon=True).start()
 
-    def load(self, generation, tab):
+    def load(self, generation, tab, elevated):
         model.new_load()
         states = model._read_states()
         snap = model.snapshot(states) if states else None
@@ -1141,8 +1144,24 @@ class ProxySuiteGui(Adw.Application):
         if tab is not None:
             result["visible"] = model.available_tabs(states)
             result["status"] = model._safe(model.status_items, states, fallback=[("", "Status unavailable", "bad")])
-            result["tab"] = (tab.id, *model.load_tab(tab, states))
+            result["tab"] = (tab.id, *self.load_tab(tab, states, elevated))
         GLib.idle_add(self.landed, generation, result)
+
+    def load_tab(self, tab, states, elevated):
+        """The tab as this user reads it; what only root can read, through pkexec when actions run as root."""
+        rows, summary = model.load_tab(tab, states)
+        if not model.needs_root(summary.splitlines(), 1):
+            return rows, summary
+        if not elevated:
+            return rows, summary + "\nCtrl+E: read and run as root (pkexec)"
+        if self.root_read_refused:
+            return rows, summary + "\nRoot read cancelled: Ctrl+E twice to ask again."
+        root_rows, why = model.load_tab_as_root(tab, "pkexec")
+        if root_rows is None:
+            # ponytail: one refusal stops the asking, else the password dialog is back every refresh
+            self.root_read_refused = why == "authentication cancelled"
+            return rows, summary + f"\nAs root: {why}"
+        return root_rows, why
 
     def landed(self, generation, result):
         self.loading = False

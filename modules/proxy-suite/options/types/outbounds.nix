@@ -67,13 +67,6 @@ let
         settings.address = "example.com";
       };
 
-      json = mkOption {
-        type = types.nullOr types.attrs;
-        default = null;
-        visible = false;
-        description = "Deprecated alias for singBoxJson.";
-      };
-
       backend = mkOption {
         type = types.enum [
           "auto"
@@ -88,7 +81,7 @@ let
         example = "xray";
       };
 
-      # Destinations sent to this outbound (selection "selector" or "urltest").
+      # Destinations sent to this outbound, whatever the selection.
       routing = routingFields;
     };
   };

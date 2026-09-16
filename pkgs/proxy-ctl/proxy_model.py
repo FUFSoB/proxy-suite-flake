@@ -5,6 +5,7 @@ validation, permission errors and systemd triggers stay in one place, and its
 die() cannot take a front end down.
 """
 
+import json
 import os
 import re
 import shlex
@@ -176,7 +177,8 @@ def outbound_rows(_):
     excluded = set(inventory.get("excluded") or [])
     current = ctl._outbound_current()
     reputation = ctl._reputation_by_tag()
-    runtime = set(ctl._runtime_tags("outbound"))
+    # outbounds.d is root-only; the inventory says "runtime" for what the backend loaded from it.
+    runtime = set(ctl._runtime_tags("outbound")) | {t for t, s in sources.items() if s == "runtime"}
     return [
         {
             "key": t,
@@ -565,6 +567,21 @@ def _capture(argv):
 def elevated(argv, via):
     """proxy-ctl argv run as root through via (sudo, pkexec): by its full path, the one the polkit rule names."""
     return [via, shutil.which(CTL) or CTL, *argv]
+
+
+def load_tab_as_root(tab, via):
+    """load_tab in proxy-ctl run through via (pkexec): (rows, summary), or None and why it did not run."""
+    try:
+        p = subprocess.run(elevated(["status", "--tab", tab.id], via), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        return None, f"cannot run {via}: {e}"
+    if p.returncode in (126, 127) and not p.stdout and not p.stderr.strip():
+        return None, "authentication cancelled"  # pkexec: dismissed, or not allowed
+    try:
+        rows, summary = json.loads(p.stdout)
+        return rows, summary
+    except ValueError:
+        return None, (p.stderr.strip().splitlines() or [f"exit status {p.returncode}"])[-1]
 
 
 def popen(argv, root=None):

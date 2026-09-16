@@ -116,10 +116,7 @@ let
           ''
             SUB_SING_BOX_JSON=$(${jq} -c '.singBox' "$cache")
             ${markBlock}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_SING_BOX_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
-            while IFS= read -r SUB_XRAY_OB; do
-              SUB_XRAY_TAG="$(${jq} -r '.tag' <<< "$SUB_XRAY_OB")"
-              _proxy_suite_add_xray_sidecar_ob "$SUB_XRAY_OB" "$SUB_XRAY_TAG"
-            done < <(${jq} -c '.xray[]' "$cache")
+            _proxy_suite_add_xray_sidecar_obs "$(${jq} -c '.xray' "$cache")"
           ''
         else
           ''

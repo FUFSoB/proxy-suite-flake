@@ -39,13 +39,7 @@ let
   rawOutboundJson =
     ob: tag: routingMark:
     let
-      backendRaw =
-        if pureXrayEnabled then
-          ob.xrayJson
-        else if ob.singBoxJson != null then
-          ob.singBoxJson
-        else
-          ob.json;
+      backendRaw = if pureXrayEnabled then ob.xrayJson else ob.singBoxJson;
       markAttrs =
         if routingMark == null then
           { }
@@ -218,16 +212,7 @@ let
 
   mkOutboundBlock =
     ob: routingMark: tag:
-    let
-      backendRaw =
-        if pureXrayEnabled then
-          ob.xrayJson
-        else if ob.singBoxJson != null then
-          ob.singBoxJson
-        else
-          ob.json;
-    in
-    if backendRaw != null then
+    if (if pureXrayEnabled then ob.xrayJson else ob.singBoxJson) != null then
       let
         outboundJson = builtins.toJSON (rawOutboundJson ob tag routingMark);
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
@@ -249,26 +234,14 @@ let
 
   singBoxRawOutboundJson =
     ob: tag: routingMark:
-    let
-      backendRaw = if ob.singBoxJson != null then ob.singBoxJson else ob.json;
-      markAttrs = lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; };
-    in
-    backendRaw // { inherit tag; } // markAttrs;
-
-  xrayRawOutboundJson =
-    ob: tag:
-    lib.recursiveUpdate (ob.xrayJson // { inherit tag; }) {
-      streamSettings.sockopt = {
-        mark = xraySidecarRoutingMark;
-        domainStrategy = "UseIP";
-      };
-    };
+    ob.singBoxJson // { inherit tag; } // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; };
 
   mkHybridOutboundBlock =
     ob: routingMark: tag:
     if ob.xrayJson != null then
       let
-        outboundJson = builtins.toJSON (xrayRawOutboundJson ob tag);
+        # The sidecar helper adds the tag, its mark, and UseIP unless one is set.
+        outboundJson = builtins.toJSON ob.xrayJson;
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
@@ -277,7 +250,7 @@ let
         _proxy_suite_add_xray_sidecar_ob "$OB_JSON" ${lib.escapeShellArg tag}
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
       ''
-    else if ob.singBoxJson != null || ob.json != null then
+    else if ob.singBoxJson != null then
       let
         outboundJson = builtins.toJSON (singBoxRawOutboundJson ob tag routingMark);
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
@@ -598,10 +571,14 @@ let
             if [ -z "$PROXY_TAG" ]; then
               PROXY_TAG=$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")
             fi
-            OUTBOUNDS_JSON=$(${jq} --arg t "$PROXY_TAG" \
-              'map(if .tag == $t then .tag = "proxy" else . end
-                | if .detour == $t then .detour = "proxy" else . end
-                | if .streamSettings.sockopt.dialerProxy? == $t then .streamSettings.sockopt.dialerProxy = "proxy" else . end)' <<< "$OUTBOUNDS_JSON")
+            # Every tag stays, so rules naming another outbound still reach it; "proxy"
+            # only stands for the pick.
+            ${
+              if pureXrayEnabled then
+                ''XRAY_SINGLE_PROXY_TAG="$PROXY_TAG"''
+              else
+                ''OUTBOUNDS_JSON=$(${jq} --arg t "$PROXY_TAG" '[{type:"selector",tag:"proxy",outbounds:[$t],default:$t}] + .' <<< "$OUTBOUNDS_JSON")''
+            }
           ''
         else if selectionMode == "selector" then
           ''

@@ -5,7 +5,9 @@ key names become GTK accelerators, and every icon the tray can ask for is drawn.
 import os
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 import proxy_ctl as ctl
 import proxy_gui as gui
@@ -80,6 +82,32 @@ class GuiTest(unittest.TestCase):
             gui.ansi_segments("\x1b[1;31mfailed\x1b[0m ok\x1b[K"),
             [("failed", ("bold", "red")), (" ok", ())],
         )
+
+    def test_root_toggle_reads_too(self):
+        """A tab only root can read goes through pkexec when the toggle is on, and one refusal stops the asking."""
+        tab = model.Tab("x", "X", model.ROW, [], list)
+        app = types.SimpleNamespace(root_read_refused=False)
+        denied = ([], "✗ Cannot read /x - join the proxy-suite group, or re-run with sudo.")
+        asked = []
+
+        def as_root(result):
+            return mock.patch.object(model, "load_tab_as_root", lambda tab, via: asked.append(via) or result)
+
+        load = lambda elevated: gui.ProxySuiteGui.load_tab(app, tab, {}, elevated)
+        with mock.patch.object(model, "load_tab", lambda tab, states: denied), mock.patch.object(model.os, "geteuid", lambda: 1000):
+            with as_root(([{"key": "a"}], "")):
+                self.assertIn("Ctrl+E", load(False)[1])
+                self.assertEqual(asked, [])
+                self.assertEqual(load(True), ([{"key": "a"}], ""))
+                self.assertEqual(asked, ["pkexec"])
+            with as_root((None, "authentication cancelled")):
+                self.assertIn("As root: authentication cancelled", load(True)[1])
+                self.assertIn("Ctrl+E twice", load(True)[1])
+                self.assertEqual(len(asked), 2)
+        with mock.patch.object(model, "load_tab", lambda tab, states: ([], "Nothing here yet.")), as_root(None):
+            app.root_read_refused = False
+            self.assertEqual(load(True), ([], "Nothing here yet."))  # readable: no pkexec
+            self.assertEqual(len(asked), 2)
 
     def test_every_tray_icon_is_drawn(self):
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")

@@ -92,9 +92,9 @@ in
       assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
       assert pkgs.lib.hasInfix "hybrid XRay json sidecar" hybridXrayRawStartScript;
-      assert pkgs.lib.hasInfix ''{type:"socks",tag:$tag,server:"127.0.0.1"'' hybridXrayRawStartScript;
-      assert pkgs.lib.hasInfix "udp:true" hybridXrayRawStartScript;
-      assert pkgs.lib.hasInfix "routing_mark:2" hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix ''{type: "socks", tag: $tag, server: "127.0.0.1"'' hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "udp: true" hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "{routing_mark: 2}" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix "sing_box_preserved_rules" hybridBackendJqFilter;
       assert pkgs.lib.hasInfix "xray-dns-in" hybridBackendJqFilter;
       assert pkgs.lib.hasInfix "--backend hybrid" hybridSubscriptionStartScript;
@@ -103,7 +103,7 @@ in
         ''type == "object" and (.singBox | type == "array") and (.xray | type == "array")''
         hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix ".singBox" hybridSubscriptionStartScript;
-      assert pkgs.lib.hasInfix ".xray[]" hybridSubscriptionStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_obs \"$(" hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridSubscriptionStartScript;
       true
     )

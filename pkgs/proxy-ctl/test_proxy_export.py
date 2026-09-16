@@ -135,13 +135,6 @@ class SingBoxTest(unittest.TestCase):
         self.assertNotIn("via-warp", [o["tag"] for o in cfg["outbounds"]])
         self.assertIn("left out via-warp: it chains through warp", warnings)
 
-    def test_collapsed_proxy(self):
-        base = sing_box_config()
-        base["outbounds"] = [{**base["outbounds"][0], "tag": "proxy"}, base["outbounds"][1], *base["outbounds"][6:]]
-        base["route"]["rules"] = []
-        cfg, _ = export.portable(base, only="vps")
-        self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["proxy", "direct", "block"])
-
     def test_kept_loopback_hop_leaves_no_dangling_reference(self):
         """Asking for a loopback hop drops it, so nothing may still point at it:
         sing-box stops with "default outbound not found" (which `check` does not catch)."""
