@@ -11,17 +11,11 @@
   perAppTproxyRulesFile,
   ip,
   nft,
-  awk,
   seqBin,
   sleepBin,
 }:
 
 let
-  defaultUplinkIPv4Source = builders.mkDefaultUplinkIPv4Source {
-    inherit ip awk;
-    errorMessage = "proxy-suite: could not determine the default uplink IPv4 address for app TUN";
-  };
-
   inherit (constants)
     xrayPerAppTunIPv6Address
     xrayPerAppTunIPv6RoutePrefix
@@ -47,7 +41,6 @@ let
     tun6_route_prefix=${lib.escapeShellArg xrayPerAppTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
-    uplink_addr=""
 
     ${builders.cidrNetworkFunction}
 
@@ -68,12 +61,12 @@ let
     ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = perAppRoutingTun.routeTable; }}
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
-    ${defaultUplinkIPv4Source}
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
-    ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$uplink_addr" table ${toString perAppRoutingTun.routeTable}
+    # No uplink src, as in xrayTunUpScript: it goes stale when the uplink address changes.
+    ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
     ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
     ${lib.optionalString pureXrayEnabled ''
       ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}

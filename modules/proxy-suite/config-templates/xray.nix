@@ -71,7 +71,10 @@ let
       {
         enabled = true;
         destOverride = [ "fakedns" ];
-        metadataOnly = true;
+        # Fake IPs only live in memory: after a restart an app still holding one gets its
+        # domain back from TLS/HTTP/QUIC instead of a dead end. Real IPs are left alone;
+        # the cost is up to 200 ms before a server-speaks-first protocol (SSH, SMTP) starts.
+        metadataOnly = false;
       }
     else
       {
@@ -142,10 +145,6 @@ let
       enableTunFakeDns ? false,
     }:
     let
-      tunDnsServers = [
-        (if (proxyCfg.routing.default == "proxy") then proxyCfg.dns.remote.address else proxyCfg.dns.local.address)
-        (if (proxyCfg.routing.default == "proxy") then proxyCfg.dns.local.address else proxyCfg.dns.remote.address)
-      ];
       tunSniffing = mkSniffing { fakeDnsOnly = enableTunFakeDns; };
       dnsConfig =
         if enableTunFakeDns then
@@ -215,9 +214,7 @@ let
             name = tunInterface;
             mtu = tunMtu;
             gateway = [ tunAddress ] ++ lib.optionals (tunIPv6Address != null) [ tunIPv6Address ];
-            dns = tunDnsServers;
             userLevel = 0;
-            autoOutboundsInterface = "auto";
           };
           sniffing = tunSniffing;
         };

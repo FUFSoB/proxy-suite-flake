@@ -68,7 +68,6 @@ let
       perAppTproxyRulesFile
       ip
       nft
-      awk
       seqBin
       sleepBin
       ;

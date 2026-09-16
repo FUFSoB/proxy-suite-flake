@@ -9,20 +9,6 @@
 
 if pureXrayEnabled then
   ''
-    def xray_bind_outbound($interface):
-      # A loopback hop (the WARP tunnel, the OpenSSH listener) cannot leave through the uplink.
-      if $interface == "" or .protocol == "blackhole" or .protocol == "dns"
-        or ((.settings.address? // "") | test("^(127\\.|::1$|localhost$)")) then
-        .
-      else
-        .streamSettings = (.streamSettings // {})
-        | .streamSettings.sockopt = (.streamSettings.sockopt // {})
-        | if (.streamSettings.sockopt.interface? // "") == "" then
-            .streamSettings.sockopt.interface = $interface
-          else
-            .
-          end
-      end;
     def xray_proxy_rule_target($single_tag):
       if $single_tag != "" then
         {outboundTag:$single_tag}
@@ -52,15 +38,7 @@ if pureXrayEnabled then
          + [.dns.servers[] | select((.tag? // "") == $dns_final)]
          + [.dns.servers[] | select((.tag? // "") != "fakedns" and (.tag? // "") != $dns_final)])
       end;
-    def xray_tun_dns_addresses($dns_final; $local_addr; $remote_addr):
-      if $dns_final == "local" then
-        [$local_addr, $remote_addr]
-      elif $dns_final == "remote" then
-        [$remote_addr, $local_addr]
-      else
-        [$remote_addr, $local_addr]
-      end;
-    .outbounds = (($obs + .outbounds) | map(xray_bind_outbound($xray_bind_interface)))
+    .outbounds = ($obs + .outbounds)
       | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
       | if $auth_enabled then
           (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
@@ -68,11 +46,12 @@ if pureXrayEnabled then
         else . end
       | if $xray_tun_dns_runtime then
           .dns.servers = xray_dns_server_order($dns_final)
-          | if $dns_final == "" then
-              .
-            else
-              (.inbounds[] | select(.protocol == "tun" and .tag == "tun-in") | .settings.dns) = xray_tun_dns_addresses($dns_final; $xray_dns_local_client; $xray_dns_remote_client)
-            end
+          # Without a domainStrategy a dial resolves through the system resolver, which under
+          # the TUN (resolved's upstream queries included) hands out fake IPs. XRay's own DNS
+          # client skips fakedns.
+          | .outbounds |= map(
+              if .protocol == "blackhole" or .protocol == "dns" or .protocol == "loopback" then .
+              else .streamSettings.sockopt.domainStrategy //= "UseIPv4v6" end)
         else . end
       | if $route_enabled then
           .routing.rules = (xray_preserved_rules + $route_rules + [xray_final_rule($route_final; $xray_single_proxy_tag)])
@@ -99,7 +78,7 @@ else
       [.route.rules[]
        | select(((.action? // "") == "hijack-dns")
          and (((.inbound? // []) | index("xray-dns-in")) != null))];
-    .outbounds = $obs + .outbounds
+    .outbounds = ($obs + .outbounds)
       | if $auth_enabled then
           (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
         else . end

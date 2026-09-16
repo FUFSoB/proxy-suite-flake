@@ -67,24 +67,11 @@ lib.optionalString hybridEnabled ''
     fi
     ${jq} -n \
       --arg loglevel "$XRAY_LOGLEVEL" \
-      --arg bind_interface "$XRAY_TUN_BIND_INTERFACE" \
       --argjson dns_port "$XRAY_SIDECAR_DNS_PORT" \
       --argjson inbounds "$XRAY_INBOUNDS_JSON" \
       --argjson outbounds "$XRAY_OUTBOUNDS_JSON" \
       --argjson route_rules "$XRAY_ROUTE_RULES_JSON" \
       '
-      def bind_xray_sidecar($interface):
-        if $interface == "" then
-          .
-        else
-          .streamSettings = (.streamSettings // {})
-          | .streamSettings.sockopt = (.streamSettings.sockopt // {})
-          | if (.streamSettings.sockopt.interface? // "") == "" then
-              .streamSettings.sockopt.interface = $interface
-            else
-              .
-            end
-        end;
       {
         log: {
           loglevel: (if $loglevel == "" then "warning" else $loglevel end),
@@ -101,7 +88,7 @@ lib.optionalString hybridEnabled ''
           ]
         },
         inbounds: $inbounds,
-        outbounds: (($outbounds | map(bind_xray_sidecar($bind_interface))) + [{protocol:"freedom",tag:"direct"}]),
+        outbounds: ($outbounds + [{protocol:"freedom",tag:"direct"}]),
         routing: {
           domainStrategy: "AsIs",
           rules: ($route_rules + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])

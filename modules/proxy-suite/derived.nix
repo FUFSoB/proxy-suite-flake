@@ -280,11 +280,18 @@ let
 
     tunAutoRouteTableIndex = 2022;
     tunAutoRouteRulePriority = 9000;
-    # Keeps proxy-suite's own daemons (the inbound XRay, replies to its clients included)
-    # out of the pure-XRay global TUN.
-    xrayTunServiceUserRulePriority = 8995;
-    xrayTunPerAppTproxyRulePriority = 8996;
-    xrayTunPerAppTunRulePriority = 8997;
+    # Pure-XRay global TUN, below 8998/8999 (AmneziaWG and tg-ws-proxy bypasses).
+    # proxyMark sockets and proxy-suite's own daemons (the inbound XRay, replies to its
+    # clients included) stay out of the TUN.
+    xrayTunMarkBypassRulePriority = 8992;
+    xrayTunServiceUserRulePriority = 8993;
+    xrayTunPerAppTproxyRulePriority = 8994;
+    xrayTunPerAppTunRulePriority = 8995;
+    # DNS stays in the TUN for fakedns, even to a LAN resolver.
+    xrayTunDnsRulePriority = 8996;
+    # Routes more specific than default (LAN, container bridges) skip the TUN, so
+    # replies to connections from there leave the way they came.
+    xrayTunMainRulePriority = 8997;
 
     xrayGlobalTunIPv6Address = "fd66:19::1/64";
     xrayGlobalTunIPv6RoutePrefix = "fd66:19::/64";

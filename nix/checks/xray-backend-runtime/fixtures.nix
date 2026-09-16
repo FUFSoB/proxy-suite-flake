@@ -85,8 +85,6 @@ let
         selectionMode = xrayFixture.config.services.proxy-suite.proxy.selection;
       };
   xrayBackendJqFilterFile = pkgs.writeText "proxy-suite-xray-backend-filter-check.jq" xrayBackendJqFilter;
-  xrayDnsLocalClient = xrayFixture.config.services.proxy-suite.proxy.dns.local.address;
-  xrayDnsRemoteClient = xrayFixture.config.services.proxy-suite.proxy.dns.remote.address;
   xrayTunConfigJson = pkgs.writeText "proxy-suite-xray-tun-check.json" (
     builtins.toJSON xrayTunConfig
   );
@@ -98,8 +96,6 @@ in
   inherit
     xrayBackendJqFilter
     xrayBackendJqFilterFile
-    xrayDnsLocalClient
-    xrayDnsRemoteClient
     xrayFixture
     xrayPerAppTunBackendJqFilterFile
     xrayPerAppTunCleanupScript

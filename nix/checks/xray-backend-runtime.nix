@@ -23,8 +23,6 @@ let
   inherit (fixtures)
     xrayBackendJqFilter
     xrayBackendJqFilterFile
-    xrayDnsLocalClient
-    xrayDnsRemoteClient
     xrayFixture
     xrayPerAppTunBackendJqFilterFile
     xrayPerAppTunCleanupScript
@@ -62,27 +60,22 @@ let
             --arg dns_final "remote" \
             --argjson clear_dns_rules false \
             --arg xray_loglevel "" \
-            --arg xray_bind_interface "eth0" \
             --arg xray_single_proxy_tag "proxy-suite-ob-primary" \
             --argjson xray_tun_dns_runtime true \
-            --arg xray_dns_local_client ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
-            --arg xray_dns_remote_client ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
             -f ${pkgs.lib.escapeShellArg xrayBackendJqFilterFile} \
             "$input" > "$output"
 
           jq -e \
-            --arg remote ${pkgs.lib.escapeShellArg xrayDnsRemoteClient} \
-            --arg local ${pkgs.lib.escapeShellArg xrayDnsLocalClient} \
             '
               type == "object"
               and (.dns.servers | length) >= 3
               and .dns.servers[0].tag == "fakedns"
               and ([.routing.rules[] | select((.ruleTag? // "") == "dns-hijack")] | length) == 1
               and ([.routing.rules[] | select((.ruleTag? // "") == "dns-upstream-direct")] | length) == 1
-              and ([.outbounds[] | select(.tag == "proxy-suite-ob-primary" and (.streamSettings.sockopt.interface? // "") == "eth0")] | length) == 1
-              and ([.outbounds[] | select(.tag == "dns-out" and ((.streamSettings.sockopt.interface? // "") == ""))] | length) == 1
-              and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns] | length) == 1
-              and ([.inbounds[] | select(.tag == "tun-in") | .settings.dns][0] == [$remote, $local])
+              and ([.outbounds[] | select(.streamSettings.sockopt.interface?)] | length) == 0
+              and ([.outbounds[] | select(.protocol == "freedom" or .tag == "proxy-suite-ob-primary") | .streamSettings.sockopt.domainStrategy] | all(. == "UseIPv4v6"))
+              and ([.outbounds[] | select(.protocol == "dns") | .streamSettings.sockopt.domainStrategy?] | all(. == null))
+              and ([.inbounds[] | select(.tag == "tun-in") | .settings | has("dns") or has("autoOutboundsInterface")] | any | not)
               and ((.routing | has("balancers")) | not)
               and ((has("observatory")) | not)
             ' "$output" >/dev/null

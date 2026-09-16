@@ -146,7 +146,6 @@ let
       configFile,
       routingMark ? null,
       enableLocalProxyAuth ? false,
-      xrayTunEgressBinding ? false,
       xrayTunDnsRuntime ? false,
       xraySidecarBasePort ? xraySidecarBasePorts.socks,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
@@ -161,7 +160,6 @@ let
       ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
       BACKEND_JQ_FILTER=${lib.escapeShellArg backendJqFilterFile}
       XRAY_LOGLEVEL=""
-      XRAY_TUN_BIND_INTERFACE=""
       XRAY_SINGLE_PROXY_TAG=""
       mkdir -p "$RUNTIME_DIR"
       OUTBOUNDS_JSON='[]'
@@ -185,22 +183,6 @@ let
       ${lib.optionalString xrayEnabled ''
         if [ -r "${xrayLoglevelFile}" ]; then
           XRAY_LOGLEVEL="$(tr -d '\r\n[:space:]' < "${xrayLoglevelFile}" 2>/dev/null || true)"
-        fi
-      ''}
-      ${lib.optionalString xrayTunEgressBinding ''
-        XRAY_TUN_BIND_INTERFACE="$(${pkgs.iproute2}/bin/ip -4 route get 1.1.1.1 mark ${toString globalTproxy.proxyMark} 2>/dev/null | ${pkgs.gawk}/bin/awk '
-          /dev/ {
-            for (i = 1; i <= NF; i++) {
-              if ($i == "dev" && i + 1 <= NF) {
-                print $(i + 1)
-                exit
-              }
-            }
-          }
-        ')"
-        if [ -z "$XRAY_TUN_BIND_INTERFACE" ]; then
-          echo "proxy-suite: could not determine the default uplink interface for XRay TUN" >&2
-          exit 1
         fi
       ''}
 
@@ -350,12 +332,9 @@ let
         --arg dns_final "$DNS_FINAL" \
         --argjson clear_dns_rules "$CLEAR_DNS_RULES" \
         --arg xray_loglevel "$XRAY_LOGLEVEL" \
-        --arg xray_bind_interface "$XRAY_TUN_BIND_INTERFACE" \
         --arg xray_single_proxy_tag "$XRAY_SINGLE_PROXY_TAG" \
         --argjson xray_selectable "$SELECTABLE_TAGS_JSON" \
         --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
-        --arg xray_dns_local_client ${lib.escapeShellArg proxyCfg.dns.local.address} \
-        --arg xray_dns_remote_client ${lib.escapeShellArg proxyCfg.dns.remote.address} \
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json"
       ${lib.optionalString excludeServiceUserFromTun ''
@@ -446,7 +425,6 @@ let
     runtimeDir = "/run/proxy-suite-tun";
     configFile = tunFile;
     routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
-    xrayTunEgressBinding = xrayEnabled;
     xrayTunDnsRuntime = pureXrayEnabled;
     xraySidecarBasePort = xraySidecarBasePorts.tun;
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
@@ -458,7 +436,6 @@ let
     runtimeDir = "/run/proxy-suite-per-app-tun";
     configFile = perAppTunFile;
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
-    xrayTunEgressBinding = xrayEnabled;
     xrayTunDnsRuntime = pureXrayEnabled;
     xraySidecarBasePort = xraySidecarBasePorts.perAppTun;
     xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;

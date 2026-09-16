@@ -16,17 +16,45 @@ let
   inherit (constants)
     tunAutoRouteTableIndex
     tunAutoRouteRulePriority
+    xrayTunMarkBypassRulePriority
     xrayTunServiceUserRulePriority
     xrayTunPerAppTproxyRulePriority
     xrayTunPerAppTunRulePriority
+    xrayTunDnsRulePriority
+    xrayTunMainRulePriority
     xrayGlobalTunIPv6Address
     xrayGlobalTunIPv6RoutePrefix
     ;
 
-  defaultUplinkIPv4Source = builders.mkDefaultUplinkIPv4Source {
-    inherit ip;
-    awk = "${pkgs.gawk}/bin/awk";
-    errorMessage = "proxy-suite: could not determine the default uplink IPv4 address for XRay TUN";
+  deleteXrayTunRules = lib.concatMapStrings (
+    family:
+    lib.concatMapStrings (priority: builders.mkIpRuleDeleteByPriority { inherit ip family priority; }) [
+      xrayTunMarkBypassRulePriority
+      xrayTunServiceUserRulePriority
+      xrayTunPerAppTproxyRulePriority
+      xrayTunPerAppTunRulePriority
+      xrayTunDnsRulePriority
+      xrayTunMainRulePriority
+      tunAutoRouteRulePriority
+    ]
+  ) [ "-4" "-6" ];
+
+  # Replies to connections from outside (sshd, a game server, anything listening) take
+  # proxyMark, so the fwmark rule sends them back out the way they came instead of into
+  # the TUN, where nothing expects them. Locally started connections stay "original".
+  xrayTunReplyTable = "proxy_suite_xray_tun";
+  xrayTunReplyRules = pkgs.writeText "proxy-suite-xray-tun.nft" ''
+    table inet ${xrayTunReplyTable} {
+      chain output {
+        type route hook output priority mangle; policy accept;
+        ct direction reply meta mark 0 meta mark set ${toString globalTproxy.proxyMark}
+      }
+    }
+  '';
+  deleteXrayTunReplyTable = builders.mkNftDeleteTable {
+    inherit nft;
+    family = "inet";
+    table = xrayTunReplyTable;
   };
 in
 {
@@ -38,7 +66,6 @@ in
     tun6_route_prefix=${lib.escapeShellArg xrayGlobalTunIPv6RoutePrefix}
     tun_addr=""
     tun_route_prefix=""
-    uplink_addr=""
 
     ${builders.cidrNetworkFunction}
 
@@ -54,15 +81,9 @@ in
       exit 1
     fi
 
-    ${defaultUplinkIPv4Source}
-
-    while ${ip} -4 rule del pref ${toString xrayTunPerAppTproxyRulePriority} 2>/dev/null; do :; done
-    while ${ip} -4 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
-    while ${ip} -4 rule del pref ${toString xrayTunServiceUserRulePriority} 2>/dev/null; do :; done
-    while ${ip} -6 rule del pref ${toString xrayTunServiceUserRulePriority} 2>/dev/null; do :; done
-    while ${ip} -4 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
-    while ${ip} -6 rule del pref ${toString xrayTunPerAppTunRulePriority} 2>/dev/null; do :; done
-    while ${ip} -6 rule del pref ${toString tunAutoRouteRulePriority} 2>/dev/null; do :; done
+    ${deleteXrayTunRules}
+    ${deleteXrayTunReplyTable}
+    ${nft} -f ${xrayTunReplyRules}
 
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
@@ -70,7 +91,9 @@ in
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg globalTun.interface}
     ${ip} -6 addr replace "$tun6_cidr" dev ${lib.escapeShellArg globalTun.interface}
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg globalTun.interface} src "$tun_addr" table ${toString tunAutoRouteTableIndex}
-    ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} src "$uplink_addr" table ${toString tunAutoRouteTableIndex}
+    # No uplink src: it goes stale when the uplink address changes, and XRay's own sockets
+    # (routed by uid and mark, not bound to an interface) pick theirs from main.
+    ${ip} -4 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
     ${ip} -6 route replace "$tun6_route_prefix" dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
     ${ip} -6 route replace default dev ${lib.escapeShellArg globalTun.interface} table ${toString tunAutoRouteTableIndex}
     ${lib.optionalString perAppRoutingTproxy.enable ''
@@ -83,6 +106,12 @@ in
     service_uid=$(${pkgs.coreutils}/bin/id -u ${constants.serviceUser})
     ${ip} -4 rule add pref ${toString xrayTunServiceUserRulePriority} uidrange "$service_uid-$service_uid" lookup main
     ${ip} -6 rule add pref ${toString xrayTunServiceUserRulePriority} uidrange "$service_uid-$service_uid" lookup main
+    for family in -4 -6; do
+      ${ip} "$family" rule add pref ${toString xrayTunMarkBypassRulePriority} fwmark ${toString globalTproxy.proxyMark} lookup main
+      ${ip} "$family" rule add pref ${toString xrayTunDnsRulePriority} ipproto udp dport 53 table ${toString tunAutoRouteTableIndex}
+      ${ip} "$family" rule add pref ${toString xrayTunDnsRulePriority} ipproto tcp dport 53 table ${toString tunAutoRouteTableIndex}
+      ${ip} "$family" rule add pref ${toString xrayTunMainRulePriority} lookup main suppress_prefixlength 0
+    done
     ${ip} -4 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
     ${ip} -6 rule add pref ${toString tunAutoRouteRulePriority} not fwmark ${toString globalTproxy.proxyMark} table ${toString tunAutoRouteTableIndex}
   '';
@@ -127,31 +156,8 @@ in
     ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "sing-box"; }}
     ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
     ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
-    ${builders.mkIpRuleDeleteByPriority {
-      inherit ip;
-      family = "-4";
-      priority = xrayTunPerAppTproxyRulePriority;
-    }}
-    ${builders.mkIpRuleDeleteByPriority {
-      inherit ip;
-      family = "-4";
-      priority = xrayTunPerAppTunRulePriority;
-    }}
-    ${builders.mkIpRuleDeleteByPriority {
-      inherit ip;
-      family = "-6";
-      priority = xrayTunPerAppTunRulePriority;
-    }}
-    ${builders.mkIpRuleDeleteByPriority {
-      inherit ip;
-      family = "-4";
-      priority = xrayTunServiceUserRulePriority;
-    }}
-    ${builders.mkIpRuleDeleteByPriority {
-      inherit ip;
-      family = "-6";
-      priority = xrayTunServiceUserRulePriority;
-    }}
+    ${deleteXrayTunRules}
+    ${deleteXrayTunReplyTable}
     ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
     ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
     ${builders.mkIpLinkDelete { inherit ip; interface = globalTun.interface; }}

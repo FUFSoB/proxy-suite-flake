@@ -40,10 +40,8 @@
           "172.19.0.1/30"
           checkConstants.xrayGlobalTunIPv6Address
         ];
-      assert builtins.length tunInbound.settings.dns == 2;
-      assert tunInbound.settings.autoOutboundsInterface == "auto";
       assert tunInbound.sniffing.destOverride == [ "fakedns" ];
-      assert tunInbound.sniffing.metadataOnly == true;
+      assert tunInbound.sniffing.metadataOnly == false;
       assert xrayTunConfig.routing.domainStrategy == "IPIfNonMatch";
       assert tunHasFinalRuleTag;
       assert tunHasDirectGeositeRule;
@@ -67,21 +65,18 @@
       assert tunDirectOutbound.streamSettings.sockopt.mark == 2;
       assert pkgs.lib.hasInfix "xray-loglevel" xrayTunStartScript;
       assert pkgs.lib.hasInfix "XRAY_SINGLE_PROXY_TAG=" xrayTunStartScript;
-      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1" xrayTunStartScript;
-      assert pkgs.lib.hasInfix "ip -4 route get 1.1.1.1 mark 2" xrayTunStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" xrayTunStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' xrayTunStartScript;
       assert pkgs.lib.hasInfix "xray_tun_dns_runtime" xrayTunStartScript;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayTunUpScript;
       assert pkgs.lib.hasInfix checkConstants.xrayGlobalTunIPv6Address xrayTunUpScript;
-      assert pkgs.lib.hasInfix ''uplink_addr="$('' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix
         ''route replace "$tun_route_prefix" dev singtun0 src "$tun_addr" table ${toString checkConstants.tunAutoRouteTableIndex}''
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
-        ''route replace default dev singtun0 src "$uplink_addr" table ${toString checkConstants.tunAutoRouteTableIndex}''
+        "-4 route replace default dev singtun0 table ${toString checkConstants.tunAutoRouteTableIndex}"
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
         ''-6 route replace "$tun6_route_prefix" dev singtun0 table ${toString checkConstants.tunAutoRouteTableIndex}''
@@ -104,6 +99,33 @@
       assert pkgs.lib.hasInfix
         "-6 rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}"
         xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        ''"$family" rule add pref ${toString checkConstants.xrayTunMarkBypassRulePriority} fwmark 2 lookup main''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        ''"$family" rule add pref ${toString checkConstants.xrayTunDnsRulePriority} ipproto udp dport 53 table ${toString checkConstants.tunAutoRouteTableIndex}''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix
+        ''"$family" rule add pref ${toString checkConstants.xrayTunMainRulePriority} lookup main suppress_prefixlength 0''
+        xrayTunUpScript;
+      assert pkgs.lib.hasInfix "proxy-suite-xray-tun.nft" xrayTunUpScript;
+      assert pkgs.lib.hasInfix "delete table inet proxy_suite_xray_tun" xrayTunUpScript;
+      # No uplink src: it would go stale when the uplink address changes.
+      assert !(pkgs.lib.hasInfix "uplink_addr" xrayTunUpScript);
+      # Every rule the up script adds is flushed first, v4 and v6.
+      assert builtins.all (
+        priority:
+        pkgs.lib.hasInfix "-4 rule del pref ${toString priority}" xrayTunUpScript
+        && pkgs.lib.hasInfix "-6 rule del pref ${toString priority}" xrayTunUpScript
+      ) [
+        checkConstants.xrayTunMarkBypassRulePriority
+        checkConstants.xrayTunServiceUserRulePriority
+        checkConstants.xrayTunPerAppTproxyRulePriority
+        checkConstants.xrayTunPerAppTunRulePriority
+        checkConstants.xrayTunDnsRulePriority
+        checkConstants.xrayTunMainRulePriority
+        checkConstants.tunAutoRouteRulePriority
+      ];
       true
     )
   ];
