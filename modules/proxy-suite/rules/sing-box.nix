@@ -6,6 +6,7 @@
   tgWsProxyCfg,
   customRules,
   customRuleCategory,
+  onionOutbound,
   geodata,
 }:
 
@@ -60,7 +61,11 @@ let
       action = "hijack-dns";
     }
     { action = "sniff"; }
-  ];
+  ]
+  ++ lib.optional (onionOutbound != null) {
+    domain_suffix = [ "onion" ];
+    outbound = onionOutbound;
+  };
 
   customRouteRules = map (rule: {
     category = customRuleCategory rule.outbound;

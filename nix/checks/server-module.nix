@@ -47,6 +47,7 @@ let
     };
 
   ipServer = mkServer { };
+  onionServer = mkServer { onion.enable = true; };
   domainServer = mkServer {
     domain = "vpn.example.com";
     network.dhcp = true;
@@ -57,6 +58,7 @@ let
   listener = spec: tag: lib.head (builtins.filter (l: l.tag == tag) spec.listeners);
 
   ipSpec = mkInboundsSpec ipServer;
+  onionSpec = mkInboundsSpec onionServer;
   domainSpec = mkInboundsSpec domainServer;
   uplink = fixture: fixture.config.systemd.network.networks."10-uplink";
   ipCert = ipServer.config.security.acme.certs."203.0.113.10";
@@ -157,6 +159,41 @@ in
     )
     (
       assert ipServer.config.services.openssh.settings.PermitRootLogin == "no";
+      true
+    )
+
+    # onion.enable: every listener behind the onion service, and nothing opened for it.
+    (
+      assert failedAssertions onionServer == [ ];
+      true
+    )
+    (
+      assert
+        lib.sort (a: b: a < b) onionSpec.onionListeners == [
+          "vless-reality"
+          "vless-tls"
+          "vless-ws"
+        ];
+      true
+    )
+    (
+      assert !(ipServer.config.systemd.services ? proxy-suite-tor) && (ipSpec.onionListeners or [ ]) == [ ];
+      true
+    )
+    (
+      assert builtins.elem "proxy-suite-tor.service" onionServer.config.systemd.services.proxy-suite-inbounds.after;
+      true
+    )
+    (
+      assert
+        onionServer.config.networking.firewall.allowedTCPPorts
+        == ipServer.config.networking.firewall.allowedTCPPorts;
+      true
+    )
+    (
+      assert
+        lib.hasInfix "--onion" onionServer.config.services.getty.helpLine
+        && !(lib.hasInfix "--onion" ipServer.config.services.getty.helpLine);
       true
     )
   ];

@@ -50,11 +50,13 @@ let
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
     warpCfg
+    torCfg
     awgOutbounds
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInboundsAwg
     proxyInboundsNeedLocalProxy
+    torOnionEnabled
     proxyInboundsGuardPrivate
     proxyInboundViaOutbounds
     userControlAllows
@@ -100,6 +102,7 @@ let
       proxyCfg
       sshProxyCfg
       warpCfg
+      torCfg
       awgOutbounds
       xrayEnabled
       hybridEnabled
@@ -135,6 +138,7 @@ let
       proxyInboundsAwg
       awgBin
       proxyInboundsNeedLocalProxy
+      torOnionEnabled
       proxyInboundsGuardPrivate
       proxyInboundViaOutbounds
       userControlAllows

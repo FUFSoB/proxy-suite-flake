@@ -157,6 +157,17 @@ in
           }
         ))
 
+        (lib.mkIf cfg.tor.enable (
+          import ./tor.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
         (lib.mkIf (derived.proxyInboundsEnabled && derived.proxyInboundsAwg != [ ]) (
           import ./amnezia-wg-inbounds.nix {
             inherit

@@ -13,6 +13,8 @@
   perAppZapretEnabled,
   sshProxyOutboundEnabled,
   sshProxyUnitEnabled,
+  torOutboundEnabled,
+  torOnionEnabled,
   proxyInboundsEnabled,
   proxyInboundsNeedLocalProxy,
   scripts,
@@ -76,10 +78,12 @@ let
           "network-online.target"
         ]
         ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service";
+        # Not after Tor: it may reach its relays through this listener.
         wants = [
           "network-online.target"
         ]
-        ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service";
+        ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service"
+        ++ lib.optional torOutboundEnabled "proxy-suite-tor.service";
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
@@ -97,11 +101,14 @@ let
         ]
         # After the client stack, but not `requires`: direct listeners keep serving
         # without it.
-        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service";
+        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service"
+        # For the onion address in the share links.
+        ++ lib.optional torOnionEnabled "proxy-suite-tor.service";
         wants = [
           "network-online.target"
         ]
-        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service";
+        ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service"
+        ++ lib.optional torOnionEnabled "proxy-suite-tor.service";
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startInbounds;
         runtimeDirectory = serviceNames.inbounds;

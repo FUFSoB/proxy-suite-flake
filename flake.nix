@@ -1,5 +1,5 @@
 {
-  description = "NixOS proxy suite - SingBox, XRay, AmneziaWG 3.1, zapret, tg-ws-proxy";
+  description = "NixOS proxy suite - SingBox, XRay, AmneziaWG 3.1, zapret, tg-ws-proxy, Tor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

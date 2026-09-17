@@ -14,6 +14,7 @@ Update the module option docs there instead of editing these files by hand.
 - [proxy](./proxy.md)
 - [sshProxy](./sshProxy.md)
 - [tgWsProxy](./tgWsProxy.md)
+- [tor](./tor.md)
 - [tui](./tui.md)
 - [userControl](./userControl.md)
 - [warp](./warp.md)
@@ -255,6 +256,27 @@ services.proxy-suite = {
     proxyProtocol = false;
     secret = null;
     secretFile = null;
+  };
+  tor = {
+    asOutbound = false;
+    bridges = {
+      file = null;
+      lines = [ ];
+    };
+    clientOnly = true;
+    enable = false;
+    extraConfig = "";
+    lyrebirdPackage = pkgs.lyrebird;
+    onionService = {
+      enable = false;
+      listeners = null;
+      secretKeyFile = null;
+    };
+    package = pkgs.tor;
+    routeOnion = true;
+    snowflakePackage = pkgs.snowflake;
+    socksPort = 18530;
+    upstream = "direct";
   };
   tui = {
     enable = true;

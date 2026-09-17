@@ -5,6 +5,7 @@
 
 let
   inherit (checkLib)
+    mkRouting
     evalProxySuite
     mkRoutingRules
     mkRouteModeRules
@@ -121,6 +122,21 @@ let
       evalProxySuite
       mkBadProxySuiteFixture
       mkFailingAssertions
+      ;
+  };
+
+  torChecks = import ./tor.nix {
+    inherit
+      pkgs
+      evalProxySuite
+      mkBadProxySuiteFixture
+      mkFailingAssertions
+      mkRouting
+      mkTunConfig
+      mkTProxyConfig
+      mkInboundsSpec
+      mkInboundsConfig
+      mkProxyCtlDerived
       ;
   };
 
@@ -276,6 +292,7 @@ let
     ++ localProxyAuthChecks.assertions
     ++ sshProxyChecks.assertions
     ++ warpChecks.assertions
+    ++ torChecks.assertions
     ++ proxyInboundsChecks.assertions
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions
@@ -297,6 +314,7 @@ in
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
   amneziawg-secret-manifest = amneziaWgChecks.manifest;
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
+  tor-guard-runtime = torChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;
   zapret2-config = zapret2Checks.runtime;

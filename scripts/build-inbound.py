@@ -19,6 +19,12 @@ def main() -> None:
         dest="server_address",
         help="public address used in generated share links",
     )
+    ap.add_argument(
+        "--onion-address",
+        default="",
+        dest="onion_address",
+        help="the onion service's address, for a second set of links to its listeners",
+    )
     args = ap.parse_args()
 
     with open(args.spec, encoding="utf-8") as handle:
@@ -30,7 +36,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        result = build_inbounds(spec, server_address)
+        result = build_inbounds(spec, server_address, args.onion_address)
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

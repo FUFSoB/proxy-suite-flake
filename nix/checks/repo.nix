@@ -372,6 +372,8 @@
         has work awg on
         has torrent apps run
         has unpin proxy
+        has newnym tor
+        has --onion inbounds link
         has community-de proxy pin
 
         # Flags, and completion past the first of several arguments.
@@ -785,6 +787,7 @@
           singBoxCfg = null;
           sshProxyCfg = null;
           warpCfg = null;
+          torCfg = null;
           awgOutbounds = null;
           constants = null;
           pureXrayEnabled = null;

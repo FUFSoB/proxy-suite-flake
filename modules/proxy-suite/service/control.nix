@@ -63,6 +63,7 @@
       if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
     autoProxyEnabled = if proxyCfg.autoProxy.enable then "1" else "0";
     autoProxyStateDir = constants.autoProxyStateDir;
+    torControlSocket = constants.torControlSocket;
     inherit (constants) stateDir runtimeDir serviceManager;
     privileged = if constants.privileged then "1" else "0";
     supervisorCtl = if constants.serviceManager == "supervisor" then constants.systemctl else "";

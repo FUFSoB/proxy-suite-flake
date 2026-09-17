@@ -66,6 +66,8 @@ let
     perAppZapretEnabled
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
+    torOutboundEnabled
+    torOnionEnabled
     proxyInboundsEnabled
     proxyInboundsNeedLocalProxy
     proxyInboundFirewallPorts
@@ -108,6 +110,8 @@ let
       perAppZapretEnabled
       sshProxyOutboundEnabled
       sshProxyUnitEnabled
+      torOutboundEnabled
+      torOnionEnabled
       proxyInboundsEnabled
       proxyInboundsNeedLocalProxy
       scripts

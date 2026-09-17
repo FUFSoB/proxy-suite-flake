@@ -111,6 +111,11 @@ let
         enable = true;
         asOutbound = "singBox";
       };
+      tor = {
+        enable = true;
+        asOutbound = true;
+        onionService.enable = true;
+      };
       perAppRouting = {
         enable = true;
         proxychains.enable = true;
@@ -169,6 +174,12 @@ in
       assert lib.hasPrefix "/home/u/.local/state/" hmCfg.services.proxy-suite.host.stateDir;
       assert hmCfg.systemd.user.services ? proxy-suite-socks;
       assert hmCfg.systemd.user.services ? proxy-suite-inbounds;
+      assert hmCfg.systemd.user.services ? proxy-suite-tor;
+      # Rootless, there is no userControl group to hand the control socket to.
+      assert
+        !(lib.hasInfix "proxy-suite-tor-control-dir" (
+          toString (hmCfg.systemd.user.services.proxy-suite-tor.Service.ExecStartPre or [ ])
+        ));
       assert forced hmCfg.systemd.user.services;
       # No setpriv on a user manager: nothing to drop to.
       assert
@@ -204,6 +215,7 @@ in
       assert lib.hasInfix "proxy-suitectl boot" nodCfg.build.activationAfter.proxySuite;
       assert lib.hasInfix "proxy-suitectl ensure" nodCfg.environment.etc.profile.text;
       assert forced nodCfg.build.activationAfter.proxySuite;
+      assert nodCfg.services.proxy-suite.internal.services.proxy-suite-tor.enable;
       # Android bans apps from netlink's route groups, which stock sing-box subscribes to.
       assert nodCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false;
       assert !(hmCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false);

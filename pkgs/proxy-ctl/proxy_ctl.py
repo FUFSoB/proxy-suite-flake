@@ -29,6 +29,7 @@ ALL_SERVICES = [
     "proxy-suite-ssh-proxy",
     "proxy-suite-warp",
     "proxy-suite-warp-tunnel",
+    "proxy-suite-tor",
     "proxy-suite-tg-ws-proxy",
     "proxy-suite-zapret",
     "proxy-suite-zapret-vm-exempt",
@@ -40,6 +41,7 @@ RESTART_SERVICES = [
     "proxy-suite-inbounds",
     "proxy-suite-ssh-proxy",
     "proxy-suite-warp-tunnel",
+    "proxy-suite-tor",
     "proxy-suite-tg-ws-proxy",
     "proxy-suite-zapret",
 ]
@@ -101,14 +103,17 @@ Secrets and changes need root, or the userControl group.
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
   warp [status|on|off]                   WARP tunnel behind the warp outbound
+  tor [status|on|off]                    Tor, behind the tor outbound and the onion service
+  tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram WebSocket proxy
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--qr|--json]
-                                         client share link, or the client's outbound JSON
+  inbounds link <tag> [user] [--onion] [--qr|--json]
+                                         client share link, or the client's outbound JSON;
+                                         --onion: the one through the onion service
   inbounds link <tag> [user] --config [--qr]
                                          an AmneziaWG client's .conf, or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON
@@ -313,6 +318,68 @@ def _warp_unit():
     return "proxy-suite-warp-tunnel"
 
 
+def _tor_control(*commands):
+    """Replies to commands on Tor's control socket, one list of lines per command.
+
+    The socket authenticates by who can open it: root and the userControl group.
+    """
+    path = env("TOR_CONTROL_SOCKET", f"{runtime_dir()}/proxy-suite-tor/control/socket")
+    replies = []
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5)
+            sock.connect(path)
+            stream = sock.makefile("rwb")
+            for command in ("AUTHENTICATE", *commands):
+                stream.write(command.encode("ascii") + b"\r\n")
+                stream.flush()
+                lines = []
+                while True:
+                    line = stream.readline()
+                    if not line:
+                        die("Tor closed its control connection.")
+                    line = line.decode("utf-8", "replace").rstrip("\r\n")
+                    lines.append(line)
+                    # "250-" and "250+" continue a reply; "250 " ends it.
+                    if len(line) >= 4 and line[3] == " ":
+                        break
+                if not lines[-1].startswith("250"):
+                    die(f"Tor refused {command.split()[0]}: {lines[-1]}")
+                replies.append(lines)
+    except PermissionError:
+        denied(path, "open")
+    except (FileNotFoundError, ConnectionRefusedError):
+        die("Tor is not running: no control socket.")
+    except OSError as exc:
+        die(f"Cannot talk to Tor: {exc}")
+    return replies[1:]
+
+
+def _tor_bootstrap():
+    """Tor's bootstrap progress, as "100% (Done)"."""
+    line = _tor_control("GETINFO status/bootstrap-phase")[0][0]
+    progress = re.search(r"PROGRESS=(\d+)", line)
+    summary = re.search(r'SUMMARY="((?:[^"\\]|\\.)*)"', line)
+    if not progress:
+        return line
+    return f"{progress.group(1)}%" + (f" ({summary.group(1)})" if summary else "")
+
+
+def cmd_tor(verb="status", *args):
+    unit = "proxy-suite-tor"
+    if verb == "newnym":
+        if not svc_exists(unit):
+            die("tor is not enabled in this configuration.")
+        _tor_control("SIGNAL NEWNYM")
+        print("New connections take new circuits (Tor allows this once every 10 seconds).")
+        return
+    if verb not in ("status", "on", "off"):
+        usage("tor [status|on|off|newnym]")
+    _toggle(unit, "tor", verb, *args)
+    if verb == "status" and svc_active(unit):
+        print(f"bootstrap {_tor_bootstrap()}")
+
+
 def _emit(text, qr):
     """Prints text, or its QR code."""
     if not qr:
@@ -379,6 +446,7 @@ COMPLETE = {
             "awg": "AmneziaWG profiles",
             "ssh": "SSH SOCKS5 tunnel",
             "warp": "WARP tunnel behind the warp outbound",
+            "tor": "Tor, behind the tor outbound and the onion service",
             "tg": "Telegram WebSocket proxy",
             "apps": "per-app routing profiles",
             "inbounds": "server inbounds",
@@ -497,6 +565,7 @@ COMPLETE = {
     "awg restart": {"args": lambda: _names(_awg_profiles())},
     "ssh": {"words": TOGGLE},
     "warp": {"words": TOGGLE},
+    "tor": {"words": {**TOGGLE, "newnym": "new circuits for new connections"}},
     "tg": {"words": TOGGLE},
     "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
     "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
@@ -514,6 +583,7 @@ COMPLETE = {
         "args": _inbound_link_choices,
         "flags": {
             "--qr": "print a QR code",
+            "--onion": "the link through the onion service",
             "--json": "the client's outbound JSON",
             "--config": "an AmneziaWG client's .conf",
             "--server-json": "the server's inbound JSON",
@@ -2775,9 +2845,16 @@ def _inbound_server_json(tag):
     print(_json_text(inbound))
 
 
-def _inbound_link_for(tag, user="", *_, field="link"):
-    matches = [x for x in _inbound_links() if x.get("tag") == tag and (not user or x.get("user") == user)]
+def _inbound_link_for(tag, user="", *_, field="link", variant=""):
+    """variant "onion": the link to the listener through the onion service."""
+    matches = [
+        x
+        for x in _inbound_links()
+        if x.get("tag") == tag and (not user or x.get("user") == user) and (x.get("variant") or "") == variant
+    ]
     if not matches:
+        if variant == "onion":
+            die(f"No onion link for {tag}: is it in tor.onionService.listeners, and has Tor written its address?")
         die(f"Unknown inbound, or no share link for it: {tag}")
     if len(matches) > 1:
         sys.stdout.flush()
@@ -2973,20 +3050,22 @@ def cmd_inbounds(verb="list", *args):
         row = "  {:<24} {:<16} {:<14} {:<8} {}"
         print(row.format("TAG", "USER", "TYPE", "PORT", "STATE"))
         for x in _inbound_links():
-            print(row.format(*(_s(x.get(k)) for k in ("tag", "user", "type", "port")), state))
+            kind = _s(x.get("type")) + (" (onion)" if x.get("variant") == "onion" else "")
+            print(row.format(_s(x.get("tag")), _s(x.get("user")), kind, _s(x.get("port")), state))
     elif verb in ("link", "qr"):
         rest = [a for a in args if not a.startswith("--")]
         if not rest:
-            usage("inbounds link <tag> [user] [--qr|--json|--config|--server-json]")
+            usage("inbounds link <tag> [user] [--onion] [--qr|--json|--config|--server-json]")
         qr = verb == "qr" or "--qr" in args
+        variant = "onion" if "--onion" in args else ""
         if "--server-json" in args:
             _inbound_server_json(rest[0])
         elif "--json" in args:
-            print(_json_text(_inbound_link_for(*rest, field="outbound")))
+            print(_json_text(_inbound_link_for(*rest, field="outbound", variant=variant)))
         elif "--config" in args:
-            _emit(_inbound_link_for(*rest, field="config").rstrip("\n"), qr)
+            _emit(_inbound_link_for(*rest, field="config", variant=variant).rstrip("\n"), qr)
         else:
-            _emit(_inbound_link_for(*rest), qr)
+            _emit(_inbound_link_for(*rest, variant=variant), qr)
     elif verb == "stats":
         _inbound_stats(*args)
     elif verb == "online":
@@ -3030,6 +3109,7 @@ COMMANDS = {
     "awg": cmd_awg,
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
     "warp": lambda *args: _toggle(_warp_unit(), "warp", *args),
+    "tor": cmd_tor,
     "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
     "apps": cmd_apps,
     "inbounds": cmd_inbounds,

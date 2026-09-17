@@ -107,6 +107,20 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(called, [])
         self.assertNotIn("online", [c for c, _ in next(t for t in model.TABS if t.id == "inbounds").columns])
 
+    def test_onion_rows_link_through_the_onion(self):
+        links = [
+            {"tag": "ws", "user": "alice", "type": "vless", "port": 443},
+            {"tag": "ws", "user": "alice", "type": "vless", "port": 443, "variant": "onion"},
+        ]
+        with mock.patch.object(ctl, "_inbound_links", lambda: links):
+            plain, onion = model.inbound_rows({})
+        self.assertNotEqual(plain["key"], onion["key"])
+        self.assertEqual((plain["type"], onion["type"]), ("vless", "vless (onion)"))
+        self.assertEqual(model._link(plain, "--qr"), ["inbounds", "link", "ws", "alice", "--qr"])
+        self.assertEqual(model._link(onion, "--qr"), ["inbounds", "link", "ws", "alice", "--onion", "--qr"])
+        self.assertFalse(model._amneziawg(onion))
+        self.assertEqual(model.TOGGLES["proxy-suite-tor"], ["tor"])
+
     def test_tray_menu(self):
         states = {
             "proxy-suite-socks": "active",

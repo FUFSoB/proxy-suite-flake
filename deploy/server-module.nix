@@ -149,6 +149,16 @@ in
       example = "/3f9a1c07b2e4";
     };
 
+    onion.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Also serve the listeners as a Tor onion service, for clients that cannot reach
+        publicAddress. Its address is kept in /var/lib/proxy-suite/tor/onion; the links
+        to it come from `proxy-ctl inbounds link <tag> --onion`.
+      '';
+    };
+
     ports = {
       reality = mkOption {
         type = types.port;
@@ -261,6 +271,10 @@ in
     services.proxy-suite = {
       enable = true;
       proxy.enable = false;
+      tor = lib.mkIf cfg.onion.enable {
+        enable = true;
+        onionService.enable = true;
+      };
       userControl = {
         enable = true;
         group = "wheel";
@@ -309,6 +323,9 @@ in
 
       proxy-suite server ''${certName}. Share links (as ''${cfg.adminUser}):
         proxy-ctl inbounds link vless-reality --qr   (or vless-tls, vless-ws)
+    ''
+    + lib.optionalString cfg.onion.enable "  proxy-ctl inbounds link vless-reality --onion --qr   (through Tor)\n"
+    + ''
       Network down? Log in and run: sudo proxy-suite-net
     '';
 

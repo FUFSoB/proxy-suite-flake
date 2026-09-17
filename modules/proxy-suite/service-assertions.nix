@@ -72,6 +72,7 @@ let
       ob.tunnelPort
       ob.directPort
     ]) derived.awgTunnelOutbounds
+    ++ lib.optional derived.torOutboundEnabled derived.torCfg.socksPort
     ++ lib.optionals derived.proxyInboundsEnabled (
       map (listener: listener.internalPort) derived.proxyInboundsAwg
     );
@@ -350,7 +351,7 @@ let
 
   proxyInboundAssertions = [
     (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
-      "proxy-suite: inbounds via targets, or the hops they chain through, are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies, warp, ssh-proxy and AmneziaWG outbounds cannot be named here because the inbound service does not run them; use via = \"proxy\" to reach those."
+      "proxy-suite: inbounds via targets, or the hops they chain through, are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies, warp, tor, ssh-proxy and AmneziaWG outbounds cannot be named here because the inbound service does not run them; use via = \"proxy\" to reach those."
     )
     (mkAssertion (!proxyInboundsEnabled || singBoxOnlyPinnedTags == [ ])
       "proxy-suite: inbounds via targets a sing-box-only outbound: ${lib.concatStringsSep ", " singBoxOnlyPinnedTags}. The inbound service runs XRay, so a pinned outbound needs url, urlFile, or xrayJson."
@@ -928,9 +929,74 @@ let
           message = "proxy-suite: tgWsProxy.fwmark must not use per-app-zapret internal desync mark bits";
         }
       ];
+
+  torCfg = cfg.tor;
+  torOnionListeners = if torCfg.onionService.listeners == null then [ ] else torCfg.onionService.listeners;
+  torOnionUnfit = map (ib: ib.tag) (
+    builtins.filter (ib: !derived.proxyInboundOnionCapable ib) derived.torOnionInbounds
+  );
+  torOnionVirtualPorts = map (
+    ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port
+  ) derived.torOnionInbounds;
+  torSnowflake = lib.any (line: lib.hasPrefix "snowflake " line) torCfg.bridges.lines;
+  torAssertions = [
+    (mkAssertion (!torCfg.enable || torCfg.asOutbound || torCfg.onionService.enable)
+      "proxy-suite: tor.enable = true needs tor.asOutbound or tor.onionService.enable"
+    )
+    (requireEnabled (torCfg.enable && torCfg.asOutbound) proxyEnabled
+      "proxy-suite: tor.asOutbound requires proxy.enable = true"
+    )
+    (requireEnabled (torCfg.enable && torCfg.upstream == "proxy") proxyEnabled
+      ''proxy-suite: tor.upstream = "proxy" requires proxy.enable = true''
+    )
+    (mkAssertion (!(torCfg.enable && torCfg.upstream == "proxy" && torSnowflake))
+      ''proxy-suite: tor.bridges.lines has a snowflake bridge, which cannot follow tor.upstream = "proxy"; use obfs4, webtunnel or meek_lite bridges, or upstream = "direct"''
+    )
+    (mkAssertion (!(derived.torOutboundEnabled && builtins.elem derived.torOutboundTag outboundTags))
+      "proxy-suite: the outbound tag \"tor\" belongs to tor.asOutbound; rename the proxy.outbounds entry"
+    )
+    (requireEnabled (torCfg.enable && torCfg.onionService.enable) cfg.inbounds.enable
+      "proxy-suite: tor.onionService.enable requires inbounds.enable = true"
+    )
+    (mkAssertion (
+      !derived.torOnionEnabled
+      || builtins.all (tag: builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
+    ) "proxy-suite: tor.onionService.listeners names listeners not in inbounds.listeners: ${
+      lib.concatStringsSep ", " (
+        builtins.filter (tag: !builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
+      )
+    }")
+    (mkAssertion (!derived.torOnionEnabled || derived.torOnionInbounds != [ ])
+      "proxy-suite: tor.onionService has no listener to serve: amneziawg, h3-only xhttp and raw JSON listeners cannot go over an onion"
+    )
+    (mkAssertion (!derived.torOnionEnabled || torOnionUnfit == [ ])
+      "proxy-suite: tor.onionService.listeners cannot serve ${lib.concatStringsSep ", " torOnionUnfit}: an onion carries TCP only, so not amneziawg or h3-only xhttp, and raw JSON listeners have no known protocol"
+    )
+    (uniqueValues derived.torOnionEnabled torOnionVirtualPorts
+      "proxy-suite: tor.onionService listeners must each share a distinct port (sharePort, or port)"
+    )
+    (mkAssertion
+      (
+        !derived.torOutboundEnabled
+        || !(
+          (proxyEnabled && proxyCfg.listener.port == torCfg.socksPort)
+          || (proxyInboundsEnabled && builtins.elem torCfg.socksPort derived.proxyInboundPorts)
+          || builtins.elem torCfg.socksPort (
+            builtins.attrValues constants.xrayDnsBridgePorts
+            ++ [
+              constants.inboundStatsApiPort
+              constants.outboundTestPort
+            ]
+          )
+        )
+      )
+      "proxy-suite: tor.socksPort ${toString torCfg.socksPort} collides with another proxy-suite listener"
+    )
+  ];
 in
 rootlessAssertions
 ++ featureAssertions
+++ torAssertions
 ++ perAppRoutingAssertions
 ++ localProxyAuthAssertions
 ++ secretAssertions

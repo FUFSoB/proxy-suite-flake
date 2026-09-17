@@ -243,14 +243,16 @@ def _link_security_params(listener: dict, server_address: str) -> dict:
     return {"security": "none"}
 
 
-def _vmess_link(listener: dict, secret: str, server_address: str, label: str) -> str:
+def _vmess_link(
+    listener: dict, secret: str, server_address: str, label: str, endpoint_address: str
+) -> str:
     transport = listener["transport"]
     reality = listener["reality"]
     tls = listener["tls"]
     blob = {
         "v": "2",
         "ps": label,
-        "add": server_address,
+        "add": endpoint_address,
         "port": str(_share_port(listener)),
         "id": secret,
         "aid": "0",
@@ -266,8 +268,14 @@ def _vmess_link(listener: dict, secret: str, server_address: str, label: str) ->
     return "vmess://" + _b64(json.dumps(blob, separators=(",", ":")))
 
 
-def build_share_link(listener: dict, server_address: str, user_index: int = 0) -> str:
-    """Build the client-facing share URL for a listener."""
+def build_share_link(
+    listener: dict, server_address: str, user_index: int = 0, onion_address: str = ""
+) -> str:
+    """Build the client-facing share URL for a listener.
+
+    With an onion address the link dials that instead, through the client's Tor; the TLS
+    and REALITY names stay those of server_address, which the listener still answers to.
+    """
     tag = listener["tag"]
     listener_type = listener["type"]
     users = listener["users"]
@@ -279,13 +287,14 @@ def build_share_link(listener: dict, server_address: str, user_index: int = 0) -
     user = users[user_index]
     secret = _user_secret(user, listener_type, tag)
     user_name = user.get("name") or f"{tag}-{user_index}"
-    label = f"{tag} ({user_name})"
+    label = f"{tag} ({user_name}, onion)" if onion_address else f"{tag} ({user_name})"
     fragment = urllib.parse.quote(label, safe="")
-    host = f"[{server_address}]" if ":" in server_address else server_address
+    endpoint_address = onion_address or server_address
+    host = f"[{endpoint_address}]" if ":" in endpoint_address else endpoint_address
     endpoint = f"{host}:{_share_port(listener)}"
 
     if listener_type == "vmess":
-        return _vmess_link(listener, secret, server_address, label)
+        return _vmess_link(listener, secret, server_address, label, endpoint_address)
 
     if listener_type == "shadowsocks":
         if len(users) > 1:
@@ -335,7 +344,9 @@ def render_amneziawg_inbound(listener: dict) -> dict:
     }
 
 
-def build_listener(listener: dict, server_address: str, share_links: bool) -> dict:
+def build_listener(
+    listener: dict, server_address: str, share_links: bool, onion_address: str = ""
+) -> dict:
     """Render one listener into its inbound object and, when possible, a link.
 
     Raw-JSON listeners are passed through untouched apart from the tag, and get
@@ -372,7 +383,22 @@ def build_listener(listener: dict, server_address: str, share_links: bool) -> di
         if share_links
         else []
     )
-    return {"tag": tag, "type": listener["type"], "port": _share_port(listener), "inbound": inbound, "links": links}
+    onion_links = (
+        [
+            build_share_link(listener, server_address, index, onion_address)
+            for index in range(len(listener["users"]))
+        ]
+        if share_links and onion_address
+        else []
+    )
+    return {
+        "tag": tag,
+        "type": listener["type"],
+        "port": _share_port(listener),
+        "inbound": inbound,
+        "links": links,
+        "onionLinks": onion_links,
+    }
 
 
 def client_outbound(link: str, tag: str) -> dict | None:
@@ -397,36 +423,43 @@ def subscription_token(name: str, secrets: list[str]) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
-def build_inbounds(spec: dict, server_address: str) -> dict:
+def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> dict:
     """Render a whole spec into {"inbounds": [...], "links": [...],
     "subscriptions": [...]}.
 
     A subscription gathers one user's links from every listener -- users are
     matched by name -- as base64 of the newline-joined links, which is what
-    v2rayNG, Hiddify and NekoBox import.
+    v2rayNG, Hiddify and NekoBox import. Listeners in spec["onionListeners"] get a
+    second link per user to onion_address, with "variant": "onion", in both.
     """
     inbounds = []
     links = []
     by_user: dict[str, dict] = {}
     for listener in spec["listeners"]:
-        rendered = build_listener(listener, server_address, spec.get("shareLinks", True))
+        onion = onion_address if listener["tag"] in spec.get("onionListeners", []) else ""
+        rendered = build_listener(listener, server_address, spec.get("shareLinks", True), onion)
         inbounds.append(rendered["inbound"])
-        for index, link in enumerate(rendered["links"]):
-            user = listener["users"][index]
-            name = user.get("name") or f"{rendered['tag']}-{index}"
-            links.append(
-                {
-                    "tag": rendered["tag"],
-                    "user": name,
-                    "type": rendered.get("type", ""),
-                    "port": rendered.get("port", 0),
-                    "link": link,
-                    "outbound": client_outbound(link, rendered["tag"]),
-                }
-            )
-            entry = by_user.setdefault(name, {"links": [], "secrets": []})
-            entry["links"].append(link)
-            entry["secrets"].append(_user_secret(user, listener["type"], rendered["tag"]))
+        variants = [(rendered["links"], {})]
+        if rendered.get("onionLinks"):
+            variants.append((rendered["onionLinks"], {"variant": "onion"}))
+        for variant_links, extra in variants:
+            for index, link in enumerate(variant_links):
+                user = listener["users"][index]
+                name = user.get("name") or f"{rendered['tag']}-{index}"
+                links.append(
+                    {
+                        "tag": rendered["tag"],
+                        "user": name,
+                        "type": rendered.get("type", ""),
+                        "port": rendered.get("port", 0),
+                        "link": link,
+                        "outbound": client_outbound(link, rendered["tag"]),
+                        **extra,
+                    }
+                )
+                entry = by_user.setdefault(name, {"links": [], "secrets": []})
+                entry["links"].append(link)
+                entry["secrets"].append(_user_secret(user, listener["type"], rendered["tag"]))
         # Not in subscriptions: the clients reading those do not speak vpn://.
         for entry in rendered.get("configs", []):
             links.append(

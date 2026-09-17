@@ -60,6 +60,9 @@ let
     }
   ) proxyCfg.outbounds;
 
+  # .onion names go to Tor in every route mode: nothing else can reach them.
+  onionOutbound = if derived.torRouteOnion then resolveTag derived.torOutboundTag else null;
+
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.
   customRules =
     perOutboundRules ++ map (rule: rule // { outbound = resolveTag rule.outbound; }) r.rules;
@@ -72,6 +75,7 @@ let
       tgWsProxyCfg
       customRules
       customRuleCategory
+      onionOutbound
       ;
     inherit (cfg) geodata;
   };
@@ -91,6 +95,7 @@ let
       tgWsProxyCfg
       customRules
       customRuleCategory
+      onionOutbound
       ;
     inherit (derived) selectionMode;
   };

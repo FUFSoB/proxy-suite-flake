@@ -8,6 +8,7 @@
   proxyInboundsAwg,
   awgBin,
   proxyInboundsNeedLocalProxy,
+  torOnionEnabled,
   proxyInboundViaOutbounds,
   userControlCfg,
   userControlAllows,
@@ -52,6 +53,26 @@ let
       ''
     else
       ''SERVER_ADDRESS=""'';
+
+  # The onion service's address, for its share links. Tor writes it as it starts; a Tor
+  # that is not up in time costs only the onion links, until the next restart.
+  onionAddressBlock =
+    if torOnionEnabled && proxyInboundsCfg.shareLinks then
+      ''
+        ONION_ADDRESS=""
+        onion_hostname=${lib.escapeShellArg constants.torOnionHostnameFile}
+        for _ in $(${pkgs.coreutils}/bin/seq 30); do
+          [ -s "$onion_hostname" ] && break
+          ${pkgs.coreutils}/bin/sleep 1
+        done
+        if [ -s "$onion_hostname" ]; then
+          ONION_ADDRESS=$(${pkgs.coreutils}/bin/tr -d '[:space:]' < "$onion_hostname")
+        else
+          echo "proxy-suite: proxy-suite-tor has not written $onion_hostname; no onion share links until a restart" >&2
+        fi
+      ''
+    else
+      ''ONION_ADDRESS=""'';
 
   # Outbounds pinned with `via = "<tag>"`, rendered at start so urlFile contents stay
   # out of the store.
@@ -131,10 +152,12 @@ let
     mkdir -p "$RUNTIME_DIR"
 
     ${serverAddressBlock}
+    ${onionAddressBlock}
 
     RENDERED=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildInboundPy} \
       --spec ${proxyInboundsSpecFile} \
-      --server-address "$SERVER_ADDRESS")
+      --server-address "$SERVER_ADDRESS" \
+      --onion-address "$ONION_ADDRESS")
 
     INBOUNDS_JSON=$(${jq} -c '.inbounds' <<< "$RENDERED")
 

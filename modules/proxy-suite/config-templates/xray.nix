@@ -171,12 +171,30 @@ let
           tag = "dns-out";
           settings = {
             userLevel = 0;
-            rules = [
-              {
-                action = "direct";
-                qType = "2-27,29-65535";
-              }
-            ];
+            # No resolver knows .onion, and asking one leaks the name. The TUN's fake DNS
+            # answers with an address that routes to Tor by name; anything else is told there
+            # is no such name.
+            rules =
+              lib.optionals derived.torRouteOnion (
+                lib.optional enableTunFakeDns {
+                  action = "hijack";
+                  qType = "1,28";
+                  domain = [ "domain:onion" ];
+                }
+                ++ [
+                  {
+                    action = "return";
+                    rCode = 3;
+                    domain = [ "domain:onion" ];
+                  }
+                ]
+              )
+              ++ [
+                {
+                  action = "direct";
+                  qType = "2-27,29-65535";
+                }
+              ];
           };
         }
       ];

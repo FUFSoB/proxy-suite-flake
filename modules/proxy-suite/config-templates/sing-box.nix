@@ -38,7 +38,12 @@ let
       localDetour ? null,
       useOutboundRoutingMark ? false,
       fakeIp ? false,
+      # Inbounds whose clients look names up in sing-box: .onion ones get a fake address there.
+      onionFakeIpInbounds ? [ ],
     }:
+    let
+      onionFakeIp = derived.torRouteOnion && onionFakeIpInbounds != [ ];
+    in
     {
       servers = [
         (mkDnsServer "remote" proxyCfg.dns.remote "proxy")
@@ -52,7 +57,7 @@ let
         }
         // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
       ) derived.awgInterfaceOutbounds
-      ++ lib.optional fakeIp {
+      ++ lib.optional (fakeIp || onionFakeIp) {
         tag = "fakeip";
         type = "fakeip";
         inet4_range = proxyCfg.dns.fakeIp.inet4Range;
@@ -61,6 +66,26 @@ let
       # The route mode keeps the user's rules and fake IP, and may drop what sits between.
       rules =
         proxyCfg.dns.singBox.rules
+        # No resolver knows .onion, and asking one leaks the name. A transparent client gets a
+        # fake address that routes to Tor by name; everything else is told there is no such name.
+        ++ lib.optionals derived.torRouteOnion (
+          lib.optional onionFakeIp {
+            inbound = onionFakeIpInbounds;
+            domain_suffix = [ "onion" ];
+            query_type = [
+              "A"
+              "AAAA"
+            ];
+            server = "fakeip";
+          }
+          ++ [
+            {
+              domain_suffix = [ "onion" ];
+              action = "predefined";
+              rcode = "NXDOMAIN";
+            }
+          ]
+        )
         ++ rules.singBoxDnsRules
         # Only what apps ask through the TUN: the XRay sidecar's and sing-box's own lookups
         # need real addresses.
@@ -126,6 +151,9 @@ let
       dns = mkDnsConfig {
         localDetour = if forceLocalDnsViaProxy then "proxy" else null;
         inherit useOutboundRoutingMark fakeIp;
+        onionFakeIpInbounds =
+          lib.optional enableTun "tun-in"
+          ++ lib.optionals enableTProxy ([ "tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "tproxy-in6");
       };
 
       inbounds =

@@ -49,6 +49,14 @@ let
   warpOutboundTag = "warp";
   # The sing-box tunnel; "userspace" and "interface" come in through the AmneziaWG profile list.
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound == "singBox";
+  torCfg = cfg.tor // {
+    # tor's DataDirectory; the onion service keeps its keys and hostname under it.
+    dataDir = "${stateDir}/tor";
+    onionDir = "${stateDir}/tor/onion";
+  };
+  torOutboundTag = "tor";
+  torOutboundEnabled = torCfg.enable && torCfg.asOutbound;
+  torRouteOnion = torOutboundEnabled && torCfg.routeOnion && proxyEnabled;
 
   # Two ports per "singBox" or "userspace" AmneziaWG outbound, above the autoProxy prober's own
   # listeners (proxy.autoProxy.probeBasePort, 18540 by default, one per exit):
@@ -87,10 +95,17 @@ let
     via = if listener.via == null then proxyInboundsCfg.routing.via else listener.via;
   }) proxyInboundsCfg.listeners;
 
+  # .onion names from clients go to the local proxy, whose rule hands them to Tor, whatever
+  # the listener's via. AmneziaWG listeners never pass XRay's routing.
+  proxyInboundsRouteOnion =
+    torRouteOnion
+    && lib.any (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds;
+
   # Whether any listener or inbounds.routing.proxy exception relays through the local SOCKS
   # listener.
   proxyInboundsNeedLocalProxy =
     lib.any (ib: ib.via == "proxy") proxyInbounds
+    || proxyInboundsRouteOnion
     || lib.any (field: proxyInboundsCfg.routing.proxy.${field} != [ ]) [
       "domains"
       "ips"
@@ -170,6 +185,17 @@ let
   # h3-only xhttp listeners are UDP-only, leaving the TCP port to a web server.
   proxyInboundIsH3Only =
     l: l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
+  # What an onion service can carry: TCP to a listener with a known protocol.
+  proxyInboundOnionCapable =
+    ib: ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsH3Only ib.listener;
+  torOnionEnabled = torCfg.enable && torCfg.onionService.enable && proxyInboundsEnabled;
+  torOnionInbounds =
+    if !torOnionEnabled then
+      [ ]
+    else if torCfg.onionService.listeners == null then
+      builtins.filter proxyInboundOnionCapable proxyInbounds
+    else
+      builtins.filter (ib: builtins.elem ib.tag torCfg.onionService.listeners) proxyInbounds;
   proxyInboundFirewallPorts = lib.unique (
     map (ib: ib.listener.port) (
       builtins.filter (
@@ -200,6 +226,7 @@ let
     outboundTags
     ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
     ++ lib.optional warpOutboundEnabled warpOutboundTag
+    ++ lib.optional torOutboundEnabled torOutboundTag
     ++ map (ob: ob.tag) awgOutbounds;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
 
@@ -210,6 +237,7 @@ let
     || hasSubscriptions
     || sshProxyOutboundEnabled
     || warpOutboundEnabled
+    || torOutboundEnabled
     || awgOutbounds != [ ];
   collapseNamedOutbounds = selectionMode == "first";
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
@@ -318,6 +346,10 @@ let
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
     inboundStatsFile = "${stateDir}/inbound-stats.json";
+    # Written by proxy-suite-tor as it starts, before it reaches the network.
+    torOnionHostnameFile = "${stateDir}/tor/onion/hostname";
+    # proxy-ctl tor status|newnym.
+    torControlSocket = "${runtimeDir}/proxy-suite-tor/control/socket";
 
     # sing-box DNS server resolving through an "interface" AmneziaWG outbound.
     awgDnsServerTag = tag: "awg-dns-${tag}";
@@ -401,6 +433,13 @@ in
     warpCfg
     warpOutboundTag
     warpOutboundEnabled
+    torCfg
+    torOutboundTag
+    torOutboundEnabled
+    torRouteOnion
+    torOnionEnabled
+    torOnionInbounds
+    proxyInboundOnionCapable
     awgGlobalProfiles
     awgOutbounds
     awgInterfaceOutbounds
@@ -409,6 +448,7 @@ in
     proxyInboundsEnabled
     proxyInbounds
     proxyInboundsAwg
+    proxyInboundsRouteOnion
     proxyInboundsNeedLocalProxy
     proxyInboundsResolveInSingBox
     proxyInboundsGuardPrivate

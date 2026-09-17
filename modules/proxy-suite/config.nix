@@ -26,7 +26,7 @@ let
 
   inboundRules = import ./rules/proxy-inbounds.nix {
     inherit lib;
-    inherit (derived) proxyInboundsCfg proxyInbounds;
+    inherit (derived) proxyInboundsCfg proxyInbounds proxyInboundsRouteOnion;
     inherit (rules) zapretDirectRules;
   };
 
@@ -40,6 +40,8 @@ let
   proxyInboundsSpec = {
     serverAddress = derived.proxyInboundsCfg.serverAddress;
     shareLinks = derived.proxyInboundsCfg.shareLinks;
+    # Listeners the onion service carries, which get a second set of links to it.
+    onionListeners = map (ib: ib.tag) derived.torOnionInbounds;
     listeners = map (
       ib:
       {

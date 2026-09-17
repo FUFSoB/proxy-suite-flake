@@ -135,6 +135,7 @@ TOGGLES = {
     # WARP as an AmneziaWG outbound: `proxy-ctl warp`, not `awg`, which only knows global profiles.
     "proxy-suite-awg-warp": ["warp"],
     "proxy-suite-tg-ws-proxy": ["tg"],
+    "proxy-suite-tor": ["tor"],
     "proxy-suite-zapret": ["zapret"],
 }
 AWG_PREFIX = ctl._awg_service("")
@@ -303,8 +304,13 @@ def inbound_rows(_):
     # No presence column: XRay keys the online map by user alone (no inbound dimension),
     # so a per-listener row could only repeat the same verdict once per listener. The
     # "who is online" action shows it once per user, which is the shape the data has.
+    # A listener behind the onion service has a second row, for its .onion link.
     return [
-        {"key": f"{x.get('tag')}/{x.get('user')}", **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port")}}
+        {
+            "key": "/".join(ctl._s(x.get(k) or "") for k in ("tag", "user", "variant")),
+            **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port", "variant")},
+            **({"type": f"{ctl._s(x.get('type') or '')} (onion)"} if x.get("variant") == "onion" else {}),
+        }
         for x in ctl._inbound_links()
     ]
 
@@ -360,7 +366,8 @@ def _natural(value):
 
 
 def _link(row, *extra):
-    return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *extra]
+    onion = ["--onion"] if row.get("variant") == "onion" else []
+    return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *onion, *extra]
 
 
 def _amneziawg(row):

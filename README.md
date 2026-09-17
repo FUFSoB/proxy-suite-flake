@@ -25,6 +25,7 @@ Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [
 - AmneziaWG 1.x–3.x tunnels from `.conf`, `vpn://`, or Nix
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
+- Tor as an outbound, with `.onion` names routed to it automatically, bridges (obfs4, webtunnel, meek, snowflake), and an onion service in front of the server inbounds
 - Server inbounds (XRay protocols and multi-user AmneziaWG) with share links, QR codes, per-user subscriptions and traffic stats
 - Proxy Suite GUI (a desktop app with a tray icon), the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
@@ -97,6 +98,14 @@ services.proxy-suite = {
     # asAmneziaWg = true; # or a global profile instead: proxy-ctl awg on warp
   };
 
+  # An outbound tagged "tor" for routing.rules; .onion names always go to it.
+  tor = {
+    enable = true;
+    asOutbound = true;
+    # bridges.file = "/run/secrets/tor-bridges"; # one obfs4/webtunnel/snowflake line each
+    # upstream = "proxy"; # reach Tor through the local proxy
+  };
+
   tgWsProxy = {
     enable = true;
     secretFile = "/run/secrets/tg-ws-proxy-secret";
@@ -116,7 +125,7 @@ The same options work outside NixOS. Pick the module for the host; everything th
 | Local SOCKS/HTTP proxy, subscriptions, selection, route modes | ✓ | ✓ | ✓ | ✓ |
 | Per-app proxychains | ✓ | ✓ | ✓ | ✓ |
 | Server inbounds, share links, stats | ✓ | ✓ | ports ≥ 1024 | ports ≥ 1024 |
-| tg-ws-proxy, SSH proxy, WARP as a sing-box outbound | ✓ | ✓ | ✓ | ✓ |
+| tg-ws-proxy, SSH proxy, WARP as a sing-box outbound, Tor | ✓ | ✓ | ✓ | ✓ |
 | AmneziaWG `asOutbound = "userspace"` | ✓ | ✓ | ✓ | ✓ |
 | Global TUN/TProxy, per-app TUN/TProxy/zapret, zapret, AmneziaWG interfaces and inbounds | ✓ | ✓ | ✗ | ✗ |
 | `userControl`, polkit | ✓ | ✓ | not needed | not needed |
@@ -224,14 +233,17 @@ Secrets and changes need root, or the userControl group.
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
   warp [status|on|off]                   WARP tunnel behind the warp outbound
+  tor [status|on|off]                    Tor, behind the tor outbound and the onion service
+  tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram WebSocket proxy
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--qr|--json]
-                                         client share link, or the client's outbound JSON
+  inbounds link <tag> [user] [--onion] [--qr|--json]
+                                         client share link, or the client's outbound JSON;
+                                         --onion: the one through the onion service
   inbounds link <tag> [user] --config [--qr]
                                          an AmneziaWG client's .conf, or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON

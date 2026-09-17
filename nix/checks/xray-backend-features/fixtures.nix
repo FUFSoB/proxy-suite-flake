@@ -17,6 +17,7 @@ let
       proxyCfg = null;
       sshProxyCfg = null;
       warpCfg = null;
+      torCfg = null;
       awgOutbounds = null;
       constants = null;
       hybridEnabled = null;

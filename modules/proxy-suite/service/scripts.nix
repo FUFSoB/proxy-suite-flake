@@ -6,6 +6,7 @@
   proxyCfg,
   sshProxyCfg,
   warpCfg,
+  torCfg,
   awgOutbounds,
   xrayEnabled,
   hybridEnabled,
@@ -32,6 +33,7 @@
   proxyInboundsAwg,
   awgBin,
   proxyInboundsNeedLocalProxy,
+  torOnionEnabled,
   proxyInboundsGuardPrivate,
   proxyInboundViaOutbounds,
   userControlAllows,
@@ -115,6 +117,7 @@ let
       proxyCfg
       sshProxyCfg
       warpCfg
+      torCfg
       awgOutbounds
       constants
       pureXrayEnabled
@@ -202,6 +205,7 @@ let
       proxyInboundsAwg
       awgBin
       proxyInboundsNeedLocalProxy
+      torOnionEnabled
       proxyInboundViaOutbounds
       userControlCfg
       userControlAllows

@@ -29,7 +29,7 @@ in
       default = [ ];
       description = ''
         What userControl.group may do; empty allows every scope.
-        - "services": turn the proxy-suite units on and off (proxy, tun, tproxy, zapret, ssh, warp, tg, awg, inbounds), and `restart`.
+        - "services": turn the proxy-suite units on and off (proxy, tun, tproxy, zapret, ssh, warp, tor, tg, awg, inbounds), `restart`, and `tor status|newnym` on Tor's control socket.
         - "perApp": the per-app backend units used by `proxy-ctl apps run`.
         - "routing": `proxy pin`, `proxy unpin` and `proxy mode`.
         - "outbounds": add and remove runtime outbounds and subscriptions, disable and enable outbounds, and update subscriptions.

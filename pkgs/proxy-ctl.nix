@@ -36,6 +36,7 @@
   localProxyUrl,
   autoProxyEnabled,
   autoProxyStateDir,
+  torControlSocket ? "",
   singBox,
   stateDir ? "/var/lib/proxy-suite",
   runtimeDir ? "/run",
@@ -84,6 +85,7 @@ let
     LOCAL_PROXY_URL = localProxyUrl;
     AUTOPROXY_ENABLED = autoProxyEnabled;
     AUTOPROXY_STATE_DIR = autoProxyStateDir;
+    TOR_CONTROL_SOCKET = torControlSocket;
     SING_BOX = singBox;
     STATE_DIR = stateDir;
     RUNTIME_DIR = runtimeDir;

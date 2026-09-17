@@ -9,6 +9,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -873,12 +874,87 @@ class ShareTest(EnvTest):
         self.assertNotEqual(status, 0)
         self.assertIn("only AmneziaWG", err)
 
+    def test_inbound_onion_link(self):
+        self.write(
+            "inbounds/links.json",
+            [
+                {"tag": "in", "user": "u", "type": "vless", "link": "vless://x@h:443", "outbound": {"server": "h"}},
+                {"tag": "in", "user": "u", "type": "vless", "port": 443, "link": "vless://x@o.onion:443", "outbound": {"server": "o.onion"},
+                 "variant": "onion"},
+                {"tag": "plain", "user": "u", "type": "vless", "link": "vless://x@h:80", "outbound": None},
+            ],
+        )
+        # Same tag and user: the plain link unless --onion asks for the other.
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "in", "u"), "vless://x@h:443\n")
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "in", "--onion"), "vless://x@o.onion:443\n")
+        self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "u", "--onion", "--json"))["server"], "o.onion")
+        status, _, err = run(ctl.cmd_inbounds, "link", "plain", "--onion")
+        self.assertNotEqual(status, 0)
+        self.assertIn("onionService.listeners", err)
+        self.patch("svc_state", lambda unit: "active")
+        self.assertRegex(ok(ctl.cmd_inbounds, "list"), r"(?m)^  in +u +vless \(onion\) +443 +active$")
+
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable(self):
         os.chmod(self.share, 0)
         status, _, err = run(ctl.cmd_outbounds, "link", "vps")
         self.assertNotEqual(status, 0)
         self.assertIn("re-run with sudo", err)
+
+
+class TorTest(EnvTest):
+    """proxy-ctl tor against a fake control socket that answers like Tor 0.4.9."""
+
+    def setUp(self):
+        super().setUp()
+        # A relative path: an absolute one under TMPDIR can outgrow sun_path.
+        cwd = os.getcwd()
+        os.chdir(self.dir)
+        self.addCleanup(os.chdir, cwd)
+        os.environ["TOR_CONTROL_SOCKET"] = "control"
+        self.received = []
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server.bind("control")
+        self.server.listen(1)
+        self.addCleanup(self.server.close)
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+        self.patch("systemctl", lambda *a, **kw: (0, "active\n") if kw.get("capture") else (0, None))
+
+    def serve(self):
+        replies = {
+            "AUTHENTICATE": "250 OK",
+            "GETINFO status/bootstrap-phase": '250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=75 TAG=enough_dirinfo '
+            'SUMMARY="Loaded enough directory info to build circuits"\r\n250 OK',
+            "SIGNAL NEWNYM": "250 OK",
+        }
+        try:
+            conn, _ = self.server.accept()
+        except OSError:
+            return
+        with conn, conn.makefile("rwb") as stream:
+            for line in stream:
+                command = line.decode().rstrip("\r\n")
+                self.received.append(command)
+                stream.write((replies.get(command, '510 Unrecognized command "x"') + "\r\n").encode())
+                stream.flush()
+
+    def test_status_shows_bootstrap(self):
+        out = ok(ctl.cmd_tor)
+        self.assertIn("bootstrap 75% (Loaded enough directory info to build circuits)", out)
+        self.assertEqual(self.received, ["AUTHENTICATE", "GETINFO status/bootstrap-phase"])
+
+    def test_newnym(self):
+        ok(ctl.cmd_tor, "newnym")
+        self.thread.join(5)
+        self.assertEqual(self.received, ["AUTHENTICATE", "SIGNAL NEWNYM"])
+
+    def test_not_running(self):
+        os.environ["TOR_CONTROL_SOCKET"] = "missing"
+        status, _, err = run(ctl.cmd_tor, "newnym")
+        self.assertNotEqual(status, 0)
+        self.assertIn("not running", err)
+        self.assertNotEqual(run(ctl.cmd_tor, "bogus")[0], 0)
 
 
 class BadExitTest(EnvTest):

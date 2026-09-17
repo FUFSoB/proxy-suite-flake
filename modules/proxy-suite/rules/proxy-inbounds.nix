@@ -4,6 +4,7 @@
   lib,
   proxyInboundsCfg,
   proxyInbounds,
+  proxyInboundsRouteOnion,
   zapretDirectRules,
 }:
 
@@ -16,6 +17,18 @@ let
 
   # A blocked listener stays blocked: neither serverAddress nor the proxy exceptions open it.
   exceptionInboundTags = map (ib: ib.tag) (builtins.filter (ib: ib.via != "block") proxyInbounds);
+
+  # Only Tor reaches .onion: to the local proxy, whose own rule sends it there. First, so no
+  # IP rule before it has XRay look the name up, which would leak it to a resolver.
+  onionRule = lib.optional proxyInboundsRouteOnion {
+    type = "field";
+    ruleTag = "inbound-tor-onion";
+    domain = [ "domain:onion" ];
+    inboundTag = map (ib: ib.tag) (
+      builtins.filter (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds
+    );
+    outboundTag = "proxy";
+  };
 
   blockPrivateRule = lib.optional proxyInboundsCfg.routing.blockPrivate {
     type = "field";
@@ -147,7 +160,8 @@ let
   # Explicit proxy exceptions beat blockRu: RU-geolocated ranges (Telegram's,
   # at times) would otherwise swallow them.
   xrayInboundRules =
-    blockPrivateRule
+    onionRule
+    ++ blockPrivateRule
     ++ serverAddressRule
     ++ proxyDomainRule
     ++ proxyIpRule

@@ -6,6 +6,7 @@
   tgWsProxyCfg,
   customRules,
   customRuleCategory,
+  onionOutbound,
   selectionMode,
 }:
 
@@ -116,8 +117,14 @@ let
     (xrayGeoIPRules "proxy-geoip" "proxy" r.proxy.geoips)
   ];
 
+  # Kept by every route mode, like sing-box's common rules.
+  xrayCommonRules = lib.optional (onionOutbound != null) (
+    mkXrayRule "tor-onion" { domain = [ "domain:onion" ]; } onionOutbound
+  );
+
   xrayRoutingRules =
-    lib.concatMap (item: item.entries) xrayCustomRouteRules
+    xrayCommonRules
+    ++ lib.concatMap (item: item.entries) xrayCustomRouteRules
     ++ xrayProxyPrimaryRules
     ++ xrayDirectRules
     ++ xraySafetyDirectRules
@@ -125,7 +132,7 @@ let
     ++ xrayBlockRules;
 
   xrayRouteModeRules = {
-    common = [ ];
+    common = xrayCommonRules;
     custom = xrayCustomRouteRules;
     proxyPrimary = xrayProxyPrimaryRules;
     direct = xrayDirectRules;

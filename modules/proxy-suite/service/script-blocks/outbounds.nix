@@ -5,6 +5,7 @@
   proxyCfg,
   sshProxyCfg,
   warpCfg,
+  torCfg,
   awgOutbounds,
   constants,
   pureXrayEnabled,
@@ -27,6 +28,7 @@
 
 let
   sshProxyTag = "ssh-proxy";
+  torOutboundEnabled = torCfg != null && torCfg.enable && torCfg.asOutbound;
 
   # sing-box domain strategies in XRay's names (UseIPv4v6 = prefer IPv4).
   xrayDomainStrategies = {
@@ -202,7 +204,7 @@ let
           tag="''${f##*/}"
           tag="''${tag%.*}"
           case "$tag" in
-            proxy | direct | block)
+            proxy | direct | block${lib.optionalString torOutboundEnabled " | tor"})
               echo "proxy-suite: warning: ignoring runtime outbound '$tag': reserved name" >&2
               continue
               ;;
@@ -528,10 +530,11 @@ let
 
   # What selection may pick on its own: all but proxy.selectionExclude and disabled
   # outbounds. A pin still reaches the excluded ones, and a selector switched by hand both.
+  # Tor is only for what is routed to it, unless it is the one outbound there is.
   selectableBlock = ''
     SELECTABLE_TAGS_JSON=$(${jq} -c --argjson ex ${lib.escapeShellArg (builtins.toJSON proxyCfg.selectionExclude)} \
       --argjson disabled "$DISABLED_TAGS_JSON" \
-      'map(select(. as $t | ($ex + $disabled) | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
+      '${lib.optionalString torOutboundEnabled "(if length > 1 then [\"tor\"] else [] end) as $tor | "}map(select(. as $t | ($ex + $disabled${lib.optionalString torOutboundEnabled " + $tor"}) | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
     if [ -z "$PINNED_OUTBOUND" ] && [ "$(${jq} 'length' <<< "$SELECTABLE_TAGS_JSON")" -eq 0 ]; then
       echo "proxy-suite: every outbound is in proxy.selectionExclude or disabled, so there is nothing to select; pin one, enable one (proxy-ctl proxy outbounds enable), or exclude fewer" >&2
       exit 1
@@ -572,6 +575,9 @@ let
       sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
       warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound == "singBox") (
         mkTunnelOutboundBlock "proxy-suite-warp-tunnel" "warp" "warp" warpCfg.tunnelPort
+      );
+      torBlock = lib.optionalString torOutboundEnabled (
+        mkTunnelOutboundBlock "proxy-suite-tor" "tor" "tor" torCfg.socksPort
       );
       awgBlocks = lib.concatMapStrings (mkAwgOutboundBlock routingMark) awgOutbounds;
 
@@ -639,7 +645,9 @@ let
       # Real exits for autoProxy, taken after the wrapper may have renamed one to
       # "proxy".
       exitTagsBlock = ''
-        EXIT_TAGS_JSON=$(${jq} -c '[.[] | select(.type != "selector" and .type != "urltest") | .tag]' <<< "$OUTBOUNDS_JSON")
+        EXIT_TAGS_JSON=$(${jq} -c '[.[] | select(.type != "selector" and .type != "urltest"${
+          lib.optionalString torOutboundEnabled " and (.tag | ltrimstr(\"proxy-suite-ob-\")) != \"tor\""
+        }) | .tag]' <<< "$OUTBOUNDS_JSON")
       '';
     in
     mkUrlOutboundHelpersBlock routingMark
@@ -650,6 +658,7 @@ let
     + runtimeOutboundsBlock
     + sshProxyBlock
     + warpBlock
+    + torBlock
     + awgBlocks
     + detourBlock
     + requireOutboundsBlock

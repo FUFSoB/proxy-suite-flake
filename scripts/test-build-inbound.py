@@ -576,6 +576,74 @@ class BuildInboundsTests(unittest.TestCase):
         self.assertEqual(result["inbounds"][0]["port"], 2053)
         self.assertEqual(result["links"], [])
 
+    def test_onion_links_dial_the_onion_and_keep_the_names(self):
+        onion = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
+        tls = {"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None}
+        users = [{"name": "alice", "uuid": "uuid-1", "uuidFile": None, "password": None, "passwordFile": None}]
+        spec = {
+            "serverAddress": "vpn.example.com",
+            "shareLinks": True,
+            "onionListeners": ["reality", "ws", "vmess"],
+            "listeners": [
+                listener(tag="reality", users=users, reality=reality()),
+                listener(
+                    tag="ws",
+                    users=users,
+                    port=10002,
+                    sharePort=443,
+                    tls=tls,
+                    transport={"type": "ws", "path": "/ws", "host": "cdn.example.com", "serviceName": ""},
+                ),
+                listener(tag="vmess", type="vmess", users=users, port=8443, tls=tls),
+                listener(tag="plain", users=users, port=8080),
+            ],
+        }
+        result = build_inbounds(spec, "vpn.example.com", onion)
+        by_variant = {(e["tag"], e.get("variant", "")): e for e in result["links"]}
+        self.assertEqual(
+            sorted(by_variant),
+            sorted(
+                [
+                    ("reality", ""),
+                    ("reality", "onion"),
+                    ("ws", ""),
+                    ("ws", "onion"),
+                    ("vmess", ""),
+                    ("vmess", "onion"),
+                    ("plain", ""),
+                ]
+            ),
+        )
+
+        real = by_variant[("reality", "onion")]["link"]
+        self.assertTrue(real.startswith(f"vless://uuid-1@{onion}:443?"), real)
+        self.assertEqual(link_params(real)["sni"], "www.microsoft.com")
+        self.assertIn("onion", urllib.parse.unquote(urllib.parse.urlsplit(real).fragment))
+
+        # The onion port is the share port, as the torrc maps it; TLS keeps the real name.
+        ws = by_variant[("ws", "onion")]
+        self.assertEqual(ws["port"], 443)
+        self.assertTrue(ws["link"].startswith(f"vless://uuid-1@{onion}:443?"), ws["link"])
+        self.assertEqual(link_params(ws["link"])["sni"], "vpn.example.com")
+        self.assertEqual(link_params(ws["link"])["host"], "cdn.example.com")
+        self.assertEqual(ws["outbound"]["server"], onion)
+
+        payload = by_variant[("vmess", "onion")]["link"][len("vmess://") :]
+        blob = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(blob["add"], onion)
+        self.assertEqual(blob["sni"], "vpn.example.com")
+
+        # The plain links are untouched, and a subscription carries both.
+        self.assertTrue(by_variant[("reality", "")]["link"].startswith("vless://uuid-1@vpn.example.com:443?"))
+        body = base64.b64decode(result["subscriptions"][0]["body"]).decode().split("\n")
+        self.assertEqual(len(body), 7)
+        self.assertIn(real, body)
+
+        # No address yet: no onion links, and nothing else changes.
+        without = build_inbounds(spec, "vpn.example.com")
+        self.assertEqual([e for e in without["links"] if e.get("variant")], [])
+        self.assertEqual(without["inbounds"], result["inbounds"])
+
 
 if __name__ == "__main__":
     unittest.main()

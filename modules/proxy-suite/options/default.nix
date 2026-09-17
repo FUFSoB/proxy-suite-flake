@@ -15,6 +15,7 @@
     ./amnezia-wg.nix
     ./ssh-proxy.nix
     ./warp.nix
+    ./tor.nix
     ./tg-ws-proxy.nix
     ./geodata.nix
     ./gui.nix
