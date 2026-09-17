@@ -1,6 +1,6 @@
 # proxy-suite-flake
 
-Declarative proxy stack for NixOS, on either side of the connection: as a client that routes this host's traffic through outbounds, as a server that accepts clients on its own inbounds, or both at once. Configure it in Nix, rebuild, and it runs as systemd services. It also runs on other Linux distributions (through system-manager or home-manager) and on Android (through Nix-on-Droid): see [Other hosts](#other-hosts).
+Declarative proxy stack for NixOS, on either side of the connection: as a client that routes this host's traffic through outbounds, as a server that accepts clients on its own inbounds, or both at once. Configure it in Nix, rebuild, and it runs as systemd services. It also runs on other Linux distributions (through system-manager or home-manager) and on Android (through Nix-on-Droid).
 
 > [!IMPORTANT]
 > This project is for study and research purposes only: learning how proxies, tunnels and traffic routing work. It comes with no warranty, and the authors are not responsible for how it is used.
@@ -114,58 +114,6 @@ services.proxy-suite = {
   gui.enable = true;
 };
 ```
-
-### Other hosts
-
-The same options work outside NixOS. Pick the module for the host; everything the host cannot do fails evaluation with a message naming the option.
-
-| | NixOS | system-manager | home-manager | Nix-on-Droid |
-|---|:-:|:-:|:-:|:-:|
-| Runs as | root, systemd | root, systemd | user, `systemd --user` | user, `proxy-suitectl` |
-| Local SOCKS/HTTP proxy, subscriptions, selection, route modes | ✓ | ✓ | ✓ | ✓ |
-| Per-app proxychains | ✓ | ✓ | ✓ | ✓ |
-| Server inbounds, share links, stats | ✓ | ✓ | ports ≥ 1024 | ports ≥ 1024 |
-| tg-ws-proxy, SSH proxy, WARP as a sing-box outbound, Tor | ✓ | ✓ | ✓ | ✓ |
-| AmneziaWG `asOutbound = "userspace"` | ✓ | ✓ | ✓ | ✓ |
-| Global TUN/TProxy, per-app TUN/TProxy/zapret, zapret, AmneziaWG interfaces and inbounds | ✓ | ✓ | ✗ | ✗ |
-| `userControl`, polkit | ✓ | ✓ | not needed | not needed |
-| GUI | ✓ | ✓ | ✓ | ✗ (`proxy-ctl`, `proxy-tui`) |
-
-Rootless hosts get the local proxy only: nothing captures the rest of the host's traffic, so point applications at `127.0.0.1:1080` (or run them through `proxy-ctl apps run`).
-
-#### system-manager (other distributions, as root)
-
-```nix
-# with github:numtide/system-manager
-modules = [ inputs.proxy-suite.systemManagerModules.default ];
-```
-
-- Units, service users and the polkit rules (`/etc/polkit-1/rules.d/50-proxy-suite.rules`) are installed like on NixOS; the GUI's user unit goes to `/etc/systemd/user`. The service users come from `users.users`, so system-manager needs its user management.
-- The host's firewall is left alone: open the inbound ports yourself, and let AmneziaWG inbound interfaces (`awgi-*`) through the input chain and strict reverse-path filtering. TUN, TProxy, zapret and AmneziaWG inbounds load their own nftables tables, which needs `nf_tables`, `nfnetlink_queue`, `nft_tproxy` and `tun` in the host kernel.
-- AmneziaWG runs on its userspace implementation (`amneziaWg.kernelModulePackage` must stay `null`). DNS pushed by a VPN profile goes through `resolvectl` under systemd-resolved, `openresolv` otherwise.
-
-#### home-manager (any Linux, no root)
-
-```nix
-# homeConfigurations.<name> = home-manager.lib.homeManagerConfiguration { ... }
-modules = [ inputs.proxy-suite.homeManagerModules.default ];
-```
-
-- Units run in the user's systemd manager: `systemctl --user status proxy-suite-socks`. They stop at logout unless lingering is on: `loginctl enable-linger $USER`.
-- State lives in `$XDG_STATE_HOME/proxy-suite`, runtime files in `$XDG_CACHE_HOME/proxy-suite/run`.
-
-#### Nix-on-Droid (Android, no root)
-
-```nix
-# nixOnDroidConfigurations.default = nix-on-droid.lib.nixOnDroidConfiguration { ... }
-modules = [ inputs.proxy-suite.nixOnDroidModules.default ];
-```
-
-- Android has no systemd, so `nix-on-droid switch` hands the units to `proxy-suitectl`, a small supervisor that understands the parts of systemd units proxy-suite uses (restarts, dependencies, timers, path watches). `proxy-ctl` talks to it for you; directly, `proxy-suitectl status`, `proxy-suitectl restart proxy-suite-socks` and `proxy-suitectl journal -u 'proxy-suite-*' -f` work much like `systemctl` and `journalctl`.
-- Android gives the app no boot hook. The services start on `nix-on-droid switch`, and, with `services.proxy-suite.nixOnDroid.startWithSession` (on by default), whenever a Nix-on-Droid shell opens; `proxy-suitectl boot` starts them by hand.
-- Android stops background apps: acquire Nix-on-Droid's wake lock from its notification and exempt the app from battery optimisation, or the services die with the terminal.
-- Inbounds are reachable from the local network on ports from 1024 up; zapret is not available (on Android it needs a VPN app).
-- An AmneziaWG `userspace` outbound resolves an `Endpoint` hostname through the system resolver; give it as an IP address where that resolver is itself blocked.
 
 ---
 

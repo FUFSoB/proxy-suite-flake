@@ -85,7 +85,17 @@ let
     }
   '';
 
-  inherit (import ./wg-tunnel.nix { inherit lib pkgs cfg derived; }) mkTunnel;
+  inherit
+    (import ./wg-tunnel.nix {
+      inherit
+        lib
+        pkgs
+        cfg
+        derived
+        ;
+    })
+    mkTunnel
+    ;
   viaAmneziaWg = builtins.elem w.asOutbound [
     "userspace"
     "interface"
@@ -135,7 +145,9 @@ in
           StateDirectoryMode = "0700";
           WorkingDirectory = "${derived.constants.stateDir}/warp";
           UMask = "0077";
-          LoadCredential = lib.optional (cfg.proxy.enable && withProxyAuth) "proxy-password:${passwordSource}";
+          LoadCredential = lib.optional (
+            cfg.proxy.enable && withProxyAuth
+          ) "proxy-password:${passwordSource}";
           ExecStart = registerScript;
         };
       };

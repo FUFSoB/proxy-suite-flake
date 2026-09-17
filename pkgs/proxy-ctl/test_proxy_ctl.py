@@ -540,6 +540,19 @@ class RuntimeEntryTest(EnvTest):
         self.assertNotEqual(run(ctl.cmd_outbounds, "enable", "primary")[0], 0)
         self.assertNotEqual(run(ctl.cmd_outbounds, "enable", "../primary")[0], 0)
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_rm_says_so_when_the_dir_is_out_of_reach(self):
+        """outbounds.d is root-only without the group: the entry is there, it just cannot be seen."""
+        ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
+        os.chmod(self.path("outbounds.d"), 0o000)
+        try:
+            status, _, err = run(ctl.cmd_outbounds, "rm", "de")
+        finally:
+            os.chmod(self.path("outbounds.d"), 0o700)
+        self.assertNotEqual(status, 0)
+        self.assertIn("Cannot see the entry for 'de'", err)
+        self.assertNotIn("No runtime outbound", err)
+
     def test_rm_takes_the_marker_along(self):
         ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
         ok(ctl.cmd_outbounds, "disable", "de")
@@ -955,6 +968,11 @@ class TorTest(EnvTest):
         self.assertNotEqual(status, 0)
         self.assertIn("not running", err)
         self.assertNotEqual(run(ctl.cmd_tor, "bogus")[0], 0)
+        # Status still reports the unit.
+        status, out, err = run(ctl.cmd_tor)
+        self.assertEqual(status, 0)
+        self.assertIn("bootstrap unknown", out)
+        self.assertIn("not running", err)
 
 
 class BadExitTest(EnvTest):

@@ -70,7 +70,12 @@ def generate_obfuscation(declared: dict[str, Any], stored: dict[str, Any]) -> di
     pick("jmin", lambda v: jmin_low <= v <= jmin_high, lambda: rng.randint(jmin_low, jmin_high))
     jmin = values["jmin"] if type(values["jmin"]) is int else 0
     pick("jmax", lambda v: jmin + 8 <= v <= max(jmin + 8, 250), lambda: rng.randint(jmin + 8, max(jmin + 8, 250)))
-    pick("s1", lambda v: 15 <= v <= 150, lambda: rng.randint(15, 150))
+    s2_declared = values.get("s2") if type(values.get("s2")) is int else None
+    pick(
+        "s1",
+        lambda v: 15 <= v <= 150 and (s2_declared is None or v + HANDSHAKE_SIZE_DIFFERENCE != s2_declared),
+        lambda: rng.randint(15, 150),
+    )
     s1 = values["s1"] if isinstance(values["s1"], int) else None
     pick(
         "s2",

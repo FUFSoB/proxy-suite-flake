@@ -11,7 +11,9 @@
 let
   generated = import ./read-generated.nix;
   startScript =
-    fixture: generated.readDerivation fixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
+    fixture:
+    generated.readDerivation
+      fixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
 
   chained = evalProxySuite [
     baseModule
@@ -70,9 +72,13 @@ in
   assertions = [
     # Detours are resolved at start, once subscription and runtime entries exist.
     (
-      assert pkgs.lib.hasInfix ''{"outbounds":{"exit":"primary"},"subscriptions":{"sub":"primary"}}'' (startScript chained);
+      assert pkgs.lib.hasInfix ''{"outbounds":{"exit":"primary"},"subscriptions":{"sub":"primary"}}'' (
+        startScript chained
+      );
       assert pkgs.lib.hasInfix "proxy-suite-outbound-detours" (startScript chained);
-      assert pkgs.lib.hasInfix ''/var/lib/proxy-suite/outbounds.d/$RUNTIME_OB_TAG.detour'' (startScript chained);
+      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/outbounds.d/$RUNTIME_OB_TAG.detour" (
+        startScript chained
+      );
       true
     )
 
@@ -85,51 +91,52 @@ in
         ]);
       in
       assert pkgs.lib.hasInfix ''--argjson ex '["primary"]' '' script;
-      assert pkgs.lib.hasInfix ''excluded: ($tags - $selectable)'' script;
+      assert pkgs.lib.hasInfix "excluded: ($tags - $selectable)" script;
       true
     )
 
     # An inbound pinned to a chained outbound gets the whole chain.
     (
       let
-        script = generated.readDerivation
-          (evalProxySuite [
-            {
-              system.stateVersion = "26.05";
-              services.proxy-suite = {
-                enable = true;
-                proxy = {
+        script =
+          generated.readDerivation
+            (evalProxySuite [
+              {
+                system.stateVersion = "26.05";
+                services.proxy-suite = {
                   enable = true;
-                  outbounds = [
-                    {
-                      tag = "hop";
-                      url = "http://hop.example.com:8080";
-                    }
-                    {
-                      tag = "exit";
-                      url = "http://exit.example.com:8080";
-                      detour = "hop";
-                    }
-                  ];
-                };
-                inbounds = {
-                  enable = true;
-                  serverAddress = "203.0.113.1";
-                  listeners.main = {
-                    type = "socks";
-                    port = 1081;
-                    via = "exit";
-                    users = [
+                  proxy = {
+                    enable = true;
+                    outbounds = [
                       {
-                        name = "a";
-                        password = "b";
+                        tag = "hop";
+                        url = "http://hop.example.com:8080";
+                      }
+                      {
+                        tag = "exit";
+                        url = "http://exit.example.com:8080";
+                        detour = "hop";
                       }
                     ];
                   };
+                  inbounds = {
+                    enable = true;
+                    serverAddress = "203.0.113.1";
+                    listeners.main = {
+                      type = "socks";
+                      port = 1081;
+                      via = "exit";
+                      users = [
+                        {
+                          name = "a";
+                          password = "b";
+                        }
+                      ];
+                    };
+                  };
                 };
-              };
-            }
-          ]).config.systemd.services."proxy-suite-inbounds".serviceConfig.ExecStart;
+              }
+            ]).config.systemd.services."proxy-suite-inbounds".serviceConfig.ExecStart;
       in
       assert pkgs.lib.hasInfix "# via outbound: hop" script;
       assert pkgs.lib.hasInfix "--arg hop hop '.streamSettings.sockopt.dialerProxy = $hop'" script;
@@ -138,12 +145,20 @@ in
 
     # User rules first, fake IP last and only for what comes through the TUN.
     (
-      assert builtins.head tunDns.rules == { domain_suffix = [ "corp.example" ]; server = "corp"; };
-      assert pkgs.lib.last tunDns.rules == {
-        inbound = [ "tun-in" ];
-        query_type = [ "A" "AAAA" ];
-        server = "fakeip";
-      };
+      assert
+        builtins.head tunDns.rules == {
+          domain_suffix = [ "corp.example" ];
+          server = "corp";
+        };
+      assert
+        pkgs.lib.last tunDns.rules == {
+          inbound = [ "tun-in" ];
+          query_type = [
+            "A"
+            "AAAA"
+          ];
+          server = "fakeip";
+        };
       assert builtins.any (s: s.tag == "fakeip") tunDns.servers;
       assert builtins.any (s: s.tag == "corp") tunDns.servers;
       assert tunDns.strategy == "ipv4_only";
@@ -151,7 +166,8 @@ in
     )
     # Fake addresses survive a restart, one cache per TUN config.
     (
-      assert (mkTunConfig dnsFixture).experimental.cache_file.path == "/var/lib/proxy-suite/fakeip/tun.db";
+      assert
+        (mkTunConfig dnsFixture).experimental.cache_file.path == "/var/lib/proxy-suite/fakeip/tun.db";
       assert (mkTunConfig dnsFixture).experimental.cache_file.store_fakeip;
       true
     )
@@ -209,7 +225,11 @@ in
     (
       assert !(builtins.any (s: s.tag == "fakeip") tproxyDns.servers);
       assert !((mkTProxyConfig dnsFixture).experimental ? cache_file);
-      assert builtins.head tproxyDns.rules == { domain_suffix = [ "corp.example" ]; server = "corp"; };
+      assert
+        builtins.head tproxyDns.rules == {
+          domain_suffix = [ "corp.example" ];
+          server = "corp";
+        };
       true
     )
   ]

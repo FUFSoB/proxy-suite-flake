@@ -163,7 +163,9 @@ let
 
             _proxy_suite_parse_xray_url() {
               ${parse "--backend xray" (
-                lib.optionalString (xraySidecarRoutingMark != null) " --routing-mark ${toString xraySidecarRoutingMark}"
+                lib.optionalString (
+                  xraySidecarRoutingMark != null
+                ) " --routing-mark ${toString xraySidecarRoutingMark}"
               )}
             }
           ''
@@ -238,7 +240,11 @@ let
 
   singBoxRawOutboundJson =
     ob: tag: routingMark:
-    ob.singBoxJson // { inherit tag; } // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; };
+    ob.singBoxJson
+    // {
+      inherit tag;
+    }
+    // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; };
 
   mkHybridOutboundBlock =
     ob: routingMark: tag:
@@ -435,7 +441,10 @@ let
 
   # Declared detours, resolved once every outbound - subscription entries included - exists.
   detourMap =
-    entries: lib.listToAttrs (map (e: lib.nameValuePair e.tag e.detour) (lib.filter (e: e.detour != null) entries));
+    entries:
+    lib.listToAttrs (
+      map (e: lib.nameValuePair e.tag e.detour) (lib.filter (e: e.detour != null) entries)
+    );
   detours = {
     outbounds = detourMap proxyCfg.outbounds;
     subscriptions = detourMap proxyCfg.subscriptions;
@@ -645,9 +654,7 @@ let
       # Real exits for autoProxy, taken after the wrapper may have renamed one to
       # "proxy".
       exitTagsBlock = ''
-        EXIT_TAGS_JSON=$(${jq} -c '[.[] | select(.type != "selector" and .type != "urltest"${
-          lib.optionalString torOutboundEnabled " and (.tag | ltrimstr(\"proxy-suite-ob-\")) != \"tor\""
-        }) | .tag]' <<< "$OUTBOUNDS_JSON")
+        EXIT_TAGS_JSON=$(${jq} -c '[.[] | select(.type != "selector" and .type != "urltest"${lib.optionalString torOutboundEnabled " and (.tag | ltrimstr(\"proxy-suite-ob-\")) != \"tor\""}) | .tag]' <<< "$OUTBOUNDS_JSON")
       '';
     in
     mkUrlOutboundHelpersBlock routingMark

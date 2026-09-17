@@ -19,9 +19,7 @@ let
   # JSON. The context is dropped so the check may mention it.
   expectedOutboundFile =
     value:
-    builtins.unsafeDiscardStringContext "${
-      pkgs.writeText "proxy-suite-core" (builtins.toJSON value)
-    }";
+    builtins.unsafeDiscardStringContext "${pkgs.writeText "proxy-suite-core" (builtins.toJSON value)}";
 
   # SingBox dials SSH natively: no unit, no local SOCKS listener.
   sshNativeSingBox = evalProxySuite [
@@ -367,7 +365,9 @@ let
     (
       assert pkgs.lib.hasInfix expectedNativeSingBoxOutbound sshNativeSingBoxStart;
       # The daemon cannot read the key where it lives: it gets a group-readable copy.
-      assert pkgs.lib.hasInfix "install -m 0640 -g proxy-suite-daemon /run/secrets/ssh-key \"$SSH_IDENTITY\"" sshNativeSingBoxStart;
+      assert pkgs.lib.hasInfix
+        "install -m 0640 -g proxy-suite-daemon /run/secrets/ssh-key \"$SSH_IDENTITY\""
+        sshNativeSingBoxStart;
       assert pkgs.lib.hasInfix "'.private_key_path = $key'" sshNativeSingBoxStart;
       true
     )
@@ -392,7 +392,10 @@ let
     )
     # The keys must not be baked into the store-resident outbound JSON.
     (
-      assert !(pkgs.lib.hasInfix "host_key" (builtins.toJSON sshHostKeyFile.config.services.proxy-suite.sshProxy.hostKey));
+      assert
+        !(pkgs.lib.hasInfix "host_key" (
+          builtins.toJSON sshHostKeyFile.config.services.proxy-suite.sshProxy.hostKey
+        ));
       true
     )
 
@@ -443,7 +446,8 @@ let
       true
     )
     (
-      assert pkgs.lib.hasInfix ''UserKnownHostsFile="$CREDENTIALS_DIRECTORY/known_hosts"'' standaloneStartScript;
+      assert pkgs.lib.hasInfix ''UserKnownHostsFile="$CREDENTIALS_DIRECTORY/known_hosts"''
+        standaloneStartScript;
       true
     )
     # Secrets reach the unprivileged user as credentials.

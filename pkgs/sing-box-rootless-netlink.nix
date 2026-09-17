@@ -10,15 +10,15 @@
 
 sing-box.overrideAttrs (old: {
   postConfigure = (old.postConfigure or "") + ''
-    tun=vendor/github.com/sagernet/sing-tun
-    chmod -R u+w "$tun"
-    cp ${./patches/sing-tun-netlink-groups-probe.go} "$tun/monitor_linux_groups_probe.go"
-    substituteInPlace "$tun/monitor_linux.go" --replace-fail \
-      'func NewNetworkUpdateMonitor(logger logger.Logger) (NetworkUpdateMonitor, error) {' \
-      'func NewNetworkUpdateMonitor(logger logger.Logger) (NetworkUpdateMonitor, error) {
-	if netlinkGroupsBanned() {
-		return nil, ErrNetlinkBanned
-	}'
+        tun=vendor/github.com/sagernet/sing-tun
+        chmod -R u+w "$tun"
+        cp ${./patches/sing-tun-netlink-groups-probe.go} "$tun/monitor_linux_groups_probe.go"
+        substituteInPlace "$tun/monitor_linux.go" --replace-fail \
+          'func NewNetworkUpdateMonitor(logger logger.Logger) (NetworkUpdateMonitor, error) {' \
+          'func NewNetworkUpdateMonitor(logger logger.Logger) (NetworkUpdateMonitor, error) {
+    	if netlinkGroupsBanned() {
+    		return nil, ErrNetlinkBanned
+    	}'
   '';
   passthru = (old.passthru or { }) // {
     rootlessNetlink = true;

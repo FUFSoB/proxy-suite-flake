@@ -1,7 +1,13 @@
 { lib, ... }:
 
 let
-  p = path: [ "services" "proxy-suite" ] ++ lib.splitString "." path;
+  p =
+    path:
+    [
+      "services"
+      "proxy-suite"
+    ]
+    ++ lib.splitString "." path;
   rm = path: replacement: lib.mkRemovedOptionModule (p path) replacement;
   # Top-level zapret options that moved under the engine namespace; the value is
   # the leaf name they carry there.

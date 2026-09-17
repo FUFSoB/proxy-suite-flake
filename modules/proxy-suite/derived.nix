@@ -98,8 +98,7 @@ let
   # .onion names from clients go to the local proxy, whose rule hands them to Tor, whatever
   # the listener's via. AmneziaWG listeners never pass XRay's routing.
   proxyInboundsRouteOnion =
-    torRouteOnion
-    && lib.any (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds;
+    torRouteOnion && lib.any (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds;
 
   # Whether any listener or inbounds.routing.proxy exception relays through the local SOCKS
   # listener.
@@ -187,7 +186,8 @@ let
     l: l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
   # What an onion service can carry: TCP to a listener with a known protocol.
   proxyInboundOnionCapable =
-    ib: ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsH3Only ib.listener;
+    ib:
+    ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsH3Only ib.listener;
   torOnionEnabled = torCfg.enable && torCfg.onionService.enable && proxyInboundsEnabled;
   torOnionInbounds =
     if !torOnionEnabled then

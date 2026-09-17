@@ -38,12 +38,13 @@ let
   perAppRoutingTunUserStartScript = generated.readDerivation (
     (mkPerAppUserRules perAppRoutingTunFixture).perAppTunUserRuleStart
   );
-  perAppRoutingTunNftRules = generated.readDerivation
-    (import ../../modules/proxy-suite/nftables.nix {
-      inherit (pkgs) lib;
-      inherit pkgs;
-      cfg = perAppRoutingTunFixture.config.services.proxy-suite;
-    }).perAppTunChainFile;
+  perAppRoutingTunNftRules =
+    generated.readDerivation
+      (import ../../modules/proxy-suite/nftables.nix {
+        inherit (pkgs) lib;
+        inherit pkgs;
+        cfg = perAppRoutingTunFixture.config.services.proxy-suite;
+      }).perAppTunChainFile;
 
   perAppRoutingTunWithTproxyFixture = evalProxySuite [
     baseModule
@@ -98,7 +99,11 @@ in
         );
       in
       assert inbound.interface_name == "psperapptun0";
-      assert inbound.address == [ "172.20.0.1/30" "fd66:20::1/64" ];
+      assert
+        inbound.address == [
+          "172.20.0.1/30"
+          "fd66:20::1/64"
+        ];
       assert inbound.auto_route == false;
       assert inbound.auto_redirect == false;
       assert inbound.strict_route == false;
@@ -147,7 +152,8 @@ in
       assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
       # With proxy.ipv6, wrapped apps' IPv6 goes through the app TUN too.
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' perAppRoutingTunUpScript;
-      assert pkgs.lib.hasInfix "-6 route replace default dev psperapptun0 table 101" perAppRoutingTunUpScript;
+      assert pkgs.lib.hasInfix "-6 route replace default dev psperapptun0 table 101"
+        perAppRoutingTunUpScript;
       assert !(pkgs.lib.hasInfix "unreachable" perAppRoutingTunUpScript);
       assert pkgs.lib.hasInfix "-6 rule add fwmark 16 table 101" perAppRoutingTunUpScript;
       assert pkgs.lib.hasInfix "-6 route flush table 101" perAppRoutingTunCleanupScript;
@@ -160,8 +166,9 @@ in
     # -- perAppRouting: wrapped apps' replies to incoming connections skip the mark (and the
     # user rule appended after it), so they leave directly --
     (
-      assert pkgs.lib.hasInfix "ct direction reply return"
-        (builtins.head (pkgs.lib.splitString "ct mark 16 meta mark set 16" perAppRoutingTunNftRules));
+      assert pkgs.lib.hasInfix "ct direction reply return" (
+        builtins.head (pkgs.lib.splitString "ct mark 16 meta mark set 16" perAppRoutingTunNftRules)
+      );
       true
     )
 

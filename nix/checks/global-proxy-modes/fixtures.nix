@@ -59,13 +59,15 @@ let
       };
     }
   ];
-  tproxyIPv4OnlyStartScript = generated.readDerivation
-    tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig.ExecStart;
+  tproxyIPv4OnlyStartScript =
+    generated.readDerivation
+      tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig.ExecStart;
   tproxyIPv4OnlyConfig = mkTProxyConfig tproxyIPv4OnlyFixture;
   tproxyIPv4OnlyNftRules = mkTProxyNftRules tproxyIPv4OnlyFixture;
   ipv4OnlyTunConfig = mkTunConfig tproxyIPv4OnlyFixture;
-  ipv4OnlyPerAppTunUpScript = generated.readDerivation
-    tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStartPost;
+  ipv4OnlyPerAppTunUpScript =
+    generated.readDerivation
+      tproxyIPv4OnlyFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStartPost;
 
   # XRay's TUN configures IPv6 itself: with it off, its up script must not touch IPv6 addresses.
   xrayIPv4OnlyFixture = evalProxySuite [
@@ -82,8 +84,9 @@ let
     )
   ];
   xrayIPv4OnlyTunConfig = mkTunConfig xrayIPv4OnlyFixture;
-  xrayIPv4OnlyTunUpScript = generated.readDerivation
-    xrayIPv4OnlyFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost;
+  xrayIPv4OnlyTunUpScript =
+    generated.readDerivation
+      xrayIPv4OnlyFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost;
 
   tproxyAutostartFixture = evalProxySuite [
     baseModule

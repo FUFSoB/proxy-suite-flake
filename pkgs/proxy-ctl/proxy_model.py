@@ -307,7 +307,8 @@ def inbound_rows(_):
     # A listener behind the onion service has a second row, for its .onion link.
     return [
         {
-            "key": "/".join(ctl._s(x.get(k) or "") for k in ("tag", "user", "variant")),
+            # The TUI titles its menu with the key: no trailing "/" for the plain link.
+            "key": "/".join(ctl._s(x.get(k)) for k in ("tag", "user", "variant") if x.get(k)),
             **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port", "variant")},
             **({"type": f"{ctl._s(x.get('type') or '')} (onion)"} if x.get("variant") == "onion" else {}),
         }

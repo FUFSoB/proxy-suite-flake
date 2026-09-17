@@ -114,7 +114,7 @@ class ModelTest(unittest.TestCase):
         ]
         with mock.patch.object(ctl, "_inbound_links", lambda: links):
             plain, onion = model.inbound_rows({})
-        self.assertNotEqual(plain["key"], onion["key"])
+        self.assertEqual((plain["key"], onion["key"]), ("ws/alice", "ws/alice/onion"))
         self.assertEqual((plain["type"], onion["type"]), ("vless", "vless (onion)"))
         self.assertEqual(model._link(plain, "--qr"), ["inbounds", "link", "ws", "alice", "--qr"])
         self.assertEqual(model._link(onion, "--qr"), ["inbounds", "link", "ws", "alice", "--onion", "--qr"])

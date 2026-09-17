@@ -80,12 +80,7 @@ let
         "ControlSocketsGroupWritable 1"
       ]
       ++ lib.optional t.clientOnly "ClientOnly 1"
-      ++ (
-        if t.asOutbound then
-          [ "SocksPort 127.0.0.1:${toString t.socksPort}" ]
-        else
-          [ "SocksPort 0" ]
-      )
+      ++ (if t.asOutbound then [ "SocksPort 127.0.0.1:${toString t.socksPort}" ] else [ "SocksPort 0" ])
       ++ lib.optionals bridgesEnabled [
         "UseBridges 1"
         "ClientTransportPlugin obfs4,webtunnel,meek_lite exec ${t.lyrebirdPackage}/bin/lyrebird"
@@ -103,6 +98,22 @@ let
     ${pkgs.coreutils}/bin/install -d -m 2750 -o ${derived.constants.serviceUser} \
       -g ${lib.escapeShellArg cfg.userControl.group} "$dir"
   '';
+
+  # Before ExecStart, which is when proxy-suite-inbounds may start reading the hostname: a
+  # stale one must be gone by then.
+  onionKeyScript = pkgs.writeShellScript "proxy-suite-tor-onion-key" ''
+    set -euo pipefail
+    umask 0077
+    # Tor wants the service directory private to it.
+    ${pkgs.coreutils}/bin/install -d -m 0700 "$STATE_DIRECTORY/onion"
+    if ! ${pkgs.diffutils}/bin/cmp -s "$CREDENTIALS_DIRECTORY/onion-secret-key" "$STATE_DIRECTORY/onion/hs_ed25519_secret_key"; then
+      # Another key: the old address and its public key must not be served with it.
+      ${pkgs.coreutils}/bin/rm -f "$STATE_DIRECTORY/onion/hs_ed25519_public_key" "$STATE_DIRECTORY/onion/hostname"
+      ${pkgs.coreutils}/bin/install -m 0600 "$CREDENTIALS_DIRECTORY/onion-secret-key" \
+        "$STATE_DIRECTORY/onion/hs_ed25519_secret_key"
+    fi
+  '';
+  onionKeyEnabled = derived.torOnionEnabled && t.onionService.secretKeyFile != null;
 
   startScript = pkgs.writeShellScript "proxy-suite-tor" ''
     set -euo pipefail
@@ -133,17 +144,6 @@ let
       cat ${pkgs.writeText "proxy-suite-torrc-extra" t.extraConfig}
     } > "$torrc"
 
-    ${lib.optionalString (derived.torOnionEnabled && t.onionService.secretKeyFile != null) ''
-      # Tor wants the service directory private to it.
-      ${pkgs.coreutils}/bin/install -d -m 0700 "$STATE_DIRECTORY/onion"
-      if ! ${pkgs.diffutils}/bin/cmp -s "$CREDENTIALS_DIRECTORY/onion-secret-key" "$STATE_DIRECTORY/onion/hs_ed25519_secret_key"; then
-        # Another key: the old address and its public key must not be served with it.
-        ${pkgs.coreutils}/bin/rm -f "$STATE_DIRECTORY/onion/hs_ed25519_public_key" "$STATE_DIRECTORY/onion/hostname"
-        ${pkgs.coreutils}/bin/install -m 0600 "$CREDENTIALS_DIRECTORY/onion-secret-key" \
-          "$STATE_DIRECTORY/onion/hs_ed25519_secret_key"
-      fi
-    ''}
-
     exec ${t.package}/bin/tor -f "$torrc"
   '';
 in
@@ -171,15 +171,15 @@ in
         LoadCredential =
           lib.optional withProxyAuth "proxy-password:${passwordSource}"
           ++ lib.optional (t.bridges.file != null) "bridges:${t.bridges.file}"
-          ++ lib.optional (
-            derived.torOnionEnabled && t.onionService.secretKeyFile != null
-          ) "onion-secret-key:${t.onionService.secretKeyFile}";
+          ++ lib.optional onionKeyEnabled "onion-secret-key:${t.onionService.secretKeyFile}";
         Restart = "always";
         RestartSec = 5;
         LimitNOFILE = 65536;
       }
-      // lib.optionalAttrs controlGroup {
-        ExecStartPre = "+${controlDirScript}";
+      // lib.optionalAttrs (controlGroup || onionKeyEnabled) {
+        ExecStartPre =
+          lib.optional controlGroup "+${controlDirScript}"
+          ++ lib.optional onionKeyEnabled "${onionKeyScript}";
       };
   };
 }

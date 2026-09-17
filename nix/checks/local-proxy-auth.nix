@@ -108,7 +108,8 @@ in
       assert pkgs.lib.hasInfix ''chgrp proxy-suite-daemon "$backend_config"'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''chmod 640 "$backend_config"'' localProxyAuthStartScript;
       # The backend itself runs unprivileged.
-      assert pkgs.lib.hasInfix "setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon" localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix "setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon"
+        localProxyAuthStartScript;
       true
     )
 

@@ -50,45 +50,27 @@ let
     discord = [ "discord-voice" ];
   };
 
-  expandDefaultDomains =
-    groups:
-    lib.unique (
-      lib.concatMap (group: domainGroups.${group}) groups
-    );
+  expandDefaultDomains = groups: lib.unique (lib.concatMap (group: domainGroups.${group}) groups);
 
-  expandDefaultIps =
-    groups:
-    lib.unique (
-      lib.concatMap (group: ipGroups.${group}) groups
-    );
+  expandDefaultIps = groups: lib.unique (lib.concatMap (group: ipGroups.${group}) groups);
 
-  inferPresets =
-    groups:
-    lib.unique (map (group: groupPresets.${group}) groups);
+  inferPresets = groups: lib.unique (map (group: groupPresets.${group}) groups);
 
-  effectiveRuleDomains =
-    rule:
-    lib.unique (expandDefaultDomains rule.defaultDomains ++ rule.domains);
+  effectiveRuleDomains = rule: lib.unique (expandDefaultDomains rule.defaultDomains ++ rule.domains);
 
-  effectiveRuleIps =
-    rule:
-    lib.unique (expandDefaultIps rule.defaultIps ++ rule.ips);
+  effectiveRuleIps = rule: lib.unique (expandDefaultIps rule.defaultIps ++ rule.ips);
 
   effectiveRulePresets =
-    rule:
-    if rule.preset != null then [ rule.preset ] else inferPresets rule.defaultDomains;
+    rule: if rule.preset != null then [ rule.preset ] else inferPresets rule.defaultDomains;
 
-  effectiveRuleIpsetFamilies =
-    rule:
-    lib.optional (effectiveRuleIps rule != [ ]) "all";
+  effectiveRuleIpsetFamilies = rule: lib.optional (effectiveRuleIps rule != [ ]) "all";
 
   effectiveRuleProtocolFamilies =
     rule:
     lib.optionals (rule.configName != null) (
       lib.unique (
         lib.concatMap (
-          group:
-          if builtins.hasAttr group protocolGroups then protocolGroups.${group} else [ ]
+          group: if builtins.hasAttr group protocolGroups then protocolGroups.${group} else [ ]
         ) rule.defaultDomains
       )
     );

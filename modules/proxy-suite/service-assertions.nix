@@ -167,12 +167,20 @@ let
     (mkAssertion (cfg.userControl.scopes == [ ] || cfg.userControl.enable)
       "proxy-suite: userControl.scopes is set but userControl.enable is false, so the group gets nothing"
     )
-    (requireEnabled (cfg.warp.enable && cfg.warp.asOutbound != null) proxyEnabled
-      "proxy-suite: warp.asOutbound requires proxy.enable = true"
-    )
     (requireEnabled (
-      cfg.warp.enable && builtins.elem cfg.warp.asOutbound [ "userspace" "interface" ]
-    ) cfg.amneziaWg.enable ''proxy-suite: warp.asOutbound = "${toString cfg.warp.asOutbound}" requires amneziaWg.enable = true'')
+      cfg.warp.enable && cfg.warp.asOutbound != null
+    ) proxyEnabled "proxy-suite: warp.asOutbound requires proxy.enable = true")
+    (requireEnabled
+      (
+        cfg.warp.enable
+        && builtins.elem cfg.warp.asOutbound [
+          "userspace"
+          "interface"
+        ]
+      )
+      cfg.amneziaWg.enable
+      ''proxy-suite: warp.asOutbound = "${toString cfg.warp.asOutbound}" requires amneziaWg.enable = true''
+    )
     (requireEnabled (
       cfg.warp.enable && cfg.warp.asAmneziaWg
     ) cfg.amneziaWg.enable "proxy-suite: warp.asAmneziaWg requires amneziaWg.enable = true")
@@ -203,16 +211,19 @@ let
       (!(pureXrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls")))
       "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.backend = \"xray\"; use udp/tcp DNS for XRay"
     )
-    (mkAssertion (
-      !pureXrayEnabled
-      || (
-        proxyCfg.dns.strategy == null
-        && proxyCfg.dns.clientSubnet == null
-        && !proxyCfg.dns.fakeIp.enable
-        && proxyCfg.dns.singBox.servers == [ ]
-        && proxyCfg.dns.singBox.rules == [ ]
+    (mkAssertion
+      (
+        !pureXrayEnabled
+        || (
+          proxyCfg.dns.strategy == null
+          && proxyCfg.dns.clientSubnet == null
+          && !proxyCfg.dns.fakeIp.enable
+          && proxyCfg.dns.singBox.servers == [ ]
+          && proxyCfg.dns.singBox.rules == [ ]
+        )
       )
-    ) "proxy-suite: proxy.dns.strategy, clientSubnet, fakeIp and singBox require proxy.backend = \"sing-box\" or \"hybrid\"")
+      "proxy-suite: proxy.dns.strategy, clientSubnet, fakeIp and singBox require proxy.backend = \"sing-box\" or \"hybrid\""
+    )
     (requireEnabled globalTun.enable proxyEnabled
       "proxy-suite: proxy.tun.enable requires proxy.enable = true"
     )
@@ -300,43 +311,40 @@ let
     ] "proxy-suite: tgWsProxy requires exactly one of secret or secretFile")
   ];
 
-  outboundAssertions = lib.concatMap (ob: [
-    (exactlyOneOf proxyEnabled
-      [
+  outboundAssertions =
+    lib.concatMap (ob: [
+      (exactlyOneOf proxyEnabled [
         ob.urlFile
         ob.url
         ob.singBoxJson
         ob.xrayJson
-      ]
-      "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, or xrayJson"
-    )
-    (mkAssertion (
-      !singBoxEnabled || hybridEnabled || ob.xrayJson == null
-    ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
-    (mkAssertion (
-      !xrayEnabled || hybridEnabled || ob.singBoxJson == null
-    ) "proxy-suite: outbound '${ob.tag}': singBoxJson requires proxy.backend = sing-box or hybrid")
-    (mkAssertion (
-      !(ob.backend == "xray") || xrayEnabled
-    ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
-    (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
-      "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
-    )
-    (mkAssertion (
-      ob.detour != ob.tag
-    ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
-  ])
-  proxyCfg.outbounds
-  ++ map (
-    e:
-    mkAssertion (
-      !builtins.elem e.detour [
-        "proxy"
-        "direct"
-        "block"
-      ]
-    ) "proxy-suite: '${e.tag}': detour must name a real outbound, not proxy, direct or block"
-  ) (builtins.filter (e: e.detour != null) (proxyCfg.outbounds ++ proxyCfg.subscriptions));
+      ] "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, or xrayJson")
+      (mkAssertion (
+        !singBoxEnabled || hybridEnabled || ob.xrayJson == null
+      ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
+      (mkAssertion (
+        !xrayEnabled || hybridEnabled || ob.singBoxJson == null
+      ) "proxy-suite: outbound '${ob.tag}': singBoxJson requires proxy.backend = sing-box or hybrid")
+      (mkAssertion (
+        !(ob.backend == "xray") || xrayEnabled
+      ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
+      (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
+        "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
+      )
+      (mkAssertion (
+        ob.detour != ob.tag
+      ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
+    ]) proxyCfg.outbounds
+    ++ map (
+      e:
+      mkAssertion (
+        !builtins.elem e.detour [
+          "proxy"
+          "direct"
+          "block"
+        ]
+      ) "proxy-suite: '${e.tag}': detour must name a real outbound, not proxy, direct or block"
+    ) (builtins.filter (e: e.detour != null) (proxyCfg.outbounds ++ proxyCfg.subscriptions));
 
   proxyInboundsCfg = derived.proxyInboundsCfg;
   proxyInboundsEnabled = derived.proxyInboundsEnabled;
@@ -489,24 +497,30 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.xrayJson == null || (l.xrayJson.port or l.port) == l.port
       ) "${prefix}: xrayJson.port and port differ; the firewall and the port checks go by port")
-      (mkAssertion (
-        !proxyInboundsEnabled
-        || !proxyInboundsCfg.shareLinks
-        || !l.reality.enable
-        || builtins.elem l.type [
-          "vless"
-          "trojan"
-        ]
-      ) "${prefix}: share links carry reality only for vless and trojan; set inbounds.shareLinks = false to serve it anyway")
-      (mkAssertion (
-        !proxyInboundsEnabled
-        || !proxyInboundsCfg.shareLinks
-        || !l.tls.enable
-        || !builtins.elem l.type [
-          "shadowsocks"
-          "socks"
-        ]
-      ) "${prefix}: share links cannot carry tls for ${toString l.type}; set inbounds.shareLinks = false to serve it anyway")
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || !proxyInboundsCfg.shareLinks
+          || !l.reality.enable
+          || builtins.elem l.type [
+            "vless"
+            "trojan"
+          ]
+        )
+        "${prefix}: share links carry reality only for vless and trojan; set inbounds.shareLinks = false to serve it anyway"
+      )
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || !proxyInboundsCfg.shareLinks
+          || !l.tls.enable
+          || !builtins.elem l.type [
+            "shadowsocks"
+            "socks"
+          ]
+        )
+        "${prefix}: share links cannot carry tls for ${toString l.type}; set inbounds.shareLinks = false to serve it anyway"
+      )
       (exactlyOneOf (proxyInboundsEnabled && l.reality.enable) [
         l.reality.privateKey
         l.reality.privateKeyFile
@@ -577,19 +591,16 @@ let
     (uniqueValues awgListenersEnabled awgInterfaces
       "proxy-suite: AmneziaWG inbounds listeners and amneziaWg.profiles must each use a distinct interfaceName"
     )
-    (mkAssertion (!awgListenersEnabled || !lib.any (name: builtins.elem name otherInterfaces) awgInterfaces)
+    (mkAssertion
+      (!awgListenersEnabled || !lib.any (name: builtins.elem name otherInterfaces) awgInterfaces)
       "proxy-suite: an AmneziaWG inbounds listener's interfaceName is taken by proxy.tun or perAppRouting.tun"
     )
-    (mkAssertion
-      (
-        !awgListenersEnabled
-        || lib.all (
-          ib:
-          lib.all (other: ib.tag == other.tag || !ipv4Overlap ib.subnet other.subnet) awgSubnets
-        ) awgSubnets
-      )
-      "proxy-suite: AmneziaWG inbounds listeners must each use a subnet of their own"
-    )
+    (mkAssertion (
+      !awgListenersEnabled
+      || lib.all (
+        ib: lib.all (other: ib.tag == other.tag || !ipv4Overlap ib.subnet other.subnet) awgSubnets
+      ) awgSubnets
+    ) "proxy-suite: AmneziaWG inbounds listeners must each use a subnet of their own")
     (mkAssertion
       (
         !awgListenersEnabled
@@ -644,18 +655,18 @@ let
         ];
     in
     lib.optionals (proxyInboundsEnabled && l.type == "amneziawg") [
-      (mkAssertion (lib.all (user: user.name != "") l.users)
-        "${prefix}: AmneziaWG users each need a name, which their keys and address are kept under"
+      (mkAssertion (lib.all (user: user.name != "")
+        l.users
+      ) "${prefix}: AmneziaWG users each need a name, which their keys and address are kept under")
+      (mkAssertion (builtins.stringLength awg.interfaceName <= 15)
+        "${prefix}: amneziaWg.interfaceName '${awg.interfaceName}' is longer than the kernel's 15 characters"
       )
-      (mkAssertion (
-        builtins.stringLength awg.interfaceName <= 15
-      ) "${prefix}: amneziaWg.interfaceName '${awg.interfaceName}' is longer than the kernel's 15 characters")
       (mkAssertion (
         !l.tls.enable && !l.reality.enable && l.flow == null && l.transport.type == "raw"
       ) "${prefix}: AmneziaWG takes no tls, reality, flow or transport")
-      (mkAssertion (subnet != null && subnet.size >= 4)
-        "${prefix}: amneziaWg.subnet '${awg.subnet}' must be an IPv4 CIDR of /30 or wider"
-      )
+      (mkAssertion (
+        subnet != null && subnet.size >= 4
+      ) "${prefix}: amneziaWg.subnet '${awg.subnet}' must be an IPv4 CIDR of /30 or wider")
       (mkAssertion (subnet == null || lib.all inSubnet addresses)
         "${prefix}: each user address must be a host address inside amneziaWg.subnet, other than its first (this host's)"
       )
@@ -931,7 +942,8 @@ let
       ];
 
   torCfg = cfg.tor;
-  torOnionListeners = if torCfg.onionService.listeners == null then [ ] else torCfg.onionService.listeners;
+  torOnionListeners =
+    if torCfg.onionService.listeners == null then [ ] else torCfg.onionService.listeners;
   torOnionUnfit = map (ib: ib.tag) (
     builtins.filter (ib: !derived.proxyInboundOnionCapable ib) derived.torOnionInbounds
   );
@@ -940,14 +952,26 @@ let
   ) derived.torOnionInbounds;
   torSnowflake = lib.any (line: lib.hasPrefix "snowflake " line) torCfg.bridges.lines;
   torAssertions = [
-    (mkAssertion (!torCfg.enable || torCfg.asOutbound || torCfg.onionService.enable)
-      "proxy-suite: tor.enable = true needs tor.asOutbound or tor.onionService.enable"
-    )
-    (requireEnabled (torCfg.enable && torCfg.asOutbound) proxyEnabled
-      "proxy-suite: tor.asOutbound requires proxy.enable = true"
-    )
-    (requireEnabled (torCfg.enable && torCfg.upstream == "proxy") proxyEnabled
-      ''proxy-suite: tor.upstream = "proxy" requires proxy.enable = true''
+    (mkAssertion (
+      !torCfg.enable || torCfg.asOutbound || torCfg.onionService.enable
+    ) "proxy-suite: tor.enable = true needs tor.asOutbound or tor.onionService.enable")
+    (requireEnabled (
+      torCfg.enable && torCfg.asOutbound
+    ) proxyEnabled "proxy-suite: tor.asOutbound requires proxy.enable = true")
+    (requireEnabled (
+      torCfg.enable && torCfg.upstream == "proxy"
+    ) proxyEnabled ''proxy-suite: tor.upstream = "proxy" requires proxy.enable = true'')
+    # Tor as the one outbound would be what the local proxy dials Tor's own relays through.
+    (mkAssertion
+      (
+        !(
+          derived.torOutboundEnabled
+          && torCfg.upstream == "proxy"
+          && lib.subtractLists [ derived.torOutboundTag ] effectiveOutboundTags == [ ]
+          && !derived.hasSubscriptions
+        )
+      )
+      ''proxy-suite: tor.upstream = "proxy" needs an outbound besides "tor" to reach Tor through; with tor the only one, Tor would dial its relays through itself''
     )
     (mkAssertion (!(torCfg.enable && torCfg.upstream == "proxy" && torSnowflake))
       ''proxy-suite: tor.bridges.lines has a snowflake bridge, which cannot follow tor.upstream = "proxy"; use obfs4, webtunnel or meek_lite bridges, or upstream = "direct"''
@@ -955,17 +979,20 @@ let
     (mkAssertion (!(derived.torOutboundEnabled && builtins.elem derived.torOutboundTag outboundTags))
       "proxy-suite: the outbound tag \"tor\" belongs to tor.asOutbound; rename the proxy.outbounds entry"
     )
-    (requireEnabled (torCfg.enable && torCfg.onionService.enable) cfg.inbounds.enable
-      "proxy-suite: tor.onionService.enable requires inbounds.enable = true"
-    )
-    (mkAssertion (
-      !derived.torOnionEnabled
-      || builtins.all (tag: builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
-    ) "proxy-suite: tor.onionService.listeners names listeners not in inbounds.listeners: ${
-      lib.concatStringsSep ", " (
-        builtins.filter (tag: !builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
+    (requireEnabled (
+      torCfg.enable && torCfg.onionService.enable
+    ) cfg.inbounds.enable "proxy-suite: tor.onionService.enable requires inbounds.enable = true")
+    (mkAssertion
+      (
+        !derived.torOnionEnabled
+        || builtins.all (tag: builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
       )
-    }")
+      "proxy-suite: tor.onionService.listeners names listeners not in inbounds.listeners: ${
+        lib.concatStringsSep ", " (
+          builtins.filter (tag: !builtins.hasAttr tag cfg.inbounds.listeners) torOnionListeners
+        )
+      }"
+    )
     (mkAssertion (!derived.torOnionEnabled || derived.torOnionInbounds != [ ])
       "proxy-suite: tor.onionService has no listener to serve: amneziawg, h3-only xhttp and raw JSON listeners cannot go over an onion"
     )

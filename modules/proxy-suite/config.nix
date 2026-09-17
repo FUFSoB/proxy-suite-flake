@@ -93,24 +93,12 @@ let
   routeModeRules =
     if derived.pureXrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules;
 
-  tproxyFile = pkgs.writeText "proxy-suite-core" (
-    builtins.toJSON selectedTemplates.tproxy
-  );
-  tunFile = pkgs.writeText "proxy-suite-core" (
-    builtins.toJSON selectedTemplates.tun
-  );
-  perAppTunFile = pkgs.writeText "proxy-suite-core" (
-    builtins.toJSON selectedTemplates.perAppTun
-  );
-  routeModeRulesFile = pkgs.writeText "proxy-suite-core" (
-    builtins.toJSON routeModeRules
-  );
-  proxyInboundsFile = pkgs.writeText "proxy-suite-inbounds" (
-    builtins.toJSON proxyInboundsTemplate
-  );
-  proxyInboundsSpecFile = pkgs.writeText "proxy-suite-inbounds" (
-    builtins.toJSON proxyInboundsSpec
-  );
+  tproxyFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON selectedTemplates.tproxy);
+  tunFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON selectedTemplates.tun);
+  perAppTunFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON selectedTemplates.perAppTun);
+  routeModeRulesFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON routeModeRules);
+  proxyInboundsFile = pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON proxyInboundsTemplate);
+  proxyInboundsSpecFile = pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON proxyInboundsSpec);
 in
 {
   inherit

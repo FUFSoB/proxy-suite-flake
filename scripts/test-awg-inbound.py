@@ -142,6 +142,13 @@ class ObfuscationTests(unittest.TestCase):
         self.assertTrue(values["jmin"] < 20)
         self.assertNotIn(7, [values[key] for key in ("h2", "h3", "h4")])
 
+    def test_generated_s1_avoids_declared_s2(self):
+        # A stored S1 that no longer fits is replaced too.
+        for stored in ({}, {"s1": 44}):
+            for _ in range(200):
+                values = awg_inbound.generate_obfuscation({"s2": 100}, stored)
+                self.assertNotEqual(values["s1"] + 56, 100)
+
 
 class StateTests(Fixture):
     def test_prepare_creates_private_state_and_server_config(self):

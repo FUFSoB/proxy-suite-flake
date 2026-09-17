@@ -221,17 +221,24 @@ let
           };
           sniffing = standardSniffing;
         }
-        ++ lib.zipListsWith (tag: listen: {
-          inherit tag listen;
-          protocol = "tunnel";
-          port = globalTproxy.port;
-          settings = {
-            allowedNetwork = "tcp,udp";
-            followRedirect = true;
-          };
-          streamSettings.sockopt.tproxy = "tproxy";
-          sniffing = standardSniffing;
-        }) (lib.optionals enableTProxy tproxyInboundTags) [ "127.0.0.1" "::1" ]
+        ++
+          lib.zipListsWith
+            (tag: listen: {
+              inherit tag listen;
+              protocol = "tunnel";
+              port = globalTproxy.port;
+              settings = {
+                allowedNetwork = "tcp,udp";
+                followRedirect = true;
+              };
+              streamSettings.sockopt.tproxy = "tproxy";
+              sniffing = standardSniffing;
+            })
+            (lib.optionals enableTProxy tproxyInboundTags)
+            [
+              "127.0.0.1"
+              "::1"
+            ]
         ++ lib.optional enableTun {
           tag = "tun-in";
           protocol = "tun";

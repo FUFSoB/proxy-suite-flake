@@ -157,7 +157,8 @@ in
       true
     )
     (
-      assert hasInfix singBoxHop hybridStart && hasInfix "_proxy_suite_add_sing_box_ob \"$OB_JSON\"" hybridStart;
+      assert
+        hasInfix singBoxHop hybridStart && hasInfix "_proxy_suite_add_sing_box_ob \"$OB_JSON\"" hybridStart;
       true
     )
     # Only the tunnel reads the profile, at start; the private key never reaches the store.

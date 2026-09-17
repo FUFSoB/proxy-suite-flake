@@ -41,7 +41,7 @@ let
 
   serverAddressBlock =
     if proxyInboundsCfg.serverAddress != null then
-      ''SERVER_ADDRESS=${lib.escapeShellArg proxyInboundsCfg.serverAddress}''
+      "SERVER_ADDRESS=${lib.escapeShellArg proxyInboundsCfg.serverAddress}"
     else if proxyInboundsCfg.shareLinks then
       ''
         ${builders.mkDefaultUplinkIPv4Source {
@@ -95,9 +95,7 @@ let
       ''
         # via outbound: ${ob.tag} (static xray json)
         OB_JSON=$(cat ${
-          pkgs.writeText "proxy-suite-inbounds" (
-            builtins.toJSON (ob.xrayJson // { inherit (ob) tag; })
-          )
+          pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON (ob.xrayJson // { inherit (ob) tag; }))
         })
         ${dialerBlock}
         OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")

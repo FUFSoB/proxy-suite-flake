@@ -456,29 +456,32 @@
   # proxy_ctl.py's function-level tests: the probe verdict table and exit walk,
   # autoProxy learn/queue, inbound stats and subscriptions, apps run.
   proxy-ctl-unit =
-    pkgs.runCommand "proxy-suite-proxy-ctl-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      export SING_BOX=${pkgs.sing-box}/bin/sing-box
-      export PYTHONDONTWRITEBYTECODE=1
-      python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
-      touch "$out"
-    '';
+    pkgs.runCommand "proxy-suite-proxy-ctl-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export SING_BOX=${pkgs.sing-box}/bin/sing-box
+        export PYTHONDONTWRITEBYTECODE=1
+        python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
+        touch "$out"
+      '';
 
   # proxy-suitectl, nix-on-droid's service manager: real processes restarted, timed and stopped.
   proxy-suite-supervisor-unit =
-    pkgs.runCommand "proxy-suite-supervisor-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      export PYTHONDONTWRITEBYTECODE=1 HOME="$TMPDIR"
-      python ${../../pkgs/proxy-ctl}/test_proxy_supervisor.py
-      touch "$out"
-    '';
+    pkgs.runCommand "proxy-suite-supervisor-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1 HOME="$TMPDIR"
+        python ${../../pkgs/proxy-ctl}/test_proxy_supervisor.py
+        touch "$out"
+      '';
 
   # proxy_export: the running config made portable, and sing-box still accepts it.
   proxy-export-unit =
-    pkgs.runCommand "proxy-suite-proxy-export-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      export SING_BOX=${pkgs.sing-box}/bin/sing-box
-      export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-      python ${../../pkgs/proxy-ctl}/test_proxy_export.py
-      touch "$out"
-    '';
+    pkgs.runCommand "proxy-suite-proxy-export-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export SING_BOX=${pkgs.sing-box}/bin/sing-box
+        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+        python ${../../pkgs/proxy-ctl}/test_proxy_export.py
+        touch "$out"
+      '';
 
   # proxy-tui driven headless: keys turn into the right proxy-ctl argv.
   proxy-tui-unit =
@@ -492,11 +495,12 @@
 
   # proxy_model: the status strip, tab loads and the tray menu tree, without a UI toolkit.
   proxy-model-unit =
-    pkgs.runCommand "proxy-suite-proxy-model-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-      python ${../../pkgs/proxy-ctl}/test_proxy_model.py
-      touch "$out"
-    '';
+    pkgs.runCommand "proxy-suite-proxy-model-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
+        python ${../../pkgs/proxy-ctl}/test_proxy_model.py
+        touch "$out"
+      '';
 
   # proxy_gui and proxy_sni import against GTK4/libadwaita, the D-Bus interfaces parse,
   # and the tray menu serializes to dbusmenu's layout type. No display needed.
@@ -520,8 +524,7 @@
 
   # autoProxy slowness routing: sampler and judge.
   autoproxy-slowness =
-    pkgs.runCommand "proxy-suite-autoproxy-slowness-check"
-      { nativeBuildInputs = [ pkgs.jq ]; }
+    pkgs.runCommand "proxy-suite-autoproxy-slowness-check" { nativeBuildInputs = [ pkgs.jq ]; }
       ''
         sample=${../../modules/proxy-suite/autoproxy-slow-sample.jq}
         judge=${../../modules/proxy-suite/autoproxy-slow-judge.jq}
@@ -582,73 +585,75 @@
   # autoProxy probe order: one exit per network first, bad exits last; and the
   # strikes that make an exit bad.
   autoproxy-rounds =
-    pkgs.runCommand "proxy-suite-autoproxy-rounds-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
-      echo '[{"tag":"direct"},{"tag":"a"},{"tag":"b"},{"tag":"a2"},{"tag":"b2"},{"tag":"c"}]' > index.json
-      echo '{"exits":{"a":{"asn":"AS1","bad":true},"b":{"asn":"AS2"},"a2":{"asn":"AS1"},
-        "b2":{"asn":"AS2"},"c":{"asn":"AS3","bad":false}}}' > state.json
-      r="$(jq -c --slurpfile s state.json -f ${../../modules/proxy-suite/autoproxy-rounds.jq} index.json)"
-      printf '%s\n' "$r"
-      # A refused a takes neither AS1's first place (a2 does) nor any place before b2.
-      jq -e '. == {r1: "b,a2,c", r2: "b2,a", ordered: ["b", "a2", "b2", "c", "a"]}' <<<"$r" > /dev/null
+    pkgs.runCommand "proxy-suite-autoproxy-rounds-check" { nativeBuildInputs = [ pkgs.jq ]; }
+      ''
+        echo '[{"tag":"direct"},{"tag":"a"},{"tag":"b"},{"tag":"a2"},{"tag":"b2"},{"tag":"c"}]' > index.json
+        echo '{"exits":{"a":{"asn":"AS1","bad":true},"b":{"asn":"AS2"},"a2":{"asn":"AS1"},
+          "b2":{"asn":"AS2"},"c":{"asn":"AS3","bad":false}}}' > state.json
+        r="$(jq -c --slurpfile s state.json -f ${../../modules/proxy-suite/autoproxy-rounds.jq} index.json)"
+        printf '%s\n' "$r"
+        # A refused a takes neither AS1's first place (a2 does) nor any place before b2.
+        jq -e '. == {r1: "b,a2,c", r2: "b2,a", ordered: ["b", "a2", "b2", "c", "a"]}' <<<"$r" > /dev/null
 
-      k() {
-        jq -c --argjson tags "$1" --arg d "$2" --arg why "$3" --argjson now "$4" --argjson ttl 100 \
-          -f ${../../modules/proxy-suite/autoproxy-strike.jq} <<<"$5"
-      }
-      s='{"exits":{"a":{"asn":"AS1"},"b":{}}}'
-      # One destination is not enough, however often it strikes.
-      s="$(k '["a"]' sekai.test refused 1000 "$s")"
-      s="$(k '["a","b"]' sekai.test refused 1010 "$s")"
-      jq -e '.exits.a.bad == false and .exits.a.asn == "AS1" and .exits.b.bad == false' <<<"$s" > /dev/null
-      # A second one is.
-      s="$(k '["a"]' pximg.net slow 1020 "$s")"
-      jq -e '.exits.a | .bad and .badBy == ["sekai.test refused", "pximg.net slow"]' <<<"$s" > /dev/null
-      jq -e '.exits.b.bad == false' <<<"$s" > /dev/null
-      # A TTL later the older strike has expired.
-      s="$(k '[]' "" "" 1115 "$s")"
-      jq -e '.exits.a | (.bad | not) and .badBy == ["pximg.net slow"]' <<<"$s" > /dev/null
-      # A block page may be a passing challenge: one is not enough either.
-      s="$(k '["b"]' colorfulpalette.org wall:aws-waf 1120 "$s")"
-      jq -e '.exits.b | (.bad | not) and .badBy == ["colorfulpalette.org wall:aws-waf"]' <<<"$s" > /dev/null
-      s="$(k '["b"]' fandom.com wall:cloudflare 1130 "$s")"
-      jq -e '.exits.b | .bad and .badBy == ["colorfulpalette.org wall:aws-waf", "fandom.com wall:cloudflare"]' <<<"$s" > /dev/null
-      touch "$out"
-    '';
+        k() {
+          jq -c --argjson tags "$1" --arg d "$2" --arg why "$3" --argjson now "$4" --argjson ttl 100 \
+            -f ${../../modules/proxy-suite/autoproxy-strike.jq} <<<"$5"
+        }
+        s='{"exits":{"a":{"asn":"AS1"},"b":{}}}'
+        # One destination is not enough, however often it strikes.
+        s="$(k '["a"]' sekai.test refused 1000 "$s")"
+        s="$(k '["a","b"]' sekai.test refused 1010 "$s")"
+        jq -e '.exits.a.bad == false and .exits.a.asn == "AS1" and .exits.b.bad == false' <<<"$s" > /dev/null
+        # A second one is.
+        s="$(k '["a"]' pximg.net slow 1020 "$s")"
+        jq -e '.exits.a | .bad and .badBy == ["sekai.test refused", "pximg.net slow"]' <<<"$s" > /dev/null
+        jq -e '.exits.b.bad == false' <<<"$s" > /dev/null
+        # A TTL later the older strike has expired.
+        s="$(k '[]' "" "" 1115 "$s")"
+        jq -e '.exits.a | (.bad | not) and .badBy == ["pximg.net slow"]' <<<"$s" > /dev/null
+        # A block page may be a passing challenge: one is not enough either.
+        s="$(k '["b"]' colorfulpalette.org wall:aws-waf 1120 "$s")"
+        jq -e '.exits.b | (.bad | not) and .badBy == ["colorfulpalette.org wall:aws-waf"]' <<<"$s" > /dev/null
+        s="$(k '["b"]' fandom.com wall:cloudflare 1130 "$s")"
+        jq -e '.exits.b | .bad and .badBy == ["colorfulpalette.org wall:aws-waf", "fandom.com wall:cloudflare"]' <<<"$s" > /dev/null
+        touch "$out"
+      '';
 
   # `proxy-ctl proxy auto forget|clear`, as the runner applies them.
   autoproxy-edit =
-    pkgs.runCommand "proxy-suite-autoproxy-edit-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
-      edit() { jq -c --arg op "$1" --arg d "$2" -f ${../../modules/proxy-suite/autoproxy-edit.jq} <<<"$3"; }
-      s='{
-        "domains": {"last.fm": {"exit": "a", "host": "www.last.fm"}, "pximg.net": {"exit": "b", "host": "i.pximg.net"}},
-        "hosts": {"www.last.fm": {"domain": "last.fm"}, "cdn.last.fm": {"domain": "last.fm"}, "i.pximg.net": {"domain": "pximg.net"}},
-        "backlog": {"api.last.fm": {"domain": "last.fm", "hits": 3}, "x.test": {"domain": "x.test", "hits": 1}},
-        "slowWant": {"last.fm": 1}, "slowSkip": {"pximg.net": 1},
-        "exits": {
-          "a": {"asn": "AS1", "strikes": {"last.fm": {"why": "refused", "at": 1}, "sekai.test": {"why": "slow", "at": 2}}, "bad": true,
-                "badBy": ["last.fm refused", "sekai.test slow"]},
-          "b": {"asn": "AS2"}
-        },
-        "egress": "203.0.113.1", "lastRun": 5
-      }'
+    pkgs.runCommand "proxy-suite-autoproxy-edit-check" { nativeBuildInputs = [ pkgs.jq ]; }
+      ''
+        edit() { jq -c --arg op "$1" --arg d "$2" -f ${../../modules/proxy-suite/autoproxy-edit.jq} <<<"$3"; }
+        s='{
+          "domains": {"last.fm": {"exit": "a", "host": "www.last.fm"}, "pximg.net": {"exit": "b", "host": "i.pximg.net"}},
+          "hosts": {"www.last.fm": {"domain": "last.fm"}, "cdn.last.fm": {"domain": "last.fm"}, "i.pximg.net": {"domain": "pximg.net"}},
+          "backlog": {"api.last.fm": {"domain": "last.fm", "hits": 3}, "x.test": {"domain": "x.test", "hits": 1}},
+          "slowWant": {"last.fm": 1}, "slowSkip": {"pximg.net": 1},
+          "exits": {
+            "a": {"asn": "AS1", "strikes": {"last.fm": {"why": "refused", "at": 1}, "sekai.test": {"why": "slow", "at": 2}}, "bad": true,
+                  "badBy": ["last.fm refused", "sekai.test slow"]},
+            "b": {"asn": "AS2"}
+          },
+          "egress": "203.0.113.1", "lastRun": 5
+        }'
 
-      # Forget: every trace of the one domain, and a strike it made no longer counts.
-      f="$(edit forget last.fm "$s")"
-      jq -e '(.domains | keys) == ["pximg.net"]' <<<"$f" > /dev/null
-      jq -e '(.hosts | keys) == ["i.pximg.net"] and (.backlog | keys) == ["x.test"]' <<<"$f" > /dev/null
-      jq -e '.slowWant == {} and .slowSkip == {"pximg.net": 1}' <<<"$f" > /dev/null
-      jq -e '.exits.a | .asn == "AS1" and (.bad | not) and .badBy == ["sekai.test slow"]' <<<"$f" > /dev/null
-      jq -e '.exits.b == {"asn": "AS2"}' <<<"$f" > /dev/null
-      # A domain it never knew changes nothing.
-      jq -e --argjson s "$s" '. == $s' <<<"$(edit forget nope.test "$s")" > /dev/null
+        # Forget: every trace of the one domain, and a strike it made no longer counts.
+        f="$(edit forget last.fm "$s")"
+        jq -e '(.domains | keys) == ["pximg.net"]' <<<"$f" > /dev/null
+        jq -e '(.hosts | keys) == ["i.pximg.net"] and (.backlog | keys) == ["x.test"]' <<<"$f" > /dev/null
+        jq -e '.slowWant == {} and .slowSkip == {"pximg.net": 1}' <<<"$f" > /dev/null
+        jq -e '.exits.a | .asn == "AS1" and (.bad | not) and .badBy == ["sekai.test slow"]' <<<"$f" > /dev/null
+        jq -e '.exits.b == {"asn": "AS2"}' <<<"$f" > /dev/null
+        # A domain it never knew changes nothing.
+        jq -e --argjson s "$s" '. == $s' <<<"$(edit forget nope.test "$s")" > /dev/null
 
-      # Clear: every route and verdict; the exits, backlog and egress stay.
-      c="$(edit clear "" "$s")"
-      jq -e '.domains == {} and .hosts == {} and (has("slowWant") | not) and (has("slowSkip") | not)' <<<"$c" > /dev/null
-      jq -e '.exits.a | .asn == "AS1" and .strikes == {} and (.bad | not) and .badBy == []' <<<"$c" > /dev/null
-      jq -e '(.backlog | keys) == ["api.last.fm", "x.test"] and .egress == "203.0.113.1" and .lastRun == 5' <<<"$c" > /dev/null
-      touch "$out"
-    '';
+        # Clear: every route and verdict; the exits, backlog and egress stay.
+        c="$(edit clear "" "$s")"
+        jq -e '.domains == {} and .hosts == {} and (has("slowWant") | not) and (has("slowSkip") | not)' <<<"$c" > /dev/null
+        jq -e '.exits.a | .asn == "AS1" and .strikes == {} and (.bad | not) and .badBy == []' <<<"$c" > /dev/null
+        jq -e '(.backlog | keys) == ["api.last.fm", "x.test"] and .egress == "203.0.113.1" and .lastRun == 5' <<<"$c" > /dev/null
+        touch "$out"
+      '';
 
   # A probe that exits 0 printing nothing: jq reads "" as no input at all, so the
   # "error" guard downstream saw "" instead of "error" and let it through to

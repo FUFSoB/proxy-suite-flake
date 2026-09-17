@@ -86,7 +86,8 @@ in
       assert tgWithGlobalTunServiceConfig.User == "proxy-suite-daemon";
       assert tgWithGlobalTunServiceConfig.ExecStartPre == "+${tgWithGlobalTunModule.bypassUpScript}";
       assert tgWithGlobalTunServiceConfig.ExecStopPost == "+${tgWithGlobalTunModule.bypassDownScript}";
-      assert pkgs.lib.hasInfix "\"system.slice/proxy-suite-tg-ws-proxy.service\" meta mark set 4" tgWithGlobalTunBypassUp;
+      assert pkgs.lib.hasInfix "\"system.slice/proxy-suite-tg-ws-proxy.service\" meta mark set 4"
+        tgWithGlobalTunBypassUp;
       assert pkgs.lib.hasInfix "delete table inet proxy_suite_tg_ws_proxy" tgWithGlobalTunBypassDown;
       assert pkgs.lib.hasInfix "rule add pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassUp;
       assert pkgs.lib.hasInfix "rule del pref 8999 fwmark 4 lookup main" tgWithGlobalTunBypassDown;

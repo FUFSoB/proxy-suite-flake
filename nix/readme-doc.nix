@@ -46,7 +46,13 @@ let
       proxyInboundsFile
       proxyInboundsSpecFile
       ;
-    inherit (nftr) perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile ip nft;
+    inherit (nftr)
+      perAppTunChainFile
+      perAppTproxyRulesFile
+      perAppZapretRulesFile
+      ip
+      nft
+      ;
   };
 in
 pkgs.runCommand "proxy-suite-README.md" { nativeBuildInputs = [ pkgs.python3 ]; } ''

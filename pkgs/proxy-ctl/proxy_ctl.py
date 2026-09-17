@@ -377,7 +377,12 @@ def cmd_tor(verb="status", *args):
         usage("tor [status|on|off|newnym]")
     _toggle(unit, "tor", verb, *args)
     if verb == "status" and svc_active(unit):
-        print(f"bootstrap {_tor_bootstrap()}")
+        # Extra detail: the unit's state stands without it, for a user outside the group
+        # or a Tor that has not opened its socket yet. The reason is on stderr.
+        try:
+            print(f"bootstrap {_tor_bootstrap()}")
+        except SystemExit:
+            print("bootstrap unknown")
 
 
 def _emit(text, qr):
@@ -1279,7 +1284,8 @@ def cmd_pin(tag="", *_):
         # Dismissed.
         if status or not tag:
             return
-    if os.path.exists(_outbound_disabled_marker(tag)):
+    # The inventory too: the marker sits in a dir only root and the group can look into.
+    if os.path.exists(_outbound_disabled_marker(tag)) or tag in _outbound_disabled():
         die(f"Outbound '{tag}' is disabled; enable it first: proxy-ctl proxy outbounds enable {tag}")
     status, escaped = _run(["systemd-escape", "--", tag], capture=True)
     if status:
@@ -1481,6 +1487,9 @@ def _runtime_entry_rm(kind, tag="", *_):
         usage(f"proxy {_runtime_noun(kind)} rm <tag>")
     path = _runtime_path(kind, tag)
     if not os.path.exists(path):
+        # The dir may be root-only: an entry that is there looks absent from outside it.
+        if _runtime_hidden(kind):
+            die(f"Cannot see the entry for '{tag}' in {_runtime_dir(kind)} - {ask_group()}")
         die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
     try:
         os.unlink(path)

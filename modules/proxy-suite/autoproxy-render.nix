@@ -13,10 +13,12 @@
 pkgs.writeShellScript "proxy-suite-autoproxy" ''
   set -euo pipefail
   # $1 - probe-exits.json (index -> tag -> path), $2 - state.json
-  export PATH=${pkgs.lib.makeBinPath [
-    pkgs.coreutils
-    pkgs.jq
-  ]}
+  export PATH=${
+    pkgs.lib.makeBinPath [
+      pkgs.coreutils
+      pkgs.jq
+    ]
+  }
 
   jq -c '.[]' "$1" | while IFS= read -r exit; do
     tag=$(jq -r '.tag' <<<"$exit")

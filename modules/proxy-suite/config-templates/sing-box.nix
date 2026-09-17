@@ -114,8 +114,7 @@ let
   };
 
   clashApiBlock = lib.optionalAttrs clashApiEnabled {
-    experimental.clash_api.external_controller =
-      "127.0.0.1:${toString singBoxCfg.clashApiPort}";
+    experimental.clash_api.external_controller = "127.0.0.1:${toString singBoxCfg.clashApiPort}";
   };
 
   mkConfig =
@@ -144,100 +143,104 @@ let
     let
       fakeIp = fakeIpCache != null && proxyCfg.dns.fakeIp.enable;
     in
-    lib.recursiveUpdate (
-    {
-      log.level = "warn";
-
-      dns = mkDnsConfig {
-        localDetour = if forceLocalDnsViaProxy then "proxy" else null;
-        inherit useOutboundRoutingMark fakeIp;
-        onionFakeIpInbounds =
-          lib.optional enableTun "tun-in"
-          ++ lib.optionals enableTProxy ([ "tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "tproxy-in6");
-      };
-
-      inbounds =
-        lib.optional enableXrayDnsBridge {
-          type = "direct";
-          tag = "xray-dns-in";
-          listen = "127.0.0.1";
-          listen_port = xrayDnsBridgePort;
-        }
-        ++ lib.optional enableMixed {
-          type = "mixed";
-          tag = "mixed-in";
-          listen = proxyCfg.listener.address;
-          listen_port = proxyCfg.listener.port;
-        }
-        ++ lib.optionals enableTProxy (
-          [
-            {
-              type = "tproxy";
-              tag = "tproxy-in";
-              listen = "127.0.0.1";
-              listen_port = globalTproxy.port;
-            }
-          ]
-          ++ lib.optional proxyCfg.ipv6 {
-            type = "tproxy";
-            tag = "tproxy-in6";
-            listen = "::1";
-            listen_port = globalTproxy.port;
-          }
-        )
-        ++ lib.optional enableTun (
-          {
-            type = "tun";
-            tag = "tun-in";
-            interface_name = tunInterface;
-            address = [ tunAddress ] ++ lib.optional (proxyCfg.ipv6 && tunIPv6Address != null) tunIPv6Address;
-            mtu = tunMtu;
-            auto_route = tunAutoRoute;
-            auto_redirect = tunAutoRedirect;
-            strict_route = tunStrictRoute;
-            stack = "mixed";
-          }
-          // lib.optionalAttrs tunAutoRoute {
-            iproute2_table_index = tunAutoRouteTableIndex;
-            iproute2_rule_index = tunAutoRouteRuleIndex;
-          }
-        );
-
-      outbounds = [
-        (
-          {
-            type = "direct";
-            tag = "direct";
-          }
-          // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
-        )
+    lib.recursiveUpdate
+      (
         {
-          type = "block";
-          tag = "block";
-        }
-      ];
+          log.level = "warn";
 
-      route = {
-        default_domain_resolver = "local";
-        rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
-        rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
-        final = if (proxyCfg.routing.default == "proxy") then "proxy" else "direct";
-      }
-      // lib.optionalAttrs (enableTun && tunAutoRoute) {
-        auto_detect_interface = true;
-      };
-    }
-    // lib.optionalAttrs enableClashApi clashApiBlock)
-    # Fake addresses handed out survive a restart, so apps still holding one keep working. The
-    # start script creates the directory; nothing else is stored, since TUN configs have no
-    # Clash API to switch a selector with.
-    (lib.optionalAttrs fakeIp {
-      experimental.cache_file = {
-        enabled = true;
-        path = "${constants.fakeIpCacheDir}/${fakeIpCache}.db";
-        store_fakeip = true;
-      };
-    });
+          dns = mkDnsConfig {
+            localDetour = if forceLocalDnsViaProxy then "proxy" else null;
+            inherit useOutboundRoutingMark fakeIp;
+            onionFakeIpInbounds =
+              lib.optional enableTun "tun-in"
+              ++ lib.optionals enableTProxy ([ "tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "tproxy-in6");
+          };
+
+          inbounds =
+            lib.optional enableXrayDnsBridge {
+              type = "direct";
+              tag = "xray-dns-in";
+              listen = "127.0.0.1";
+              listen_port = xrayDnsBridgePort;
+            }
+            ++ lib.optional enableMixed {
+              type = "mixed";
+              tag = "mixed-in";
+              listen = proxyCfg.listener.address;
+              listen_port = proxyCfg.listener.port;
+            }
+            ++ lib.optionals enableTProxy (
+              [
+                {
+                  type = "tproxy";
+                  tag = "tproxy-in";
+                  listen = "127.0.0.1";
+                  listen_port = globalTproxy.port;
+                }
+              ]
+              ++ lib.optional proxyCfg.ipv6 {
+                type = "tproxy";
+                tag = "tproxy-in6";
+                listen = "::1";
+                listen_port = globalTproxy.port;
+              }
+            )
+            ++ lib.optional enableTun (
+              {
+                type = "tun";
+                tag = "tun-in";
+                interface_name = tunInterface;
+                address = [ tunAddress ] ++ lib.optional (proxyCfg.ipv6 && tunIPv6Address != null) tunIPv6Address;
+                mtu = tunMtu;
+                auto_route = tunAutoRoute;
+                auto_redirect = tunAutoRedirect;
+                strict_route = tunStrictRoute;
+                stack = "mixed";
+              }
+              // lib.optionalAttrs tunAutoRoute {
+                iproute2_table_index = tunAutoRouteTableIndex;
+                iproute2_rule_index = tunAutoRouteRuleIndex;
+              }
+            );
+
+          outbounds = [
+            (
+              {
+                type = "direct";
+                tag = "direct";
+              }
+              // lib.optionalAttrs useOutboundRoutingMark { routing_mark = globalTproxy.proxyMark; }
+            )
+            {
+              type = "block";
+              tag = "block";
+            }
+          ];
+
+          route = {
+            default_domain_resolver = "local";
+            rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
+            rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
+            final = if (proxyCfg.routing.default == "proxy") then "proxy" else "direct";
+          }
+          // lib.optionalAttrs (enableTun && tunAutoRoute) {
+            auto_detect_interface = true;
+          };
+        }
+        // lib.optionalAttrs enableClashApi clashApiBlock
+      )
+      # Fake addresses handed out survive a restart, so apps still holding one keep working. The
+      # start script creates the directory; nothing else is stored, since TUN configs have no
+      # Clash API to switch a selector with.
+      (
+        lib.optionalAttrs fakeIp {
+          experimental.cache_file = {
+            enabled = true;
+            path = "${constants.fakeIpCacheDir}/${fakeIpCache}.db";
+            store_fakeip = true;
+          };
+        }
+      );
 in
 {
   # The local proxy, ready for TProxy. A rootless host can neither take transparent

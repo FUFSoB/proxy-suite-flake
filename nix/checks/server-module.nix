@@ -177,11 +177,13 @@ in
       true
     )
     (
-      assert !(ipServer.config.systemd.services ? proxy-suite-tor) && (ipSpec.onionListeners or [ ]) == [ ];
+      assert
+        !(ipServer.config.systemd.services ? proxy-suite-tor) && (ipSpec.onionListeners or [ ]) == [ ];
       true
     )
     (
-      assert builtins.elem "proxy-suite-tor.service" onionServer.config.systemd.services.proxy-suite-inbounds.after;
+      assert builtins.elem "proxy-suite-tor.service"
+        onionServer.config.systemd.services.proxy-suite-inbounds.after;
       true
     )
     (

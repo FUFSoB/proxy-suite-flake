@@ -77,19 +77,16 @@ in
     # absent a pin - at start, keeping every tag for rules that name one.
     (
       assert pkgs.lib.hasInfix ''PROXY_TAG="$PINNED_OUTBOUND"'' subscriptionFirstSelectionStartScript;
-      assert
-        pkgs.lib.hasInfix ''[{type:"selector",tag:"proxy",outbounds:[$t],default:$t}] + .''
-          subscriptionFirstSelectionStartScript;
+      assert pkgs.lib.hasInfix ''[{type:"selector",tag:"proxy",outbounds:[$t],default:$t}] + .''
+        subscriptionFirstSelectionStartScript;
       true
     )
 
     # The pin is read from state, and one that names nothing is dropped.
     (
-      assert
-        pkgs.lib.hasInfix "/var/lib/proxy-suite/pinned-outbound" subscriptionOnlyStartScript;
-      assert
-        pkgs.lib.hasInfix "pinned outbound '$PINNED_OUTBOUND' is not available"
-          subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "/var/lib/proxy-suite/pinned-outbound" subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "pinned outbound '$PINNED_OUTBOUND' is not available"
+        subscriptionOnlyStartScript;
       true
     )
 
@@ -134,10 +131,8 @@ in
     # Declared and runtime subscriptions both go through the same two entry
     # points, with the tag passed raw.
     (
-      assert pkgs.lib.hasInfix "_proxy_suite_load_subscription community "
-        subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix "_proxy_suite_fetch_subscription community "
-        subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_load_subscription community " subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_fetch_subscription community " subscriptionOnlyUpdateScript;
       assert pkgs.lib.hasInfix ''_proxy_suite_load_subscription "$RUNTIME_SUB_TAG"''
         subscriptionOnlyStartScript;
       assert pkgs.lib.hasInfix ''_proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG"''
@@ -147,8 +142,10 @@ in
 
     # The fetcher's output must land in the cache, not after a stray newline.
     (
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"'' subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"''
+        subscriptionOnlyUpdateScript;
       true
     )
 
@@ -190,14 +187,12 @@ in
 
     # Runtime spool dirs are root-only unless userControl grants outbounds (see user-control.nix).
     (
-      assert
-        builtins.any (
-          rule: builtins.match "d /var/lib/proxy-suite/outbounds\\.d 0700 root root -" rule != null
-        ) minimal.config.systemd.tmpfiles.rules;
-      assert
-        builtins.any (
-          rule: builtins.match "d /var/lib/proxy-suite/subscriptions\\.d 0700 root root -" rule != null
-        ) minimal.config.systemd.tmpfiles.rules;
+      assert builtins.any (
+        rule: builtins.match "d /var/lib/proxy-suite/outbounds\\.d 0700 root root -" rule != null
+      ) minimal.config.systemd.tmpfiles.rules;
+      assert builtins.any (
+        rule: builtins.match "d /var/lib/proxy-suite/subscriptions\\.d 0700 root root -" rule != null
+      ) minimal.config.systemd.tmpfiles.rules;
       true
     )
 

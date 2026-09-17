@@ -69,7 +69,9 @@ let
         curl -sS --noproxy '*' --max-time 1 "''${clash_auth[@]}" "http://$clash_api/connections" 2>/dev/null ||
           echo '{}'
       done | jq -s -r --argjson min ${toString (300 * 1024)} \
-        --argjson below ${toString (apCfg.slowBelowKiBps * 1024)} -f ${jqFile ./autoproxy-slow-sample.jq} || true
+        --argjson below ${
+          toString (apCfg.slowBelowKiBps * 1024)
+        } -f ${jqFile ./autoproxy-slow-sample.jq} || true
     )
     [ -z "$lines" ] || printf '%s\n' "$lines" >> "$state_dir/samples"
   '';
@@ -492,25 +494,29 @@ in
   services.proxy-suite.internal.services.proxy-suite-autoproxy-learn =
     mkUnit "proxy-suite - probe the destinations asked for with proxy-ctl proxy auto learn" " --requests-only";
 
-  services.proxy-suite.internal.services.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
-    description = "proxy-suite - watch live transfers for destinations that crawl directly";
-    after = [ "proxy-suite-socks.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${sampler}";
-    }
-    // stateDirConfig;
-  };
+  services.proxy-suite.internal.services.proxy-suite-autoproxy-sample =
+    lib.mkIf (apCfg.slowBelowKiBps > 0)
+      {
+        description = "proxy-suite - watch live transfers for destinations that crawl directly";
+        after = [ "proxy-suite-socks.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${sampler}";
+        }
+        // stateDirConfig;
+      };
 
-  services.proxy-suite.internal.timers.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
-    description = "proxy-suite autoProxy transfer sampling";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnActiveSec = "1m";
-      OnUnitActiveSec = "1m";
-      AccuracySec = "5s";
-    };
-  };
+  services.proxy-suite.internal.timers.proxy-suite-autoproxy-sample =
+    lib.mkIf (apCfg.slowBelowKiBps > 0)
+      {
+        description = "proxy-suite autoProxy transfer sampling";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnActiveSec = "1m";
+          OnUnitActiveSec = "1m";
+          AccuracySec = "5s";
+        };
+      };
 
   services.proxy-suite.internal.timers.proxy-suite-autoproxy = {
     description = "proxy-suite autoProxy probe schedule";

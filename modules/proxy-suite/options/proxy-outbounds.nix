@@ -77,7 +77,10 @@ in
         and AmneziaWG tags work too. A pin still reaches them, and so does a selector switched by
         hand.
       '';
-      example = [ "ru-vps" "warp" ];
+      example = [
+        "ru-vps"
+        "warp"
+      ];
     };
 
     urlTest = {

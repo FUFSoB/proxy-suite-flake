@@ -100,8 +100,7 @@ in
     (
       assert pkgs.lib.hasInfix "Usage: proxy-ctl <group>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "local proxy backend" perAppRoutingProxychainsScript;
-      assert pkgs.lib.hasInfix "restart active services"
-        perAppRoutingProxychainsScript;
+      assert pkgs.lib.hasInfix "restart active services" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps run <profile> -- <cmd>" perAppRoutingProxychainsScript;
       assert pkgs.lib.hasInfix "apps" perAppRoutingProxychainsScript;
       true

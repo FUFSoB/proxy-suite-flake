@@ -5,19 +5,17 @@
 }:
 
 let
-  proxyWithSubscriptions =
-    subscriptions:
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
+  proxyWithSubscriptions = subscriptions: {
+    system.stateVersion = "26.05";
+    services.proxy-suite = {
+      enable = true;
+      proxy = {
         enable = true;
-        proxy = {
-          enable = true;
-          backend = "sing-box";
-          inherit subscriptions;
-        };
+        backend = "sing-box";
+        inherit subscriptions;
       };
     };
+  };
 
   subscriptionUrlFileFixture = evalProxySuite [
     (proxyWithSubscriptions [

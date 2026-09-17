@@ -25,17 +25,23 @@ let
     globalTunIPv6RoutePrefix
     ;
 
-  deleteXrayTunRules = lib.concatMapStrings (
-    family:
-    lib.concatMapStrings (priority: builders.mkIpRuleDeleteByPriority { inherit ip family priority; }) [
-      xrayTunMarkBypassRulePriority
-      xrayTunServiceUserRulePriority
-        xrayTunPerAppTunRulePriority
-      xrayTunDnsRulePriority
-      xrayTunMainRulePriority
-      tunAutoRouteRulePriority
-    ]
-  ) [ "-4" "-6" ];
+  deleteXrayTunRules =
+    lib.concatMapStrings
+      (
+        family:
+        lib.concatMapStrings (priority: builders.mkIpRuleDeleteByPriority { inherit ip family priority; }) [
+          xrayTunMarkBypassRulePriority
+          xrayTunServiceUserRulePriority
+          xrayTunPerAppTunRulePriority
+          xrayTunDnsRulePriority
+          xrayTunMainRulePriority
+          tunAutoRouteRulePriority
+        ]
+      )
+      [
+        "-4"
+        "-6"
+      ];
 
   # Replies to connections from outside (sshd, a game server, anything listening) take
   # proxyMark, so the fwmark rule sends them back out the way they came instead of into
@@ -119,7 +125,11 @@ in
     # Start from a clean policy-routing state.  `ip rule add` permits duplicate
     # rules on some iproute2 versions, and a stale rule can keep packets routed
     # into a dead local table after a failed restart.
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "singbox"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "singbox";
+    }}
     ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = globalTproxy.fwmark;
@@ -138,7 +148,11 @@ in
   tproxyDownScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set +e
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "singbox"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "singbox";
+    }}
     ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = globalTproxy.fwmark;
@@ -152,14 +166,37 @@ in
     # SingBox normally removes these on graceful shutdown, but stale
     # auto_route/auto_redirect state leaves the host routing through a dead TUN
     # interface after `proxy-ctl proxy tun off` or an unclean service stop.
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "sing-box"; }}
-    ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
-    ${builders.mkIpRuleDeleteByTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "sing-box";
+    }}
+    ${builders.mkIpRuleDeleteByTable {
+      inherit ip;
+      family = "-4";
+      table = tunAutoRouteTableIndex;
+    }}
+    ${builders.mkIpRuleDeleteByTable {
+      inherit ip;
+      family = "-6";
+      table = tunAutoRouteTableIndex;
+    }}
     ${deleteXrayTunRules}
     ${deleteXrayTunReplyTable}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = tunAutoRouteTableIndex; }}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = tunAutoRouteTableIndex; }}
-    ${builders.mkIpLinkDelete { inherit ip; interface = globalTun.interface; }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-4";
+      table = tunAutoRouteTableIndex;
+    }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-6";
+      table = tunAutoRouteTableIndex;
+    }}
+    ${builders.mkIpLinkDelete {
+      inherit ip;
+      interface = globalTun.interface;
+    }}
     ${builders.flushResolvedCaches}
   '';
 }

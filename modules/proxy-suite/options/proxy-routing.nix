@@ -37,9 +37,11 @@ in
     };
 
     direct = {
-      domains = list "Domain suffixes sent direct. zapret hostlists join them when zapret.directSync.enable is on." [
-        "internal.example"
-      ];
+      domains =
+        list "Domain suffixes sent direct. zapret hostlists join them when zapret.directSync.enable is on."
+          [
+            "internal.example"
+          ];
       ips = list "IP CIDRs sent direct." [ "10.10.0.0/16" ];
       geosites = list "Geosite names sent direct." [ "category-ru" ];
       geoips = list "Geoip names sent direct." [ "ru" ];

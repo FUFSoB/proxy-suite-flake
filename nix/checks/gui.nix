@@ -67,11 +67,13 @@ in
       in
       assert guiFixture.config.security.polkit.enable;
       # nixpkgs 26.11+: no setuid pkexec unless asked for, and without it pkexec refuses to run.
-      assert guiFixture.config.security.wrappers ? pkexec && guiFixture.config.security.wrappers.pkexec.enable;
+      assert
+        guiFixture.config.security.wrappers ? pkexec && guiFixture.config.security.wrappers.pkexec.enable;
       assert
         builtins.match ''.*action\.lookup\("program"\) === "/nix/store/[^"]*proxy-ctl/bin/proxy-ctl".*AUTH_ADMIN_KEEP.*'' rules
         != null;
-      assert builtins.match ".*AUTH_ADMIN_KEEP.*" tuiOffFixture.config.security.polkit.extraConfig == null;
+      assert
+        builtins.match ".*AUTH_ADMIN_KEEP.*" tuiOffFixture.config.security.polkit.extraConfig == null;
       true
     )
     (

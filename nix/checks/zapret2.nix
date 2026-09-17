@@ -43,7 +43,8 @@ let
   tunedRuntime = runtimeDir zapret2Tuned globalService;
   noAutoRuntime = runtimeDir zapret2NoAuto globalService;
   z2kRuntime = runtimeDir zapret2Z2k globalService;
-  cutoffProbe = zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
+  cutoffProbe =
+    zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
 
   proxyCtlEnv = fixture: (mkProxyCtlDerived fixture).wrapperEnv;
@@ -67,7 +68,8 @@ in
         == "proxy-suite";
       assert envValue zapret2PerApp perAppService "HOSTLIST_BASE=" == "/var/lib/proxy-suite/zapret2";
       assert
-        envValue zapret2PerApp perAppService "Z2K_STATE_DIR_OVERRIDE=" == "/var/lib/proxy-suite/zapret2/circular";
+        envValue zapret2PerApp perAppService "Z2K_STATE_DIR_OVERRIDE="
+        == "/var/lib/proxy-suite/zapret2/circular";
       true
     )
 
@@ -85,7 +87,8 @@ in
       assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-cutoff);
       assert (proxyCtlEnv zapret2Global).ZAPRET_CUTOFF_ENABLED == "1";
       assert
-        envValue zapret2Global globalService "Z2K_TCP16_ASN=" == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
+        envValue zapret2Global globalService "Z2K_TCP16_ASN="
+        == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
       true
     )
 

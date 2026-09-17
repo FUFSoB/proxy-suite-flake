@@ -140,9 +140,7 @@ let
     set -euo pipefail
     ${subscriptionCacheHelpersBlock}
 
-    KEEP="|${
-      lib.concatMapStrings (sub: "${sub.tag}|") proxyCfg.subscriptions
-    }"
+    KEEP="|${lib.concatMapStrings (sub: "${sub.tag}|") proxyCfg.subscriptions}"
     while IFS=$'\t' read -r TAG _; do
       [ -n "$TAG" ] || continue
       KEEP="$KEEP$TAG|"

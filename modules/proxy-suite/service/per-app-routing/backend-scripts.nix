@@ -44,7 +44,11 @@ let
 
     ${builders.cidrNetworkFunction}
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tun"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tun";
+    }}
     ${builders.mkIpRuleDeleteByFwmark {
       inherit ip;
       family = "-4";
@@ -57,8 +61,16 @@ let
       fwmark = perAppRoutingTun.fwmark;
       table = perAppRoutingTun.routeTable;
     }}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = perAppRoutingTun.routeTable; }}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = perAppRoutingTun.routeTable; }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-4";
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-6";
+      table = perAppRoutingTun.routeTable;
+    }}
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
     tun_addr="''${tun_cidr%%/*}"
@@ -89,7 +101,11 @@ let
     set +e
 
     # Best-effort cleanup for graceful stops and for unclean previous exits.
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tun"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tun";
+    }}
     ${builders.mkIpRuleDeleteByFwmark {
       inherit ip;
       family = "-4";
@@ -102,16 +118,31 @@ let
       fwmark = perAppRoutingTun.fwmark;
       table = perAppRoutingTun.routeTable;
     }}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-4"; table = perAppRoutingTun.routeTable; }}
-    ${builders.mkIpRouteFlushTable { inherit ip; family = "-6"; table = perAppRoutingTun.routeTable; }}
-    ${builders.mkIpLinkDelete { inherit ip; interface = perAppRoutingTun.interface; }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-4";
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpRouteFlushTable {
+      inherit ip;
+      family = "-6";
+      table = perAppRoutingTun.routeTable;
+    }}
+    ${builders.mkIpLinkDelete {
+      inherit ip;
+      interface = perAppRoutingTun.interface;
+    }}
     ${builders.flushResolvedCaches}
   '';
 
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tproxy";
+    }}
     ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = perAppRoutingTproxy.fwmark;
@@ -130,7 +161,11 @@ let
   perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set +e
 
-    ${builders.mkNftDeleteTable { inherit nft; family = "inet"; table = "proxy_suite_per_app_tproxy"; }}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tproxy";
+    }}
     ${builders.mkTproxyRoutingDown {
       inherit ip;
       fwmark = perAppRoutingTproxy.fwmark;

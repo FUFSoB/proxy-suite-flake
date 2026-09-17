@@ -15,7 +15,7 @@ let
   tgWsProxyCfg = cfg.tgWsProxy;
   tgWsProxyBypassEnabled = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
   tgWsProxyBypassMarkLine = lib.optionalString tgWsProxyBypassEnabled ''
-                  meta mark ${toString tgWsProxyCfg.fwmark} return
+    meta mark ${toString tgWsProxyCfg.fwmark} return
   '';
 
   # Shared across all three nftables rule files that do IP routing.
@@ -54,7 +54,9 @@ let
   perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
   # Without ipv6, IPv6 packets are left alone, as if the table were still `ip`.
-  tproxyProtocols = "${lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 "}meta l4proto { tcp, udp }";
+  tproxyProtocols = "${
+    lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 "
+  }meta l4proto { tcp, udp }";
   # Both listeners share the port; `tproxy ip`/`tproxy ip6` only match their own family.
   mkTproxyLines = prefix: suffix: ''
     ${prefix}meta l4proto { tcp, udp } tproxy ip to 127.0.0.1:${toString globalTproxy.port}${suffix}

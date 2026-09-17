@@ -41,7 +41,13 @@
       ) xrayTproxyConfig.inbounds;
       # Apps' DNS through TProxy is answered by XRay, as sing-box's hijack-dns.
       assert builtins.any (
-        rule: (rule.ruleTag or "") == "dns-hijack" && rule.inboundTag == [ "tproxy-in" "tproxy-in6" ]
+        rule:
+        (rule.ruleTag or "") == "dns-hijack"
+        &&
+          rule.inboundTag == [
+            "tproxy-in"
+            "tproxy-in6"
+          ]
       ) xrayTproxyConfig.routing.rules;
       assert builtins.any (outbound: outbound.tag == "dns-out") xrayTproxyConfig.outbounds;
       assert specificRule.outboundTag == "proxy-suite-ob-primary";

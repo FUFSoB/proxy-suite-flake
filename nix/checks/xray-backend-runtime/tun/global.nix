@@ -30,7 +30,11 @@
           rule: (rule ? ruleTag) && rule.ruleTag == "dns-hijack"
         ) xrayTunConfig.routing.rules;
         tunDnsUpstreamRules = builtins.filter (
-          rule: builtins.elem (rule.ruleTag or "") [ "dns-upstream-direct" "dns-upstream-remote" ]
+          rule:
+          builtins.elem (rule.ruleTag or "") [
+            "dns-upstream-direct"
+            "dns-upstream-remote"
+          ]
         ) xrayTunConfig.routing.rules;
       in
       assert tunInbound.protocol == "tun";
@@ -47,7 +51,11 @@
       assert tunHasDirectGeositeRule;
       assert tunHasDnsHijackRule;
       # Servers route by their own tags: local direct, remote through the proxy.
-      assert map (rule: rule.inboundTag) tunDnsUpstreamRules == [ [ "local" ] [ "remote" ] ];
+      assert
+        map (rule: rule.inboundTag) tunDnsUpstreamRules == [
+          [ "local" ]
+          [ "remote" ]
+        ];
       assert xrayTunConfig.dns.queryStrategy == "UseIP";
       assert (builtins.head xrayTunConfig.dns.servers).address == "fakedns";
       assert (builtins.head xrayTunConfig.dns.servers).tag == "fakedns";
@@ -110,18 +118,20 @@
       # No uplink src: it would go stale when the uplink address changes.
       assert !(pkgs.lib.hasInfix "uplink_addr" xrayTunUpScript);
       # Every rule the up script adds is flushed first, v4 and v6.
-      assert builtins.all (
-        priority:
-        pkgs.lib.hasInfix "-4 rule del pref ${toString priority}" xrayTunUpScript
-        && pkgs.lib.hasInfix "-6 rule del pref ${toString priority}" xrayTunUpScript
-      ) [
-        checkConstants.xrayTunMarkBypassRulePriority
-        checkConstants.xrayTunServiceUserRulePriority
-        checkConstants.xrayTunPerAppTunRulePriority
-        checkConstants.xrayTunDnsRulePriority
-        checkConstants.xrayTunMainRulePriority
-        checkConstants.tunAutoRouteRulePriority
-      ];
+      assert builtins.all
+        (
+          priority:
+          pkgs.lib.hasInfix "-4 rule del pref ${toString priority}" xrayTunUpScript
+          && pkgs.lib.hasInfix "-6 rule del pref ${toString priority}" xrayTunUpScript
+        )
+        [
+          checkConstants.xrayTunMarkBypassRulePriority
+          checkConstants.xrayTunServiceUserRulePriority
+          checkConstants.xrayTunPerAppTunRulePriority
+          checkConstants.xrayTunDnsRulePriority
+          checkConstants.xrayTunMainRulePriority
+          checkConstants.tunAutoRouteRulePriority
+        ];
       true
     )
   ];

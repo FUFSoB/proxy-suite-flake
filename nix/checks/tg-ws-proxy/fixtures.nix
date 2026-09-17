@@ -75,7 +75,10 @@ let
       inherit (pkgs) lib;
       inherit pkgs cfg;
       packages = import ../../../pkgs/default.nix { inherit pkgs; };
-      derived = import ../../../modules/proxy-suite/derived.nix { inherit (pkgs) lib; inherit cfg; };
+      derived = import ../../../modules/proxy-suite/derived.nix {
+        inherit (pkgs) lib;
+        inherit cfg;
+      };
     };
   tgWithGlobalTunBypassUp = generated.readDerivation tgWithGlobalTunModule.bypassUpScript;
   tgWithGlobalTunBypassDown = generated.readDerivation tgWithGlobalTunModule.bypassDownScript;

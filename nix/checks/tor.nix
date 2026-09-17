@@ -54,9 +54,12 @@ let
       builtins.filter (a: !a.assertion && lib.hasPrefix "proxy-suite" a.message) fixture.config.assertions
     );
   services = fixture: fixture.config.systemd.services;
-  socksStartOf = fixture: generated.readDerivation (services fixture).proxy-suite-socks.serviceConfig.ExecStart;
-  torStartOf = fixture: generated.readDerivation (services fixture).proxy-suite-tor.serviceConfig.ExecStart;
-  dnsOut = config: (lib.head (builtins.filter (o: o.tag == "dns-out") config.outbounds)).settings.rules;
+  socksStartOf =
+    fixture: generated.readDerivation (services fixture).proxy-suite-socks.serviceConfig.ExecStart;
+  torStartOf =
+    fixture: generated.readDerivation (services fixture).proxy-suite-tor.serviceConfig.ExecStart;
+  dnsOut =
+    config: (lib.head (builtins.filter (o: o.tag == "dns-out") config.outbounds)).settings.rules;
 
   singBox = mkFixture "sing-box" { };
   singBoxStart = socksStartOf singBox;
@@ -64,10 +67,12 @@ let
   singBoxTun = mkTunConfig singBox;
   singBoxModes = (mkRouting singBox).singBoxRouteModeRules;
   singBoxTorUnit = (services singBox).proxy-suite-tor;
-  singBoxTProxy = mkTProxyConfig (mkFixture "sing-box" {
-    proxy.tun.enable = false;
-    proxy.tproxy.enable = true;
-  });
+  singBoxTProxy = mkTProxyConfig (
+    mkFixture "sing-box" {
+      proxy.tun.enable = false;
+      proxy.tproxy.enable = true;
+    }
+  );
 
   xray = mkFixture "xray" { proxy.tproxy.enable = true; };
   xrayStart = socksStartOf xray;
@@ -85,7 +90,9 @@ let
 
   bridges = mkFixture "sing-box" {
     tor = {
-      bridges.lines = [ "obfs4 192.0.2.1:443 0123456789ABCDEF0123456789ABCDEF01234567 cert=x iat-mode=0" ];
+      bridges.lines = [
+        "obfs4 192.0.2.1:443 0123456789ABCDEF0123456789ABCDEF01234567 cert=x iat-mode=0"
+      ];
       bridges.file = "/run/secrets/tor-bridges";
     };
   };
@@ -143,7 +150,9 @@ let
   exitNode = mkFixture "sing-box" exitInbounds;
   exitNodeConfig = mkInboundsConfig exitNode;
   exitNodeRules = exitNodeConfig.routing.rules;
-  exitNodeNoOnion = mkInboundsConfig (mkFixture "sing-box" (exitInbounds // { tor.routeOnion = false; }));
+  exitNodeNoOnion = mkInboundsConfig (
+    mkFixture "sing-box" (exitInbounds // { tor.routeOnion = false; })
+  );
 
   # inbounds.routing.blockPrivate's resolve guard must come after the .onion rule: resolving
   # a .onion name fails, and the connection with it. autoProxy's probe pins sit first.
@@ -166,25 +175,23 @@ let
       ]
     )
   );
-  guardRuntime =
-    pkgs.runCommand "proxy-suite-tor-guard-check" { nativeBuildInputs = [ pkgs.jq ]; }
-      ''
-        echo '{"inbounds":[],"outbounds":[],"dns":{"rules":[]},"route":{"rules":[]}}' |
-          jq --argjson obs '[]' --argjson auth_enabled false --arg user "" --arg password "" \
-            --argjson route_enabled true --argjson route_rules "$(cat ${guardRouteRules})" \
-            --arg route_final proxy --arg dns_final remote --argjson clear_dns_rules false \
-            --argjson probe_inbounds '[]' --argjson autoproxy_rule_sets '[]' --argjson autoproxy_rules '[]' \
-            --argjson probe_pin_rules '[{"inbound":["probe-in-0"],"outbound":"direct"}]' \
-            -f ${guardFilter} > rules.json
-        jq -e '
-          .route.rules as $r
-          | ($r | map(.domain_suffix? == ["onion"]) | index(true)) as $onion
-          | ($r | map(.action? == "resolve") | index(true)) as $guard
-          | ($r | map(.domain_suffix? == ["ru"]) | index(true)) as $ru
-          | $onion != null and $guard > $onion and $guard < $ru
-        ' rules.json
-        touch $out
-      '';
+  guardRuntime = pkgs.runCommand "proxy-suite-tor-guard-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
+    echo '{"inbounds":[],"outbounds":[],"dns":{"rules":[]},"route":{"rules":[]}}' |
+      jq --argjson obs '[]' --argjson auth_enabled false --arg user "" --arg password "" \
+        --argjson route_enabled true --argjson route_rules "$(cat ${guardRouteRules})" \
+        --arg route_final proxy --arg dns_final remote --argjson clear_dns_rules false \
+        --argjson probe_inbounds '[]' --argjson autoproxy_rule_sets '[]' --argjson autoproxy_rules '[]' \
+        --argjson probe_pin_rules '[{"inbound":["probe-in-0"],"outbound":"direct"}]' \
+        -f ${guardFilter} > rules.json
+    jq -e '
+      .route.rules as $r
+      | ($r | map(.domain_suffix? == ["onion"]) | index(true)) as $onion
+      | ($r | map(.action? == "resolve") | index(true)) as $guard
+      | ($r | map(.domain_suffix? == ["ru"]) | index(true)) as $ru
+      | $onion != null and $guard > $onion and $guard < $ru
+    ' rules.json
+    touch $out
+  '';
 
   onionStart = torStartOf onion;
   onionSpec = mkInboundsSpec onion;
@@ -192,93 +199,111 @@ let
 
   invalidAssertions = mkFailingAssertions mkBadProxySuiteFixture (
     map (case: { enable = true; } // case) [
-    # Enabled but used for nothing.
-    { tor.enable = true; }
-    # An outbound without a backend.
-    {
-      tor = {
-        enable = true;
-        asOutbound = true;
-      };
-    }
-    # "tor" is taken.
-    {
-      tor = {
-        enable = true;
-        asOutbound = true;
-      };
-      proxy = {
-        enable = true;
-        outbounds = [
-          {
-            tag = "tor";
-            url = "http://proxy.example.com:8080";
-          }
-        ];
-      };
-    }
-    # Snowflake ignores Socks5Proxy.
-    {
-      tor = {
-        enable = true;
-        asOutbound = true;
-        upstream = "proxy";
-        bridges.lines = [ "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72" ];
-      };
-      proxy.enable = true;
-    }
-    # The SOCKS port on the proxy's own.
-    {
-      tor = {
-        enable = true;
-        asOutbound = true;
-        socksPort = 1080;
-      };
-      proxy = {
-        enable = true;
-        listener.port = 1080;
-      };
-    }
-    # An onion service without inbounds, and one naming a listener that is not there.
-    {
-      tor = {
-        enable = true;
-        onionService.enable = true;
-      };
-    }
-    {
-      tor = {
-        enable = true;
-        onionService = {
+      # Enabled but used for nothing.
+      { tor.enable = true; }
+      # An outbound without a backend.
+      {
+        tor = {
           enable = true;
-          listeners = [ "missing" ];
+          asOutbound = true;
         };
-      };
-      inbounds = {
-        enable = true;
-        routing.via = "direct";
-        listeners.plain = listener;
-      };
-    }
-    # Two listeners on one onion port.
-    {
-      tor = {
-        enable = true;
-        onionService.enable = true;
-      };
-      inbounds = {
-        enable = true;
-        routing.via = "direct";
-        listeners.a = listener // {
-          sharePort = 443;
+      }
+      # "tor" is taken.
+      {
+        tor = {
+          enable = true;
+          asOutbound = true;
         };
-        listeners.b = listener // {
-          port = 10444;
-          sharePort = 443;
+        proxy = {
+          enable = true;
+          outbounds = [
+            {
+              tag = "tor";
+              url = "http://proxy.example.com:8080";
+            }
+          ];
         };
-      };
-    }
-  ]);
+      }
+      # Snowflake ignores Socks5Proxy.
+      {
+        tor = {
+          enable = true;
+          asOutbound = true;
+          upstream = "proxy";
+          bridges.lines = [ "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72" ];
+        };
+        proxy = {
+          enable = true;
+          outbounds = [
+            {
+              tag = "vps";
+              url = "http://vps.example.com:8080";
+            }
+          ];
+        };
+      }
+      # Upstream through the proxy with Tor its only outbound: Tor through itself.
+      {
+        tor = {
+          enable = true;
+          asOutbound = true;
+          upstream = "proxy";
+        };
+        proxy.enable = true;
+      }
+      # The SOCKS port on the proxy's own.
+      {
+        tor = {
+          enable = true;
+          asOutbound = true;
+          socksPort = 1080;
+        };
+        proxy = {
+          enable = true;
+          listener.port = 1080;
+        };
+      }
+      # An onion service without inbounds, and one naming a listener that is not there.
+      {
+        tor = {
+          enable = true;
+          onionService.enable = true;
+        };
+      }
+      {
+        tor = {
+          enable = true;
+          onionService = {
+            enable = true;
+            listeners = [ "missing" ];
+          };
+        };
+        inbounds = {
+          enable = true;
+          routing.via = "direct";
+          listeners.plain = listener;
+        };
+      }
+      # Two listeners on one onion port.
+      {
+        tor = {
+          enable = true;
+          onionService.enable = true;
+        };
+        inbounds = {
+          enable = true;
+          routing.via = "direct";
+          listeners.a = listener // {
+            sharePort = 443;
+          };
+          listeners.b = listener // {
+            port = 10444;
+            sharePort = 443;
+          };
+        };
+      }
+    ]
+  );
 in
 {
   runtime = guardRuntime;
@@ -297,7 +322,8 @@ in
       assert lib.any (o: o.tag == "proxy") exitNodeConfig.outbounds;
       assert builtins.elem "proxy-suite-socks.service" (services exitNode).proxy-suite-inbounds.wants;
       assert !(lib.any (r: r.ruleTag or "" == "inbound-tor-onion") exitNodeNoOnion.routing.rules);
-      assert !(lib.any (r: r.ruleTag or "" == "inbound-tor-onion") (mkInboundsConfig onion).routing.rules);
+      assert
+        !(lib.any (r: r.ruleTag or "" == "inbound-tor-onion") (mkInboundsConfig onion).routing.rules);
       true
     )
     (
@@ -315,12 +341,13 @@ in
 
     # Every backend dials Tor's SOCKS listener as the "tor" outbound.
     (
-      assert hasInfix ''{"server":"127.0.0.1","server_port":18530,"tag":"tor","type":"socks"}'' singBoxStart;
+      assert hasInfix ''{"server":"127.0.0.1","server_port":18530,"tag":"tor","type":"socks"}''
+        singBoxStart;
       true
     )
     (
-      assert
-        hasInfix ''{"protocol":"socks","settings":{"address":"127.0.0.1","port":18530},"tag":"tor"}'' xrayStart;
+      assert hasInfix ''{"protocol":"socks","settings":{"address":"127.0.0.1","port":18530},"tag":"tor"}''
+        xrayStart;
       true
     )
     (
@@ -443,9 +470,12 @@ in
     # userControl's group can use the control socket: that is `proxy-ctl tor status|newnym`.
     (
       assert
-        hasInfix "proxy-suite-tor-control-dir" (toString (services controlled).proxy-suite-tor.serviceConfig.ExecStartPre)
+        hasInfix "proxy-suite-tor-control-dir" (
+          toString (services controlled).proxy-suite-tor.serviceConfig.ExecStartPre
+        )
         && !(singBoxTorUnit.serviceConfig ? ExecStartPre)
-        && (mkProxyCtlDerived singBox).wrapperEnv.TOR_CONTROL_SOCKET == "/run/proxy-suite-tor/control/socket";
+        &&
+          (mkProxyCtlDerived singBox).wrapperEnv.TOR_CONTROL_SOCKET == "/run/proxy-suite-tor/control/socket";
       true
     )
     (
@@ -455,7 +485,8 @@ in
         && hasInfix "ClientTransportPlugin snowflake exec" bridgesStart
         && hasInfix "Bridge obfs4 192.0.2.1:443 " bridgesStart
         && hasInfix ''"$CREDENTIALS_DIRECTORY/bridges"'' bridgesStart
-        && builtins.elem "bridges:/run/secrets/tor-bridges" (services bridges).proxy-suite-tor.serviceConfig.LoadCredential;
+        && builtins.elem "bridges:/run/secrets/tor-bridges" (services bridges)
+        .proxy-suite-tor.serviceConfig.LoadCredential;
       true
     )
     # Through the local proxy, with its password read at start, never written to the store.
@@ -475,7 +506,10 @@ in
         && hasInfix "HiddenServicePort 10443 127.0.0.1:10443" onionStart
         && hasInfix "HiddenServicePort 443 127.0.0.1:10444" onionStart
         && hasInfix "SocksPort 0" onionStart
-        && hasInfix "hs_ed25519_secret_key" onionStart;
+        && !(hasInfix "hs_ed25519_secret_key" onionStart)
+        && hasInfix "proxy-suite-tor-onion-key" (
+          toString (services onion).proxy-suite-tor.serviceConfig.ExecStartPre
+        );
       true
     )
     (

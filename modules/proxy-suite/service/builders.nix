@@ -264,10 +264,22 @@ rec {
       fwmark,
       table,
     }:
-    lib.concatMapStrings (family: ''
-      ${mkIpRuleDeleteByFwmark { inherit ip family fwmark table; }}
-      ${mkIpLocalDefaultRouteDelete { inherit ip family table; }}
-    '') [ "-4" "-6" ];
+    lib.concatMapStrings
+      (family: ''
+        ${mkIpRuleDeleteByFwmark {
+          inherit
+            ip
+            family
+            fwmark
+            table
+            ;
+        }}
+        ${mkIpLocalDefaultRouteDelete { inherit ip family table; }}
+      '')
+      [
+        "-4"
+        "-6"
+      ];
 
   mkTproxyRoutingUp =
     {

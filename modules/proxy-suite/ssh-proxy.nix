@@ -34,7 +34,7 @@ let
         )
         ${lib.optionalString (s.server.port != 22) "args+=(-p ${toString s.server.port})"}
         ${lib.optionalString (s.identityFile != null) ''args+=(-i "$CREDENTIALS_DIRECTORY/identity")''}
-        ${lib.optionalString (knownHosts != null) ''args+=(-o UserKnownHostsFile=${knownHosts})''}
+        ${lib.optionalString (knownHosts != null) "args+=(-o UserKnownHostsFile=${knownHosts})"}
     ${extraArgs}
         exec ${pkgs.openssh}/bin/ssh "''${args[@]}" ${lib.escapeShellArg destination}
   '';

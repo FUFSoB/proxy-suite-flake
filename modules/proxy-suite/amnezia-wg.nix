@@ -27,7 +27,17 @@ let
     map (other: "${serviceName other}.service") (
       builtins.filter (other: other != name) globalProfileNames
     );
-  inherit (import ./wg-tunnel.nix { inherit lib pkgs cfg derived; }) mkTunnel;
+  inherit
+    (import ./wg-tunnel.nix {
+      inherit
+        lib
+        pkgs
+        cfg
+        derived
+        ;
+    })
+    mkTunnel
+    ;
   sourceCount =
     profile:
     builtins.length (
@@ -84,9 +94,15 @@ let
   bypassRule =
     family: action:
     "${pkgs.iproute2}/bin/ip ${family} rule ${action} pref ${toString proxyBypassRulePriority} fwmark ${toString cfg.proxy.tproxy.proxyMark} lookup main";
-  clearBypassRules = lib.concatMapStrings (family: ''
-    while ${bypassRule family "del"} 2>/dev/null; do :; done
-  '') [ "-4" "-6" ];
+  clearBypassRules =
+    lib.concatMapStrings
+      (family: ''
+        while ${bypassRule family "del"} 2>/dev/null; do :; done
+      '')
+      [
+        "-4"
+        "-6"
+      ];
 
   # Some lines drop a share of fresh flows for good, handshakes included. A new source port
   # is a new flow, and moving the interface to one keeps its routes, so traffic never leaks
@@ -118,7 +134,9 @@ let
   pingVia =
     profile:
     "${pkgs.iputils}/bin/ping -n -c 1"
-    + lib.optionalString (profile.asOutbound == "interface") " -I ${lib.escapeShellArg profile.interfaceName}";
+    + lib.optionalString (
+      profile.asOutbound == "interface"
+    ) " -I ${lib.escapeShellArg profile.interfaceName}";
 
   # An outbound interface keeps the host's routes and resolver, and marks its packets so TUN and
   # TProxy let them past.
@@ -126,7 +144,9 @@ let
     ${pkgs.python3}/bin/python3 ${configTool} \
       --manifest ${lib.escapeShellArg (toString (manifestFor profile))} \
       --output ${output}${
-        lib.optionalString (profile.asOutbound == "interface") " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
+        lib.optionalString (
+          profile.asOutbound == "interface"
+        ) " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
       }
   '';
 
@@ -436,7 +456,8 @@ let
 
   interfaceNames = map (name: profiles.${name}.interfaceName) profileNames;
   autostartProfiles = builtins.filter (name: profiles.${name}.autostart) globalProfileNames;
-  globalAutostartCount = builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
+  globalAutostartCount =
+    builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
 in
 {
   services.proxy-suite.internal.packages = [
@@ -445,9 +466,11 @@ in
   ]
   ++ lib.optional (builtins.any (ob: ob.kind == "userspace") tunnelOutbounds) awgCfg.wireproxyPackage;
 
-  services.proxy-suite.internal.kernelModulePackages = lib.optionals (awgCfg.kernelModulePackage != null) [
-    awgCfg.kernelModulePackage
-  ];
+  services.proxy-suite.internal.kernelModulePackages =
+    lib.optionals (awgCfg.kernelModulePackage != null)
+      [
+        awgCfg.kernelModulePackage
+      ];
 
   # Replies to the proxy's sockets come in on an interface the host has no route through.
   services.proxy-suite.internal.firewall.extraReversePathFilterRules = lib.concatMapStrings (ob: ''
@@ -461,7 +484,9 @@ in
     (lib.mapAttrs' (
       name: profile: lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog name profile)
     ) interfaceProfiles)
-    (lib.listToAttrs (map (ob: lib.nameValuePair (serviceName ob.name) (mkTunnelService ob)) tunnelOutbounds))
+    (lib.listToAttrs (
+      map (ob: lib.nameValuePair (serviceName ob.name) (mkTunnelService ob)) tunnelOutbounds
+    ))
     (lib.mkIf cfg.proxy.tun.enable {
       proxy-suite-tun.conflicts = map (name: "${name}.service") globalServiceNames;
     })

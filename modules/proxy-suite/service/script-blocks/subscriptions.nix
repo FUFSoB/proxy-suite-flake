@@ -25,11 +25,7 @@ let
   subscriptionCacheDir = "${stateDir}/subscriptions/${backend}";
 
   mkSubscriptionUrlSource =
-    sub:
-    if sub.urlFile != null then
-      sub.urlFile
-    else
-      pkgs.writeText "proxy-suite-core" sub.url;
+    sub: if sub.urlFile != null then sub.urlFile else pkgs.writeText "proxy-suite-core" sub.url;
 
   # Defined in every script that touches a cache: the start scripts and the
   # update unit.
@@ -145,14 +141,10 @@ let
       }
     '';
 
-  mkSubscriptionBlock =
-    sub: _routingMark:
-    ''
-      # subscription: ${sub.tag}
-      _proxy_suite_load_subscription ${lib.escapeShellArg sub.tag} ${
-        lib.escapeShellArg (mkSubscriptionUrlSource sub)
-      }
-    '';
+  mkSubscriptionBlock = sub: _routingMark: ''
+    # subscription: ${sub.tag}
+    _proxy_suite_load_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}
+  '';
 
   runtimeSubscriptionsBlock = ''
     # subscriptions added at runtime
@@ -162,17 +154,13 @@ let
     done < <(_proxy_suite_runtime_subscriptions)
   '';
 
-  mkSubscriptionFetchBlock =
-    sub:
-    ''
-      if _proxy_suite_fetch_subscription ${lib.escapeShellArg sub.tag} ${
-        lib.escapeShellArg (mkSubscriptionUrlSource sub)
-      }; then
-        echo "Updated subscription: ${sub.tag}"
-      else
-        FAILED=1
-      fi
-    '';
+  mkSubscriptionFetchBlock = sub: ''
+    if _proxy_suite_fetch_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}; then
+      echo "Updated subscription: ${sub.tag}"
+    else
+      FAILED=1
+    fi
+  '';
 
   runtimeSubscriptionsFetchBlock = ''
     while IFS=$'\t' read -r RUNTIME_SUB_TAG RUNTIME_SUB_SRC; do

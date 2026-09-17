@@ -62,7 +62,9 @@ let
   zapretCustomUserIps =
     if syncZapretDirectUserIps then
       lib.unique (
-        lib.concatMap (rule: lib.optionals rule.enableDirectSync rule.ips) zapretCfg.zapret-discord-youtube.hostlistRules
+        lib.concatMap (
+          rule: lib.optionals rule.enableDirectSync rule.ips
+        ) zapretCfg.zapret-discord-youtube.hostlistRules
       )
     else
       [ ];
@@ -104,18 +106,16 @@ let
         ))
         (
           lib.unique (
-            map stripExactPrefix (
-              zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains
-            )
+            map stripExactPrefix (zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains)
           )
         )
     else
       [ ];
   zapretDirectIps =
     if syncZapretDirectAnyIps then
-      subtractItems (
-        lib.unique (zapretDefaultIps ++ zapretUserIps ++ zapretCustomUserIps ++ zapretCustomDefaultIps)
-      ) zapretExcludedIps
+      subtractItems (lib.unique (
+        zapretDefaultIps ++ zapretUserIps ++ zapretCustomUserIps ++ zapretCustomDefaultIps
+      )) zapretExcludedIps
     else
       [ ];
 in
