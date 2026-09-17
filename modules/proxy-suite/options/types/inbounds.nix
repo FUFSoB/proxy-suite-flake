@@ -2,6 +2,7 @@
 
 let
   inherit (lib) mkOption types;
+  inherit (import ./amnezia-wg.nix { inherit lib; }) obfuscationType;
   nullStr =
     description: example:
     mkOption {
@@ -22,8 +23,103 @@ let
       uuidFile = nullStr "Runtime path to the UUID." "/run/secrets/proxy-inbound-uuid";
       password = nullStr "Password (trojan, shadowsocks, socks, http). Ends up in the Nix store; prefer passwordFile." "hunter2";
       passwordFile = nullStr "Runtime path to the password." "/run/secrets/proxy-inbound-password";
+
+      publicKey = nullStr ''
+        AmneziaWG public key of a peer that keeps its private key to itself. It gets no client
+        config or link. Null generates a key pair, kept in the state directory.
+      '' "jNXH...";
+      privateKeyFile = nullStr "Runtime path to the AmneziaWG client private key, instead of a generated one." "/run/secrets/awg-phone-key";
+      presharedKeyFile = nullStr "Runtime path to the AmneziaWG preshared key, instead of a generated one." "/run/secrets/awg-phone-psk";
+      address = nullStr ''
+        AmneziaWG tunnel IPv4 address, inside amneziaWg.subnet. Null takes the lowest free one, which
+        the user keeps for as long as it exists.
+      '' "10.66.0.10";
     };
   };
+
+  # The listener's tag names the default interface; a submodule's own name is its option's.
+  mkAmneziaWgType =
+    tag:
+    types.submodule {
+      options = {
+        mode = mkOption {
+          type = types.enum [
+            "proxy"
+            "lan"
+          ];
+          default = "proxy";
+          description = ''
+            What clients reach besides the internet, which they reach the listener's `via` way either way:
+            - "proxy": nothing else. This host, its private networks and the other peers are cut off.
+            - "lan": also this host, its private networks and the other peers, directly (masqueraded
+              behind this host), not through `via`. It turns on IP forwarding.
+            Only TCP and UDP can follow `via`: anything else to the internet (ping) is dropped.
+          '';
+        };
+
+        interfaceName = mkOption {
+          type = types.strMatching "^[A-Za-z0-9_.-]+$";
+          default = "awgi-${tag}";
+          defaultText = lib.literalExpression ''"awgi-<tag>"'';
+          description = "Linux interface name. It must fit Linux's 15-character limit.";
+        };
+
+        subnet = mkOption {
+          type = types.strMatching "[0-9.]+/[0-9]+";
+          default = "10.66.0.0/24";
+          description = ''
+            Tunnel IPv4 subnet, private and unused elsewhere. This host takes the first address, clients
+            the rest.
+          '';
+        };
+
+        subnet6 = nullStr ''
+          Tunnel IPv6 subnet (ULA), laid out as subnet. Null keeps the tunnel IPv4-only. With mode = "lan"
+          it turns on IPv6 forwarding, which stops this host configuring itself from router advertisements.
+        '' "fd66:66::/64";
+
+        privateKeyFile = nullStr "Runtime path to the server private key, instead of a generated one." "/run/secrets/awg-server-key";
+
+        obfuscation = mkOption {
+          type = obfuscationType;
+          default = { };
+          description = ''
+            Obfuscation parameters, shared with every client. Jc, Jmin, Jmax, S1, S2 and H1-H4 left
+            null are generated once and kept in the state directory; the rest stay unset.
+          '';
+        };
+
+        dns = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "1.1.1.1"
+            "1.0.0.1"
+          ];
+          description = "DNS servers in client configs. Queries leave like any other traffic.";
+        };
+
+        mtu = mkOption {
+          type = types.nullOr types.ints.unsigned;
+          default = null;
+          description = "Interface MTU, on both ends. Null leaves awg-quick's (1280 with AWG 3 fields).";
+        };
+
+        persistentKeepalive = mkOption {
+          type = types.nullOr types.ints.unsigned;
+          default = 25;
+          description = "PersistentKeepalive in client configs, which keeps NAT mappings open.";
+        };
+
+        clientAllowedIPs = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "0.0.0.0/0"
+            "::/0"
+          ];
+          description = "AllowedIPs in client configs: what clients send through the tunnel.";
+        };
+      };
+    };
 
   transportType = types.submodule {
     options = {
@@ -154,101 +250,115 @@ let
     };
   };
 
-  inboundType = types.submodule {
-    options = {
-      type = mkOption {
-        type = types.nullOr (
-          types.enum [
-            "vless"
-            "vmess"
-            "trojan"
-            "shadowsocks"
-            "socks"
-            "http"
-          ]
-        );
-        default = null;
-        description = "Protocol. Set exactly one of type, xrayJson, or jsonFile.";
-        example = "vless";
-      };
+  inboundType = types.submodule (
+    { name, ... }:
+    {
+      options = {
+        type = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "vless"
+              "vmess"
+              "trojan"
+              "shadowsocks"
+              "socks"
+              "http"
+              "amneziawg"
+            ]
+          );
+          default = null;
+          description = ''
+            Protocol. Set exactly one of type, xrayJson, or jsonFile. "amneziawg" is an AmneziaWG
+            server on UDP port, with its own interface (see amneziaWg); its traffic is handed to XRay
+            and leaves like any other listener's.
+          '';
+          example = "vless";
+        };
 
-      port = mkOption {
-        type = types.port;
-        default = 443;
-        description = "Bound port. A raw-JSON listener's port must match it: the firewall and the port checks go by this one.";
-      };
+        port = mkOption {
+          type = types.port;
+          default = 443;
+          description = "Bound port. A raw-JSON listener's port must match it: the firewall and the port checks go by this one.";
+        };
 
-      sharePort = mkOption {
-        type = types.nullOr types.port;
-        default = null;
-        description = "Port share links advertise, when something in front owns the public port. Null uses port.";
-        example = 443;
-      };
+        sharePort = mkOption {
+          type = types.nullOr types.port;
+          default = null;
+          description = "Port share links advertise, when something in front owns the public port. Null uses port.";
+          example = 443;
+        };
 
-      address = mkOption {
-        type = types.strMatching "[^[:space:]]+";
-        default = "::";
-        description = "Bound address. A loopback address keeps the port closed in the firewall.";
-        example = "127.0.0.1";
-      };
+        address = mkOption {
+          type = types.strMatching "[^[:space:]]+";
+          default = "::";
+          description = "Bound address. A loopback address keeps the port closed in the firewall.";
+          example = "127.0.0.1";
+        };
 
-      via = nullStr "Egress, as in inbounds.routing.via. Null inherits it." "nl-vps";
+        via = nullStr "Egress, as in inbounds.routing.via. Null inherits it." "nl-vps";
 
-      users = mkOption {
-        type = types.listOf userType;
-        default = [ ];
-        description = "Accepted accounts.";
-        example = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
-      };
+        users = mkOption {
+          type = types.listOf userType;
+          default = [ ];
+          description = "Accepted accounts.";
+          example = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+        };
 
-      flow = mkOption {
-        type = types.nullOr (types.enum [ "xtls-rprx-vision" ]);
-        default = null;
-        description = "VLESS flow; raw transport only.";
-        example = "xtls-rprx-vision";
-      };
+        flow = mkOption {
+          type = types.nullOr (types.enum [ "xtls-rprx-vision" ]);
+          default = null;
+          description = "VLESS flow; raw transport only.";
+          example = "xtls-rprx-vision";
+        };
 
-      method = mkOption {
-        type = types.str;
-        default = "2022-blake3-aes-128-gcm";
-        description = "Shadowsocks cipher. 2022 ciphers take a base64 key of matching length as password; more than one user needs a 2022-blake3-aes cipher and serverPassword.";
-        example = "aes-128-gcm";
-      };
+        method = mkOption {
+          type = types.str;
+          default = "2022-blake3-aes-128-gcm";
+          description = "Shadowsocks cipher. 2022 ciphers take a base64 key of matching length as password; more than one user needs a 2022-blake3-aes cipher and serverPassword.";
+          example = "aes-128-gcm";
+        };
 
-      serverPassword = nullStr "Server key of a multi-user shadowsocks 2022 listener, shared by its users. Ends up in the Nix store; prefer serverPasswordFile." "c2VydmVyLWtleS0xNmJ5dGU=";
-      serverPasswordFile = nullStr "Runtime path to the server key." "/run/secrets/proxy-inbound-ss-server-key";
+        serverPassword = nullStr "Server key of a multi-user shadowsocks 2022 listener, shared by its users. Ends up in the Nix store; prefer serverPasswordFile." "c2VydmVyLWtleS0xNmJ5dGU=";
+        serverPasswordFile = nullStr "Runtime path to the server key." "/run/secrets/proxy-inbound-ss-server-key";
 
-      transport = mkOption {
-        type = transportType;
-        default = { };
-        description = "Stream transport.";
-      };
+        transport = mkOption {
+          type = transportType;
+          default = { };
+          description = "Stream transport.";
+        };
 
-      tls = mkOption {
-        type = tlsType;
-        default = { };
-        description = "TLS termination.";
-      };
+        tls = mkOption {
+          type = tlsType;
+          default = { };
+          description = "TLS termination.";
+        };
 
-      reality = mkOption {
-        type = realityType;
-        default = { };
-        description = "REALITY.";
-      };
+        reality = mkOption {
+          type = realityType;
+          default = { };
+          description = "REALITY.";
+        };
 
-      xrayJson = mkOption {
-        type = types.nullOr types.attrs;
-        default = null;
-        description = "Raw XRay inbound, built into the store; tag is overridden and port, if left out, filled in.";
-        example = {
-          protocol = "dokodemo-door";
-          settings.port = 8080;
+        xrayJson = mkOption {
+          type = types.nullOr types.attrs;
+          default = null;
+          description = "Raw XRay inbound, built into the store; tag is overridden and port, if left out, filled in.";
+          example = {
+            protocol = "dokodemo-door";
+            settings.port = 8080;
+          };
+        };
+
+        jsonFile = nullStr "Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in." "/run/secrets/proxy-inbound-vless.json";
+
+        amneziaWg = mkOption {
+          type = mkAmneziaWgType name;
+          default = { };
+          description = ''The AmneziaWG server of a type = "amneziawg" listener.'';
         };
       };
-
-      jsonFile = nullStr "Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in." "/run/secrets/proxy-inbound-vless.json";
-    };
-  };
+    }
+  );
 in
 {
   inherit inboundType;

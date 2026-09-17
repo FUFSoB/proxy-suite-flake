@@ -71,7 +71,10 @@ let
     ++ lib.concatMap (ob: [
       ob.tunnelPort
       ob.directPort
-    ]) derived.awgTunnelOutbounds;
+    ]) derived.awgTunnelOutbounds
+    ++ lib.optionals derived.proxyInboundsEnabled (
+      map (listener: listener.internalPort) derived.proxyInboundsAwg
+    );
 
   # A rootless host (home-manager, nix-on-droid) runs everything as the user: nothing
   # that programs routing, firewalls or interfaces, and no privileged ports.
@@ -392,10 +395,11 @@ let
         !proxyInboundsEnabled
         || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
           [ derived.constants.inboundStatsApiPort ]
+          ++ map (listener: listener.internalPort) derived.proxyInboundsAwg
           ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
         )
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the inbounds' stats API on ${toString derived.constants.inboundStatsApiPort}, or 18533-18535)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the inbounds' stats API on ${toString derived.constants.inboundStatsApiPort}, the AmneziaWG listeners' loopback inbounds from 18700, or 18533-18535)"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -530,6 +534,142 @@ let
       ) "${prefix}: tls.alpn \"h3\" is served only by the xhttp transport with tls.enable (not REALITY)")
     ]
   ) proxyInbounds;
+
+  # AmneziaWG listeners run an interface each and give their clients addresses in a subnet.
+  awgListeners = builtins.filter (ib: ib.listener.type == "amneziawg") proxyInbounds;
+  awgListenersEnabled = proxyInboundsEnabled && awgListeners != [ ];
+
+  # "a.b.c.d/n" as { base; size; } (base is the address itself, not yet masked), or null.
+  parseIPv4 =
+    value:
+    let
+      match = builtins.match "([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})(/([0-9]{1,2}))?" value;
+      octets = map lib.toInt (lib.take 4 match);
+      prefix = if builtins.elemAt match 5 == null then 32 else lib.toInt (builtins.elemAt match 5);
+    in
+    if match == null || lib.any (octet: octet > 255) octets || prefix > 32 then
+      null
+    else
+      {
+        base = lib.foldl (acc: octet: acc * 256 + octet) 0 octets;
+        size = lib.foldl (acc: _: acc * 2) 1 (lib.range 1 (32 - prefix));
+      };
+  # Same network once both are cut down to the larger of the two.
+  ipv4Overlap =
+    a: b:
+    let
+      size = lib.max a.size b.size;
+    in
+    a.base / size == b.base / size;
+
+  awgInterfaces =
+    map (ib: ib.listener.amneziaWg.interfaceName) awgListeners
+    ++ lib.optionals cfg.amneziaWg.enable (
+      lib.mapAttrsToList (_: profile: profile.interfaceName) cfg.amneziaWg.profiles
+    );
+  otherInterfaces =
+    lib.optional (proxyEnabled && globalTun.enable) globalTun.interface
+    ++ lib.optional (perAppRoutingCfg.enable && perAppRoutingTun.enable) perAppRoutingTun.interface;
+
+  awgInboundAssertions = [
+    (rootlessForbids awgListenersEnabled "an AmneziaWG listener in inbounds.listeners")
+    (uniqueValues awgListenersEnabled awgInterfaces
+      "proxy-suite: AmneziaWG inbounds listeners and amneziaWg.profiles must each use a distinct interfaceName"
+    )
+    (mkAssertion (!awgListenersEnabled || !lib.any (name: builtins.elem name otherInterfaces) awgInterfaces)
+      "proxy-suite: an AmneziaWG inbounds listener's interfaceName is taken by proxy.tun or perAppRouting.tun"
+    )
+    (mkAssertion
+      (
+        !awgListenersEnabled
+        || lib.all (
+          ib:
+          lib.all (other: ib.tag == other.tag || !ipv4Overlap ib.subnet other.subnet) awgSubnets
+        ) awgSubnets
+      )
+      "proxy-suite: AmneziaWG inbounds listeners must each use a subnet of their own"
+    )
+    (mkAssertion
+      (
+        !awgListenersEnabled
+        || !builtins.elem derived.constants.awgInboundFwmark (
+          [
+            globalTproxy.fwmark
+            globalTproxy.proxyMark
+          ]
+          ++ lib.optional perAppRoutingTun.enable perAppRoutingTun.fwmark
+          ++ lib.optional perAppRoutingTproxy.enable perAppRoutingTproxy.fwmark
+          ++ lib.optional tgWsProxyCfg.enable tgWsProxyCfg.fwmark
+        )
+      )
+      "proxy-suite: AmneziaWG inbounds listeners mark their diverted packets with ${toString derived.constants.awgInboundFwmark}, which a proxy.tproxy, perAppRouting or tgWsProxy fwmark also uses"
+    )
+    (mkAssertion
+      (
+        !awgListenersEnabled
+        || !builtins.elem derived.constants.awgInboundRouteTable (
+          [
+            globalTproxy.routeTable
+            derived.constants.tunAutoRouteTableIndex
+          ]
+          ++ lib.optional perAppRoutingTun.enable perAppRoutingTun.routeTable
+          ++ lib.optional perAppRoutingTproxy.enable perAppRoutingTproxy.routeTable
+        )
+      )
+      "proxy-suite: AmneziaWG inbounds listeners route with table ${toString derived.constants.awgInboundRouteTable}, which proxy.tproxy.routeTable or a perAppRouting routeTable also uses"
+    )
+  ]
+  ++ lib.concatMap (
+    ib:
+    let
+      l = ib.listener;
+      awg = l.amneziaWg;
+      prefix = "proxy-suite: inbounds listener '${ib.tag}'";
+      subnet = parseIPv4 awg.subnet;
+      addresses = builtins.filter (address: address != null) (map (user: user.address) l.users);
+      inSubnet =
+        address:
+        let
+          parsed = parseIPv4 address;
+          offset = parsed.base - parsed.base / subnet.size * subnet.size;
+        in
+        parsed != null
+        && parsed.size == 1
+        && ipv4Overlap parsed subnet
+        && !builtins.elem offset [
+          0
+          1
+          (subnet.size - 1)
+        ];
+    in
+    lib.optionals (proxyInboundsEnabled && l.type == "amneziawg") [
+      (mkAssertion (lib.all (user: user.name != "") l.users)
+        "${prefix}: AmneziaWG users each need a name, which their keys and address are kept under"
+      )
+      (mkAssertion (
+        builtins.stringLength awg.interfaceName <= 15
+      ) "${prefix}: amneziaWg.interfaceName '${awg.interfaceName}' is longer than the kernel's 15 characters")
+      (mkAssertion (
+        !l.tls.enable && !l.reality.enable && l.flow == null && l.transport.type == "raw"
+      ) "${prefix}: AmneziaWG takes no tls, reality, flow or transport")
+      (mkAssertion (subnet != null && subnet.size >= 4)
+        "${prefix}: amneziaWg.subnet '${awg.subnet}' must be an IPv4 CIDR of /30 or wider"
+      )
+      (mkAssertion (subnet == null || lib.all inSubnet addresses)
+        "${prefix}: each user address must be a host address inside amneziaWg.subnet, other than its first (this host's)"
+      )
+      (uniqueValues true addresses "${prefix}: users must each have a distinct address")
+      (mkAssertion (lib.all (
+        user: user.publicKey == null || user.privateKeyFile == null
+      ) l.users) "${prefix}: a user sets publicKey or privateKeyFile, not both")
+    ]
+  ) awgListeners;
+  awgSubnets = builtins.filter (entry: entry.subnet != null) (
+    map (ib: {
+      inherit (ib) tag;
+      subnet = parseIPv4 ib.listener.amneziaWg.subnet;
+    }) awgListeners
+  );
 
   subscriptionAssertions = lib.concatMap (sub: [
     (exactlyOneOf proxyEnabled [
@@ -796,6 +936,7 @@ rootlessAssertions
 ++ secretAssertions
 ++ outboundAssertions
 ++ proxyInboundAssertions
+++ awgInboundAssertions
 ++ subscriptionAssertions
 ++ collisionAssertions
 ++ positiveNumberAssertions

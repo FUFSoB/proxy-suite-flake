@@ -156,6 +156,65 @@ def decode_vpn_link(link: str) -> dict[str, Any]:
     return result
 
 
+def encode_vpn_link(
+    config: str,
+    host: str,
+    description: str,
+    client_public_key: str | None = None,
+) -> str:
+    """A self-contained vpn:// link carrying a client .conf, as AmneziaVPN exports one.
+
+    The payload is qCompress'd JSON (a 4-byte big-endian length, then zlib), in URL-safe
+    base64. Everything but host and the client's public key is read from the config.
+    """
+    interface = {key: value for name, pairs in conf_sections(config) if name == "interface" for key, value in pairs}
+    peer = {key: value for name, pairs in conf_sections(config) if name == "peer" for key, value in pairs}
+    endpoint = peer.get("endpoint", "")
+    port = endpoint.rsplit(":", 1)[1] if ":" in endpoint else ""
+    dns = [item.strip() for item in interface.get("dns", "").split(",") if item.strip()]
+    last: dict[str, Any] = {
+        "config": config,
+        "hostName": host,
+        "port": int(port) if port.isdigit() else port,
+        "client_ip": interface.get("address", "").split(",")[0].strip().split("/")[0],
+        "client_priv_key": interface.get("privatekey", ""),
+        "server_pub_key": peer.get("publickey", ""),
+        "psk_key": peer.get("presharedkey", ""),
+        "allowed_ips": [item.strip() for item in peer.get("allowedips", "").split(",") if item.strip()],
+        "persistent_keep_alive": peer.get("persistentkeepalive", ""),
+    }
+    if client_public_key:
+        last["client_pub_key"] = client_public_key
+    if interface.get("mtu"):
+        last["mtu"] = interface["mtu"]
+    protocol: dict[str, Any] = {}
+    for normalized, key in VPN_INTERFACE_FIELDS.items():
+        if normalized in interface:
+            last[key] = interface[normalized]
+            protocol[key] = interface[normalized]
+    protocol.update(
+        {
+            "last_config": json.dumps(last, separators=(",", ":")),
+            "port": str(port),
+            "transport_proto": "udp",
+            "isThirdPartyConfig": True,
+        }
+    )
+    data = {
+        "containers": [{"container": "amnezia-awg", "awg": protocol}],
+        "defaultContainer": "amnezia-awg",
+        "description": description,
+        "hostName": host,
+    }
+    if dns:
+        data["dns1"] = dns[0]
+    if len(dns) > 1:
+        data["dns2"] = dns[1]
+    payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    compressed = len(payload).to_bytes(4, "big") + zlib.compress(payload, 8)
+    return "vpn://" + base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
+
+
 def _candidate_payload(value: Any, key: str) -> tuple[dict[str, Any], str]:
     payload = _decode_json_value(value, f"{key} protocol")
     last = _decode_json_value(payload.get("last_config", payload), f"{key}.last_config")

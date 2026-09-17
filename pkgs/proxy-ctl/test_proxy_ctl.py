@@ -474,6 +474,35 @@ class InboundsTest(EnvTest):
         self.patch("_run", lambda *a, **kw: (1, ""))
         self.assertNotEqual(run(ctl._inbound_online)[0], 0)
 
+    def test_online_amneziawg(self):
+        answer = {"users": [{"email": "fufsob", "ips": [{"ip": "203.0.113.7", "lastSeen": 1789471207}]}]}
+        self.patch("_run", lambda *a, **kw: (0, json.dumps(answer)))
+        started = []
+        self.patch("systemctl", lambda *a, **kw: started.append(a))
+        now = 1789471300
+        self.patch("time", mock.Mock(time=lambda: now))
+        os.environ["INBOUNDS_STATS_FILE"] = self.write(
+            "stats.json",
+            {
+                "seen": {"phone": now - 600, "laptop": now - 30},
+                "awgPeers": {
+                    "phone": {"tag": "awg", "handshake": now - 600, "endpoint": "198.51.100.2:5000"},
+                    "laptop": {"tag": "awg", "handshake": now - 30, "endpoint": "[2001:db8::5]:51820"},
+                    "tablet": {"tag": "awg", "handshake": 0, "endpoint": None},
+                },
+            },
+        )
+        os.environ["INBOUNDS_LINKS_FILE"] = self.write(
+            "links.json", [{"tag": "a", "user": "fufsob", "type": "vless"}, {"tag": "awg", "user": "tablet", "type": "amneziawg"}]
+        )
+        out = ok(ctl._inbound_online)
+        # The collector reads the handshakes first.
+        self.assertEqual(started, [("--no-ask-password", "start", "proxy-suite-inbound-stats.service")])
+        self.assertRegex(out, r"(?m)^  fufsob +online +203\.0\.113\.7$")
+        self.assertRegex(out, r"(?m)^  laptop +online +2001:db8::5$")
+        self.assertRegex(out, r"(?m)^  phone +seen ")
+        self.assertRegex(out, r"(?m)^  tablet +never seen")
+
     def test_subscriptions(self):
         os.environ["INBOUNDS_SUBS_FILE"] = self.write("subs.json", [{"user": "fufsob", "token": "aaa"}, {"user": "teri", "token": "bbb"}])
         os.environ["INBOUNDS_SUB_BASE_URL"] = "https://vpn.example/sub/"
@@ -687,6 +716,28 @@ class ShareTest(EnvTest):
     def test_inbound_json(self):
         self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "--json")), {"type": "vless"})
         self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "--server-json"))["protocol"], "vless")
+
+    def test_inbound_amneziawg_config(self):
+        config = "[Interface]\nPrivateKey = k\n\n[Peer]\nEndpoint = h:51820\n"
+        self.write(
+            "inbounds/links.json",
+            [
+                {"tag": "in", "user": "u", "type": "vless", "link": "vless://x@h:443", "outbound": {"type": "vless"}},
+                {"tag": "awg", "user": "u", "type": "amneziawg", "link": "vpn://abc", "config": config, "outbound": None},
+            ],
+        )
+        emitted = []
+        self.patch("_run", lambda cmd, **kw: (emitted.append((cmd, kw.get("stdin"))), (0, ""))[1])
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "awg", "u"), "vpn://abc\n")
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "awg", "--config"), config)
+        ok(ctl.cmd_inbounds, "link", "awg", "u", "--config", "--qr")
+        self.assertEqual(emitted[-1], (["qrencode", "-t", "ANSIUTF8"], config.rstrip("\n")))
+        status, _, err = run(ctl.cmd_inbounds, "link", "awg", "--json")
+        self.assertNotEqual(status, 0)
+        self.assertIn("use --config", err)
+        status, _, err = run(ctl.cmd_inbounds, "link", "in", "--config")
+        self.assertNotEqual(status, 0)
+        self.assertIn("only AmneziaWG", err)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable(self):

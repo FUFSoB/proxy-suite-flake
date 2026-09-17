@@ -53,6 +53,7 @@ let
     awgOutbounds
     proxyInboundsCfg
     proxyInboundsEnabled
+    proxyInboundsAwg
     proxyInboundsNeedLocalProxy
     proxyInboundsGuardPrivate
     proxyInboundViaOutbounds
@@ -70,6 +71,7 @@ let
   headBin = "${pkgs.coreutils}/bin/head";
   seqBin = "${pkgs.coreutils}/bin/seq";
   findBin = "${pkgs.findutils}/bin/find";
+  awgBin = "${cfg.amneziaWg.toolsPackage}/bin/awg";
   # `proxy-ctl awg` toggles global profiles; outbound ones always run and show up with the proxy.
   amneziaWgProfileNamesFile = pkgs.writeText "proxy-suite-core" (
     builtins.toJSON (
@@ -130,6 +132,8 @@ let
       ;
     inherit
       proxyInboundsCfg
+      proxyInboundsAwg
+      awgBin
       proxyInboundsNeedLocalProxy
       proxyInboundsGuardPrivate
       proxyInboundViaOutbounds

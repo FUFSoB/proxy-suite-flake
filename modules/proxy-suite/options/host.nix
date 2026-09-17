@@ -68,7 +68,10 @@ in
       allowedTCPPorts = internalOption (types.listOf types.port) [ ];
       allowedUDPPorts = internalOption (types.listOf types.port) [ ];
       extraReversePathFilterRules = internalOption types.lines "";
+      trustedInterfaces = internalOption (types.listOf types.str) [ ];
     };
+    # Kernel parameters the services also set when they start.
+    sysctl = internalOption (types.attrsOf types.int) { };
     kernelModulePackages = internalOption (types.listOf types.package) [ ];
   };
 }

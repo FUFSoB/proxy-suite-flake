@@ -36,9 +36,10 @@ let
   # Only the ports clients dial there: the rest of this host (wildcard services the
   # firewall keeps from the internet) must not be reachable through it.
   serverAddressPorts = lib.unique (
-    map (
-      ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port
-    ) proxyInbounds
+    map (ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port) (
+      # AmneziaWG is UDP to the interface, never relayed through XRay.
+      builtins.filter (ib: ib.listener.type != "amneziawg") proxyInbounds
+    )
     ++ lib.optionals proxyInboundsCfg.subscriptions.enable [
       80
       443

@@ -45,4 +45,13 @@
         python ${../../scripts/test-amneziawg-config.py}
         touch "$out"
       '';
+
+  awg-inbound-state =
+    pkgs.runCommand "awg-inbound-state-check" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONPATH=${../../scripts}:$PYTHONPATH
+        python ${../../scripts/test-awg-inbound.py}
+        touch "$out"
+      '';
 }

@@ -10,6 +10,43 @@ Part of the [proxy-suite options reference](./index.md).
   - [listeners](#services-proxy-suite-inbounds-listeners)
     - `<name>`
       - [address](#services-proxy-suite-inbounds-listeners-name-address)
+      - [amneziaWg](#services-proxy-suite-inbounds-listeners-name-amneziawg)
+        - [clientAllowedIPs](#services-proxy-suite-inbounds-listeners-name-amneziawg-clientallowedips)
+        - [dns](#services-proxy-suite-inbounds-listeners-name-amneziawg-dns)
+        - [interfaceName](#services-proxy-suite-inbounds-listeners-name-amneziawg-interfacename)
+        - [mode](#services-proxy-suite-inbounds-listeners-name-amneziawg-mode)
+        - [mtu](#services-proxy-suite-inbounds-listeners-name-amneziawg-mtu)
+        - [obfuscation](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation)
+          - [contentPaddingAddition](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-contentpaddingaddition)
+          - [disableCookies](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-disablecookies)
+          - [h1](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h1)
+          - [h2](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h2)
+          - [h3](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h3)
+          - [h4](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h4)
+          - [headerProtectionKey](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkey)
+          - [headerProtectionKeyFile](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkeyfile)
+          - [i1](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i1)
+          - [i2](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i2)
+          - [i3](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i3)
+          - [i4](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i4)
+          - [i5](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i5)
+          - [jc](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jc)
+          - [jmax](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmax)
+          - [jmin](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmin)
+          - [keepaliveTimeout](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-keepalivetimeout)
+          - [maxHandshakeAttempts](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-maxhandshakeattempts)
+          - [randomTrailers](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-randomtrailers)
+          - [rejectAfterTime](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rejectaftertime)
+          - [rekeyAfterTime](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeyaftertime)
+          - [rekeyTimeout](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeytimeout)
+          - [s1](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s1)
+          - [s2](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s2)
+          - [s3](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s3)
+          - [s4](#services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s4)
+        - [persistentKeepalive](#services-proxy-suite-inbounds-listeners-name-amneziawg-persistentkeepalive)
+        - [privateKeyFile](#services-proxy-suite-inbounds-listeners-name-amneziawg-privatekeyfile)
+        - [subnet](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet)
+        - [subnet6](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet6)
       - [flow](#services-proxy-suite-inbounds-listeners-name-flow)
       - [jsonFile](#services-proxy-suite-inbounds-listeners-name-jsonfile)
       - [method](#services-proxy-suite-inbounds-listeners-name-method)
@@ -41,9 +78,13 @@ Part of the [proxy-suite options reference](./index.md).
       - [type](#services-proxy-suite-inbounds-listeners-name-type)
       - [users](#services-proxy-suite-inbounds-listeners-name-users)
         - item
+          - [address](#services-proxy-suite-inbounds-listeners-name-users-address)
           - [name](#services-proxy-suite-inbounds-listeners-name-users-name)
           - [password](#services-proxy-suite-inbounds-listeners-name-users-password)
           - [passwordFile](#services-proxy-suite-inbounds-listeners-name-users-passwordfile)
+          - [presharedKeyFile](#services-proxy-suite-inbounds-listeners-name-users-presharedkeyfile)
+          - [privateKeyFile](#services-proxy-suite-inbounds-listeners-name-users-privatekeyfile)
+          - [publicKey](#services-proxy-suite-inbounds-listeners-name-users-publickey)
           - [uuid](#services-proxy-suite-inbounds-listeners-name-users-uuid)
           - [uuidFile](#services-proxy-suite-inbounds-listeners-name-users-uuidfile)
       - [via](#services-proxy-suite-inbounds-listeners-name-via)
@@ -119,7 +160,7 @@ attribute set of (submodule)
 
 *Example:*
 
-```nix
+````nix
 {
   vless-reality = {
     type = "vless";
@@ -134,9 +175,16 @@ attribute set of (submodule)
       shortIds = [ "0123abcd" ];
     };
   };
+  # `proxy-ctl inbounds link home phone` prints a vpn:// link; add --config for the .conf.
+  home = {
+    type = "amneziawg";
+    port = 51820;
+    users = [ { name = "phone"; } { name = "laptop"; } ];
+    amneziaWg.mode = "lan";
+  };
 }
 
-```
+````
 
 <a id="services-proxy-suite-inbounds-listeners-name-address"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.address
@@ -156,6 +204,550 @@ string matching the pattern \[^\[:space:]]+
 
 ```nix
 "127.0.0.1"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg
+
+The AmneziaWG server of a type = “amneziawg” listener\.
+
+*Type:*
+submodule
+
+*Default:*
+
+```nix
+{ }
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-clientallowedips"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.clientAllowedIPs
+
+AllowedIPs in client configs: what clients send through the tunnel\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[
+  "0.0.0.0/0"
+  "::/0"
+]
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-dns"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.dns
+
+DNS servers in client configs\. Queries leave like any other traffic\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[
+  "1.1.1.1"
+  "1.0.0.1"
+]
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-interfacename"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.interfaceName
+
+Linux interface name\. It must fit Linux’s 15-character limit\.
+
+*Type:*
+string matching the pattern ^\[A-Za-z0-9_\.-]+$
+
+*Default:*
+
+```nix
+"awgi-<tag>"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-mode"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.mode
+
+What clients reach besides the internet, which they reach the listener’s ` via ` way either way:
+
+ - “proxy”: nothing else\. This host, its private networks and the other peers are cut off\.
+ - “lan”: also this host, its private networks and the other peers, directly (masqueraded
+   behind this host), not through ` via `\. It turns on IP forwarding\.
+   Only TCP and UDP can follow ` via `: anything else to the internet (ping) is dropped\.
+
+*Type:*
+one of “proxy”, “lan”
+
+*Default:*
+
+```nix
+"proxy"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-mtu"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.mtu
+
+Interface MTU, on both ends\. Null leaves awg-quick’s (1280 with AWG 3 fields)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation
+
+Obfuscation parameters, shared with every client\. Jc, Jmin, Jmax, S1, S2 and H1-H4 left
+null are generated once and kept in the state directory; the rest stay unset\.
+
+*Type:*
+submodule
+
+*Default:*
+
+```nix
+{ }
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-contentpaddingaddition"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.contentPaddingAddition
+
+AWG 3 content-padding addition or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-disablecookies"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.disableCookies
+
+AWG 3 cookie suppression (DisableCookies)\.
+
+*Type:*
+null or boolean
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h1"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h1
+
+Handshake-init header or range (H1)\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h2"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h2
+
+Handshake-response header or range (H2)\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h3"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h3
+
+Cookie-reply header or range (H3)\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h4"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h4
+
+Transport-message header or range (H4)\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkey"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.headerProtectionKey
+
+Inline AWG 3 header-protection key\. Prefer headerProtectionKeyFile\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkeyfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.headerProtectionKeyFile
+
+Runtime path containing the AWG 3 header-protection key\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i1"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i1
+
+First custom signature packet (I1)\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i2"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i2
+
+Second custom signature packet (I2)\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i3"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i3
+
+Third custom signature packet (I3)\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i4"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i4
+
+Fourth custom signature packet (I4)\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i5"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i5
+
+Fifth custom signature packet (I5)\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jc"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jc
+
+Junk packet count (Jc)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmax"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jmax
+
+Maximum junk packet size (Jmax)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmin"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jmin
+
+Minimum junk packet size (Jmin)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-keepalivetimeout"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.keepaliveTimeout
+
+AWG 3 keepalive timeout or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-maxhandshakeattempts"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.maxHandshakeAttempts
+
+AWG 3 maximum handshake attempts or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-randomtrailers"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.randomTrailers
+
+AWG 3 random transport trailers (RandomTrailers)\.
+
+*Type:*
+null or boolean
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rejectaftertime"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rejectAfterTime
+
+AWG 3 reject-after interval or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeyaftertime"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rekeyAfterTime
+
+AWG 3 rekey interval or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeytimeout"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rekeyTimeout
+
+AWG 3 rekey timeout or range\.
+
+*Type:*
+null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s1"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s1
+
+Handshake-init padding (S1)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s2"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s2
+
+Handshake-response padding (S2)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s3"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s3
+
+Cookie-reply padding (S3)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s4"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s4
+
+Transport-message padding (S4)\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-persistentkeepalive"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.persistentKeepalive
+
+PersistentKeepalive in client configs, which keeps NAT mappings open\.
+
+*Type:*
+null or (unsigned integer, meaning >=0)
+
+*Default:*
+
+```nix
+25
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-privatekeyfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.privateKeyFile
+
+Runtime path to the server private key, instead of a generated one\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"/run/secrets/awg-server-key"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-subnet"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.subnet
+
+Tunnel IPv4 subnet, private and unused elsewhere\. This host takes the first address, clients
+the rest\.
+
+*Type:*
+string matching the pattern \[0-9\.]+/\[0-9]+
+
+*Default:*
+
+```nix
+"10.66.0.0/24"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-amneziawg-subnet6"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.subnet6
+
+Tunnel IPv6 subnet (ULA), laid out as subnet\. Null keeps the tunnel IPv4-only\. With mode = “lan”
+it turns on IPv6 forwarding, which stops this host configuring itself from router advertisements\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"fd66:66::/64"
 ```
 
 <a id="services-proxy-suite-inbounds-listeners-name-flow"></a>
@@ -698,10 +1290,12 @@ one of “raw”, “ws”, “grpc”, “httpupgrade”, “xhttp”
 <a id="services-proxy-suite-inbounds-listeners-name-type"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.type
 
-Protocol\. Set exactly one of type, xrayJson, or jsonFile\.
+Protocol\. Set exactly one of type, xrayJson, or jsonFile\. “amneziawg” is an AmneziaWG
+server on UDP port, with its own interface (see amneziaWg); its traffic is handed to XRay
+and leaves like any other listener’s\.
 
 *Type:*
-null or one of “vless”, “vmess”, “trojan”, “shadowsocks”, “socks”, “http”
+null or one of “vless”, “vmess”, “trojan”, “shadowsocks”, “socks”, “http”, “amneziawg”
 
 *Default:*
 
@@ -737,6 +1331,27 @@ list of (submodule)
     uuidFile = "/run/secrets/proxy-inbound-uuid";
   }
 ]
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-users-address"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.address
+
+AmneziaWG tunnel IPv4 address, inside amneziaWg\.subnet\. Null takes the lowest free one, which
+the user keeps for as long as it exists\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"10.66.0.10"
 ```
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-name"></a>
@@ -797,6 +1412,67 @@ null
 
 ```nix
 "/run/secrets/proxy-inbound-password"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-users-presharedkeyfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.presharedKeyFile
+
+Runtime path to the AmneziaWG preshared key, instead of a generated one\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"/run/secrets/awg-phone-psk"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-users-privatekeyfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.privateKeyFile
+
+Runtime path to the AmneziaWG client private key, instead of a generated one\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"/run/secrets/awg-phone-key"
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-users-publickey"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.publicKey
+
+AmneziaWG public key of a peer that keeps its private key to itself\. It gets no client
+config or link\. Null generates a key pair, kept in the state directory\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"jNXH..."
 ```
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-uuid"></a>

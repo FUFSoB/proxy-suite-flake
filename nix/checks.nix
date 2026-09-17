@@ -52,6 +52,9 @@ let
   proxyInboundsRuntime = import ./checks/proxy-inbounds-runtime.nix {
     inherit pkgs proxySuiteModule;
   };
+  amneziaWgInboundsRuntime = import ./checks/amnezia-wg-inbound-runtime.nix {
+    inherit pkgs proxySuiteModule;
+  };
 in
 moduleSuiteChecks
 // {
@@ -62,6 +65,7 @@ moduleSuiteChecks
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   amneziawg-runtime = amneziaWgRuntime;
   proxy-inbounds-runtime = proxyInboundsRuntime;
+  amneziawg-inbounds-runtime = amneziaWgInboundsRuntime;
 }
 // parserChecks
 // repoChecks

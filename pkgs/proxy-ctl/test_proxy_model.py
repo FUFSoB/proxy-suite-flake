@@ -79,6 +79,16 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(model.toggle_argv(row), ["awg", "on", "warp"])  # a global profile named warp
             self.assertIn("ctrl+r", keys())
 
+    def test_inbound_amneziawg_actions(self):
+        tab = next(t for t in model.TABS if t.id == "inbounds")
+        actions = {a.key: a for a in tab.actions}
+        awg = {"key": "awg/u", "tag": "awg", "user": "u", "type": "amneziawg", "port": "51820"}
+        vless = {"key": "in/u", "tag": "in", "user": "u", "type": "vless", "port": "443"}
+        self.assertEqual(actions["w"].argv(awg), ["inbounds", "link", "awg", "u", "--config"])
+        self.assertEqual(actions["W"].argv(awg), ["inbounds", "link", "awg", "u", "--config", "--qr"])
+        self.assertTrue(actions["w"].when(awg) and actions["W"].when(awg) and actions["J"].when(vless))
+        self.assertFalse(actions["w"].when(vless) or actions["W"].when(vless) or actions["J"].when(awg))
+
     def test_inbound_rows_carry_no_presence(self):
         """XRay keys the online map by user, not by inbound, so a per-listener row
         could only repeat one verdict per listener; it must not claim to have one."""

@@ -40,25 +40,51 @@ let
   proxyInboundsSpec = {
     serverAddress = derived.proxyInboundsCfg.serverAddress;
     shareLinks = derived.proxyInboundsCfg.shareLinks;
-    listeners = map (ib: {
-      inherit (ib) tag;
-      inherit (ib.listener)
-        type
-        port
-        sharePort
-        users
-        flow
-        method
-        serverPassword
-        serverPasswordFile
-        transport
-        tls
-        reality
-        xrayJson
-        jsonFile
-        ;
-      listen = ib.listener.address;
-    }) derived.proxyInbounds;
+    listeners = map (
+      ib:
+      {
+        inherit (ib) tag;
+        inherit (ib.listener)
+          type
+          port
+          sharePort
+          users
+          flow
+          method
+          serverPassword
+          serverPasswordFile
+          transport
+          tls
+          reality
+          xrayJson
+          jsonFile
+          ;
+        listen = ib.listener.address;
+      }
+      # Only on AmneziaWG listeners: the defaults of the others need not type-check.
+      // lib.optionalAttrs (ib.listener.type == "amneziawg") {
+        amneziaWg =
+          let
+            runtime = lib.findFirst (awg: awg.tag == ib.tag) null derived.proxyInboundsAwg;
+          in
+          {
+            inherit (ib.listener.amneziaWg)
+              mode
+              interfaceName
+              subnet
+              subnet6
+              privateKeyFile
+              obfuscation
+              dns
+              mtu
+              persistentKeepalive
+              clientAllowedIPs
+              ;
+            inherit (runtime) internalPort internalListen stateFile;
+            fwmark = cfg.proxy.tproxy.proxyMark;
+          };
+      }
+    ) derived.proxyInbounds;
   };
 
   selectedTemplates = if derived.pureXrayEnabled then xrayTemplates else singBoxTemplates;

@@ -352,6 +352,11 @@ def _link(row, *extra):
     return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *extra]
 
 
+def _amneziawg(row):
+    # AmneziaWG clients take a .conf (or its vpn:// link), not an outbound JSON.
+    return row["type"] == "amneziawg"
+
+
 def _kind(*kinds):
     return lambda row: row["kind"] in kinds
 
@@ -512,7 +517,9 @@ TABS = [
             # Without subscriptions.baseUrl there is only a file path, with a hint after it: nothing to encode or copy.
             Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
             Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
-            Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=ROW, mode="dialog"),
+            Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=lambda r: not _amneziawg(r), mode="dialog"),
+            Action("w", "client config", lambda r, *_: _link(r, "--config"), when=_amneziawg, mode="dialog"),
+            Action("W", "client config as QR", lambda r, *_: _link(r, "--config", "--qr"), when=_amneziawg, mode="dialog"),
             Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
             Action("I", "traffic per inbound", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),

@@ -130,7 +130,28 @@ let
     ob: builtins.elem ob.tag proxyInboundViaChain
   ) proxyCfg.outbounds;
 
+  # AmneziaWG listeners: the interface's TCP and UDP is diverted to a loopback XRay inbound,
+  # one port per listener above the AmneziaWG outbound tunnels (awgTunnelBasePort).
+  awgInboundBasePort = 18700;
+  proxyInboundsAwg = lib.imap0 (
+    index: ib:
+    let
+      awg = ib.listener.amneziaWg;
+    in
+    {
+      inherit (ib) tag via;
+      inherit (ib.listener) port;
+      inherit (awg) mode subnet subnet6;
+      interface = awg.interfaceName;
+      internalPort = awgInboundBasePort + index;
+      # Dual-stack when the clients have IPv6, so one inbound takes both families.
+      internalListen = if awg.subnet6 != null then "::" else "127.0.0.1";
+      stateFile = "${stateDir}/awg-inbounds/${ib.tag}/state.json";
+    }
+  ) (builtins.filter (ib: ib.listener.type == "amneziawg") proxyInbounds);
+
   proxyInboundUdpTypes = [
+    "amneziawg"
     "shadowsocks"
     "socks"
   ];
@@ -151,7 +172,9 @@ let
     l: l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
   proxyInboundFirewallPorts = lib.unique (
     map (ib: ib.listener.port) (
-      builtins.filter (ib: !proxyInboundIsH3Only ib.listener) proxyInboundsPublic
+      builtins.filter (
+        ib: !proxyInboundIsH3Only ib.listener && ib.listener.type != "amneziawg"
+      ) proxyInboundsPublic
     )
   );
   # A raw-JSON listener could serve anything, so open both protocols for it.
@@ -285,6 +308,11 @@ let
     outboundInventoryFile = "${runtimeDir}/proxy-suite-socks/outbounds.json";
 
     inboundStatsApiPort = 18536;
+    # Mark and table sending the AmneziaWG listeners' diverted packets to the local stack,
+    # clear of proxy.tproxy's and perAppRouting's (asserted).
+    awgInboundFwmark = 20;
+    awgInboundRouteTable = 103;
+    awgInboundRulePriority = 8990;
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
@@ -380,6 +408,7 @@ in
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds
+    proxyInboundsAwg
     proxyInboundsNeedLocalProxy
     proxyInboundsResolveInSingBox
     proxyInboundsGuardPrivate

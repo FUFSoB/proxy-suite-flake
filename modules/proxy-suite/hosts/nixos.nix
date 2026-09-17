@@ -59,9 +59,11 @@ in
         allowedTCPPorts = forward internal.firewall.allowedTCPPorts;
         allowedUDPPorts = forward internal.firewall.allowedUDPPorts;
         extraReversePathFilterRules = forward internal.firewall.extraReversePathFilterRules;
+        trustedInterfaces = forward internal.firewall.trustedInterfaces;
       };
 
       boot.extraModulePackages = forward internal.kernelModulePackages;
+      boot.kernel.sysctl = lib.mapAttrs (_: lib.mkDefault) cfg.internal.sysctl;
     })
 
     # Off by default since nixpkgs 26.11, and always there before, where the option does

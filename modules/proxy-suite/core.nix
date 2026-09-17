@@ -157,6 +157,19 @@ in
           }
         ))
 
+        (lib.mkIf (derived.proxyInboundsEnabled && derived.proxyInboundsAwg != [ ]) (
+          import ./amnezia-wg-inbounds.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+            inherit (configs) proxyInboundsSpecFile;
+            inherit (nftr) reservedIpBlock ip nft;
+          }
+        ))
+
         (lib.mkIf cfg.amneziaWg.enable (
           import ./amnezia-wg.nix {
             inherit

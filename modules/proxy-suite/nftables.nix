@@ -163,6 +163,7 @@ let
 in
 {
   inherit
+    reservedIpBlock
     nftablesRulesFile
     perAppTproxyRulesFile
     perAppZapretRulesFile

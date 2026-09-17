@@ -29,6 +29,8 @@
   perAppTunFile,
   routeModeRulesFile,
   proxyInboundsCfg,
+  proxyInboundsAwg,
+  awgBin,
   proxyInboundsNeedLocalProxy,
   proxyInboundsGuardPrivate,
   proxyInboundViaOutbounds,
@@ -198,6 +200,8 @@ let
       pkgs
       proxyCfg
       proxyInboundsCfg
+      proxyInboundsAwg
+      awgBin
       proxyInboundsNeedLocalProxy
       proxyInboundViaOutbounds
       userControlCfg

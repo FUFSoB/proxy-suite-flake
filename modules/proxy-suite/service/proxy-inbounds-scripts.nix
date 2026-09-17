@@ -5,6 +5,8 @@
   pkgs,
   proxyCfg,
   proxyInboundsCfg,
+  proxyInboundsAwg,
+  awgBin,
   proxyInboundsNeedLocalProxy,
   proxyInboundViaOutbounds,
   userControlCfg,
@@ -29,8 +31,10 @@ let
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
   subsCfg = proxyInboundsCfg.subscriptions;
   xray = "${proxyInboundsCfg.package}/bin/xray";
-  # Only listeners: no marks, no transparent sockets.
-  runXray = constants.runAsServiceUser pkgs [ "net_bind_service" ];
+  # Only listeners, and for AmneziaWG listeners transparent sockets (IP_TRANSPARENT).
+  runXray = constants.runAsServiceUser pkgs (
+    [ "net_bind_service" ] ++ lib.optional (proxyInboundsAwg != [ ]) "net_admin"
+  );
 
   needsLocalProxyAuth = proxyInboundsNeedLocalProxy && localProxyAuthEnabled;
 
@@ -216,9 +220,18 @@ let
     [ -n "$reading" ] || reading='{}'
     online=$(${xray} api statsonlineiplist "$api" -all 2> /dev/null) || online=""
     [ -n "$online" ] || online='{}'
+    ${
+      if proxyInboundsAwg != [ ] then
+        ''
+          awg=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${parserScriptsPythonPath}/awg_inbound.py peers \
+            --spec ${proxyInboundsSpecFile} --awg ${awgBin}) || awg='[]'
+        ''
+      else
+        "awg='[]'"
+    }
     [ -s "$file" ] || echo '{}' > "$file"
     tmp=$(${pkgs.coreutils}/bin/mktemp "$file.XXXXXX")
-    ${jq} --argjson q "$reading" --argjson online "$online" \
+    ${jq} --argjson q "$reading" --argjson online "$online" --argjson awg "$awg" \
       --arg day "$(${pkgs.coreutils}/bin/date +%F)" \
       --argjson now "$(${pkgs.coreutils}/bin/date +%s)" \
       -f ${

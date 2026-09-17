@@ -25,7 +25,7 @@ Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [
 - AmneziaWG 1.x–3.x tunnels from `.conf`, `vpn://`, or Nix
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
-- Server inbounds with share links, QR codes, per-user subscriptions and traffic stats
+- Server inbounds (XRay protocols and multi-user AmneziaWG) with share links, QR codes, per-user subscriptions and traffic stats
 - Proxy Suite GUI (a desktop app with a tray icon), the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
 ## Setup
@@ -118,7 +118,7 @@ The same options work outside NixOS. Pick the module for the host; everything th
 | Server inbounds, share links, stats | ✓ | ✓ | ports ≥ 1024 | ports ≥ 1024 |
 | tg-ws-proxy, SSH proxy, WARP as a sing-box outbound | ✓ | ✓ | ✓ | ✓ |
 | AmneziaWG `asOutbound = "userspace"` | ✓ | ✓ | ✓ | ✓ |
-| Global TUN/TProxy, per-app TUN/TProxy/zapret, zapret, AmneziaWG interfaces | ✓ | ✓ | ✗ | ✗ |
+| Global TUN/TProxy, per-app TUN/TProxy/zapret, zapret, AmneziaWG interfaces and inbounds | ✓ | ✓ | ✗ | ✗ |
 | `userControl`, polkit | ✓ | ✓ | not needed | not needed |
 | GUI | ✓ | ✓ | ✓ | ✗ (`proxy-ctl`, `proxy-tui`) |
 
@@ -132,7 +132,7 @@ modules = [ inputs.proxy-suite.systemManagerModules.default ];
 ```
 
 - Units, service users and the polkit rules (`/etc/polkit-1/rules.d/50-proxy-suite.rules`) are installed like on NixOS; the GUI's user unit goes to `/etc/systemd/user`. The service users come from `users.users`, so system-manager needs its user management.
-- The host's firewall is left alone: open the inbound ports yourself. TUN, TProxy and zapret load their own nftables tables, which needs `nf_tables`, `nfnetlink_queue` and `tun` in the host kernel.
+- The host's firewall is left alone: open the inbound ports yourself, and let AmneziaWG inbound interfaces (`awgi-*`) through the input chain and strict reverse-path filtering. TUN, TProxy, zapret and AmneziaWG inbounds load their own nftables tables, which needs `nf_tables`, `nfnetlink_queue`, `nft_tproxy` and `tun` in the host kernel.
 - AmneziaWG runs on its userspace implementation (`amneziaWg.kernelModulePackage` must stay `null`). DNS pushed by a VPN profile goes through `resolvectl` under systemd-resolved, `openresolv` otherwise.
 
 #### home-manager (any Linux, no root)
@@ -226,6 +226,8 @@ Secrets and changes need root, or the userControl group.
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--qr|--json]
                                          client share link, or the client's outbound JSON
+  inbounds link <tag> [user] --config [--qr]
+                                         an AmneziaWG client's .conf, or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]

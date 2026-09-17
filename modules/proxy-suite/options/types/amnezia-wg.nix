@@ -330,5 +330,5 @@ let
   );
 in
 {
-  inherit profileType;
+  inherit profileType obfuscationType;
 }

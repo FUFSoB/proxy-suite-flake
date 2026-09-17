@@ -173,6 +173,59 @@ let
     listeners.vless-in = realityListener;
   };
 
+  awgListener = {
+    type = "amneziawg";
+    port = 51820;
+    users = [
+      { name = "phone"; }
+      { name = "laptop"; }
+    ];
+  };
+  awgFixture = mkInbounds {
+    listeners.vless-in = realityListener;
+    listeners.home = awgListener // {
+      amneziaWg = {
+        mode = "lan";
+        subnet6 = "fd66:66::/64";
+      };
+    };
+    listeners.roam = awgListener // {
+      port = 51821;
+      amneziaWg.subnet = "10.67.0.0/24";
+    };
+  };
+  awgSpec = mkInboundsSpec awgFixture;
+  awgSpecListener = tag: lib.head (builtins.filter (l: l.tag == tag) awgSpec.listeners);
+  awgProxyFixture = mkInbounds {
+    listeners.roam = awgListener;
+  };
+  readInboundsStart =
+    fixture: (import ./read-generated.nix).readDerivation (service fixture).serviceConfig.ExecStart;
+  awgService = fixture: fixture.config.systemd.services."proxy-suite-inbounds-awg";
+  awgStartScript =
+    fixture: (import ./read-generated.nix).readDerivation (awgService fixture).serviceConfig.ExecStart;
+  # The nft rules file is a writeText the start script names; a writeText that returns its text
+  # puts the rules into the script itself, readable without import-from-derivation.
+  awgRules =
+    fixture:
+    let
+      cfg = fixture.config.services.proxy-suite;
+      nftr = import ../../modules/proxy-suite/nftables.nix { inherit lib pkgs cfg; };
+      module = import ../../modules/proxy-suite/amnezia-wg-inbounds.nix {
+        inherit lib cfg;
+        pkgs = pkgs // {
+          writeText = _: text: text;
+        };
+        derived = import ../../modules/proxy-suite/derived.nix { inherit lib cfg; };
+        proxyInboundsSpecFile = "/spec.json";
+        inherit (nftr) reservedIpBlock;
+        ip = "ip";
+        nft = "nft";
+      };
+    in
+    (import ./read-generated.nix).readDerivation
+      module.services.proxy-suite.internal.services."proxy-suite-inbounds-awg".serviceConfig.ExecStart;
+
   ruleTags = config: map (rule: rule.ruleTag) config.routing.rules;
   ruleByTag =
     config: tag: builtins.head (builtins.filter (rule: rule.ruleTag == tag) config.routing.rules);
@@ -417,6 +470,43 @@ let
       })
       "collides with proxy.listener.port"
     )
+
+    # AmneziaWG listeners.
+    (mkRejectsListener (awgListener // { tls.enable = true; }) "AmneziaWG takes no tls")
+    # A long tag makes a long default name.
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.far-too-long = awgListener;
+        };
+      }
+    ) "is longer than the kernel's 15 characters")
+    (mkRejectsListener (awgListener // { users = [ { } ]; }) "users each need a name")
+    (mkRejectsListener (
+      awgListener
+      // {
+        users = [
+          {
+            name = "a";
+            address = "10.66.1.2";
+          }
+        ];
+      }
+    ) "must be a host address inside amneziaWg.subnet")
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.one = awgListener;
+          listeners.two = awgListener // {
+            port = 51821;
+          };
+        };
+      }
+    ) "must each use a subnet of their own")
   ];
 
   assertions = [
@@ -584,6 +674,82 @@ let
       assert lib.hasInfix "chmod 600 \"$tmp\"" (statsScript relayFixture);
       true
     )
+
+    # AmneziaWG: the spec carries each listener's loopback inbound, in listener order.
+    (assert (awgSpecListener "home").amneziaWg.internalPort == 18700; true)
+    (assert (awgSpecListener "roam").amneziaWg.internalPort == 18701; true)
+    (assert (awgSpecListener "home").amneziaWg.internalListen == "::"; true)
+    (assert (awgSpecListener "roam").amneziaWg.internalListen == "127.0.0.1"; true)
+    (assert (awgSpecListener "home").amneziaWg.fwmark == 2; true)
+    (assert (awgSpecListener "home").amneziaWg.interfaceName == "awgi-home"; true)
+    (
+      assert
+        (awgSpecListener "roam").amneziaWg.stateFile == "/var/lib/proxy-suite/awg-inbounds/roam/state.json";
+      true
+    )
+    (assert !((awgSpecListener "vless-in") ? amneziaWg); true)
+    # UDP only, and the interfaces past the host firewall.
+    (assert awgFixture.config.networking.firewall.allowedTCPPorts == [ 443 ]; true)
+    (
+      assert
+        lib.sort lib.lessThan awgFixture.config.networking.firewall.allowedUDPPorts == [
+          51820
+          51821
+        ];
+      true
+    )
+    (
+      assert builtins.elem "awgi-home" awgFixture.config.networking.firewall.trustedInterfaces;
+      assert builtins.elem "awgi-roam" awgFixture.config.networking.firewall.trustedInterfaces;
+      true
+    )
+    (
+      assert
+        lib.hasInfix ''iifname "awgi-home" accept'' awgFixture.config.networking.firewall.extraReversePathFilterRules;
+      true
+    )
+    # The interfaces come up before XRay renders their links.
+    (assert builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).after; true)
+    (assert builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).wants; true)
+    (assert !(relayFixture.config.systemd.services ? "proxy-suite-inbounds-awg"); true)
+    (
+      assert lib.hasInfix "rule add pref 8990 fwmark 20 table 103" (awgStartScript awgFixture);
+      assert lib.hasInfix "awg_inbound.py prepare" (awgStartScript awgFixture);
+      true
+    )
+    # IPv6 routing only where a listener has IPv6.
+    (assert lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgFixture); true)
+    (assert !lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgProxyFixture); true)
+    # Transparent sockets only where there is something to divert.
+    (
+      assert lib.hasInfix "net_admin" (readInboundsStart awgFixture);
+      assert !lib.hasInfix "net_admin" (readInboundsStart relayFixture);
+      true
+    )
+    # Forwarding only for "lan" listeners.
+    (assert awgFixture.config.boot.kernel.sysctl."net.ipv4.ip_forward" == 1; true)
+    (assert awgFixture.config.boot.kernel.sysctl."net.ipv6.conf.all.forwarding" == 1; true)
+    (assert !(awgProxyFixture.config.services.proxy-suite.internal.sysctl ? "net.ipv4.ip_forward"); true)
+    # "lan" clients reach private networks and each other natively, "proxy" clients nothing but via.
+    (
+      let
+        rules = awgRules awgFixture;
+      in
+      assert lib.hasInfix "ip daddr $RESERVED_IP return" rules;
+      assert lib.hasInfix "ip daddr 192.168.0.0/16 return" rules;
+      assert lib.hasInfix "ip daddr 192.168.0.0/16 drop" rules;
+      assert lib.hasInfix "ip daddr 10.67.0.0/24 drop" rules;
+      assert lib.hasInfix "ip6 daddr fd66:66::/64 return" rules;
+      assert lib.hasInfix "tproxy ip to 127.0.0.1:18700 meta mark set 20 accept" rules;
+      assert lib.hasInfix "tproxy ip6 to [::1]:18700 meta mark set 20 accept" rules;
+      assert !lib.hasInfix "tproxy ip6 to [::1]:18701" rules;
+      assert lib.hasInfix ''iifname "awgi-roam" jump listener_1'' rules;
+      assert lib.hasInfix "th dport { 18700, 18701 } fib daddr type local drop" rules;
+      assert lib.hasInfix ''ip saddr 10.66.0.0/24 oifname != "awgi-home" masquerade'' rules;
+      assert !lib.hasInfix "10.67.0.0/24 oifname" rules;
+      true
+    )
+    (assert !lib.hasInfix "masquerade" (awgRules awgProxyFixture); true)
 
   ]
   ++ failing;

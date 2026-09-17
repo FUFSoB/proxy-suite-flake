@@ -104,6 +104,13 @@ in
               shortIds = [ "0123abcd" ];
             };
           };
+          # `proxy-ctl inbounds link home phone` prints a vpn:// link; add --config for the .conf.
+          home = {
+            type = "amneziawg";
+            port = 51820;
+            users = [ { name = "phone"; } { name = "laptop"; } ];
+            amneziaWg.mode = "lan";
+          };
         }
       '';
     };

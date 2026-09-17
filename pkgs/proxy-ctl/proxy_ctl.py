@@ -102,6 +102,8 @@ Secrets and changes need root, or the userControl group.
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--qr|--json]
                                          client share link, or the client's outbound JSON
+  inbounds link <tag> [user] --config [--qr]
+                                         an AmneziaWG client's .conf, or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
@@ -494,7 +496,12 @@ COMPLETE = {
     "inbounds stats": {"flags": {"--by": "user, inbound or outbound"}},
     "inbounds link": {
         "args": _inbound_link_choices,
-        "flags": {"--qr": "print a QR code", "--json": "the client's outbound JSON", "--server-json": "the server's inbound JSON"},
+        "flags": {
+            "--qr": "print a QR code",
+            "--json": "the client's outbound JSON",
+            "--config": "an AmneziaWG client's .conf",
+            "--server-json": "the server's inbound JSON",
+        },
     },
     "inbounds sub": {
         "args": lambda: _names(_s(x["user"]) for x in read_json(env("INBOUNDS_SUBS_FILE"))),
@@ -2536,11 +2543,16 @@ def _inbound_link_for(tag, user="", *_, field="link"):
         for x in matches:
             print(f"  {_s(x.get('user'))}", file=sys.stderr)
         sys.exit(1)
+    entry = matches[0]
     if field == "link":
-        return _s(matches[0].get("link"))
-    if matches[0].get(field) is None:
-        die(f"No client JSON for {tag}: proxy-suite cannot parse its link.")
-    return matches[0][field]
+        return _s(entry.get("link"))
+    if entry.get(field) is not None:
+        return entry[field]
+    if field == "config":
+        die(f"No client config for {tag}: only AmneziaWG listeners have one - use the link.")
+    if entry.get("type") == "amneziawg":
+        die(f"No client JSON for {tag}: AmneziaWG clients take a config - use --config.")
+    die(f"No client JSON for {tag}: proxy-suite cannot parse its link.")
 
 
 def _human_bytes(b):
@@ -2608,6 +2620,9 @@ def _inbound_stats(*args):
         print(total.format(name, _human_bytes(down), _human_bytes(up)))
 
 
+AWG_ONLINE_SECONDS = 180
+
+
 def _inbound_presence():
     """user -> (state, addresses): "online", "seen <time>" or "never seen"; dies when the stats API is silent."""
     status, out = _run(
@@ -2621,12 +2636,24 @@ def _inbound_presence():
         online = {_s(u.get("email")): u.get("ips") or [] for u in json.loads(out or "{}").get("users") or []}
     except (ValueError, AttributeError):
         die("Unexpected answer from the inbounds' stats API.")
-    # As the timer last wrote it: the API already told who is online now.
-    path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
-    seen = (read_json(path).get("seen") or {}) if readable(path) else {}
     # Users nobody has seen yet, when the links say who exists.
     path = env("INBOUNDS_LINKS_FILE")
-    known = {_s(x.get("user")) for x in read_json(path) if x.get("user")} if readable(path) else set()
+    links = read_json(path) if readable(path) else []
+    known = {_s(x.get("user")) for x in links if x.get("user")}
+    # AmneziaWG peers are only known by their last handshake, which the collector reads;
+    # the XRay API already told who else is online now.
+    if any(x.get("type") == "amneziawg" for x in links):
+        systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
+    path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
+    stats = read_json(path) if readable(path) else {}
+    seen = stats.get("seen") or {}
+    now = time.time()
+    for user, peer in (stats.get("awgPeers") or {}).items():
+        handshake = (peer or {}).get("handshake") or 0
+        endpoint = _s((peer or {}).get("endpoint") or "")
+        # A live peer handshakes every two minutes.
+        if handshake and now - handshake < AWG_ONLINE_SECONDS and endpoint:
+            online.setdefault(_s(user), []).append({"ip": endpoint.rsplit(":", 1)[0].strip("[]")})
 
     def when(ts):
         return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
@@ -2652,8 +2679,9 @@ def _inbound_online():
         print(row.format(user, state, addresses))
     sys.stdout.flush()
     print(
-        "A user counts as online while a connection is open. Behind a web server that needs the "
-        "listener's transport.trustedXForwardedFor, or everyone reads as never seen.",
+        "A user counts as online while a connection is open, or for AmneziaWG within three minutes "
+        "of a handshake. Behind a web server that needs the listener's transport.trustedXForwardedFor, "
+        "or everyone reads as never seen.",
         file=sys.stderr,
     )
 
@@ -2707,13 +2735,16 @@ def cmd_inbounds(verb="list", *args):
     elif verb in ("link", "qr"):
         rest = [a for a in args if not a.startswith("--")]
         if not rest:
-            usage("inbounds link <tag> [user] [--qr|--json|--server-json]")
+            usage("inbounds link <tag> [user] [--qr|--json|--config|--server-json]")
+        qr = verb == "qr" or "--qr" in args
         if "--server-json" in args:
             _inbound_server_json(rest[0])
         elif "--json" in args:
             print(_json_text(_inbound_link_for(*rest, field="outbound")))
+        elif "--config" in args:
+            _emit(_inbound_link_for(*rest, field="config").rstrip("\n"), qr)
         else:
-            _emit(_inbound_link_for(*rest), verb == "qr" or "--qr" in args)
+            _emit(_inbound_link_for(*rest), qr)
     elif verb == "stats":
         _inbound_stats(*args)
     elif verb == "online":

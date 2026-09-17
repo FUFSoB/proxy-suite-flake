@@ -13,6 +13,7 @@ import hashlib
 import json
 import urllib.parse
 
+from awg_inbound import client_entries
 from proxy_parsing import build_outbound
 
 UUID_TYPES = ("vless", "vmess")
@@ -314,13 +315,45 @@ def build_share_link(listener: dict, server_address: str, user_index: int = 0) -
     return f"{listener_type}://{secret}@{endpoint}?{query}#{fragment}"
 
 
+def render_amneziawg_inbound(listener: dict) -> dict:
+    """The XRay side of an AmneziaWG listener: a transparent inbound on loopback that the
+    interface's TCP and UDP is diverted to, so it leaves by the same rules as every other."""
+    awg = listener["amneziaWg"]
+    return {
+        "tag": listener["tag"],
+        "listen": awg["internalListen"],
+        "port": awg["internalPort"],
+        "protocol": "tunnel",
+        "settings": {"allowedNetwork": "tcp,udp", "followRedirect": True},
+        "streamSettings": {"sockopt": {"tproxy": "tproxy"}},
+        # routeOnly: the client already resolved, so XRay dials the address it asked for.
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": True,
+        },
+    }
+
+
 def build_listener(listener: dict, server_address: str, share_links: bool) -> dict:
     """Render one listener into its inbound object and, when possible, a link.
 
     Raw-JSON listeners are passed through untouched apart from the tag, and get
-    no share link: proxy-suite does not know what they serve.
+    no share link: proxy-suite does not know what they serve. An AmneziaWG listener
+    has no share links but client configs, each with a vpn:// link, under "configs".
     """
     tag = listener["tag"]
+
+    if listener.get("type") == "amneziawg":
+        port = _share_port(listener)
+        return {
+            "tag": tag,
+            "type": "amneziawg",
+            "port": port,
+            "inbound": render_amneziawg_inbound(listener),
+            "links": [],
+            "configs": client_entries(listener, server_address, port) if share_links else [],
+        }
 
     raw = listener.get("xrayJson")
     if listener.get("jsonFile") is not None:
@@ -394,6 +427,19 @@ def build_inbounds(spec: dict, server_address: str) -> dict:
             entry = by_user.setdefault(name, {"links": [], "secrets": []})
             entry["links"].append(link)
             entry["secrets"].append(_user_secret(user, listener["type"], rendered["tag"]))
+        # Not in subscriptions: the clients reading those do not speak vpn://.
+        for entry in rendered.get("configs", []):
+            links.append(
+                {
+                    "tag": rendered["tag"],
+                    "user": entry["user"],
+                    "type": rendered["type"],
+                    "port": rendered["port"],
+                    "link": entry["link"],
+                    "config": entry["config"],
+                    "outbound": None,
+                }
+            )
     subscriptions = [
         {
             "user": name,
