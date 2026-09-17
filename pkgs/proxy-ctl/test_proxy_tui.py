@@ -23,7 +23,10 @@ class TuiTest(unittest.TestCase):
             "zapret-hosts-user-exclude.txt": ["kept.example"],
         }
         self.capture, self.awg, self.current = "", [], mock.Mock(return_value="")
-        self.env = env = {"ZAPRET_AUTO_ENABLED": "1"}
+        # The host's own /var/lib/proxy-suite is not the test's.
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        self.env = env = {"ZAPRET_AUTO_ENABLED": "1", "STATE_DIR": state.name}
         for target, name, value in [
             (model, "unit_states", lambda units: {u: s for u, s in self.units.items() if u in units}),
             (model, "_capture", lambda argv: self.capture),
@@ -86,6 +89,37 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(sorted(["b2", "a1²", "a10"], key=tui._natural), ["a1²", "a10", "b2"])  # ² is text, not a number
         # Items never split across lines.
         self.assertEqual(tui.pack(["[b]aaa[/]", "bbb", "ccc"], 9), "[b]aaa[/]   bbb\nccc")
+
+    def test_tab_keys_leave_screen_keys_alone(self):
+        """A tab's action key hides the screen's key of the same name while that tab has focus."""
+        screen = {k for b in tui.MainScreen.BINDINGS for k in b.key.split(",")}
+        same_meaning = {("autoproxy", "w")}  # how is this domain routed: the row's own
+        for tab in tui.TABS:
+            for action in tab.actions:
+                if (tab.id, action.key) not in same_meaning:
+                    self.assertNotIn(action.key, screen, f"{tab.id}: {action.label}")
+
+    def test_failed_load_keeps_the_tui_going(self, rows=None):
+        async def run():
+            tui_trace = tempfile.TemporaryDirectory()
+            self.addCleanup(tui_trace.cleanup)
+            with mock.patch.dict(tui.os.environ, {"XDG_RUNTIME_DIR": tui_trace.name}):
+                with mock.patch.object(model, "load_tab", side_effect=RuntimeError("boom")):
+                    app = tui.ProxyTui()
+                    async with app.run_test(size=(100, 30)) as pilot:
+                        await self.settle(app, pilot)
+                        self.assertIn("✗ load failed: boom", str(app.main.query_one("#services-summary").content))
+                        with open(tui.trace_path()) as trace:
+                            self.assertIn("RuntimeError: boom", trace.read())
+                        # Reads work again: the next refresh fills the tab.
+                        model.load_tab.side_effect = None
+                        model.load_tab.return_value = ([{"key": "u", "unit": "u"}, {"key": "u", "unit": "u again"}], "")
+                        app.action_reload()
+                        await self.settle(app, pilot)
+                        self.assertEqual([k.value for k in app.table("services").rows], ["u", "u#2"])
+                        self.assertEqual(app.main.query_one("#services-summary").display, False)
+
+        asyncio.run(run())
 
     def test_ui(self):
         # Not IsolatedAsyncioTestCase: its asyncio debug mode makes Textual crawl.

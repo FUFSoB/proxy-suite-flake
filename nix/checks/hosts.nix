@@ -204,6 +204,9 @@ in
       assert lib.hasInfix "proxy-suitectl boot" nodCfg.build.activationAfter.proxySuite;
       assert lib.hasInfix "proxy-suitectl ensure" nodCfg.environment.etc.profile.text;
       assert forced nodCfg.build.activationAfter.proxySuite;
+      # Android bans apps from netlink's route groups, which stock sing-box subscribes to.
+      assert nodCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false;
+      assert !(hmCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false);
       true
     )
     (

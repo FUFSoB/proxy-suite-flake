@@ -111,6 +111,8 @@
           printf '%s\n' '  ls "$RUNTIME_OUTBOUNDS_DIR" > "$OUTBOUND_INVENTORY_FILE.spool"'
           printf '%s\n' '  jq --rawfile spool "$OUTBOUND_INVENTORY_FILE.spool" '"'"'($spool | split("\n") | map(select(endswith(".url") or endswith(".json")) | sub("\\.(url|json)$"; ""))) as $new | .tags = (.tags + $new | unique) | .sources = reduce $new[] as $t (.sources; .[$t] = "runtime")'"'"' "$OUTBOUND_INVENTORY_FILE" > "$OUTBOUND_INVENTORY_FILE.tmp"'
           printf '%s\n' '  mv "$OUTBOUND_INVENTORY_FILE.tmp" "$OUTBOUND_INVENTORY_FILE"'
+          printf '%s\n' '  jq --rawfile spool "$OUTBOUND_INVENTORY_FILE.spool" '"'"'.disabled = ($spool | split("\n") | map(select(endswith(".disabled")) | sub("\\.disabled$"; ""))) | .excluded = (.excluded + .disabled | unique)'"'"' "$OUTBOUND_INVENTORY_FILE" > "$OUTBOUND_INVENTORY_FILE.tmp"'
+          printf '%s\n' '  mv "$OUTBOUND_INVENTORY_FILE.tmp" "$OUTBOUND_INVENTORY_FILE"'
           printf '%s\n' 'fi'
           printf '%s\n' 'exit 0'
         } > stub/systemctl
@@ -212,6 +214,21 @@
         [ ! -e obd/bad-json.json ]
         run proxy outbounds rm from-json | grep -q 'Removed outbound: from-json'
         [ ! -e obd/from-json.json ]
+
+        # Without a tag one is made from the link; a tag after the link is a mix-up.
+        run proxy outbounds add 'vless://u@de.example.net:443#DE%201' > named
+        grep -q 'Tag: DE-1 (none given' named
+        grep -q 'Added outbound: DE-1' named
+        ! run proxy outbounds add http://example.com:1 x 2>/dev/null
+        run proxy outbounds rm DE-1 > /dev/null
+
+        # Disabling leaves a marker the start script reads; a pin refuses it until enabled.
+        run proxy outbounds disable own-vps | grep -q 'Disabled: own-vps'
+        [ -e obd/own-vps.disabled ]
+        run proxy outbounds | grep -q -- '-own-vps  *static, disabled$'
+        ! run proxy pin own-vps 2>/dev/null
+        run proxy outbounds enable own-vps | grep -q 'Enabled: own-vps'
+        [ ! -e obd/own-vps.disabled ]
 
         # Subscriptions use the same spool machinery, verified by cache file.
         printf '%s\n' '[{},{}]' > cache/extra.json
@@ -596,6 +613,41 @@
       touch "$out"
     '';
 
+  # `proxy-ctl proxy auto forget|clear`, as the runner applies them.
+  autoproxy-edit =
+    pkgs.runCommand "proxy-suite-autoproxy-edit-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
+      edit() { jq -c --arg op "$1" --arg d "$2" -f ${../../modules/proxy-suite/autoproxy-edit.jq} <<<"$3"; }
+      s='{
+        "domains": {"last.fm": {"exit": "a", "host": "www.last.fm"}, "pximg.net": {"exit": "b", "host": "i.pximg.net"}},
+        "hosts": {"www.last.fm": {"domain": "last.fm"}, "cdn.last.fm": {"domain": "last.fm"}, "i.pximg.net": {"domain": "pximg.net"}},
+        "backlog": {"api.last.fm": {"domain": "last.fm", "hits": 3}, "x.test": {"domain": "x.test", "hits": 1}},
+        "slowWant": {"last.fm": 1}, "slowSkip": {"pximg.net": 1},
+        "exits": {
+          "a": {"asn": "AS1", "strikes": {"last.fm": {"why": "refused", "at": 1}, "sekai.test": {"why": "slow", "at": 2}}, "bad": true,
+                "badBy": ["last.fm refused", "sekai.test slow"]},
+          "b": {"asn": "AS2"}
+        },
+        "egress": "203.0.113.1", "lastRun": 5
+      }'
+
+      # Forget: every trace of the one domain, and a strike it made no longer counts.
+      f="$(edit forget last.fm "$s")"
+      jq -e '(.domains | keys) == ["pximg.net"]' <<<"$f" > /dev/null
+      jq -e '(.hosts | keys) == ["i.pximg.net"] and (.backlog | keys) == ["x.test"]' <<<"$f" > /dev/null
+      jq -e '.slowWant == {} and .slowSkip == {"pximg.net": 1}' <<<"$f" > /dev/null
+      jq -e '.exits.a | .asn == "AS1" and (.bad | not) and .badBy == ["sekai.test slow"]' <<<"$f" > /dev/null
+      jq -e '.exits.b == {"asn": "AS2"}' <<<"$f" > /dev/null
+      # A domain it never knew changes nothing.
+      jq -e --argjson s "$s" '. == $s' <<<"$(edit forget nope.test "$s")" > /dev/null
+
+      # Clear: every route and verdict; the exits, backlog and egress stay.
+      c="$(edit clear "" "$s")"
+      jq -e '.domains == {} and .hosts == {} and (has("slowWant") | not) and (has("slowSkip") | not)' <<<"$c" > /dev/null
+      jq -e '.exits.a | .asn == "AS1" and .strikes == {} and (.bad | not) and .badBy == []' <<<"$c" > /dev/null
+      jq -e '(.backlog | keys) == ["api.last.fm", "x.test"] and .egress == "203.0.113.1" and .lastRun == 5' <<<"$c" > /dev/null
+      touch "$out"
+    '';
+
   # A probe that exits 0 printing nothing: jq reads "" as no input at all, so the
   # "error" guard downstream saw "" instead of "error" and let it through to
   # `--argjson r ""`, which failed every autoProxy run until the state changed.
@@ -715,6 +767,67 @@
 
         touch "$out"
       '';
+
+  # `proxy-ctl proxy outbounds disable` markers, as the start script reads them.
+  outbound-disabled =
+    let
+      inherit
+        (import ../../modules/proxy-suite/service/script-blocks/outbounds.nix {
+          lib = pkgs.lib;
+          inherit pkgs;
+          jq = "${pkgs.jq}/bin/jq";
+          proxyCfg.selectionExclude = [ "ex" ];
+          selectionMode = "urltest";
+          hybridEnabled = false;
+          # Relative: the build directory.
+          pinnedOutboundFile = "pinned";
+          runtimeOutboundsDir = "obd";
+          singBoxCfg = null;
+          sshProxyCfg = null;
+          warpCfg = null;
+          awgOutbounds = null;
+          constants = null;
+          pureXrayEnabled = null;
+          collapseNamedOutbounds = null;
+          backend = null;
+          backendArg = null;
+          xraySidecarRoutingMark = null;
+          python3 = null;
+          parserScriptsPythonPath = null;
+          buildOutboundPy = null;
+          mkSubscriptionBlock = null;
+          mkSubscriptionLoadHelperBlock = null;
+          runtimeSubscriptionsBlock = null;
+        })
+        selectionBlocks
+        ;
+      selection = pkgs.writeShellScript "outbound-selection" ''
+        set -euo pipefail
+        ${selectionBlocks}
+      '';
+    in
+    pkgs.runCommand "proxy-suite-outbound-disabled-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
+      mkdir obd
+      export RUNTIME_DIR="$PWD" OUTBOUND_SOURCES_JSON='{}'
+      export OUTBOUNDS_JSON='[{"tag":"a"},{"tag":"b"},{"tag":"ex"}]'
+
+      # A marker takes its outbound out of selection and drops a pin on it; stale markers do nothing.
+      touch obd/a.disabled obd/gone.disabled
+      echo a > pinned
+      ${selection} 2> err
+      grep -q "pinned outbound 'a' is disabled" err
+      jq -e '.pinned == "" and .disabled == ["a"] and .excluded == ["a", "ex"]' outbounds.json > /dev/null
+
+      # With nothing left to select and no pin the start fails, saying how out.
+      touch obd/b.disabled
+      ! ${selection} 2> err
+      grep -q "outbounds enable" err
+      # A pin on one still enabled carries it.
+      echo ex > pinned
+      ${selection}
+      jq -e '.pinned == "ex" and .disabled == ["a", "b"]' outbounds.json > /dev/null
+      touch "$out"
+    '';
 
   proxy-ctl-amneziawg =
     pkgs.runCommand "proxy-suite-proxy-ctl-amneziawg-check"

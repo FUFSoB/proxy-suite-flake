@@ -205,12 +205,14 @@ let
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
 
         # direct is always exit 0; state is keyed by tag, so shifting indices are
-        # harmless.
+        # harmless. Disabled outbounds are no exit: the prober drops what was learned
+        # through them.
         PROBE_EXITS_JSON=$(${jq} -c \
           --argjson max ${toString proxyCfg.autoProxy.maxExits} \
           --argjson base ${toString proxyCfg.autoProxy.probeBasePort} \
+          --argjson disabled "''${DISABLED_TAGS_JSON:-[]}" \
           --arg dir "$AUTOPROXY_DIR" '
-          (["direct"] + map(select(. != "direct")))[0:$max]
+          (["direct"] + map(select(. != "direct" and (. as $t | $disabled | index([$t]) | not))))[0:$max]
           | to_entries
           | map({i: .key, tag: .value, port: ($base + .key),
                  rule_set: ("autoproxy-" + (.key | tostring)),

@@ -5,6 +5,7 @@
   config,
   lib,
   pkgs,
+  proxySuiteUpstream,
   ...
 }:
 
@@ -84,6 +85,10 @@ in
         firewallPackage = null;
         resolvconfPackage = null;
       };
+      # An app may not join netlink's route groups: without this sing-box fails to start.
+      services.proxy-suite.proxy.singBox.package = lib.mkDefault (
+        import ../../../pkgs/sing-box-rootless-netlink.nix { inherit (proxySuiteUpstream) sing-box; }
+      );
     }
 
     (lib.mkIf cfg.enable {

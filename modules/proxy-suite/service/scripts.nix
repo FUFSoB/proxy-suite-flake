@@ -154,7 +154,6 @@ let
       proxyInboundsGuardPrivate
       ;
     userDnsRules = proxyCfg.dns.singBox.rules;
-    inherit (proxyCfg) selectionExclude;
   };
   backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 
@@ -234,6 +233,7 @@ let
       routeModeStateFile
       pinnedOutboundFile
       outboundInventoryFile
+      runtimeOutboundsDir
       subscriptionCacheDir
       subscriptionCacheHelpersBlock
       mkSubscriptionFetchBlock

@@ -4,7 +4,6 @@
   selectionMode,
   proxyInboundsGuardPrivate,
   userDnsRules ? [ ],
-  selectionExclude ? [ ],
 }:
 
 if pureXrayEnabled then
@@ -72,14 +71,15 @@ if pureXrayEnabled then
       | if $route_enabled then
           .routing.rules = (xray_preserved_rules + $route_rules + [xray_final_rule($route_final; $xray_single_proxy_tag)])
         else . end
-      ${lib.optionalString (selectionExclude != [ ]) ''
-        # The balancer's prefix would take in proxy.selectionExclude too: name the rest instead.
-        # ponytail: selectors are prefixes still, so "de" also takes in an excluded "de-hop";
-        # rename one of them if that matters.
-        | ($xray_selectable | map("proxy-suite-ob-" + .)) as $candidates
-        | if .routing.balancers then .routing.balancers |= map(.selector = $candidates) else . end
-        | if .observatory then .observatory.subjectSelector = $candidates else . end
-      ''}
+      # The balancer's prefix would take in proxy.selectionExclude and disabled outbounds
+      # too: name the rest instead. Disabling is a runtime decision, so always.
+      # ponytail: selectors are prefixes still, so "de" also takes in an excluded "de-hop";
+      # rename one of them if that matters.
+      | if $ARGS.named.xray_selectable == null then . else
+          ($ARGS.named.xray_selectable | map("proxy-suite-ob-" + .)) as $candidates
+          | if .routing.balancers then .routing.balancers |= map(.selector = $candidates) else . end
+          | if .observatory then .observatory.subjectSelector = $candidates else . end
+        end
       | if $xray_single_proxy_tag == "" then
           .
         else

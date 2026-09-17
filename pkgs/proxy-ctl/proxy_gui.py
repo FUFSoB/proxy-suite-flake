@@ -44,6 +44,8 @@ CELL_CLASSES = {
     "runtime": ["accent"],
     "pinned": ["accent"],
     "excluded": ["dim-label"],
+    "✕": ["dim-label"],
+    "disabled": ["dim-label"],
     "queued": ["warning"],
 }
 TAB_ICONS = {
@@ -251,7 +253,7 @@ def cell_text(name, value):
     return value, CELL_CLASSES.get(value, [])
 
 
-BADGE_VALUES = {"ok", "bad", "runtime", "pinned", "excluded", "queued"}
+BADGE_VALUES = {"ok", "bad", "runtime", "pinned", "excluded", "disabled", "queued"}
 
 
 def is_badge(name, value):

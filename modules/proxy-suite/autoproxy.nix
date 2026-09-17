@@ -78,7 +78,7 @@ let
     set -euo pipefail
     export PATH=${bin}
 
-    # --requests-only: just the `proxy-ctl proxy auto learn` requests.
+    # --requests-only: just the `proxy-ctl proxy auto learn|forget|clear` requests.
     mode=''${1:-full}
 
     # Overridable to rehearse a run against a scratch copy; the units never set them.
@@ -87,13 +87,10 @@ let
     index=$PROBE_EXITS_FILE
     state="$state_dir/state.json"
     requests="$state_dir/requests"
+    edits="$state_dir/edits"
     now=$(date +%s)
     ttl=$(( ${toString apCfg.ttlDays} * 86400 ))
 
-    if [ ! -r "$index" ]; then
-      echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
-      exit 0
-    fi
     install -d -m ${stateDirMode} "$state_dir"
 
     # Timer runs and learn requests take turns on the state.
@@ -102,12 +99,14 @@ let
 
     # Leftovers of a run that died partway; taken requests go back in line.
     rm -f "$state_dir/verdicts.json" "$state_dir/proxied-domains.txt" "$state".?????? "$state_dir/samples.taking"
-    if [ -e "$requests.taking" ]; then
-      cat "$requests.taking" >> "$requests"
-      rm -f "$requests.taking"
-      # Made here by root: the group appends to it too.
-      chmod 0660 "$requests"
-    fi
+    for queue in "$requests" "$edits"; do
+      if [ -e "$queue.taking" ]; then
+        cat "$queue.taking" >> "$queue"
+        rm -f "$queue.taking"
+        # Made here by root: the group appends to it too.
+        chmod 0660 "$queue"
+      fi
+    done
 
     if [ -e "$state" ] && ! jq -e 'type == "object"' "$state" > /dev/null 2>&1; then
       echo "$state is unreadable; set aside as $state.broken, starting fresh" >&2
@@ -128,6 +127,49 @@ let
       chmod 0640 "$tmp"
       mv -f "$tmp" "$state"
     }
+
+    # --- 0. forget what `proxy-ctl proxy auto forget|relearn|clear` asked to ---
+    # Before anything else, and even with the proxy stopped: its start renders the
+    # rule-sets from the state again.
+    edited=""
+    if [ -s "$edits" ]; then
+      mv -f "$edits" "$edits.taking"
+      while read -r op dom; do
+        case "$op" in
+          forget)
+            [[ "$dom" =~ ^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$ ]] || continue
+            update --arg op forget --arg d "$dom" -f ${jqFile ./autoproxy-edit.jq}
+            echo "forgot $dom"
+            ;;
+          clear)
+            update --arg op clear --arg d "" -f ${jqFile ./autoproxy-edit.jq}
+            echo "forgot everything learned"
+            ;;
+          *) continue ;;
+        esac
+        edited=1
+      done < "$edits.taking"
+      rm -f "$edits.taking"
+    fi
+
+    if [ ! -r "$index" ]; then
+      echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
+      exit 0
+    fi
+
+    # Routes through an outbound disabled since (`proxy-ctl proxy outbounds disable`)
+    # are forgotten like the above, so their domains get probed again without it.
+    inventory="$(dirname "$index")/outbounds.json"
+    if [ -r "$inventory" ]; then
+      while IFS=$'\t' read -r dom exit; do
+        echo "forgot $dom: its exit $exit is disabled"
+        update --arg op forget --arg d "$dom" -f ${jqFile ./autoproxy-edit.jq}
+        edited=1
+      done < <(jq -r --slurpfile inv "$inventory" '($inv[0].disabled // []) as $off
+        | (.domains // {}) | to_entries[] | select(.value.exit as $e | $off | index([$e]))
+        | "\(.key)\t\(.value.exit)"' "$state")
+    fi
+    [ -z "$edited" ] || ${render} "$index" "$state"
 
     # $1 JSON array of exit tags, $2 registrable domain, $3 wall:<page>|refused|slow.
     strike() {

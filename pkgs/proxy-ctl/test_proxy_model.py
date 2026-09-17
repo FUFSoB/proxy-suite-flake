@@ -84,10 +84,10 @@ class ModelTest(unittest.TestCase):
         actions = {a.key: a for a in tab.actions}
         awg = {"key": "awg/u", "tag": "awg", "user": "u", "type": "amneziawg", "port": "51820"}
         vless = {"key": "in/u", "tag": "in", "user": "u", "type": "vless", "port": "443"}
-        self.assertEqual(actions["w"].argv(awg), ["inbounds", "link", "awg", "u", "--config"])
-        self.assertEqual(actions["W"].argv(awg), ["inbounds", "link", "awg", "u", "--config", "--qr"])
-        self.assertTrue(actions["w"].when(awg) and actions["W"].when(awg) and actions["J"].when(vless))
-        self.assertFalse(actions["w"].when(vless) or actions["W"].when(vless) or actions["J"].when(awg))
+        self.assertEqual(actions["k"].argv(awg), ["inbounds", "link", "awg", "u", "--config"])
+        self.assertEqual(actions["K"].argv(awg), ["inbounds", "link", "awg", "u", "--config", "--qr"])
+        self.assertTrue(actions["k"].when(awg) and actions["K"].when(awg) and actions["J"].when(vless))
+        self.assertFalse(actions["k"].when(vless) or actions["K"].when(vless) or actions["J"].when(awg))
 
     def test_inbound_rows_carry_no_presence(self):
         """XRay keys the online map by user, not by inbound, so a per-listener row
@@ -152,7 +152,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual([(r["tag"], r["mark"], r["notes"]) for r in rows], [("a", "▸", "via b"), ("b", "★", "never picked")])
         self.assertIn("Pinned: b", summary)
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
-            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "l", "c", "Q", "J", "F", "X"])
+            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "x", "l", "c", "Q", "J", "F", "X"])
         chain = next(a for a in tab.actions if a.key == "h")
         self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
         # Probe exits go by the backend's tag.
@@ -167,6 +167,47 @@ class ModelTest(unittest.TestCase):
         with mock.patch.object(ctl, "_outbound_current", lambda: ""), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []), mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
             rows, _ = model.load_tab(tab, {})
         self.assertEqual([(r["source"], r["runtime"]) for r in rows], [("runtime", True), ("-", False)])
+
+    def test_disabled_outbound(self):
+        """Disabled: marked, never offered a pin, and enabled again rather than disabled twice."""
+        tab = next(t for t in model.TABS if t.id == "outbounds")
+        inventory = {"tags": ["a", "b"], "pinned": "", "excluded": ["b"], "disabled": ["b"]}
+        with mock.patch.object(ctl, "_outbound_current", lambda: "a"), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []), mock.patch.object(ctl, "_outbound_inventory", lambda: inventory), mock.patch.object(ctl, "env", lambda name, default="": ""):
+            rows, _ = model.load_tab(tab, {})
+            self.assertEqual([(r["mark"], r["notes"], r["disabled"]) for r in rows], [("▸", "", False), ("✕", "disabled", True)])
+            keys = [a.key for a in model.applicable(tab, rows[1])]
+            self.assertIn("e", keys)
+            self.assertNotIn("p", keys)
+            self.assertNotIn("x", keys)
+            self.assertEqual(next(a for a in tab.actions if a.key == "x").argv(rows[0], "", {}), ["proxy", "outbounds", "disable", "a"])
+        with mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
+            self.assertEqual(model.tray_outbounds({"proxy": {"active": True}}), (["a"], ""))
+
+    def test_add_prompt_takes_an_optional_tag(self):
+        subs = next(t for t in model.TABS if t.id == "subs")
+        add = next(a for a in subs.actions if a.key == "n")
+        self.assertIn("[tag]", add.prompt)
+        self.assertEqual(add.argv(None, "https://x.test/s", {}), ["proxy", "subs", "add", "https://x.test/s"])
+        self.assertEqual(add.argv(None, " work  https://x.test/s ", {}), ["proxy", "subs", "add", "work", "https://x.test/s"])
+        outbounds = next(t for t in model.TABS if t.id == "outbounds")
+        add = next(a for a in outbounds.actions if a.key == "n")
+        # JSON has spaces in it: all one argument.
+        self.assertEqual(add.argv(None, '{"type": "socks"}', {}), ["proxy", "outbounds", "add", '{"type": "socks"}'])
+
+    def test_autoproxy_forget_relearn_clear(self):
+        tab = next(t for t in model.TABS if t.id == "autoproxy")
+        state = {"domains": {"last.fm": {"exit": "de", "host": "www.last.fm"}}, "backlog": {"a.test": {"domain": "a.test", "hits": 2}}}
+        with mock.patch.object(ctl, "_autoproxy_unreadable", lambda path: ""), mock.patch.object(ctl, "_autoproxy_state", lambda path: state):
+            routed, queued = model.autoproxy_rows({})
+        self.assertEqual(routed["detail"], "via de, learned from www.last.fm")
+        actions = {a.key: a for a in tab.actions}
+        for key in ("f", "R"):
+            self.assertIn(actions[key], model.applicable(tab, routed))
+            self.assertNotIn(actions[key], model.applicable(tab, queued))
+        self.assertEqual(actions["f"].argv(routed, "", {}), ["proxy", "auto", "forget", "last.fm"])
+        self.assertEqual(actions["R"].argv(routed, "", {}), ["proxy", "auto", "relearn", "last.fm"])
+        self.assertEqual(actions["C"].argv(None, "", {}), ["proxy", "auto", "clear"])
+        self.assertTrue(actions["f"].confirm and actions["C"].confirm)
 
     def test_load_tab_as_root(self):
         """The GUI's root read: proxy-ctl status --tab through pkexec, and what a refusal says."""

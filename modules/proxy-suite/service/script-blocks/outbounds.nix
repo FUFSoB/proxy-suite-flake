@@ -496,6 +496,20 @@ let
   # entry that went away, say - is dropped rather than left to break the config.
   pinBlock = ''
     OUTBOUND_TAGS_JSON=$(${jq} -c '[.[].tag]' <<< "$OUTBOUNDS_JSON")
+
+    # `proxy-ctl proxy outbounds disable` leaves <tag>.disabled next to the runtime entries:
+    # the outbound stays, so rules and chains naming it still work, but nothing picks it on
+    # its own - selection, autoProxy and a pin. Markers for tags that are gone are ignored.
+    DISABLED_TAGS_JSON='[]'
+    if [ -d "${runtimeOutboundsDir}" ]; then
+      for DISABLED_MARKER in "${runtimeOutboundsDir}"/*.disabled; do
+        [ -e "$DISABLED_MARKER" ] || continue
+        DISABLED_TAG="''${DISABLED_MARKER##*/}"
+        DISABLED_TAGS_JSON=$(${jq} -c --arg t "''${DISABLED_TAG%.disabled}" '. + [$t]' <<< "$DISABLED_TAGS_JSON")
+      done
+    fi
+    DISABLED_TAGS_JSON=$(${jq} -c --argjson tags "$OUTBOUND_TAGS_JSON" 'map(select(. as $t | $tags | index([$t]))) | unique' <<< "$DISABLED_TAGS_JSON")
+
     PINNED_OUTBOUND=""
     if [ -r "${pinnedOutboundFile}" ]; then
       PINNED_OUTBOUND="$(tr -d '\r\n[:space:]' < "${pinnedOutboundFile}" 2>/dev/null || true)"
@@ -505,21 +519,27 @@ let
       echo "proxy-suite: warning: pinned outbound '$PINNED_OUTBOUND' is not available; picking automatically" >&2
       PINNED_OUTBOUND=""
     fi
+    if [ -n "$PINNED_OUTBOUND" ] \
+      && ${jq} -e --arg t "$PINNED_OUTBOUND" 'index($t) != null' <<< "$DISABLED_TAGS_JSON" >/dev/null; then
+      echo "proxy-suite: warning: pinned outbound '$PINNED_OUTBOUND' is disabled; picking automatically" >&2
+      PINNED_OUTBOUND=""
+    fi
   '';
 
-  # What selection may pick on its own: all but proxy.selectionExclude. A pin and a
-  # selector switched by hand still reach the excluded ones.
+  # What selection may pick on its own: all but proxy.selectionExclude and disabled
+  # outbounds. A pin still reaches the excluded ones, and a selector switched by hand both.
   selectableBlock = ''
     SELECTABLE_TAGS_JSON=$(${jq} -c --argjson ex ${lib.escapeShellArg (builtins.toJSON proxyCfg.selectionExclude)} \
-      'map(select(. as $t | $ex | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
+      --argjson disabled "$DISABLED_TAGS_JSON" \
+      'map(select(. as $t | ($ex + $disabled) | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
     if [ -z "$PINNED_OUTBOUND" ] && [ "$(${jq} 'length' <<< "$SELECTABLE_TAGS_JSON")" -eq 0 ]; then
-      echo "proxy-suite: every outbound is in proxy.selectionExclude, so there is nothing to select; pin one, or exclude fewer" >&2
+      echo "proxy-suite: every outbound is in proxy.selectionExclude or disabled, so there is nothing to select; pin one, enable one (proxy-ctl proxy outbounds enable), or exclude fewer" >&2
       exit 1
     fi
   '';
 
   # proxy-ctl reads this unprivileged: tags, where each came from, the pin, what each one
-  # chains through, and what selection leaves alone.
+  # chains through, what selection leaves alone, and what was disabled.
   inventoryBlock = ''
     ${jq} -n \
       --argjson tags "$OUTBOUND_TAGS_JSON" \
@@ -529,10 +549,11 @@ let
       --argjson obs "$OUTBOUNDS_JSON" \
       --argjson xobs "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}" \
       --argjson selectable "$SELECTABLE_TAGS_JSON" \
+      --argjson disabled "$DISABLED_TAGS_JSON" \
       '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
         detours: ([($xobs + $obs)[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
           | select($h != null) | {key: .tag, value: $h}] | from_entries),
-        excluded: ($tags - $selectable)}' \
+        excluded: ($tags - $selectable), disabled: $disabled}' \
       > "$RUNTIME_DIR/outbounds.json"
     chmod 644 "$RUNTIME_DIR/outbounds.json"
   '';
@@ -640,4 +661,6 @@ let
 in
 {
   inherit mkOutboundScript rawOutboundJson;
+  # For the checks: which outbounds a pin and selection may take.
+  selectionBlocks = pinBlock + selectableBlock + inventoryBlock;
 }

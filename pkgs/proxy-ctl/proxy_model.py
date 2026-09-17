@@ -180,6 +180,7 @@ def outbound_rows(_):
     sources = inventory.get("sources") or {}
     detours = inventory.get("detours") or {}
     excluded = set(inventory.get("excluded") or [])
+    disabled = set(ctl._outbound_disabled())
     current = ctl._outbound_current()
     reputation = ctl._reputation_by_tag()
     # outbounds.d is root-only; the inventory says "runtime" for what the backend loaded from it.
@@ -187,13 +188,17 @@ def outbound_rows(_):
     return [
         {
             "key": t,
-            "mark": "★" if t == pinned else "▸" if t == current else "",
+            "mark": "★" if t == pinned else "▸" if t == current else "✕" if t in disabled else "",
             "tag": t,
             "reputation": reputation.get(t, "-"),
             "source": "runtime" if t in runtime else ctl._s(sources.get(t) or "-"),
             # As `proxy-ctl proxy outbounds` prints them.
-            "notes": ", ".join(([f"via {ctl._s(detours[t])}"] if t in detours else []) + (["never picked"] if t in excluded else [])),
+            "notes": ", ".join(
+                ([f"via {ctl._s(detours[t])}"] if t in detours else [])
+                + (["disabled"] if t in disabled else ["never picked"] if t in excluded else [])
+            ),
             "runtime": t in runtime,
+            "disabled": t in disabled,
         }
         for t in ctl._outbound_tags()
     ]
@@ -243,12 +248,18 @@ def autoproxy_rows(_):
     state = ctl._autoproxy_state(path)
     domains = state.get("domains") or {}
     rows = [
-        {"key": d, "domain": d, "kind": "routed", "detail": f"via {ctl._s((v or {}).get('exit'))}"}
+        {
+            "key": d,
+            "domain": d,
+            "kind": "routed",
+            "detail": f"via {ctl._s((v or {}).get('exit'))}, learned from {ctl._s((v or {}).get('host') or d)}",
+            "host": ctl._s((v or {}).get("host") or d),
+        }
         for d, v in sorted(domains.items())
     ]
     backlog = sorted((state.get("backlog") or {}).items(), key=lambda kv: -((kv[1] or {}).get("hits") or 0))
     rows += [
-        {"key": h, "domain": h, "kind": "queued", "detail": f"{ctl._s((v or {}).get('hits'))} hits"}
+        {"key": h, "domain": h, "kind": "queued", "detail": f"{ctl._s((v or {}).get('hits'))} hits", "host": h}
         for h, v in backlog
         if h not in domains
     ]
@@ -373,6 +384,12 @@ def _sub_url(row):
     return bool(row["user"]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
 
 
+def _add_args(text):
+    """[tag] <url>, or JSON with spaces in it, as `proxy-ctl ... add` takes them."""
+    text = text.strip()
+    return [text] if text.startswith("{") else text.split(None, 1)
+
+
 def _zapret_toggle(row, _, states):
     return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
 
@@ -420,7 +437,7 @@ TABS = [
         outbound_rows,
         summary=outbound_summary,
         actions=[
-            Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★"),
+            Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★" and not r["disabled"]),
             Action("u", "unpin: let the selection pick", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
             Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
             Action("D", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=ROW, mode="dialog"),
@@ -433,15 +450,28 @@ TABS = [
                 mode="dialog",
             ),
             Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
-            Action("n", "add a runtime outbound…", lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1)], prompt="<tag> <url or JSON>"),
+            Action(
+                "n",
+                "add a runtime outbound (tag optional)…",
+                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t)],
+                prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
+            ),
             Action(
                 "h",
-                "add an outbound chained through this one…",
-                lambda r, t, _: ["proxy", "outbounds", "add", *t.split(None, 1), "--detour", r["tag"]],
+                "add an outbound chained through this one (tag optional)…",
+                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--detour", r["tag"]],
                 when=ROW,
-                prompt="<tag> <url or JSON>",
+                prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
+            Action(
+                "x",
+                "disable it (never picked, pinned or probed)",
+                lambda r, *_: ["proxy", "outbounds", "disable", r["tag"]],
+                when=lambda r: not r["disabled"],
+                confirm=True,
+            ),
+            Action("e", "enable it again", lambda r, *_: ["proxy", "outbounds", "enable", r["tag"]], when=lambda r: r["disabled"]),
             # Credentials: proxy-ctl refuses these without root or the group, and the dialog says so.
             Action("l", "its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
             Action("c", "copy its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
@@ -461,7 +491,12 @@ TABS = [
         actions=[
             Action("u", "refetch all", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
             Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
-            Action("n", "add a runtime subscription…", lambda r, t, _: ["proxy", "subs", "add", *t.split(None, 1)], prompt="<tag> <url>"),
+            Action(
+                "n",
+                "add a runtime subscription (tag optional)…",
+                lambda r, t, _: ["proxy", "subs", "add", *_add_args(t)],
+                prompt="[tag] <url> - e.g. work https://… or just https://…",
+            ),
             Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
             Action("k", "its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
             Action("y", "copy its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="copy"),
@@ -481,6 +516,9 @@ TABS = [
             Action("p", "probe it through every exit", lambda r, *_: ["proxy", "auto", "probe", r["domain"], "--keep-going"], when=ROW, mode="dialog"),
             Action("P", "probe a domain…", lambda r, t, _: ["proxy", "auto", "probe", t], prompt="<domain>[/path]", mode="dialog"),
             Action("E", "learn a domain…", lambda r, t, _: ["proxy", "auto", "learn", t], prompt="<domain>", mode="dialog"),
+            Action("f", "forget it (direct until learned again)", lambda r, *_: ["proxy", "auto", "forget", r["domain"]], when=_kind("routed"), confirm=True),
+            Action("R", "relearn it from the host it was learned from", lambda r, *_: ["proxy", "auto", "relearn", r["domain"]], when=_kind("routed"), mode="dialog"),
+            Action("C", "forget everything learned", lambda r, *_: ["proxy", "auto", "clear"], confirm=True),
             Action("i", "routed, judged and bad exits", lambda r, *_: ["proxy", "auto", "list"], mode="dialog"),
         ],
     ),
@@ -518,13 +556,14 @@ TABS = [
             Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
             Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
             Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=lambda r: not _amneziawg(r), mode="dialog"),
-            Action("w", "client config", lambda r, *_: _link(r, "--config"), when=_amneziawg, mode="dialog"),
-            Action("W", "client config as QR", lambda r, *_: _link(r, "--config", "--qr"), when=_amneziawg, mode="dialog"),
+            # Not w/W or o: those are the screen's where and last output.
+            Action("k", "client config", lambda r, *_: _link(r, "--config"), when=_amneziawg, mode="dialog"),
+            Action("K", "client config as QR", lambda r, *_: _link(r, "--config", "--qr"), when=_amneziawg, mode="dialog"),
             Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
             Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
             Action("I", "traffic per inbound", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),
             Action("O", "traffic per exit", lambda r, *_: ["inbounds", "stats", "--by", "outbound"], mode="dialog"),
-            Action("o", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
+            Action("n", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
         ],
     ),
     Tab(
@@ -555,13 +594,27 @@ def load_tab(tab, states):
     """(rows, summary) for a tab: a failed read empties the rows and says why in the summary."""
     summary = (_safe(tab.summary, fallback="") or "") if tab.summary else ""
     try:
-        rows = tab.rows(states)
+        rows = unique_keys(tab.rows(states))
     except (Exception, SystemExit) as e:
         return [], f"✗ {str(e) or type(e).__name__}" + (f"\n{summary}" if summary else "")
     if not rows:
         hints = "   ".join(f"{a.key}: {short(a.label)}" for a in tab.actions if a.prompt)
         summary = "Nothing here yet." + (f"   {hints}" if hints else "") + (f"\n{summary}" if summary else "")
     return rows, summary
+
+
+def unique_keys(rows):
+    """Rows keyed apart: a table refuses a repeated key, and one refusal would stop the tab updating."""
+    seen, out = set(), []
+    for r in rows:
+        key = base = str(r.get("key"))
+        n = 1
+        while key in seen:
+            n += 1
+            key = f"{base}#{n}"
+        seen.add(key)
+        out.append(r if key == r.get("key") else {**r, "key": key})
+    return out
 
 
 def short(label):
@@ -722,7 +775,8 @@ def tray_outbounds(snap):
     if not snap or not snap["proxy"]["active"]:
         return None
     inventory = _safe(ctl._outbound_inventory, fallback={}) or {}
-    return [ctl._s(t) for t in inventory.get("tags") or []], ctl._s(inventory.get("pinned") or "")
+    disabled = {ctl._s(t) for t in inventory.get("disabled") or []}
+    return [ctl._s(t) for t in inventory.get("tags") or [] if ctl._s(t) not in disabled], ctl._s(inventory.get("pinned") or "")
 
 
 def icon_name(overall):

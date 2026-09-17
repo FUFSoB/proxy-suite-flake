@@ -7,6 +7,7 @@
   routeModeStateFile,
   pinnedOutboundFile,
   outboundInventoryFile,
+  runtimeOutboundsDir,
   subscriptionCacheDir,
   subscriptionCacheHelpersBlock,
   mkSubscriptionFetchBlock,
@@ -95,6 +96,16 @@ let
         echo "proxy-suite: unknown outbound '$tag'" >&2
         exit 1
       fi
+      # Disabled means nothing picks it on its own, a pin included.
+      case "$tag" in
+        */* | . | ..) ;;
+        *)
+          if [ -e "${runtimeOutboundsDir}/$tag.disabled" ]; then
+            echo "proxy-suite: outbound '$tag' is disabled; enable it first: proxy-ctl proxy outbounds enable $tag" >&2
+            exit 1
+          fi
+          ;;
+      esac
       mkdir -p "$(dirname "${pinnedOutboundFile}")"
       printf '%s\n' "$tag" > "${pinnedOutboundFile}"
       # Live switch when the running config exposes a selector; the persisted pin
@@ -146,6 +157,21 @@ let
         *) rm -f "$CACHE" "''${CACHE%.json}.links" ;;
       esac
     done
+
+    # A pin on a disabled outbound goes with it, so enabling the outbound later does not
+    # bring the pin back. Here rather than through the unpin unit: disabling is the
+    # outbounds scope's, pinning the routing scope's.
+    if [ -r "${pinnedOutboundFile}" ]; then
+      PINNED="$(tr -d '\r\n[:space:]' < "${pinnedOutboundFile}" 2>/dev/null || true)"
+      case "$PINNED" in
+        "" | */* | . | ..) ;;
+        *)
+          if [ -e "${runtimeOutboundsDir}/$PINNED.disabled" ]; then
+            rm -f "${pinnedOutboundFile}"
+          fi
+          ;;
+      esac
+    fi
 
     ${restartActiveConfigConsumersBlock}
   '';

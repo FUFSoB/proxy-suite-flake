@@ -51,9 +51,9 @@ What userControl\.group may do; empty allows every scope\.
  - “services”: turn the proxy-suite units on and off (proxy, tun, tproxy, zapret, ssh, warp, tg, awg, inbounds), and ` restart `\.
  - “perApp”: the per-app backend units used by ` proxy-ctl apps run `\.
  - “routing”: ` proxy pin `, ` proxy unpin ` and ` proxy mode `\.
- - “outbounds”: add and remove runtime outbounds and subscriptions, and update subscriptions\.
+ - “outbounds”: add and remove runtime outbounds and subscriptions, disable and enable outbounds, and update subscriptions\.
  - “secrets”: read share links, subscription URLs and the running configs\.
- - “autoProxy”: read what autoProxy learned, and ` proxy auto learn `\.
+ - “autoProxy”: read what autoProxy learned, and ` proxy auto learn|forget|relearn|clear `\.
  - “zapret”: edit zapret2’s learned hosts, and ` zapret cutoff probe `\.
  - “stats”: ` inbounds stats `\.
 

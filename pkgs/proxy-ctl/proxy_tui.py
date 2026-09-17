@@ -3,11 +3,14 @@
 What it shows and does lives in proxy_model, shared with proxy-suite-gui; this is the drawing.
 """
 
+import faulthandler
 import os
 import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
+import traceback
 
 from rich.text import Text
 from textual import events, work
@@ -60,6 +63,28 @@ GLOBAL_KEYS = [
     ("?", "keys"),
     ("q", "quit"),
 ]
+
+
+def trace_path():
+    """Where a stuck TUI's stacks go: kill -USR1 writes them, and a failed load or display adds its traceback."""
+    return os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), f"proxy-tui-{os.getuid()}.trace")
+
+
+def open_trace():
+    try:
+        fd = os.open(trace_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        if os.fstat(fd).st_uid != os.getuid():  # someone else's file in a shared /tmp
+            os.close(fd)
+            return None
+        return os.fdopen(fd, "a", buffering=1)
+    except OSError:
+        return None
+
+
+def log_trace(what):
+    if trace := open_trace():
+        with trace:
+            trace.write(f"--- {what}\n{traceback.format_exc()}\n")
 
 KEY_LINE = [("menu", "⏎", "actions"), ("filter", "/", "filter"), ("help", "?", "keys"), ("quit", "q", "quit")]
 FEEDBACK_SECONDS = 10
@@ -120,6 +145,8 @@ CELL_STYLES = {
     "runtime": "cyan",
     "pinned": "cyan",
     "excluded": "dim",
+    "✕": "dim",
+    "disabled": "dim",
     "queued": "yellow",
 }
 
@@ -478,11 +505,17 @@ class ProxyTui(App):
 
     @work(thread=True, exclusive=True, group="load")
     def load(self, tab_id):
-        model.new_load()
-        states = _read_states()
-        visible = model.available_tabs(states)
-        status = _safe(status_text, states, fallback=["status unavailable"])
-        rows, summary = model.load_tab(self.tabs[tab_id], states)
+        try:
+            model.new_load()
+            states = _read_states()
+            visible = model.available_tabs(states)
+            status = _safe(status_text, states, fallback=["status unavailable"])
+            rows, summary = model.load_tab(self.tabs[tab_id], states)
+        except Exception as e:
+            # A dead worker would leave the tab as it was, for good; the next refresh tries again.
+            log_trace(f"load {tab_id}")
+            states, visible, status = self.states, self.shown, self.status
+            rows, summary = [], f"✗ load failed: {str(e) or type(e).__name__} (traceback in {trace_path()})"
         self.call_from_thread(self.fill, tab_id, states, visible, status, rows, summary)
 
     def show_status(self):
@@ -493,6 +526,16 @@ class ProxyTui(App):
             self.fill(tab_id, *self.loaded[tab_id])
 
     def fill(self, tab_id, states, visible, status, rows, summary):
+        try:
+            self.fill_table(tab_id, states, visible, status, rows, summary)
+        except Exception as e:
+            log_trace(f"fill {tab_id}")
+            widget = self.main.query_one(f"#{tab_id}-summary", Static)
+            _update(widget, Text(f"✗ display failed: {str(e) or type(e).__name__} (traceback in {trace_path()})"))
+            widget.display = True
+
+    def fill_table(self, tab_id, states, visible, status, rows, summary):
+        rows = model.unique_keys(rows)
         self.loaded[tab_id] = (states, visible, status, rows, summary)
         self.states, self.status = states, status
         # A read root could do: ! retries runs, not reads, so the way out is the whole TUI under sudo.
@@ -631,6 +674,7 @@ class ProxyTui(App):
                 text.append(f"  {key:<9}", style=ACCENT)
                 text.append(f"{label}\n")
             text.append("\n")
+        text.append(f"Stuck? kill -USR1 {os.getpid()} writes where it is to {trace_path()}\n", style="dim")
         self.push_screen(Output("Keys", text))
 
     def perform(self, action, row):
@@ -786,6 +830,8 @@ class ProxyTui(App):
 
 
 if __name__ == "__main__":
+    if trace := open_trace():
+        faulthandler.register(signal.SIGUSR1, file=trace, all_threads=True)
     if ProxyTui().run() == "root":
         # The wrapper by name: sudo resets the environment, and the wrapper sets it again.
         os.execvp("sudo", ["sudo", shutil.which("proxy-tui") or "proxy-tui"])

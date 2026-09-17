@@ -57,6 +57,7 @@ let
     routeModeStateFile = "/run/proxy-suite/route-mode";
     pinnedOutboundFile = "/var/lib/proxy-suite/pinned-outbound";
     outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
+    runtimeOutboundsDir = "/var/lib/proxy-suite/outbounds.d";
     subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/sing-box";
     subscriptionCacheHelpersBlock = "";
     mkSubscriptionFetchBlock = _: "";
@@ -157,7 +158,7 @@ in
         shellValueByPrefix minimalProxyCtlWrapper "export RUNTIME_SUBS_DIR="
         == "/var/lib/proxy-suite/subscriptions.d";
       assert pkgs.lib.hasInfix "proxy pin [tag]" minimalProxyCtlScript;
-      assert pkgs.lib.hasInfix "proxy outbounds add <tag> <url|json|->" minimalProxyCtlScript;
+      assert pkgs.lib.hasInfix "proxy outbounds add [tag] <url|json|->" minimalProxyCtlScript;
       true
     )
   ];

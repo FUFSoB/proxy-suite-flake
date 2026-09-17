@@ -179,10 +179,13 @@ Secrets and changes need root, or the userControl group.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url|json|-> [--detour <tag>]
+  proxy outbounds add [tag] <url|json|-> [--detour <tag>]
                                          add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
-                                         chained through another outbound with --detour
+                                         chained through another outbound with --detour; the tag first,
+                                         or left out to name it after the link
   proxy outbounds rm <tag>               remove a runtime outbound
+  proxy outbounds disable|enable <tag>   keep an outbound out of automatic use (selection, autoProxy, pins),
+                                         or let it back in; declared ones too
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
@@ -192,7 +195,7 @@ Secrets and changes need root, or the userControl group.
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscription caches; update refetches them
-  proxy subs add <tag> <url>             add a subscription at runtime
+  proxy subs add [tag] <url>             add a subscription at runtime; no tag: named after its host
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
   proxy config [--raw]                   client config to import elsewhere; --raw: as running
@@ -202,6 +205,9 @@ Secrets and changes need root, or the userControl group.
   proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
   proxy auto learn <domain>              probe now and route it if an exit works
+  proxy auto forget <domain>             drop what was learned about it: direct until learned again
+  proxy auto relearn <domain>            forget it, then probe the host it was learned from now
+  proxy auto clear                       forget every learned route and verdict
   proxy auto queue [count]               destinations waiting to be probed
 
   zapret [status|on|off]                 DPI bypass

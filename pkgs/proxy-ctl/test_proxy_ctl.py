@@ -401,6 +401,42 @@ class AutoProxyTest(EnvTest):
         self.assertRegex(learned, r"spotify.com .*-> primary")
         self.assertIn("ok=1", learned)
 
+    def test_forget(self):
+        state = {
+            "domains": {"last.fm": {"verdict": "destination", "exit": "primary", "host": "www.last.fm"}},
+            "hosts": {"www.last.fm": {"domain": "last.fm", "verdict": "destination", "exit": "primary"}},
+        }
+        self.write("state.json", state)
+        started = []
+        self.patch("systemctl", lambda *args, **kw: started.append(args) or (0, ""))
+        # A host names its domain: the route is the domain's.
+        out = ok(ctl.cmd_proxy_forget, "www.last.fm")
+        self.assertEqual(ctl.read_text(self.path("edits")), "forget last.fm\n")
+        self.assertEqual(started, [("start", "proxy-suite-autoproxy-learn.service")])
+        self.assertIn("Forgot last.fm (was via primary)", out)
+        self.assertNotEqual(run(ctl.cmd_proxy_forget, "x;rm -rf /")[0], 0)
+
+    def test_relearn(self):
+        before = {
+            "domains": {"last.fm": {"verdict": "destination", "exit": "primary", "host": "www.last.fm"}},
+            "hosts": {"www.last.fm": {"domain": "last.fm", "verdict": "destination", "exit": "primary"}},
+        }
+        self.write("state.json", before)
+        self.state_on_start(before)  # the same exit wins again
+        out = ok(ctl.cmd_proxy_relearn, "last.fm")
+        # Forgotten first, then probed again from the host it was learned from.
+        self.assertEqual(ctl.read_text(self.path("edits")), "forget last.fm\n")
+        self.assertEqual(ctl.read_text(self.path("requests")), "www.last.fm\n")
+        self.assertIn("probing www.last.fm", out)
+        self.assertIn("proxy-ctl proxy outbounds disable primary", out)
+
+    def test_clear(self):
+        self.patch("systemctl", lambda *args, **kw: (1, ""))
+        status, _, err = run(ctl.cmd_proxy_clear)
+        self.assertNotEqual(status, 0)
+        self.assertIn("still queued", err)
+        self.assertEqual(ctl.read_text(self.path("edits")), "clear\n")
+
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable_state_asks_for_sudo(self):
         os.chmod(self.dir, 0)
@@ -410,6 +446,104 @@ class AutoProxyTest(EnvTest):
             os.chmod(self.dir, 0o755)
         self.assertNotEqual(status, 0)
         self.assertIn("proxy-suite group, or re-run with sudo", err)
+
+
+class RuntimeEntryTest(EnvTest):
+    def setUp(self):
+        super().setUp()
+        os.environ.update(
+            RUNTIME_OUTBOUNDS_DIR=self.path("outbounds.d"),
+            RUNTIME_SUBS_DIR=self.path("subscriptions.d"),
+            SUB_CACHE_DIR=self.path("subscriptions"),
+            OUTBOUND_INVENTORY_FILE=self.path("outbounds.json"),
+            SUB_TAGS_FILE=self.write("sub-tags.json", ["provider"]),
+        )
+        os.makedirs(self.path("outbounds.d"))
+        os.makedirs(self.path("subscriptions.d"))
+        self.declared, self.pinned, self.started = ["primary", "vless-example"], "", []
+        self.backend_start()
+        self.patch("systemctl", self.systemctl)
+
+    def backend_start(self):
+        """What the start script leaves: runtime entries and disable markers read into the inventory."""
+        names = os.listdir(self.path("outbounds.d"))
+        tags = self.declared + ctl._runtime_tags("outbound")
+        disabled = [t for t in tags if f"{t}.disabled" in names]
+        if self.pinned in disabled:
+            self.pinned = ""
+        self.write("outbounds.json", {"tags": tags, "pinned": self.pinned, "excluded": disabled, "disabled": disabled})
+        for tag in ctl._runtime_tags("subscription"):
+            self.write(f"subscriptions/{tag}.json", {"outbounds": []})
+
+    def systemctl(self, *args, **kw):
+        self.started.append(args[1] if args[:1] == ("start",) else args)
+        if args[1:] == ("proxy-suite-outbound-reload.service",) and os.path.exists(self.path(f"outbounds.d/{self.pinned}.disabled")):
+            self.pinned = ""
+        self.backend_start()
+        return 0, ""
+
+    def test_tag_for(self):
+        tag = ctl._runtime_tag_for
+        self.assertEqual(tag("outbound", "vless://u@de1.example.net:443?security=reality#%F0%9F%87%A9%F0%9F%87%AA%20DE-1"), "DE-1")
+        self.assertEqual(tag("outbound", "trojan://p@1.2.3.4:443"), "trojan-1.2.3.4")
+        # Declared tags are taken as much as runtime ones.
+        self.assertEqual(tag("outbound", "vless://u@www.example.org:443"), "vless-example-2")
+        self.assertEqual(tag("outbound", '{"type": "socks", "server": "127.0.0.1"}'), "socks")
+        self.assertEqual(tag("outbound", '{"tag": "proxy", "type": "socks"}'), "proxy-2")  # reserved
+        self.assertEqual(tag("outbound", "vmess://" + __import__("base64").b64encode(b'{"ps": "JP 2", "add": "jp.test"}').decode()), "JP-2")
+        self.assertEqual(tag("outbound", "{not json"), "outbound")
+        self.assertEqual(tag("subscription", "https://sub.provider.com/api/v1/client?token=x"), "provider-2")
+        self.assertEqual(tag("subscription", "https://panel.work.test/s#" + "x" * 40), "x" * 32)
+        self.write("outbounds.d/DE-1.url", "vless://u@de1.example.net:443\n")
+        self.assertEqual(tag("outbound", "vless://u@x:1#DE-1"), "DE-1-2")
+
+    def test_add_forms(self):
+        # A URL alone: the tag comes from it.
+        out = ok(ctl.cmd_subscription, "add", "https://sub.work.test/s")
+        self.assertIn("Tag: work (none given", out)
+        self.assertEqual(ctl.read_text(self.path("subscriptions.d/work.url")), "https://sub.work.test/s\n")
+        # Tag, then URL.
+        ok(ctl.cmd_subscription, "add", "home", "https://sub.home.test/s")
+        self.assertTrue(os.path.exists(self.path("subscriptions.d/home.url")))
+        # The other way round is a mistake worth naming.
+        status, _, err = run(ctl.cmd_subscription, "add", "https://sub.x.test/s", "x")
+        self.assertNotEqual(status, 0)
+        self.assertIn("The tag goes first", err)
+        self.assertNotEqual(run(ctl.cmd_subscription, "add", "lonely")[0], 0)
+        # Outbound JSON alone, and a JSON-looking word for a subscription is not a source.
+        self.assertIn("Tag: socks", ok(ctl.cmd_outbounds, "add", '{"type": "socks", "server": "127.0.0.1", "server_port": 1080}'))
+        self.assertTrue(os.path.exists(self.path("outbounds.d/socks.json")))
+        self.assertNotEqual(run(ctl.cmd_subscription, "add", "-")[0], 0)
+
+    def test_disable_enable(self):
+        self.pinned = "primary"
+        self.backend_start()
+        out = ok(ctl.cmd_outbounds, "disable", "primary")
+        self.assertTrue(os.path.exists(self.path("outbounds.d/primary.disabled")))
+        # The reload drops the pin with it.
+        self.assertEqual(self.started, ["proxy-suite-outbound-reload.service"])
+        self.assertEqual(ctl._outbound_inventory()["pinned"], "")
+        self.assertIn("Disabled: primary", out)
+        self.assertIn("Already disabled", ok(ctl.cmd_outbounds, "disable", "primary"))
+        # The last one selection could pick stays.
+        status, _, err = run(ctl.cmd_outbounds, "disable", "vless-example")
+        self.assertNotEqual(status, 0)
+        self.assertIn("only outbound", err)
+        self.assertNotEqual(run(ctl.cmd_outbounds, "disable", "nope")[0], 0)
+        self.assertNotEqual(run(ctl.cmd_pin, "primary")[0], 0)
+
+        self.started.clear()
+        self.assertIn("Enabled: primary", ok(ctl.cmd_outbounds, "enable", "primary"))
+        self.assertFalse(os.path.exists(self.path("outbounds.d/primary.disabled")))
+        self.assertEqual(self.started, ["proxy-suite-outbound-reload.service"])
+        self.assertNotEqual(run(ctl.cmd_outbounds, "enable", "primary")[0], 0)
+        self.assertNotEqual(run(ctl.cmd_outbounds, "enable", "../primary")[0], 0)
+
+    def test_rm_takes_the_marker_along(self):
+        ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
+        ok(ctl.cmd_outbounds, "disable", "de")
+        ok(ctl.cmd_outbounds, "rm", "de")
+        self.assertEqual(os.listdir(self.path("outbounds.d")), [])
 
 
 class ZapretAutoTest(EnvTest):

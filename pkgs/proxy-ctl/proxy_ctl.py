@@ -3,6 +3,7 @@
 Configuration arrives through the environment the Nix wrapper sets.
 """
 
+import base64
 import datetime
 import http.client
 import importlib
@@ -55,10 +56,13 @@ Secrets and changes need root, or the userControl group.
 
   proxy [status|on|off]                  local proxy backend
   proxy outbounds [list]                 outbounds, where each came from, and the pick
-  proxy outbounds add <tag> <url|json|-> [--detour <tag>]
+  proxy outbounds add [tag] <url|json|-> [--detour <tag>]
                                          add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
-                                         chained through another outbound with --detour
+                                         chained through another outbound with --detour; the tag first,
+                                         or left out to name it after the link
   proxy outbounds rm <tag>               remove a runtime outbound
+  proxy outbounds disable|enable <tag>   keep an outbound out of automatic use (selection, autoProxy, pins),
+                                         or let it back in; declared ones too
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
                                          TCP ping, real delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
@@ -68,7 +72,7 @@ Secrets and changes need root, or the userControl group.
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscription caches; update refetches them
-  proxy subs add <tag> <url>             add a subscription at runtime
+  proxy subs add [tag] <url>             add a subscription at runtime; no tag: named after its host
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
   proxy config [--raw]                   client config to import elsewhere; --raw: as running
@@ -78,6 +82,9 @@ Secrets and changes need root, or the userControl group.
   proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
   proxy auto learn <domain>              probe now and route it if an exit works
+  proxy auto forget <domain>             drop what was learned about it: direct until learned again
+  proxy auto relearn <domain>            forget it, then probe the host it was learned from now
+  proxy auto clear                       forget every learned route and verdict
   proxy auto queue [count]               destinations waiting to be probed
 
   zapret [status|on|off]                 DPI bypass
@@ -399,8 +406,10 @@ COMPLETE = {
     "proxy outbounds": {
         "words": {
             "list": "outbounds, where each came from, and the pick",
-            "add": "add an outbound at runtime: a URL or JSON",
+            "add": "add an outbound at runtime: [tag] <url or JSON>",
             "rm": "remove a runtime outbound",
+            "disable": "keep it out of automatic use",
+            "enable": "let a disabled outbound back in",
             "test": "TCP ping, real delay, download speed",
             "link": "its URL, QR code, JSON or client config",
         }
@@ -411,6 +420,8 @@ COMPLETE = {
         "flags": {"--qr": "print a QR code", "--json": "backend JSON", "--config": "client config for this server"},
     },
     "proxy outbounds rm": {"args": lambda: _names(_runtime_tags("outbound"))},
+    "proxy outbounds disable": {"args": lambda: {t: d for t, d in _outbound_choices().items() if t not in _outbound_disabled()}},
+    "proxy outbounds enable": {"args": lambda: _names(_outbound_disabled())},
     "proxy outbounds test": {
         "args": _outbound_choices,
         "repeat": True,
@@ -420,13 +431,13 @@ COMPLETE = {
             "--download": "timed download through each outbound",
         },
     },
-    "proxy pin": {"args": _outbound_choices},
+    "proxy pin": {"args": lambda: {t: d for t, d in _outbound_choices().items() if t not in _outbound_disabled()}},
     "proxy mode": {"args": lambda: {"default": f"config default ({_route_mode_default()})", **ROUTE_MODE_LABELS}},
     "proxy subs": {
         "words": {
             "list": "subscription caches",
             "update": "refetch the subscriptions",
-            "add": "add a subscription at runtime",
+            "add": "add a subscription at runtime: [tag] <url>",
             "rm": "remove a runtime subscription",
             "link": "its URL",
         }
@@ -440,9 +451,14 @@ COMPLETE = {
             "list": "what autoProxy routed, and via which exit",
             "probe": "find an exit that reaches a domain",
             "learn": "probe now and route it if an exit works",
+            "forget": "drop what was learned about a domain",
+            "relearn": "forget a domain, then probe it again now",
+            "clear": "forget every learned route and verdict",
             "queue": "destinations waiting to be probed",
         }
     },
+    "proxy auto forget": {"args": _autoproxy_choices},
+    "proxy auto relearn": {"args": _autoproxy_choices},
     "proxy auto probe": {
         "flags": {
             "--json": "machine-readable result",
@@ -819,7 +835,7 @@ def cmd_proxy(verb="status", *args):
         _toggle("proxy-suite-tproxy", "proxy tproxy", *args)
     elif verb == "auto":
         cmd_proxy_auto(*args)
-    elif verb in ("probe", "learn", "queue", "learned"):
+    elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
         usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|tun|tproxy|auto|config]")
@@ -836,16 +852,20 @@ def cmd_outbounds(verb="list", *args):
             detour = args[i + 1] if i + 1 < len(args) else ""
             del args[i : i + 2]
             if not detour:
-                usage("proxy outbounds add <tag> <url|json|-> [--detour <tag>]")
+                usage("proxy outbounds add [tag] <url|json|-> [--detour <tag>]")
         _runtime_entry_add("outbound", *args, detour=detour)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("outbound", *args)
+    elif verb == "disable":
+        cmd_outbound_disable(*args)
+    elif verb == "enable":
+        cmd_outbound_enable(*args)
     elif verb == "test":
         cmd_outbounds_test(*args)
     elif verb == "link":
         _outbound_link(*args)
     else:
-        usage("proxy outbounds [list|add <tag> <url|json|->|rm <tag>|test [tag...]|link <tag>]")
+        usage("proxy outbounds [list|add [tag] <url|json|->|rm <tag>|disable <tag>|enable <tag>|test [tag...]|link <tag>]")
 
 
 def _outbound_inventory():
@@ -865,6 +885,11 @@ def _outbound_inventory():
 
 def _outbound_tags():
     return [_s(t) for t in _outbound_inventory().get("tags") or []]
+
+
+def _outbound_disabled():
+    """Disabled outbounds, as the running backend took them."""
+    return [_s(t) for t in _outbound_inventory().get("disabled") or []]
 
 
 def _require_outbound_inventory():
@@ -1056,6 +1081,7 @@ def _outbounds_list():
     sources = inventory.get("sources") or {}
     detours = inventory.get("detours") or {}
     excluded = set(inventory.get("excluded") or [])
+    disabled = set(_outbound_disabled())
     current = _outbound_current()
     reputation = _reputation_by_tag()
 
@@ -1073,7 +1099,10 @@ def _outbounds_list():
             mark = "*"
         elif not pinned and tag == current:
             mark = ">"
-        notes = ([f"via {_s(detours[tag])}"] if tag in detours else []) + (["never picked"] if tag in excluded else [])
+        elif tag in disabled:
+            mark = "-"
+        notes = [f"via {_s(detours[tag])}"] if tag in detours else []
+        notes += ["disabled"] if tag in disabled else ["never picked"] if tag in excluded else []
         print(f" {mark}{tag:<34} {rep(tag)}{', '.join([_s(sources.get(tag) or '-'), *notes])}")
 
 
@@ -1174,12 +1203,14 @@ def cmd_pin(tag="", *_):
         status, tag = _run(
             ["fzf", "--prompt=pin> ", "--height=40%", "--reverse", f"--header=pinned: {pinned}"],
             capture=True,
-            stdin="".join(f"{t}\n" for t in _outbound_tags()),
+            stdin="".join(f"{t}\n" for t in _outbound_tags() if t not in _outbound_disabled()),
         )
         tag = tag.strip("\n")
         # Dismissed.
         if status or not tag:
             return
+    if os.path.exists(_outbound_disabled_marker(tag)):
+        die(f"Outbound '{tag}' is disabled; enable it first: proxy-ctl proxy outbounds enable {tag}")
     status, escaped = _run(["systemd-escape", "--", tag], capture=True)
     if status:
         sys.exit(status)
@@ -1262,16 +1293,92 @@ def _check_runtime_tag(kind, tag):
         die(f"A subscription named '{tag}' is declared in the configuration.")
 
 
-def _runtime_entry_add(kind, tag="", url="", *_, detour=""):
+RUNTIME_TAG_MAX = 32
+
+
+def _runtime_source(kind, arg):
+    """Whether an add argument is the entry itself rather than its tag."""
+    return "://" in arg or (kind == "outbound" and (arg == "-" or arg.lstrip().startswith("{")))
+
+
+def _vmess_name(url):
+    """The name inside a vmess:// link, whose body is base64 JSON rather than a URL."""
+    body = url.split("://", 1)[1].split("#", 1)[0].strip()
+    try:
+        decoded = json.loads(base64.b64decode(body + "=" * (-len(body) % 4)).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    return _s(decoded.get("ps") or decoded.get("add") or "") if isinstance(decoded, dict) else ""
+
+
+def _host_label(host):
+    """The name a host goes by: sub.provider.com -> provider; an address as it is."""
+    if re.fullmatch(r"[0-9.]+|[0-9a-fA-F:]+", host):
+        return host
+    labels = [label for label in host.split(".") if label]
+    return labels[-2] if len(labels) >= 2 else labels[0] if labels else ""
+
+
+def _runtime_tag_for(kind, source):
+    """A tag for an entry added without one: the name the link carries, else where it points.
+
+    Never one already taken: -2, -3... after it.
+    """
+    text = source.strip()
+    name = ""
+    if text.startswith("{"):
+        try:
+            ob = json.loads(text)
+        except ValueError:
+            ob = None
+        if isinstance(ob, dict):
+            name = _s(ob.get("tag") or ob.get("type") or ob.get("protocol") or "")
+    else:
+        try:
+            parts = urllib.parse.urlsplit(text)
+            host = parts.hostname or ""
+        except ValueError:
+            parts, host = None, ""
+        if parts:
+            name = urllib.parse.unquote(parts.fragment)
+            if not name and parts.scheme.lower() == "vmess":
+                name = _vmess_name(text)
+            if not name and host:
+                label = _host_label(host)
+                name = label if kind == "subscription" else f"{parts.scheme.lower()}-{label}"
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")[:RUNTIME_TAG_MAX].strip("-._")
+    base = base or ("sub" if kind == "subscription" else "outbound")
+    taken = {"proxy", "direct", "block", *_runtime_tags(kind), *(_outbound_tags() if kind == "outbound" else _sub_tags())}
+    tag, n = base, 1
+    while tag in taken:
+        n += 1
+        suffix = f"-{n}"
+        tag = base[: RUNTIME_TAG_MAX - len(suffix)] + suffix
+    return tag
+
+
+def _runtime_entry_add(kind, *args, detour=""):
     what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url>"
-    if not tag or not url:
-        usage(f"proxy {_runtime_noun(kind)} add <tag> {what}")
-    _check_runtime_tag(kind, tag)
+    shape = f"proxy {_runtime_noun(kind)} add [tag] {what}"
+    if len(args) == 1 and _runtime_source(kind, args[0]):
+        tag, url = "", args[0]
+    elif len(args) == 2 and _runtime_source(kind, args[0]):
+        die(f"The tag goes first, the {'URL or JSON' if kind == 'outbound' else 'URL'} after it: proxy-ctl {shape}")
+    elif len(args) == 2 and args[1]:
+        tag, url = args
+    else:
+        usage(shape)
+    if tag:
+        _check_runtime_tag(kind, tag)
     # The start script checks the chain again, and leaves the outbound out if it breaks later.
     if detour and (detour == tag or detour not in _outbound_tags()):
         die(f"Cannot chain through '{detour}': not an outbound. See: proxy-ctl proxy outbounds")
     if kind == "outbound" and url == "-":
         url = sys.stdin.read()
+    if not tag:
+        tag = _runtime_tag_for(kind, url)
+        _check_runtime_tag(kind, tag)
+        print(f"Tag: {tag} (none given; pass one first to choose it)")
     ext = ".url"
     if kind == "outbound" and url.lstrip().startswith("{"):
         url, ext = _runtime_json_outbound(url), ".json"
@@ -1307,8 +1414,10 @@ def _runtime_entry_rm(kind, tag="", *_):
         die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
     try:
         os.unlink(path)
-        if kind == "outbound" and os.path.exists(os.path.join(_runtime_dir(kind), f"{tag}.detour")):
-            os.unlink(os.path.join(_runtime_dir(kind), f"{tag}.detour"))
+        # Its hop, and a disable left from it: a new entry of this name would inherit them.
+        for extra in (".detour", ".disabled") if kind == "outbound" else ():
+            if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
+                os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
     except FileNotFoundError:
         pass
     except OSError:
@@ -1320,6 +1429,71 @@ def _runtime_entry_rm(kind, tag="", *_):
 def _runtime_reload():
     if systemctl("start", "proxy-suite-outbound-reload.service")[0]:
         die("Saved, but applying it failed - see: proxy-ctl logs proxy-suite-outbound-reload")
+
+
+# --- disabled outbounds -------------------------------------------------------
+#
+# <tag>.disabled in the runtime outbound dir, for declared outbounds as much as runtime
+# ones. The outbound stays in the config, so rules and chains naming it still reach
+# it; selection, autoProxy's probes and pins leave it alone, and autoProxy forgets
+# the routes it learned through it.
+
+
+def _outbound_disabled_marker(tag):
+    return os.path.join(_runtime_dir("outbound"), f"{tag}.disabled")
+
+
+def cmd_outbound_disable(tag="", *_):
+    if not tag:
+        usage("proxy outbounds disable <tag>")
+    _require_outbound_inventory()
+    inventory = _outbound_inventory()
+    if tag not in _outbound_tags():
+        die(f"Unknown outbound: {tag}")
+    marker = _outbound_disabled_marker(tag)
+    if os.path.exists(marker) and tag in _outbound_disabled():
+        print(f"Already disabled: {tag}")
+        return
+    pinned = _s(inventory.get("pinned") or "")
+    excluded = set(inventory.get("excluded") or [])
+    # With none left to pick the proxy would not start, pinned or not: an unpin falls back to selection.
+    if [t for t in _outbound_tags() if t not in excluded] == [tag]:
+        die(f"'{tag}' is the only outbound selection can pick; enable or add another first.")
+    old = os.umask(0o027)
+    try:
+        with open(marker, "w", encoding="utf-8"):
+            pass
+    except OSError:
+        denied(marker, "write")
+    finally:
+        os.umask(old)
+    # The reload drops a pin on it too.
+    _runtime_reload()
+    if tag in _outbound_disabled():
+        print(f"Disabled: {tag} - never picked, pinned or probed; rules and chains naming it still use it.")
+    else:
+        sys.stdout.flush()
+        print(f"Saved, but the running proxy does not list '{tag}' as disabled yet. Check: proxy-ctl logs", file=sys.stderr)
+
+
+def cmd_outbound_enable(tag="", *_):
+    if not tag:
+        usage("proxy outbounds enable <tag>")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+        die(f"Not disabled: {tag}")
+    marker = _outbound_disabled_marker(tag)
+    if not os.path.exists(marker):
+        if tag in _outbound_disabled():
+            die(f"Cannot see the marker for '{tag}' in {_runtime_dir('outbound')} - {ask_group()}")
+        die(f"Not disabled: {tag}")
+    try:
+        os.unlink(marker)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        denied(marker, "remove")
+    _runtime_reload()
+    print(f"Enabled: {tag} - selection and autoProxy may use it again.")
 
 
 def _subscription_cache(tag):
@@ -1420,7 +1594,7 @@ def cmd_subscription(verb="list", *args):
         must("start", "proxy-suite-subscription-update")
         print("Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update")
     else:
-        usage("proxy subs [list|update|add <tag> <url>|rm <tag>|link <tag>]")
+        usage("proxy subs [list|update|add [tag] <url>|rm <tag>|link <tag>]")
 
 
 # --- proxy auto: reachability probe -------------------------------------------
@@ -1850,10 +2024,16 @@ def cmd_proxy_auto(verb="list", *args):
         cmd_proxy_probe(*args)
     elif verb == "learn":
         cmd_proxy_learn(*args)
+    elif verb == "forget":
+        cmd_proxy_forget(*args)
+    elif verb == "relearn":
+        cmd_proxy_relearn(*args)
+    elif verb == "clear":
+        cmd_proxy_clear(*args)
     elif verb == "queue":
         cmd_proxy_queue(*args)
     else:
-        usage("proxy auto [list|probe|learn|queue]")
+        usage("proxy auto [list|probe|learn|forget|relearn|clear|queue]")
 
 
 def _autoproxy_next_run():
@@ -1956,30 +2136,92 @@ def cmd_proxy_learned(*_):
             print(f"  {_s(tag):<28} {', '.join(_s(b) for b in by)}")
 
 
-def cmd_proxy_learn(host="", *_):
-    """Queues the host for the prober's own unit, recorded under the same lock as a timer run."""
-    _require_autoproxy()
-    path = _autoproxy_dir()
-    if not HOSTNAME.fullmatch(host):
-        usage("proxy auto learn <domain>")
-    requests = os.path.join(path, "requests")
+def _autoproxy_queue(name, line):
+    """Appends a line for the prober's own unit, which takes it under the same lock as a timer run."""
+    path = os.path.join(_autoproxy_dir(), name)
     try:
-        with open(requests, "a", encoding="utf-8") as f:
-            f.write(f"{host}\n")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{line}\n")
     except OSError:
-        denied(requests, "write")
-    print(f"Probing {host} through each exit...")
+        denied(path, "write")
+
+
+def _autoproxy_run(what):
     if systemctl("start", "proxy-suite-autoproxy-learn.service", quiet=True)[0]:
         sys.stdout.flush()
-        print(f"The probe run failed. {host} is still queued and will be tried again at the next run.", file=sys.stderr)
+        print(f"The probe run failed. {what} is still queued and will be tried again at the next run.", file=sys.stderr)
         die(f"Details: {journal_hint('proxy-suite-autoproxy-learn', 20)}")
-    h = (_autoproxy_state(path).get("hosts") or {}).get(host)
+
+
+def _autoproxy_report(host):
+    h = (_autoproxy_state(_autoproxy_dir()).get("hosts") or {}).get(host)
     if h is None:
         print(f"No verdict recorded; see: {journal_hint('proxy-suite-autoproxy-learn')}")
     elif h.get("exit"):
         print(f"{_s(h.get('domain'))}: {_s(h.get('verdict'))} - routed via {_s(h['exit'])} from now on, no restart needed")
     else:
         print(f"{host}: {_s(h.get('verdict'))} - nothing to route")
+    return h
+
+
+def cmd_proxy_learn(host="", *_):
+    _require_autoproxy()
+    if not HOSTNAME.fullmatch(host):
+        usage("proxy auto learn <domain>")
+    _autoproxy_queue("requests", host)
+    print(f"Probing {host} through each exit...")
+    _autoproxy_run(host)
+    _autoproxy_report(host)
+
+
+def _autoproxy_learned(name, verb):
+    """(registrable domain, its route or None) for a domain or one of its hosts."""
+    _require_autoproxy()
+    if not HOSTNAME.fullmatch(name):
+        usage(f"proxy auto {verb} <domain>")
+    path = _autoproxy_dir()
+    _require_autoproxy_readable(path)
+    state = _autoproxy_state(path)
+    domains = state.get("domains") or {}
+    if name in domains:
+        return name, domains[name]
+    judged = (state.get("hosts") or {}).get(name) or (state.get("backlog") or {}).get(name) or {}
+    domain = _s(judged.get("domain") or "")
+    if domain:
+        return domain, domains.get(domain)
+    # A host under a routed domain: the route covers it.
+    for d in domains:
+        if name.endswith(f".{d}"):
+            return d, domains[d]
+    return name, None
+
+
+def cmd_proxy_forget(name="", *_):
+    domain, route = _autoproxy_learned(name, "forget")
+    _autoproxy_queue("edits", f"forget {domain}")
+    _autoproxy_run(f"Forgetting {domain}")
+    via = f" (was via {_s(route.get('exit'))})" if route else ""
+    print(f"Forgot {domain}{via}: direct until it is dialled and learned again.")
+
+
+def cmd_proxy_relearn(name="", *_):
+    domain, route = _autoproxy_learned(name, "relearn")
+    host = _s((route or {}).get("host") or "") or name
+    was = _s((route or {}).get("exit") or "")
+    _autoproxy_queue("edits", f"forget {domain}")
+    _autoproxy_queue("requests", host)
+    print(f"Forgot {domain}{f' (was via {was})' if was else ''}; probing {host} through each exit...")
+    _autoproxy_run(host)
+    h = _autoproxy_report(host)
+    if was and h and _s(h.get("exit") or "") == was:
+        print(f"Same exit as before. To keep {domain} off it: proxy-ctl proxy outbounds disable {was}")
+
+
+def cmd_proxy_clear(*_):
+    _require_autoproxy()
+    _autoproxy_queue("edits", "clear")
+    _autoproxy_run("Forgetting everything")
+    print("Forgot every learned route and verdict: all direct until dialled and learned again.")
 
 
 # --- zapret -------------------------------------------------------------------
