@@ -94,9 +94,14 @@ def is_root():
     return os.geteuid() == 0
 
 
+def can_elevate():
+    """Whether running as root would get further: not on a rootless host, where the user owns everything."""
+    return ctl.privileged() and not is_root()
+
+
 def needs_root(out, status):
     """A failed run that root could do: the front ends offer to retry it elevated."""
-    return bool(status) and status > 0 and not is_root() and any(ROOT_HINT.search(line) for line in out)
+    return bool(status) and status > 0 and can_elevate() and any(ROOT_HINT.search(line) for line in out)
 
 
 STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐", "reloading": "◐"}

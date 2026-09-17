@@ -5,6 +5,8 @@
 
 let
   proxyCfg = cfg.proxy;
+  # Host paths: /var/lib/proxy-suite and /run on a system install.
+  inherit (cfg.host) stateDir runtimeDir;
   singBoxCfg = proxyCfg // {
     enable = singBoxEnabled;
     package = proxyCfg.singBox.package;
@@ -38,20 +40,17 @@ let
     # Without a configFile, proxy-suite-warp registers with wgcf into its state dir.
     autoRegister = cfg.warp.enable && cfg.warp.configFile == null;
     profilePath =
-      if cfg.warp.configFile != null then
-        cfg.warp.configFile
-      else
-        "/var/lib/proxy-suite/warp/wgcf-profile.conf";
+      if cfg.warp.configFile != null then cfg.warp.configFile else "${stateDir}/warp/wgcf-profile.conf";
     # Loopback SOCKS listener of proxy-suite-warp-tunnel, which the "warp" outbound dials.
     tunnelPort = 18538;
     # Its "direct-in" listener, which tells a blocked WARP from a dead uplink.
     directPort = 18539;
   };
   warpOutboundTag = "warp";
-  # The sing-box tunnel; asOutbound = "interface" comes in through the AmneziaWG profile list.
+  # The sing-box tunnel; "userspace" and "interface" come in through the AmneziaWG profile list.
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound == "singBox";
 
-  # Two ports per "singBox" AmneziaWG outbound, above the autoProxy prober's own
+  # Two ports per "singBox" or "userspace" AmneziaWG outbound, above the autoProxy prober's own
   # listeners (proxy.autoProxy.probeBasePort, 18540 by default, one per exit):
   # both bind loopback, so an overlap leaves whichever unit starts second dead.
   awgTunnelBasePort = 18600;
@@ -69,12 +68,15 @@ let
       tag = name;
       kind = profile.asOutbound;
       interface = profile.interfaceName;
-      # Loopback listeners of a "singBox" tunnel, as warpCfg.tunnelPort/directPort.
+      # Loopback listeners of a "singBox" or "userspace" tunnel, as warpCfg.tunnelPort/directPort
+      # (only sing-box listens on directPort).
       tunnelPort = awgTunnelBasePort + 2 * index;
       directPort = awgTunnelBasePort + 1 + 2 * index;
     }
   ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
   awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;
+  # Profiles run behind a loopback SOCKS hop rather than an interface.
+  awgTunnelOutbounds = builtins.filter (ob: ob.kind != "interface") awgOutbounds;
 
   proxyInboundsCfg = cfg.inbounds;
   proxyInboundsEnabled = proxyInboundsCfg.enable;
@@ -202,19 +204,33 @@ let
   userControlAllows =
     scope:
     userControlEnabled && (userControlCfg.scopes == [ ] || builtins.elem scope userControlCfg.scopes);
+  managerFlag = lib.optionalString (cfg.host.serviceManager == "systemd-user") " --user";
   constants = {
+    inherit stateDir runtimeDir;
+    inherit (cfg.host) privileged serviceManager;
+
     # Daemons (sing-box, XRay, the WARP tunnel, OpenSSH, tg-ws-proxy, wgcf) run as this
     # user. Its group is not the userControl group: backend configs hold credentials. Start
     # scripts still read secrets and program routing as root, then exec the daemon through
     # runAsServiceUser with only the capabilities it needs.
+    # On a rootless host everything already runs as the user: no service user, and
+    # nothing to hand files over to it.
     serviceUser = "proxy-suite-daemon";
+    # Shell text that only matters when the services run as root.
+    ifPrivileged = lib.optionalString cfg.host.privileged;
+    # The commands scripts manage units and read their logs with: the units live in the
+    # user's manager on a home-manager host, and in proxy-suitectl on nix-on-droid.
+    systemctl = cfg.host.systemctl + managerFlag;
+    journalctl = cfg.host.journalctl + managerFlag;
     runAsServiceUser =
       pkgs: caps:
       let
         keep = lib.concatMapStrings (cap: ",+${cap}") caps;
       in
-      "${pkgs.util-linux}/bin/setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon --clear-groups"
-      + " --inh-caps=-all${keep} --ambient-caps=-all${keep} --bounding-set=-all${keep} --no-new-privs --";
+      lib.optionalString cfg.host.privileged (
+        "${pkgs.util-linux}/bin/setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon --clear-groups"
+        + " --inh-caps=-all${keep} --ambient-caps=-all${keep} --bounding-set=-all${keep} --no-new-privs --"
+      );
     # The same for a unit that needs no root at all; "+" ExecStartPre/ExecStopPost
     # commands still run privileged.
     unprivilegedServiceConfig =
@@ -222,7 +238,7 @@ let
       let
         systemdCaps = map (cap: "CAP_${lib.toUpper cap}") caps;
       in
-      {
+      lib.optionalAttrs cfg.host.privileged {
         User = "proxy-suite-daemon";
         Group = "proxy-suite-daemon";
         AmbientCapabilities = systemdCaps;
@@ -244,8 +260,8 @@ let
       "net_raw"
     ];
 
-    zapret2StateDir = "/var/lib/proxy-suite/zapret2";
-    zapret2CutoffDir = "/var/lib/proxy-suite/zapret2/cutoff";
+    zapret2StateDir = "${stateDir}/zapret2";
+    zapret2CutoffDir = "${stateDir}/zapret2/cutoff";
     # Conntrack bit on the cutoff probe's own connections, which zapret2 leaves alone.
     zapret2CutoffProbeCtMark = 33554432; # 0x2000000
 
@@ -257,23 +273,23 @@ let
       zapret2 = 300;
     };
 
-    autoProxyStateDir = "/var/lib/proxy-suite/autoproxy";
+    autoProxyStateDir = "${stateDir}/autoproxy";
 
     # Runtime outbound control. The spool dirs hold one proxy URL per file and are
     # group-writable when userControl is on, so proxy-ctl edits them without sudo;
     # the pin outlives a reboot, unlike the per-boot route-mode override.
-    pinnedOutboundFile = "/var/lib/proxy-suite/pinned-outbound";
-    runtimeOutboundsDir = "/var/lib/proxy-suite/outbounds.d";
-    runtimeSubscriptionsDir = "/var/lib/proxy-suite/subscriptions.d";
+    pinnedOutboundFile = "${stateDir}/pinned-outbound";
+    runtimeOutboundsDir = "${stateDir}/outbounds.d";
+    runtimeSubscriptionsDir = "${stateDir}/subscriptions.d";
     # Written by every backend start script; proxy-ctl reads the socks copy.
-    outboundInventoryFile = "/run/proxy-suite-socks/outbounds.json";
+    outboundInventoryFile = "${runtimeDir}/proxy-suite-socks/outbounds.json";
 
     inboundStatsApiPort = 18536;
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
-    fakeIpCacheDir = "/var/lib/proxy-suite/fakeip";
+    fakeIpCacheDir = "${stateDir}/fakeip";
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
-    inboundStatsFile = "/var/lib/proxy-suite/inbound-stats.json";
+    inboundStatsFile = "${stateDir}/inbound-stats.json";
 
     # sing-box DNS server resolving through an "interface" AmneziaWG outbound.
     awgDnsServerTag = tag: "awg-dns-${tag}";
@@ -360,6 +376,7 @@ in
     awgGlobalProfiles
     awgOutbounds
     awgInterfaceOutbounds
+    awgTunnelOutbounds
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds

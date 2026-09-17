@@ -4,7 +4,11 @@
 # because sing-box refuses to start when a local rule-set path is missing, so
 # every file it will be told about must exist first; the prober needs it to
 # publish what it learns, which sing-box then picks up without a restart.
-{ pkgs, serviceUser }:
+{
+  pkgs,
+  serviceUser,
+  ifPrivileged,
+}:
 
 pkgs.writeShellScript "proxy-suite-autoproxy" ''
   set -euo pipefail
@@ -21,7 +25,7 @@ pkgs.writeShellScript "proxy-suite-autoproxy" ''
     # files: that takes read on it, not just the search the state dir grants.
     # Asserted on every render, since StateDirectory= re-owns the tree when the
     # units' Group= changes.
-    install -d -m 0750 -g ${serviceUser} "$(dirname "$path")"
+    install -d -m 0750 ${ifPrivileged "-g ${serviceUser} "}"$(dirname "$path")"
     # Written aside and renamed into place: sing-box reloads on rename (as well
     # as on in-place writes), and it never reads a half-written file.
     jq -c --arg t "$tag" '

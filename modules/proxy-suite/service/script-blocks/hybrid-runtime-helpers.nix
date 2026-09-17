@@ -25,13 +25,13 @@ lib.optionalString hybridEnabled ''
     local batch
     batch=$(${jq} -c \
       --argjson base "$XRAY_SIDECAR_NEXT_PORT" \
-      --argjson mark ${toString xraySidecarRoutingMark} '
+      --argjson mark ${if xraySidecarRoutingMark == null then "null" else toString xraySidecarRoutingMark} '
       to_entries | map(
         ($base + .key) as $port
         | ("proxy-suite-xray-" + ($port | tostring)) as $auth
         | .value.tag as $tag
         | {outbound: (.value
-             | .streamSettings.sockopt.mark = $mark
+             ${lib.optionalString (xraySidecarRoutingMark != null) "| .streamSettings.sockopt.mark = $mark"}
              | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")),
            inbound: {tag: ($tag + "-inbound"), listen: "127.0.0.1", port: $port, protocol: "socks",
              settings: {auth: "password", udp: true, accounts: [{user: $auth, pass: $auth}]}},

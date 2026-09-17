@@ -32,6 +32,7 @@ let
   perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
 
   profiles = import ./per-app-routing/profiles.nix {
+    inherit (constants) runtimeDir;
     inherit
       lib
       pkgs

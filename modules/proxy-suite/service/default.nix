@@ -1,7 +1,6 @@
-# Assembles proxy-suite systemd services from the sub-modules.
+# Assembles proxy-suite services from the sub-modules, as host-neutral declarations
+# under services.proxy-suite.internal (see ../hosts).
 {
-  config,
-  options,
   lib,
   pkgs,
   packages,
@@ -130,60 +129,51 @@ let
     import ../autoproxy.nix {
       inherit lib pkgs cfg;
       inherit (control) proxyCtl;
-      inherit (constants) autoProxyStateDir;
+      inherit (constants) autoProxyStateDir runtimeDir journalctl;
       inherit userControlAllows;
     }
   );
 in
 lib.mkMerge [
   autoProxyUnits
-  # The GUI's pkexec needs its setuid wrapper, off by default since nixpkgs 26.11 (and
-  # always there before, where the option does not exist).
-  (lib.optionalAttrs (options.security.polkit ? enablePkexecWrapper) {
-    security.polkit.enablePkexecWrapper = lib.mkIf (cfg.enable && cfg.gui.enable) true;
-  })
   {
-    # See constants.serviceUser.
-    users.users.${constants.serviceUser} = {
-      isSystemUser = true;
-      group = constants.serviceUser;
-      description = "proxy-suite daemons";
-    };
-    users.groups.${constants.serviceUser} = { };
-  }
-  {
-    environment.systemPackages = [
-      control.proxyCtl
-    ]
-    ++ lib.optional cfg.tui.enable control.proxyCtl.tui
-    ++ lib.optional cfg.gui.enable control.proxyCtl.gui;
+    services.proxy-suite.internal = {
+      # The GUI's pkexec needs its setuid wrapper.
+      polkit.pkexecWrapper = lib.mkIf (cfg.enable && cfg.gui.enable) true;
+      # See constants.serviceUser.
+      systemUsers = [ constants.serviceUser ];
 
-    # nftables must be on for transparent routing backends. Global TUN uses
-    # SingBox auto_redirect programs an `inet sing-box` nftables table.
-    networking.nftables.enable = lib.mkIf (
-      globalTun.enable
-      || globalTproxy.enable
-      || perAppRoutingTun.enable
-      || perAppRoutingTproxy.enable
-      || perAppZapretEnabled
-    ) (lib.mkDefault true);
+      packages = [
+        control.proxyCtl
+      ]
+      ++ lib.optional cfg.tui.enable control.proxyCtl.tui
+      ++ lib.optional cfg.gui.enable control.proxyCtl.gui;
 
-    # Inbound listeners are reached from outside, so their ports have to be open.
-    networking.firewall = lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
-      allowedTCPPorts = proxyInboundFirewallPorts;
-      allowedUDPPorts = proxyInboundFirewallUdpPorts;
-    };
+      # nftables must be on for transparent routing backends. Global TUN uses
+      # SingBox auto_redirect programs an `inet sing-box` nftables table.
+      nftables = lib.mkIf (
+        globalTun.enable
+        || globalTproxy.enable
+        || perAppRoutingTun.enable
+        || perAppRoutingTproxy.enable
+        || perAppZapretEnabled
+      ) true;
 
-    users.groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) {
-      "${userControlCfg.group}" = { };
-    };
+      # Inbound listeners are reached from outside, so their ports have to be open.
+      firewall = lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
+        allowedTCPPorts = proxyInboundFirewallPorts;
+        allowedUDPPorts = proxyInboundFirewallUdpPorts;
+      };
 
-    security.polkit.enable = lib.mkIf (cfg.enable && (userControlEnabled || cfg.gui.enable)) true;
-    # The GUI's "Retry as Root" and root toggle run proxy-ctl through pkexec: one
-    # admin password then covers the next few minutes, as sudo's does in the TUI.
-    security.polkit.extraConfig = lib.mkMerge [
-      (lib.mkIf (cfg.enable && cfg.gui.enable) (
-        lib.mkAfter ''
+      groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) [
+        userControlCfg.group
+      ];
+
+      polkit.enable = lib.mkIf (cfg.enable && (userControlEnabled || cfg.gui.enable)) true;
+      # The GUI's "Retry as Root" and root toggle run proxy-ctl through pkexec: one
+      # admin password then covers the next few minutes, as sudo's does in the TUI.
+      polkit.rules = lib.mkMerge [
+        (lib.mkIf (cfg.enable && cfg.gui.enable) ''
           polkit.addRule(function(action, subject) {
             if (action.id === "org.freedesktop.policykit.exec" &&
                 action.lookup("program") === "${control.proxyCtl}/bin/proxy-ctl") {
@@ -191,10 +181,8 @@ lib.mkMerge [
             }
             return null;
           });
-        ''
-      ))
-      (lib.mkIf (cfg.enable && userControlEnabled) (
-        lib.mkAfter ''
+        '')
+        (lib.mkIf (cfg.enable && userControlEnabled) ''
           polkit.addRule(function(action, subject) {
             if (!subject.isInGroup("${userControlCfg.group}")) {
               return null;
@@ -209,50 +197,60 @@ lib.mkMerge [
 
             return null;
           });
-        ''
-      ))
-    ];
+        '')
+      ];
 
-    # Spool dirs for outbounds and subscriptions added at runtime. Setgid so the
-    # files proxy-ctl drops here inherit the group; without the outbounds scope
-    # only root writes them. tmpfiles rather than the start scripts, so the group can add an
-    # outbound before the proxy has ever run.
-    systemd.tmpfiles.rules = lib.mkIf (cfg.enable && proxyEnabled) (
-      map
-        (
-          dir:
-          "d ${dir} ${
-            if userControlAllows "outbounds" then "2770 root ${userControlCfg.group}" else "0700 root root"
-          } -"
-        )
-        [
-          constants.runtimeOutboundsDir
-          constants.runtimeSubscriptionsDir
-        ]
-    );
+      # Spool dirs for outbounds and subscriptions added at runtime. Setgid so the
+      # files proxy-ctl drops here inherit the group; without the outbounds scope
+      # only root writes them. tmpfiles rather than the start scripts, so the group can add an
+      # outbound before the proxy has ever run.
+      tmpfiles = lib.mkIf (cfg.enable && proxyEnabled) (
+        map
+          (
+            dir:
+            "d ${dir} ${
+              if userControlAllows "outbounds" then
+                "2770 root ${userControlCfg.group}"
+              else if constants.privileged then
+                "0700 root root"
+              else
+                "0700 - -"
+            } -"
+          )
+          [
+            constants.runtimeOutboundsDir
+            constants.runtimeSubscriptionsDir
+          ]
+      );
 
-    systemd.user.services = lib.mkMerge [
-      (mkNamedUnits userServiceEntries)
-      (lib.mkIf (cfg.gui.enable && cfg.gui.autostart) {
-        # Starts hidden in the tray with every graphical session.
-        proxy-suite-gui = {
-          description = "Proxy Suite GUI (tray icon)";
-          wantedBy = [ "graphical-session.target" ];
-          partOf = [ "graphical-session.target" ];
-          after = [ "graphical-session.target" ];
-          unitConfig.ConditionEnvironment = [
-            "|WAYLAND_DISPLAY"
-            "|DISPLAY"
-          ];
-          serviceConfig = {
-            ExecStart = "${control.proxyCtl.gui}/bin/proxy-suite-gui --hidden";
-            Restart = "on-failure";
-            RestartSec = 3;
+      userServices = lib.mkMerge [
+        (mkNamedUnits userServiceEntries)
+        (lib.mkIf (cfg.gui.enable && cfg.gui.autostart) {
+          # Starts hidden in the tray with every graphical session.
+          proxy-suite-gui = {
+            description = "Proxy Suite GUI (tray icon)";
+            wantedBy = [ "graphical-session.target" ];
+            partOf = [ "graphical-session.target" ];
+            after = [ "graphical-session.target" ];
+            unitConfig.ConditionEnvironment = [
+              "|WAYLAND_DISPLAY"
+              "|DISPLAY"
+            ];
+            serviceConfig = {
+              ExecStart = "${control.proxyCtl.gui}/bin/proxy-suite-gui --hidden";
+              Restart = "on-failure";
+              RestartSec = 3;
+            };
           };
-        };
-      })
-    ];
+        })
+      ];
 
+      services = mkNamedUnits systemServiceEntries;
+
+      timers = mkNamedUnits timerEntries;
+    };
+  }
+  {
     assertions = import ../service-assertions.nix {
       inherit lib cfg derived;
       tgWsProxyCfg = cfg.tgWsProxy;
@@ -276,10 +274,6 @@ lib.mkMerge [
       "proxy-suite: no outbounds or subscriptions are declared; the proxy will not start"
       + " until one is added with `proxy-ctl proxy outbounds add`"
     );
-
-    systemd.services = mkNamedUnits systemServiceEntries;
-
-    systemd.timers = mkNamedUnits timerEntries;
   }
 
   # A certificate or key XRay cannot read is copied in at start (proxy-inbounds-scripts.nix),
@@ -298,20 +292,20 @@ lib.mkMerge [
       );
     in
     lib.mkIf (cfg.enable && proxyInboundsEnabled && certFiles != [ ]) {
-      systemd.paths.proxy-suite-inbounds-certs = {
+      services.proxy-suite.internal.paths.proxy-suite-inbounds-certs = {
         description = "proxy-suite - watch the inbounds' TLS certificates for renewals";
         wantedBy = [ "paths.target" ];
         pathConfig.PathChanged = certFiles;
       };
-      systemd.services.proxy-suite-inbounds-certs = {
+      services.proxy-suite.internal.services.proxy-suite-inbounds-certs = {
         description = "proxy-suite - restart the inbounds onto a renewed certificate";
         serviceConfig.Type = "oneshot";
         script = ''
           # XRay reloads the files it reads itself; only copies go stale.
-          [ -d /run/proxy-suite-inbounds/tls ] || exit 0
+          [ -d ${constants.runtimeDir}/proxy-suite-inbounds/tls ] || exit 0
           # A renewal writes the chain and the key one after the other.
           sleep 10
-          ${pkgs.systemd}/bin/systemctl try-restart proxy-suite-inbounds.service
+          ${constants.systemctl} try-restart proxy-suite-inbounds.service
         '';
       };
     }

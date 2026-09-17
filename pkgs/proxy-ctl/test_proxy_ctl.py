@@ -291,6 +291,52 @@ class ProbeWalkTest(EnvTest):
         self.assertIn('pin: proxy.routing.rules = [ { outbound = "de"; domains = [ "sekai.test" ]; } ]', out)
 
 
+class ServiceManagerTest(EnvTest):
+    def calls(self):
+        seen = []
+        self.patch("_run", lambda argv, **kw: seen.append(argv) or (0, ""))
+        return seen
+
+    def test_system_units(self):
+        seen = self.calls()
+        ctl.systemctl("--user", "start", "anchor.service")
+        ctl.systemctl("start", "proxy-suite-socks")
+        self.assertEqual(seen, [["systemctl", "--user", "start", "anchor.service"], ["systemctl", "start", "proxy-suite-socks"]])
+        self.assertEqual(ctl.journal_hint("proxy-suite-autoproxy-learn", 20), "journalctl -u proxy-suite-autoproxy-learn -n 20")
+
+    def test_user_units(self):
+        # home-manager: every unit is the user's, and a --user of the caller's is not doubled.
+        os.environ["SERVICE_MANAGER"] = "systemd-user"
+        seen = self.calls()
+        ctl.systemctl("--user", "stop", "anchor.service")
+        ctl._unit_states(["proxy-suite-socks"])
+        self.assertEqual(seen[0], ["systemctl", "--user", "stop", "anchor.service"])
+        self.assertEqual(seen[1][:3], ["systemctl", "--user", "show"])
+        self.assertEqual(ctl.journal_hint("proxy-suite-socks"), "journalctl --user -u proxy-suite-socks")
+
+    def test_supervisor_units(self):
+        # nix-on-droid: proxy-suitectl stands in for systemctl and journalctl.
+        os.environ.update(SERVICE_MANAGER="supervisor", SUPERVISOR_CTL="/bin/proxy-suitectl")
+        seen = self.calls()
+        ctl.systemctl("--user", "stop", "anchor.service")
+        ctl._unit_states(["proxy-suite-socks"])
+        self.assertEqual(seen[0], ["/bin/proxy-suitectl", "stop", "anchor.service"])
+        self.assertEqual(seen[1][:2], ["/bin/proxy-suitectl", "show"])
+        self.assertEqual(ctl.journal_hint("proxy-suite-socks", 5), "/bin/proxy-suitectl journal -u proxy-suite-socks -n 5")
+
+    def test_paths_follow_host_dirs(self):
+        for name in ("SUB_CACHE_DIR", "AUTOPROXY_STATE_DIR", "INBOUNDS_STATS_FILE", "OUTBOUND_INVENTORY_FILE"):
+            os.environ.pop(name, None)
+        os.environ.update(STATE_DIR="/home/u/.local/state/proxy-suite", RUNTIME_DIR="/tmp/ps")
+        self.assertEqual(ctl._autoproxy_dir(), "/home/u/.local/state/proxy-suite/autoproxy")
+        self.assertEqual(os.path.dirname(ctl._subscription_cache("x")), "/home/u/.local/state/proxy-suite/subscriptions")
+
+    def test_rootless_hosts_never_ask_for_root(self):
+        self.assertIn("sudo", ctl.ask_group())
+        os.environ["PRIVILEGED"] = "0"
+        self.assertNotIn("sudo", ctl.ask_group())
+
+
 class AutoProxyTest(EnvTest):
     def setUp(self):
         super().setUp()

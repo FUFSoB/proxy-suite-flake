@@ -12,10 +12,10 @@
   mkSubscriptionFetchBlock,
   runtimeSubscriptionsFetchBlock,
   jq,
+  systemctl,
 }:
 
 let
-  systemctl = "${pkgs.systemd}/bin/systemctl";
   curl = "${pkgs.curl}/bin/curl";
 
   restartActiveBlock = lib.concatMapStrings (svc: ''

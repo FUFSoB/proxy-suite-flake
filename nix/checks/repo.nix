@@ -444,6 +444,14 @@
       touch "$out"
     '';
 
+  # proxy-suitectl, nix-on-droid's service manager: real processes restarted, timed and stopped.
+  proxy-suite-supervisor-unit =
+    pkgs.runCommand "proxy-suite-supervisor-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      export PYTHONDONTWRITEBYTECODE=1 HOME="$TMPDIR"
+      python ${../../pkgs/proxy-ctl}/test_proxy_supervisor.py
+      touch "$out"
+    '';
+
   # proxy_export: the running config made portable, and sing-box still accepts it.
   proxy-export-unit =
     pkgs.runCommand "proxy-suite-proxy-export-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''

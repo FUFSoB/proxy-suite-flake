@@ -62,6 +62,7 @@ let
     mkSubscriptionFetchBlock = _: "";
     runtimeSubscriptionsFetchBlock = "";
     jq = "${pkgs.jq}/bin/jq";
+    systemctl = "${pkgs.systemd}/bin/systemctl";
   };
   routeModeSetterScript = generated.readDerivation routeModeControlScripts.setRouteModeScript;
   pinSetterScript = generated.readDerivation routeModeControlScripts.pinOutboundScript;

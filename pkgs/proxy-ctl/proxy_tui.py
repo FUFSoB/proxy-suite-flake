@@ -558,7 +558,7 @@ class ProxyTui(App):
 
     def check_action(self, action, parameters):
         if action in ("retry_root", "switch_root"):
-            return not model.is_root()
+            return model.can_elevate()
         # A row action that does not apply: its key does nothing.
         if action != "act" or self.screen is not self.main:
             return True

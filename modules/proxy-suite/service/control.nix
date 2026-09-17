@@ -63,6 +63,9 @@
       if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
     autoProxyEnabled = if proxyCfg.autoProxy.enable then "1" else "0";
     autoProxyStateDir = constants.autoProxyStateDir;
+    inherit (constants) stateDir runtimeDir serviceManager;
+    privileged = if constants.privileged then "1" else "0";
+    supervisorCtl = if constants.serviceManager == "supervisor" then constants.systemctl else "";
     singBox = "${singBoxCfg.package}/bin/sing-box";
     localProxyUrl = "http://${
       if proxyCfg.listener.address == "0.0.0.0" then "127.0.0.1" else proxyCfg.listener.address

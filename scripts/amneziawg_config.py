@@ -307,6 +307,42 @@ def as_outbound(config: str, fwmark: int) -> str:
     return _set_interface_value(config, "FwMark", str(fwmark))
 
 
+# Read once by wireproxy: repeated lines are joined into one list.
+WIREPROXY_LIST_KEYS = {"address", "dns", "allowedips"}
+# wg-quick's, which wireproxy has no use for.
+WIREPROXY_DROPPED_KEYS = FORBIDDEN_WG_QUICK_KEYS | {"table", "fwmark"}
+
+
+def as_wireproxy(config: str, socks_address: str, fwmark: int | None = None) -> str:
+    """A wireproxy configuration: the profile, served as a SOCKS5 listener on socks_address.
+
+    With fwmark, the tunnel's own packets are marked, to get past TUN and TProxy capture.
+    """
+    lines: list[str] = []
+    for name, pairs in conf_sections(config):
+        if name not in {"interface", "peer"}:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(f"[{name.capitalize()}]")
+        lists: dict[str, list[str]] = {}
+        for key, value in pairs:
+            if key in WIREPROXY_DROPPED_KEYS:
+                continue
+            if key in WIREPROXY_LIST_KEYS:
+                if key not in lists:
+                    lists[key] = []
+                    lines.append(key)
+                lists[key].extend(item.strip() for item in value.split(",") if item.strip())
+            else:
+                lines.append(f"{key} = {value}")
+        lines = [f"{line} = {','.join(lists[line])}" if line in lists else line for line in lines]
+        if name == "interface" and fwmark is not None:
+            lines.append(f"fwmark = {fwmark}")
+    lines.extend(["", "[Socks5]", f"BindAddress = {socks_address}"])
+    return "\n".join(lines) + "\n"
+
+
 def conf_sections(config: str) -> list[tuple[str, list[tuple[str, str]]]]:
     """Each [Section] of a WireGuard .conf, lowercased, with its key = value lines in order.
 
@@ -629,12 +665,18 @@ def write_private(path: str, content: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest")
+    parser.add_argument("--config", metavar="CONFIG", help="render a .conf file, as a configFile manifest")
     parser.add_argument("--output")
     parser.add_argument(
         "--outbound-fwmark",
         type=int,
         metavar="MARK",
         help="render for an outbound-only interface: no routes or DNS, packets marked MARK",
+    )
+    parser.add_argument(
+        "--wireproxy",
+        metavar="ADDRESS",
+        help="render for wireproxy, as a SOCKS5 listener on ADDRESS (packets marked with --outbound-fwmark)",
     )
     parser.add_argument(
         "--inspect",
@@ -644,18 +686,25 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.inspect is not None:
-            if args.manifest is not None or args.output is not None:
+            if args.manifest is not None or args.config is not None or args.output is not None:
                 raise ConfigError("--inspect cannot be combined with rendering options")
             config = _read_limited(args.inspect)
             print(transport_implementation(config), probe_address(config), rekey_after_time(config))
             return 0
-        if args.manifest is None or args.output is None:
-            raise ConfigError("--manifest and --output are required when rendering a configuration")
-        manifest = json.loads(_read_limited(args.manifest))
+        if (args.manifest is None) == (args.config is None) or args.output is None:
+            raise ConfigError(
+                "--output and one of --manifest or --config are required when rendering a configuration"
+            )
+        if args.config is not None:
+            manifest = {"kind": "configFile", "path": args.config}
+        else:
+            manifest = json.loads(_read_limited(args.manifest))
         if not isinstance(manifest, dict):
             raise ConfigError("manifest must be a JSON object")
         config = prepare(manifest)
-        if args.outbound_fwmark is not None:
+        if args.wireproxy is not None:
+            config = as_wireproxy(config, args.wireproxy, args.outbound_fwmark)
+        elif args.outbound_fwmark is not None:
             config = as_outbound(config, args.outbound_fwmark)
         write_private(args.output, config)
     except (ConfigError, KeyError, OSError, json.JSONDecodeError) as exc:

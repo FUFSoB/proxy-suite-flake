@@ -24,7 +24,7 @@
 }:
 
 let
-  runtimeDir = "/run/proxy-suite-inbounds";
+  runtimeDir = "${constants.runtimeDir}/proxy-suite-inbounds";
   linksFile = "${runtimeDir}/links.json";
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
   subsCfg = proxyInboundsCfg.subscriptions;
@@ -108,8 +108,9 @@ let
         printf '%s' "$body" > "$SUB_DIR.new/$token"
       done
     chmod -R u=rwX,g=rX,o= "$SUB_DIR.new"
-    ${pkgs.coreutils}/bin/chgrp -R ${lib.escapeShellArg subsCfg.group} "$SUB_DIR.new" ||
-      echo "proxy-suite: group ${subsCfg.group} cannot be given the subscriptions; they stay root-only" >&2
+    ${constants.ifPrivileged ''
+      ${pkgs.coreutils}/bin/chgrp -R ${lib.escapeShellArg subsCfg.group} "$SUB_DIR.new" ||
+        echo "proxy-suite: group ${subsCfg.group} cannot be given the subscriptions; they stay root-only" >&2''}
     rm -rf "$SUB_DIR"
     mv "$SUB_DIR.new" "$SUB_DIR"
     ${jq} -c '[.subscriptions[] | {user, token}]' <<< "$RENDERED" > "${subscriptionsFile}"
@@ -163,10 +164,10 @@ let
     while IFS= read -r source; do
       [ -n "$source" ] || continue
       if ! ${runXray} ${pkgs.coreutils}/bin/test -r "$source"; then
-        [ -d "$CERT_DIR" ] || install -d -m 0750 -g ${constants.serviceUser} "$CERT_DIR"
+        [ -d "$CERT_DIR" ] || install -d -m 0750 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$CERT_DIR"
         index=$((index + 1))
         copy="$CERT_DIR/$index-$(basename "$source")"
-        install -m 0640 -g ${constants.serviceUser} "$source" "$copy"
+        install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$source" "$copy"
         echo "proxy-suite: ${constants.serviceUser} cannot read $source; XRay uses a copy until the next restart" >&2
         ${jq} --arg from "$source" --arg to "$copy" '
           (.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile)
@@ -187,7 +188,7 @@ let
         ''
       else
         ''
-          ${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"
+          ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"''}
           chmod 640 "$RUNTIME_DIR/config.json.tmp"
         ''
     }

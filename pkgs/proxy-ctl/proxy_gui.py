@@ -1044,6 +1044,7 @@ class ProxySuiteGui(Adw.Application):
             action.connect("activate", callback)
             self.add_action(action)
         elevated = Gio.SimpleAction.new_stateful("elevated", None, GLib.Variant.new_boolean(False))
+        elevated.set_enabled(ctl.privileged())
         elevated.connect("change-state", self.on_elevated)
         self.add_action(elevated)
         retry = Gio.SimpleAction.new("retry-root", GLib.VariantType.new("as"))

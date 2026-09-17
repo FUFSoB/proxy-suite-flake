@@ -86,16 +86,20 @@ let
   '';
 
   inherit (import ./wg-tunnel.nix { inherit lib pkgs cfg derived; }) mkTunnel;
+  viaAmneziaWg = builtins.elem w.asOutbound [
+    "userspace"
+    "interface"
+  ];
 in
 {
-  services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || w.asOutbound == "interface") {
+  services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
     warp = {
       configFile = w.profilePath;
-      asOutbound = lib.mkIf (w.asOutbound == "interface") "interface";
+      asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
     };
   };
 
-  systemd.services = lib.mkMerge [
+  services.proxy-suite.internal.services = lib.mkMerge [
     (lib.mkIf (w.asOutbound == "singBox") {
       proxy-suite-warp-tunnel = mkTunnel {
         description = "proxy-suite - Cloudflare WARP tunnel behind the warp outbound";
@@ -129,7 +133,7 @@ in
           RestartSec = 30;
           StateDirectory = "proxy-suite/warp";
           StateDirectoryMode = "0700";
-          WorkingDirectory = "/var/lib/proxy-suite/warp";
+          WorkingDirectory = "${derived.constants.stateDir}/warp";
           UMask = "0077";
           LoadCredential = lib.optional (cfg.proxy.enable && withProxyAuth) "proxy-password:${passwordSource}";
           ExecStart = registerScript;
@@ -137,7 +141,7 @@ in
       };
 
       # Only pulls registration in: a simple unit gives the profile no ordering guarantee.
-      proxy-suite-awg-warp = lib.mkIf (w.asAmneziaWg || w.asOutbound == "interface") {
+      proxy-suite-awg-warp = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
         wants = [ "proxy-suite-warp.service" ];
       };
     })

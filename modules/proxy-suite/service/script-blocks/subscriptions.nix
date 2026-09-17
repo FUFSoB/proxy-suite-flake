@@ -10,6 +10,7 @@
   hybridEnabled,
   mainBackend,
   backend,
+  stateDir,
   runtimeSubscriptionsDir,
   jq,
   python3,
@@ -21,7 +22,7 @@
 let
   subscriptionBackend = if hybridEnabled then "hybrid" else mainBackend;
   subscriptionBackendArg = "--backend ${subscriptionBackend}";
-  subscriptionCacheDir = "/var/lib/proxy-suite/subscriptions/${backend}";
+  subscriptionCacheDir = "${stateDir}/subscriptions/${backend}";
 
   mkSubscriptionUrlSource =
     sub:

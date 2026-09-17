@@ -40,7 +40,7 @@ let
   '';
 in
 {
-  systemd.services.proxy-suite-ssh-proxy = {
+  services.proxy-suite.internal.services.proxy-suite-ssh-proxy = {
     description = "SSH dynamic SOCKS5 proxy";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];

@@ -79,46 +79,50 @@ in
 {
   assertions = zapretPackages.assertions;
 
-  environment.systemPackages = lib.mkBefore (
+  services.proxy-suite.internal.earlyPackages = (
     lib.optionals zapretCfg.enable [ globalZapretPackage ]
     ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
   );
 
-  systemd.services.proxy-suite-zapret = lib.mkIf zapretCfg.enable (mkOneshotService {
-    description = "zapret DPI bypass";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    conflicts = awgServiceNames;
-    wantedBy = [ "multi-user.target" ];
-    preStart = zapretCommonPreStart globalZapretPackage;
-    runtimeDirectory = "proxy-suite-zapret";
-    execStart = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-    execStop = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-    extraServiceConfig = {
-      ExecReload = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret restart";
-      Environment = globalZapretEnv;
-    };
-  });
+  services.proxy-suite.internal.services.proxy-suite-zapret =
+    lib.mkIf zapretCfg.enable
+      (mkOneshotService {
+        description = "zapret DPI bypass";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        conflicts = awgServiceNames;
+        wantedBy = [ "multi-user.target" ];
+        preStart = zapretCommonPreStart globalZapretPackage;
+        runtimeDirectory = "proxy-suite-zapret";
+        execStart = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+        execStop = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+        extraServiceConfig = {
+          ExecReload = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret restart";
+          Environment = globalZapretEnv;
+        };
+      });
 
-  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (mkOneshotService {
-    description = "proxy-suite per-app-routing zapret backend";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    conflicts = [
-      "proxy-suite-tproxy.service"
-      "proxy-suite-tun.service"
-    ]
-    ++ awgServiceNames;
-    preStart = zapretCommonPreStart perAppZapretPackage;
-    runtimeDirectory = "proxy-suite-per-app-zapret";
-    execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-    execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-    execStartPre = "${perAppZapretMarkUpScript}";
-    execStopPost = "${perAppZapretMarkDownScript}";
-    extraServiceConfig.Environment = perAppZapretEnv;
-  });
+  services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
+    lib.mkIf perAppZapretCfg.enable
+      (mkOneshotService {
+        description = "proxy-suite per-app-routing zapret backend";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        conflicts = [
+          "proxy-suite-tproxy.service"
+          "proxy-suite-tun.service"
+        ]
+        ++ awgServiceNames;
+        preStart = zapretCommonPreStart perAppZapretPackage;
+        runtimeDirectory = "proxy-suite-per-app-zapret";
+        execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+        execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+        execStartPre = "${perAppZapretMarkUpScript}";
+        execStopPost = "${perAppZapretMarkDownScript}";
+        extraServiceConfig.Environment = perAppZapretEnv;
+      });
 
-  systemd.services.proxy-suite-zapret-vm-exempt =
+  services.proxy-suite.internal.services.proxy-suite-zapret-vm-exempt =
     lib.mkIf (zapretCfg.enable && zapretCfg.cidrExemption.enable)
       (
         mkOneshotService {

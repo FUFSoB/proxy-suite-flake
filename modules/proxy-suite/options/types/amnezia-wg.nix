@@ -273,6 +273,7 @@ let
           type = types.nullOr (
             types.enum [
               "singBox"
+              "userspace"
               "interface"
             ]
           );
@@ -283,6 +284,11 @@ let
             `proxy-ctl awg`. Requires proxy.enable.
             - "singBox": a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
               hop. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning.
+            - "userspace": the same hop served by wireproxy on AmneziaWG's userspace implementation, so
+              obfuscation works. It needs no interface or root: the only AmneziaWG mode on
+              home-manager and nix-on-droid. A declared or profile ListenPort is used as is. An
+              Endpoint hostname resolves through the system resolver: give an address where that
+              resolver cannot reach the name.
             - "interface": the AmneziaWG interface comes up without routes (Table = off), and the
               outbound binds to it, so obfuscation works. With the sing-box backend its DNS goes
               through the interface too (proxy.dns.remote); XRay resolves as usual.

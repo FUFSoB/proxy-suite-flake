@@ -37,6 +37,12 @@
   autoProxyEnabled,
   autoProxyStateDir,
   singBox,
+  stateDir ? "/var/lib/proxy-suite",
+  runtimeDir ? "/run",
+  serviceManager ? "systemd",
+  privileged ? "1",
+  # proxy-suitectl, when serviceManager is "supervisor".
+  supervisorCtl ? "",
   guiRefreshInterval ? 3,
 }:
 
@@ -79,6 +85,13 @@ let
     AUTOPROXY_ENABLED = autoProxyEnabled;
     AUTOPROXY_STATE_DIR = autoProxyStateDir;
     SING_BOX = singBox;
+    STATE_DIR = stateDir;
+    RUNTIME_DIR = runtimeDir;
+    SERVICE_MANAGER = serviceManager;
+    PRIVILEGED = privileged;
+  }
+  // lib.optionalAttrs (supervisorCtl != "") {
+    SUPERVISOR_CTL = supervisorCtl;
   };
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv

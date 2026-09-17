@@ -49,7 +49,7 @@ in
 
     ipv6 = mkOption {
       type = types.bool;
-      default = config.networking.enableIPv6;
+      default = config.services.proxy-suite.host.enableIPv6;
       defaultText = literalExpression "config.networking.enableIPv6";
       description = ''
         Carry IPv6 in the transparent modes: TProxy through a second listener on ::1, the TUNs

@@ -29,6 +29,7 @@ services.proxy-suite = {
     profiles = { };
     toolsPackage = pkgs.amneziawg-tools;
     userspacePackage = pkgs.amneziawg-go;
+    wireproxyPackage = pkgs.wireproxy-awg;
   };
   enable = false;
   geodata = {

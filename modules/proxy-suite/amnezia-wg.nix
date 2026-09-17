@@ -1,6 +1,5 @@
 # Native AmneziaWG client profile services.
 {
-  config,
   lib,
   pkgs,
   cfg,
@@ -12,7 +11,15 @@ let
   profiles = awgCfg.profiles;
   profileNames = builtins.attrNames profiles;
   globalProfileNames = builtins.attrNames derived.awgGlobalProfiles;
-  singBoxOutbounds = builtins.filter (ob: ob.kind == "singBox") derived.awgOutbounds;
+  # Profiles behind a loopback SOCKS hop, in a tunnel unit rather than awg-quick.
+  tunnelOutbounds = derived.awgTunnelOutbounds;
+  interfaceProfiles = lib.filterAttrs (
+    _: profile:
+    !builtins.elem profile.asOutbound [
+      "singBox"
+      "userspace"
+    ]
+  ) profiles;
   serviceName = name: "proxy-suite-awg-${name}";
   globalServiceNames = map serviceName globalProfileNames;
   allProfileConflicts =
@@ -172,7 +179,7 @@ let
               | ${pkgs.gnugrep}/bin/grep -F " wg-quick-${profile.interfaceName}" \
               | while read -r _ family table; do nft delete table "$family" "$table" 2>/dev/null || true; done
           fi
-          ${config.networking.resolvconf.package}/bin/resolvconf -d "${profile.interfaceName}" -f 2>/dev/null || true
+          ${cfg.host.resolvconfPackage}/bin/resolvconf -d "${profile.interfaceName}" -f 2>/dev/null || true
           ${pkgs.iproute2}/bin/ip link delete dev ${lib.escapeShellArg profile.interfaceName} 2>/dev/null || true
         }
         trap cleanup ERR
@@ -255,8 +262,8 @@ let
         pkgs.iproute2
         pkgs.iputils
         pkgs.kmod
-        config.networking.firewall.package
-        config.networking.resolvconf.package
+        cfg.host.firewallPackage
+        cfg.host.resolvconfPackage
       ];
       serviceConfig = {
         Type = "oneshot";
@@ -286,7 +293,7 @@ let
       };
     };
 
-  mkSingBoxService =
+  mkTunnelService =
     ob:
     let
       profile = profiles.${ob.name};
@@ -294,8 +301,16 @@ let
     mkTunnel {
       description = "proxy-suite AmneziaWG tunnel behind the ${ob.name} outbound";
       unit = serviceName ob.name;
+      engine = ob.kind;
       inherit (ob) tag tunnelPort directPort;
       profile = ''
+        ${lib.optionalString (profile.configFile != null) ''
+          # It may not exist yet: WARP's appears once proxy-suite-warp has registered.
+          if [ ! -s ${lib.escapeShellArg profile.configFile} ]; then
+            echo "proxy-suite: waiting for the AmneziaWG profile at ${profile.configFile}" >&2
+            until [ -s ${lib.escapeShellArg profile.configFile} ]; do sleep 5; done
+          fi
+        ''}
         profile="$RUNTIME_DIRECTORY/profile.conf"
         ${prepareCommand profile ''"$profile"''}
       '';
@@ -424,28 +439,29 @@ let
   globalAutostartCount = builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
 in
 {
-  environment.systemPackages = [
+  services.proxy-suite.internal.packages = [
     awgCfg.toolsPackage
     awgCfg.userspacePackage
-  ];
+  ]
+  ++ lib.optional (builtins.any (ob: ob.kind == "userspace") tunnelOutbounds) awgCfg.wireproxyPackage;
 
-  boot.extraModulePackages = lib.optionals (awgCfg.kernelModulePackage != null) [
+  services.proxy-suite.internal.kernelModulePackages = lib.optionals (awgCfg.kernelModulePackage != null) [
     awgCfg.kernelModulePackage
   ];
 
   # Replies to the proxy's sockets come in on an interface the host has no route through.
-  networking.firewall.extraReversePathFilterRules = lib.concatMapStrings (ob: ''
+  services.proxy-suite.internal.firewall.extraReversePathFilterRules = lib.concatMapStrings (ob: ''
     iifname "${ob.interface}" accept
   '') derived.awgInterfaceOutbounds;
 
-  systemd.services = lib.mkMerge [
-    (lib.mapAttrs' (name: profile: lib.nameValuePair (serviceName name) (mkService name profile)) (
-      lib.filterAttrs (_: profile: profile.asOutbound != "singBox") profiles
-    ))
+  services.proxy-suite.internal.services = lib.mkMerge [
+    (lib.mapAttrs' (
+      name: profile: lib.nameValuePair (serviceName name) (mkService name profile)
+    ) interfaceProfiles)
     (lib.mapAttrs' (
       name: profile: lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog name profile)
-    ) (lib.filterAttrs (_: profile: profile.asOutbound != "singBox") profiles))
-    (lib.listToAttrs (map (ob: lib.nameValuePair (serviceName ob.name) (mkSingBoxService ob)) singBoxOutbounds))
+    ) interfaceProfiles)
+    (lib.listToAttrs (map (ob: lib.nameValuePair (serviceName ob.name) (mkTunnelService ob)) tunnelOutbounds))
     (lib.mkIf cfg.proxy.tun.enable {
       proxy-suite-tun.conflicts = map (name: "${name}.service") globalServiceNames;
     })

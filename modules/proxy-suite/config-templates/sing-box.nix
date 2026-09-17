@@ -212,10 +212,12 @@ let
     });
 in
 {
+  # The local proxy, ready for TProxy. A rootless host can neither take transparent
+  # connections nor mark sockets: there it is the SOCKS/HTTP listener alone.
   tproxy = mkConfig {
     enableMixed = true;
-    enableTProxy = true;
-    useOutboundRoutingMark = true;
+    enableTProxy = constants.privileged;
+    useOutboundRoutingMark = constants.privileged;
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
   };
 

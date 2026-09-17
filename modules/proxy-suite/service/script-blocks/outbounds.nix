@@ -160,7 +160,9 @@ let
             }
 
             _proxy_suite_parse_xray_url() {
-              ${parse "--backend xray" " --routing-mark ${toString xraySidecarRoutingMark}"}
+              ${parse "--backend xray" (
+                lib.optionalString (xraySidecarRoutingMark != null) " --routing-mark ${toString xraySidecarRoutingMark}"
+              )}
             }
           ''
         else
@@ -331,7 +333,7 @@ let
         # sing-box opens the key as ${constants.serviceUser}, which cannot read a key in a
         # home directory: it gets a copy only root and its group can read.
         SSH_IDENTITY="$RUNTIME_DIR/ssh-identity"
-        install -m 0640 -g ${constants.serviceUser} ${lib.escapeShellArg sshProxyCfg.identityFile} "$SSH_IDENTITY"
+        install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}${lib.escapeShellArg sshProxyCfg.identityFile} "$SSH_IDENTITY"
         OB_JSON=$(${jq} --arg key "$SSH_IDENTITY" '.private_key_path = $key' <<< "$OB_JSON")
       ''}
       ${hostKeyFileBlock}
@@ -357,7 +359,7 @@ let
     _proxy_suite_record_tag_source ${lib.escapeShellArg outbound.tag} ${source}
   '';
 
-  # WARP and "singBox" AmneziaWG profiles run in a tunnel unit, which restarts them when the
+  # WARP and "singBox" or "userspace" AmneziaWG profiles run in a tunnel unit, which restarts them when the
   # handshake stops being answered. Every backend reaches it as a loopback SOCKS hop.
   mkTunnelOutboundBlock =
     unit: source: tag: port:

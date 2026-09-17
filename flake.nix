@@ -32,7 +32,7 @@
       ];
       forAll = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: import nixpkgs { inherit system; };
-      proxySuiteModule = import ./modules/proxy-suite {
+      proxySuiteModules = import ./modules/proxy-suite {
         inherit
           zapret
           nixpkgs
@@ -40,6 +40,7 @@
           z2k
           ;
       };
+      proxySuiteModule = proxySuiteModules.nixos;
       mkOptionsDoc = import ./nix/options-doc.nix {
         inherit nixpkgs pkgsFor proxySuiteModule;
       };
@@ -59,6 +60,18 @@
       # A single-user VPS: VLESS REALITY, TLS and WS inbounds, ACME and SSH. Includes default.
       nixosModules.server = import ./deploy/server-module.nix { inherit proxySuiteModule; };
 
+      # Rootless, in the user's systemd manager: the local proxy, inbounds on ports from 1024
+      # up, and what else needs no root.
+      homeManagerModules.default = proxySuiteModules.homeManager;
+
+      # For numtide/system-manager on other distributions: everything NixOS has, with the
+      # firewall and kernel modules left to the host.
+      systemManagerModules.default = proxySuiteModules.systemManager;
+
+      # nix-on-droid, where proxy-suitectl supervises the services: what home-manager gets,
+      # without the GUI.
+      nixOnDroidModules.default = proxySuiteModules.nixOnDroid;
+
       # Re-export zapret standalone for users who want just that.
       nixosModules.zapret = zapret.nixosModules.default;
 
@@ -72,6 +85,7 @@
           mkProxyCtl
           mkTgWsProxy
           tg-ws-proxy
+          wireproxy-awg
           zapret2
           ;
         # Replaced by Proxy Suite GUI, which mkProxyCtl builds as `.gui`.
@@ -119,6 +133,7 @@
             amneziawg-tools
             amneziawg-go
             tg-ws-proxy
+            wireproxy-awg
             zapret2
             ;
           xray = import ./pkgs/xray.nix { inherit pkgs; };
@@ -166,6 +181,7 @@
             system
             nixpkgs
             proxySuiteModule
+            proxySuiteModules
             zapret
             ;
           generatedOptionsDoc = mkOptionsDoc system;

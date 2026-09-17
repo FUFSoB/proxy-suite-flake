@@ -71,7 +71,66 @@ let
     ++ lib.concatMap (ob: [
       ob.tunnelPort
       ob.directPort
-    ]) (builtins.filter (ob: ob.kind == "singBox") derived.awgOutbounds);
+    ]) derived.awgTunnelOutbounds;
+
+  # A rootless host (home-manager, nix-on-droid) runs everything as the user: nothing
+  # that programs routing, firewalls or interfaces, and no privileged ports.
+  rootless = !constants.privileged;
+  hostKind = cfg.host.kind;
+  rootlessForbids =
+    used: feature:
+    mkAssertion (
+      !(rootless && used)
+    ) "proxy-suite: ${feature} needs root, which services on a ${hostKind} host do not have";
+  rootlessPorts =
+    lib.optional proxyEnabled {
+      name = "proxy.listener.port";
+      port = proxyCfg.listener.port;
+    }
+    ++ lib.optional tgWsProxyCfg.enable {
+      name = "tgWsProxy.listener.port";
+      port = tgWsProxyCfg.listener.port;
+    }
+    ++ lib.optional cfg.sshProxy.enable {
+      name = "sshProxy.listener.port";
+      port = cfg.sshProxy.listener.port;
+    }
+    ++ lib.optionals cfg.inbounds.enable (
+      lib.mapAttrsToList (name: listener: {
+        name = "inbounds.listeners.${name}.port";
+        inherit (listener) port;
+      }) cfg.inbounds.listeners
+    );
+  rootlessAssertions = [
+    (rootlessForbids (proxyEnabled && globalTun.enable) "proxy.tun")
+    (rootlessForbids (proxyEnabled && globalTproxy.enable) "proxy.tproxy")
+    (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTun.enable) "perAppRouting.tun")
+    (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTproxy.enable) "perAppRouting.tproxy")
+    (rootlessForbids perAppZapretCfg.enable "perAppRouting.zapret")
+    (rootlessForbids zapretCfg.enable "zapret")
+    (rootlessForbids (
+      derived.awgGlobalProfiles != { } || derived.awgInterfaceOutbounds != [ ]
+    ) ''an AmneziaWG interface (a global profile, or asOutbound = "interface"; use "userspace")'')
+    (mkAssertion (!(rootless && cfg.userControl.enable))
+      "proxy-suite: userControl has nothing to grant on a ${hostKind} host, whose services already belong to the user"
+    )
+    (mkAssertion
+      (
+        !(
+          rootless
+          && cfg.sshProxy.enable
+          && cfg.sshProxy.serviceUser != null
+          && cfg.sshProxy.serviceUser != constants.serviceUser
+        )
+      )
+      "proxy-suite: sshProxy.serviceUser cannot switch users on a ${hostKind} host; leave it at its default"
+    )
+  ]
+  ++ map (
+    item:
+    mkAssertion (!(rootless && item.port < 1024))
+      "proxy-suite: ${item.name} = ${toString item.port} is a privileged port, which services on a ${hostKind} host cannot bind; pick one from 1024 up"
+  ) rootlessPorts;
 
   featureAssertions = [
     # Declaring no outbound at all is legal: they can be added at runtime with
@@ -108,8 +167,8 @@ let
       "proxy-suite: warp.asOutbound requires proxy.enable = true"
     )
     (requireEnabled (
-      cfg.warp.enable && cfg.warp.asOutbound == "interface"
-    ) cfg.amneziaWg.enable ''proxy-suite: warp.asOutbound = "interface" requires amneziaWg.enable = true'')
+      cfg.warp.enable && builtins.elem cfg.warp.asOutbound [ "userspace" "interface" ]
+    ) cfg.amneziaWg.enable ''proxy-suite: warp.asOutbound = "${toString cfg.warp.asOutbound}" requires amneziaWg.enable = true'')
     (requireEnabled (
       cfg.warp.enable && cfg.warp.asAmneziaWg
     ) cfg.amneziaWg.enable "proxy-suite: warp.asAmneziaWg requires amneziaWg.enable = true")
@@ -730,7 +789,8 @@ let
         }
       ];
 in
-featureAssertions
+rootlessAssertions
+++ featureAssertions
 ++ perAppRoutingAssertions
 ++ localProxyAuthAssertions
 ++ secretAssertions

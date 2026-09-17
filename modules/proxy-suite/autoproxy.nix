@@ -7,6 +7,8 @@
   cfg,
   proxyCtl,
   autoProxyStateDir,
+  runtimeDir,
+  journalctl,
   userControlAllows,
 }:
 
@@ -16,7 +18,7 @@ let
   stateDirMode = if userControlAllows "autoProxy" then "0771" else "0751";
   render = import ./autoproxy-render.nix {
     inherit pkgs;
-    inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser;
+    inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser ifPrivileged;
   };
   jqFile =
     path:
@@ -52,7 +54,7 @@ let
     set -euo pipefail
     export PATH=${bin}
     state_dir=''${AUTOPROXY_STATE_DIR:-${lib.escapeShellArg autoProxyStateDir}}
-    index=''${PROBE_EXITS_FILE:-/run/proxy-suite-socks/probe-exits.json}
+    index=''${PROBE_EXITS_FILE:-${runtimeDir}/proxy-suite-socks/probe-exits.json}
     ${clashApiBlock}
     if [ -z "$clash_api" ]; then
       echo "sing-box has no Clash API (selection = \"first\"?); nothing to sample"
@@ -81,7 +83,7 @@ let
 
     # Overridable to rehearse a run against a scratch copy; the units never set them.
     state_dir=''${AUTOPROXY_STATE_DIR:-${lib.escapeShellArg autoProxyStateDir}}
-    export PROBE_EXITS_FILE=''${PROBE_EXITS_FILE:-/run/proxy-suite-socks/probe-exits.json}
+    export PROBE_EXITS_FILE=''${PROBE_EXITS_FILE:-${runtimeDir}/proxy-suite-socks/probe-exits.json}
     index=$PROBE_EXITS_FILE
     state="$state_dir/state.json"
     requests="$state_dir/requests"
@@ -273,7 +275,7 @@ let
       last=$(jq -r '.lastRun // 0' "$state")
       if [ "$last" -gt 0 ]; then since="@$last"; else since="-${apCfg.interval}"; fi
       dialled=$(
-        journalctl -u proxy-suite-inbounds --since "$since" --no-pager -o cat 2>/dev/null |
+        ${journalctl} -u proxy-suite-inbounds --since "$since" --no-pager -o cat 2>/dev/null |
           sed -n 's/.* accepted tcp:\([a-zA-Z0-9._-]*\):[0-9]*.*/\1/p' |
           grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' |
           ${lib.optionalString (excludePattern != "") "grep -vE '(^|\\.)(${excludePattern})$' |"}
@@ -442,13 +444,13 @@ let
   };
 in
 {
-  systemd.services.proxy-suite-autoproxy =
+  services.proxy-suite.internal.services.proxy-suite-autoproxy =
     mkUnit "proxy-suite - find the exit that reaches each destination, and remember it" "";
 
-  systemd.services.proxy-suite-autoproxy-learn =
+  services.proxy-suite.internal.services.proxy-suite-autoproxy-learn =
     mkUnit "proxy-suite - probe the destinations asked for with proxy-ctl proxy auto learn" " --requests-only";
 
-  systemd.services.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
+  services.proxy-suite.internal.services.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
     description = "proxy-suite - watch live transfers for destinations that crawl directly";
     after = [ "proxy-suite-socks.service" ];
     serviceConfig = {
@@ -458,7 +460,7 @@ in
     // stateDirConfig;
   };
 
-  systemd.timers.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
+  services.proxy-suite.internal.timers.proxy-suite-autoproxy-sample = lib.mkIf (apCfg.slowBelowKiBps > 0) {
     description = "proxy-suite autoProxy transfer sampling";
     wantedBy = [ "timers.target" ];
     timerConfig = {
@@ -468,7 +470,7 @@ in
     };
   };
 
-  systemd.timers.proxy-suite-autoproxy = {
+  services.proxy-suite.internal.timers.proxy-suite-autoproxy = {
     description = "proxy-suite autoProxy probe schedule";
     wantedBy = [ "timers.target" ];
     timerConfig = {

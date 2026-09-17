@@ -103,50 +103,56 @@ let
   '';
 in
 {
-  environment.systemPackages = lib.mkBefore [ runtime.package ];
+  services.proxy-suite.internal.earlyPackages = [ runtime.package ];
 
-  systemd.services.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.service;
-  systemd.timers.proxy-suite-zapret2-cutoff = lib.mkIf cutoffCfg.enable cutoff.timer;
+  services.proxy-suite.internal.services.proxy-suite-zapret2-cutoff =
+    lib.mkIf cutoffCfg.enable cutoff.service;
+  services.proxy-suite.internal.timers.proxy-suite-zapret2-cutoff =
+    lib.mkIf cutoffCfg.enable cutoff.timer;
 
-  systemd.services.proxy-suite-zapret = lib.mkIf zapretCfg.enable (mkOneshotService {
-    description = "zapret2 DPI bypass";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    conflicts = awgServiceNames;
-    wantedBy = [ "multi-user.target" ];
-    preStart = mkPreStart;
-    runtimeDirectory = "proxy-suite-zapret";
-    stateDirectory = "proxy-suite";
-    execStart = "${runtime.initScript} start";
-    execStop = "${runtime.initScript} stop";
-    extraServiceConfig = {
-      ExecReload = "${runtime.initScript} restart";
-      Environment = runtime.mkEnv {
-        runtime = globalRuntime;
-        pidDir = "/run/proxy-suite-zapret";
-      };
-    };
-  });
+  services.proxy-suite.internal.services.proxy-suite-zapret =
+    lib.mkIf zapretCfg.enable
+      (mkOneshotService {
+        description = "zapret2 DPI bypass";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        conflicts = awgServiceNames;
+        wantedBy = [ "multi-user.target" ];
+        preStart = mkPreStart;
+        runtimeDirectory = "proxy-suite-zapret";
+        stateDirectory = "proxy-suite";
+        execStart = "${runtime.initScript} start";
+        execStop = "${runtime.initScript} stop";
+        extraServiceConfig = {
+          ExecReload = "${runtime.initScript} restart";
+          Environment = runtime.mkEnv {
+            runtime = globalRuntime;
+            pidDir = "/run/proxy-suite-zapret";
+          };
+        };
+      });
 
-  systemd.services.proxy-suite-per-app-zapret = lib.mkIf perAppZapretCfg.enable (mkOneshotService {
-    description = "proxy-suite per-app-routing zapret2 backend";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    conflicts = [
-      "proxy-suite-tproxy.service"
-      "proxy-suite-tun.service"
-    ]
-    ++ awgServiceNames;
-    preStart = mkPreStart;
-    runtimeDirectory = "proxy-suite-per-app-zapret";
-    stateDirectory = "proxy-suite";
-    execStart = "${runtime.initScript} start";
-    execStop = "${runtime.initScript} stop";
-    execStartPre = "${perAppZapretMarkUpScript}";
-    execStopPost = "${perAppZapretMarkDownScript}";
-    extraServiceConfig.Environment = runtime.mkEnv {
-      runtime = perAppRuntime;
-      pidDir = "/run/proxy-suite-per-app-zapret";
-    };
-  });
+  services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
+    lib.mkIf perAppZapretCfg.enable
+      (mkOneshotService {
+        description = "proxy-suite per-app-routing zapret2 backend";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        conflicts = [
+          "proxy-suite-tproxy.service"
+          "proxy-suite-tun.service"
+        ]
+        ++ awgServiceNames;
+        preStart = mkPreStart;
+        runtimeDirectory = "proxy-suite-per-app-zapret";
+        stateDirectory = "proxy-suite";
+        execStart = "${runtime.initScript} start";
+        execStop = "${runtime.initScript} stop";
+        execStartPre = "${perAppZapretMarkUpScript}";
+        execStopPost = "${perAppZapretMarkDownScript}";
+        extraServiceConfig.Environment = runtime.mkEnv {
+          runtime = perAppRuntime;
+          pidDir = "/run/proxy-suite-per-app-zapret";
+        };
+      });
 }

@@ -56,7 +56,7 @@ let
       pkgs.writeText "proxy-suite-core" localProxyAuth.password
     else
       null;
-  routeModeStateFile = "/run/proxy-suite/route-mode";
+  routeModeStateFile = "${constants.runtimeDir}/proxy-suite/route-mode";
   inherit (constants)
     pinnedOutboundFile
     runtimeOutboundsDir
@@ -64,9 +64,9 @@ let
     outboundInventoryFile
     ;
   clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
-  xrayLoglevelFile = "/run/proxy-suite/xray-loglevel";
-  runtimeProxychainsConfig = "/run/proxy-suite-socks/proxychains.conf";
-  xraySidecarRoutingMark = globalTproxy.proxyMark;
+  xrayLoglevelFile = "${constants.runtimeDir}/proxy-suite/xray-loglevel";
+  runtimeProxychainsConfig = "${constants.runtimeDir}/proxy-suite-socks/proxychains.conf";
+  xraySidecarRoutingMark = if constants.privileged then globalTproxy.proxyMark else null;
 
   routingMarkJq =
     routingMark:
@@ -78,6 +78,7 @@ let
       " | .routing_mark = ${toString routingMark}";
 
   subscriptionScripts = import ./script-blocks/subscriptions.nix {
+    inherit (constants) stateDir;
     inherit
       lib
       pkgs
@@ -220,6 +221,7 @@ let
   proxyInboundsSubscriptionsFile = proxyInboundsScripts.subscriptionsFile;
 
   controlScripts = import ./control-scripts.nix {
+    inherit (constants) systemctl;
     inherit
       lib
       pkgs

@@ -42,7 +42,7 @@ let
 
   autoProxyRender = import ../autoproxy-render.nix {
     inherit pkgs;
-    inherit (constants) serviceUser;
+    inherit (constants) serviceUser ifPrivileged;
   };
   runBackend = constants.runAsServiceUser pkgs constants.backendCaps;
   userControlGroup = lib.escapeShellArg userControlCfg.group;
@@ -136,7 +136,7 @@ let
         ${lib.escapeShellArg localProxyAuth.username} \
         "$LOCAL_PROXY_PASSWORD"
     } > "${runtimeProxychainsConfig}"
-    ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${runtimeProxychainsConfig}"
+    ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${runtimeProxychainsConfig}"''}
     chmod 640 "${runtimeProxychainsConfig}"
   '';
 
@@ -258,7 +258,7 @@ let
         ${
           if userControlCfg.enable || localProxyAuthEnabled then
             ''
-              ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$ENDPOINTS_TMP"
+              ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$ENDPOINTS_TMP"''}
               chmod 640 "$ENDPOINTS_TMP"
             ''
           else
@@ -358,14 +358,14 @@ let
             ''
           else
             ''
-              ${chgrp} ${constants.serviceUser} "$backend_config"
+              ${constants.ifPrivileged ''${chgrp} ${constants.serviceUser} "$backend_config"''}
               chmod 640 "$backend_config"
             ''
         }
       done
       FAKE_IP_CACHE=$(${jq} -r '.experimental.cache_file.path? // empty' "$RUNTIME_DIR/config.json")
       if [ -n "$FAKE_IP_CACHE" ]; then
-        install -d -m 0700 -o ${constants.serviceUser} -g ${constants.serviceUser} "$(dirname "$FAKE_IP_CACHE")"
+        install -d -m 0700 ${constants.ifPrivileged "-o ${constants.serviceUser} -g ${constants.serviceUser} "}"$(dirname "$FAKE_IP_CACHE")"
       fi
 
       ${
@@ -409,9 +409,10 @@ let
     '';
 
   startSocks = mkStartScript {
-    runtimeDir = "/run/proxy-suite-socks";
+    runtimeDir = "${constants.runtimeDir}/proxy-suite-socks";
     configFile = tproxyFile;
-    routingMark = globalTproxy.proxyMark;
+    # Rootless hosts cannot set SO_MARK, and have no TProxy rules to escape anyway.
+    routingMark = if constants.privileged then globalTproxy.proxyMark else null;
     enableLocalProxyAuth = localProxyAuthEnabled;
     # TProxy takes the system resolver's own upstream queries too, so a proxy server's name
     # has to resolve inside XRay, as under the TUN.
@@ -425,7 +426,7 @@ let
   };
 
   startTun = mkStartScript {
-    runtimeDir = "/run/proxy-suite-tun";
+    runtimeDir = "${constants.runtimeDir}/proxy-suite-tun";
     configFile = tunFile;
     routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
     xrayTunDnsRuntime = pureXrayEnabled;
@@ -436,7 +437,7 @@ let
   };
 
   startPerAppTun = mkStartScript {
-    runtimeDir = "/run/proxy-suite-per-app-tun";
+    runtimeDir = "${constants.runtimeDir}/proxy-suite-per-app-tun";
     configFile = perAppTunFile;
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
     xrayTunDnsRuntime = pureXrayEnabled;

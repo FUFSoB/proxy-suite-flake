@@ -88,7 +88,7 @@ in
   # For the checks: ExecStartPre/ExecStopPost carry these behind "+".
   inherit bypassUpScript bypassDownScript;
 
-  config.systemd.services.proxy-suite-tg-ws-proxy = {
+  config.services.proxy-suite.internal.services.proxy-suite-tg-ws-proxy = {
     description = "Telegram MTProto WebSocket proxy";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];

@@ -30,9 +30,19 @@ in
       description = "AWG 3.1 userspace implementation used when the kernel interface is unavailable.";
     };
 
+    wireproxyPackage = mkOption {
+      type = types.package;
+      default = awgPackages.wireproxy;
+      description = "wireproxy build with AWG 3.1 and FwMark, which runs profiles with asOutbound = \"userspace\".";
+    };
+
     kernelModulePackage = mkOption {
       type = types.nullOr types.package;
-      default = awgPackages.kernelModule config.boot.kernelPackages;
+      default =
+        let
+          kernelPackages = config.services.proxy-suite.host.kernelPackages;
+        in
+        if kernelPackages == null then null else awgPackages.kernelModule kernelPackages;
       description = "AWG 3.1 kernel module package. Set null to use userspace-only fallback.";
     };
 

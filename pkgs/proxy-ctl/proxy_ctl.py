@@ -165,8 +165,29 @@ def readable(path):
     return bool(path) and os.access(path, os.R_OK)
 
 
+def privileged():
+    """Whether the services run as root: off on rootless hosts (home-manager, nix-on-droid)."""
+    return env("PRIVILEGED", "1") == "1"
+
+
+def service_manager():
+    """What runs the units: systemd, systemd-user (home-manager), or supervisor (nix-on-droid)."""
+    return env("SERVICE_MANAGER", "systemd")
+
+
+def state_dir():
+    return env("STATE_DIR", "/var/lib/proxy-suite")
+
+
+def runtime_dir():
+    """The parent of the units' runtime directories (proxy-suite-socks, ...)."""
+    return env("RUNTIME_DIR", "/run")
+
+
 def ask_group():
     """What lets a refused user in: root, or userControl's group with the scope for it."""
+    if not privileged():
+        return "check its owner and permissions"
     return f"join the {env('USER_CONTROL_GROUP', 'proxy-suite')} group, or re-run with sudo"
 
 
@@ -212,8 +233,28 @@ def _exec(argv):
         die(f"proxy-ctl: {argv[0]}: {e.strerror}", 126 if isinstance(e, PermissionError) else 127)
 
 
+def _manager_argv(tool, args):
+    """tool (systemctl, journalctl) with args, aimed at the manager that runs the units.
+
+    Under systemd-user every unit is a user unit, so a --user of the caller's is redundant.
+    Without systemd (nix-on-droid), proxy-suitectl answers both.
+    """
+    if service_manager() == "systemd-user":
+        return [tool, "--user", *(a for a in args if a != "--user")]
+    if service_manager() == "supervisor":
+        ctl = env("SUPERVISOR_CTL", "proxy-suitectl")
+        rest = [a for a in args if a != "--user"]
+        return [ctl, "journal", *rest] if tool == "journalctl" else [ctl, *rest]
+    return [tool, *args]
+
+
 def systemctl(*args, capture=False, quiet=False):
-    return _run(["systemctl", *args], capture=capture, quiet=quiet)
+    return _run(_manager_argv("systemctl", args), capture=capture, quiet=quiet)
+
+
+def journal_hint(unit, count=None):
+    """The command that shows unit's log, for messages."""
+    return " ".join(_manager_argv("journalctl", ["-u", unit, *(["-n", str(count)] if count else [])]))
 
 
 def must(*args):
@@ -522,7 +563,7 @@ def _unit_states(units):
     """unit -> ActiveState for the units that exist, in one systemctl call."""
     if not units:
         return {}
-    _, out = _run(["systemctl", "show", "--property=Id,LoadState,ActiveState", "--", *units], capture=True, quiet=True)
+    _, out = systemctl("show", "--property=Id,LoadState,ActiveState", "--", *units, capture=True, quiet=True)
     states = {}
     for unit, block in zip(units, out.strip().split("\n\n")):
         props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
@@ -874,7 +915,7 @@ TEST_DOWNLOAD_SECONDS = 10
 
 
 def _runtime_file(name):
-    return os.path.join(os.path.dirname(env("OUTBOUND_INVENTORY_FILE", "/run/proxy-suite-socks/outbounds.json")), name)
+    return os.path.join(os.path.dirname(env("OUTBOUND_INVENTORY_FILE", f"{runtime_dir()}/proxy-suite-socks/outbounds.json")), name)
 
 
 def _test_ping(endpoint, timeout=3):
@@ -1156,8 +1197,8 @@ def cmd_unpin(*_):
 
 def _runtime_dir(kind):
     if kind == "outbound":
-        return env("RUNTIME_OUTBOUNDS_DIR", "/var/lib/proxy-suite/outbounds.d")
-    return env("RUNTIME_SUBS_DIR", "/var/lib/proxy-suite/subscriptions.d")
+        return env("RUNTIME_OUTBOUNDS_DIR", f"{state_dir()}/outbounds.d")
+    return env("RUNTIME_SUBS_DIR", f"{state_dir()}/subscriptions.d")
 
 
 def _runtime_hidden(kind):
@@ -1275,7 +1316,7 @@ def _runtime_reload():
 
 
 def _subscription_cache(tag):
-    return os.path.join(env("SUB_CACHE_DIR", "/var/lib/proxy-suite/subscriptions"), f"{tag}.json")
+    return os.path.join(env("SUB_CACHE_DIR", f"{state_dir()}/subscriptions"), f"{tag}.json")
 
 
 def _runtime_entry_verify(kind, tag):
@@ -1413,7 +1454,7 @@ def _probe_paths():
 
 
 def _probe_exits_file():
-    return env("PROBE_EXITS_FILE", "/run/proxy-suite-socks/probe-exits.json")
+    return env("PROBE_EXITS_FILE", f"{runtime_dir()}/proxy-suite-socks/probe-exits.json")
 
 
 def _probe_site(url):
@@ -1756,7 +1797,7 @@ def _reputation_by_tag():
 
 
 def _autoproxy_dir():
-    return env("AUTOPROXY_STATE_DIR", "/var/lib/proxy-suite/autoproxy")
+    return env("AUTOPROXY_STATE_DIR", f"{state_dir()}/autoproxy")
 
 
 def _require_autoproxy():
@@ -1924,10 +1965,10 @@ def cmd_proxy_learn(host="", *_):
     if systemctl("start", "proxy-suite-autoproxy-learn.service", quiet=True)[0]:
         sys.stdout.flush()
         print(f"The probe run failed. {host} is still queued and will be tried again at the next run.", file=sys.stderr)
-        die("Details: journalctl -u proxy-suite-autoproxy-learn -n 20")
+        die(f"Details: {journal_hint('proxy-suite-autoproxy-learn', 20)}")
     h = (_autoproxy_state(path).get("hosts") or {}).get(host)
     if h is None:
-        print("No verdict recorded; see: journalctl -u proxy-suite-autoproxy-learn")
+        print(f"No verdict recorded; see: {journal_hint('proxy-suite-autoproxy-learn')}")
     elif h.get("exit"):
         print(f"{_s(h.get('domain'))}: {_s(h.get('verdict'))} - routed via {_s(h['exit'])} from now on, no restart needed")
     else:
@@ -1947,7 +1988,7 @@ def cmd_zapret(*args):
 
 
 def _zapret_state_dir():
-    return env("ZAPRET_STATE_DIR", "/var/lib/proxy-suite/zapret2")
+    return env("ZAPRET_STATE_DIR", f"{state_dir()}/zapret2")
 
 
 def _zapret_auto_file(name):
@@ -2074,7 +2115,7 @@ def cmd_zapret_cutoff(verb="status", *_):
             denied(path, "write")
         print("Probing this line; this takes a few minutes...")
         if systemctl("start", "proxy-suite-zapret2-cutoff.service")[0]:
-            die("The probe failed. Details: journalctl -u proxy-suite-zapret2-cutoff -n 30")
+            die(f"The probe failed. Details: {journal_hint('proxy-suite-zapret2-cutoff', 30)}")
     elif verb != "status":
         usage("zapret cutoff [status|probe]")
 
@@ -2253,7 +2294,7 @@ def cmd_where(domain="", *_):
             local = " and ".join(sorted(live))
 
         if env("INBOUNDS_ENABLED") == "1":
-            inbounds_path = "/run/proxy-suite-inbounds/config.json"
+            inbounds_path = f"{runtime_dir()}/proxy-suite-inbounds/config.json"
             if not readable(inbounds_path):
                 _where_row("inbounds", f"routing is not readable - {ask_group()}")
             else:
@@ -2474,7 +2515,7 @@ def _inbound_links():
 
 def _inbound_server_json(tag):
     """The XRay inbound as the server runs it, secrets and all."""
-    path = os.path.join(os.path.dirname(env("INBOUNDS_LINKS_FILE", "/run/proxy-suite-inbounds/links.json")), "config.json")
+    path = os.path.join(os.path.dirname(env("INBOUNDS_LINKS_FILE", f"{runtime_dir()}/proxy-suite-inbounds/links.json")), "config.json")
     if not os.path.isfile(path):
         die("No inbound config yet - is proxy-suite-inbounds running?")
     if not readable(path):
@@ -2530,7 +2571,7 @@ def _inbound_stats(*args):
         days = rest.pop(0)
     if rest or kind not in STATS_KINDS or not re.fullmatch(r"[1-9][0-9]*", days):
         usage("inbounds stats [days] [--by user|inbound|outbound]")
-    path = env("INBOUNDS_STATS_FILE", "/var/lib/proxy-suite/inbound-stats.json")
+    path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
     # Collect what XRay counted since the last run first; root and userControl
     # members may, anyone else reads what the timer last wrote.
     systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
@@ -2581,7 +2622,7 @@ def _inbound_presence():
     except (ValueError, AttributeError):
         die("Unexpected answer from the inbounds' stats API.")
     # As the timer last wrote it: the API already told who is online now.
-    path = env("INBOUNDS_STATS_FILE", "/var/lib/proxy-suite/inbound-stats.json")
+    path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
     seen = (read_json(path).get("seen") or {}) if readable(path) else {}
     # Users nobody has seen yet, when the links say who exists.
     path = env("INBOUNDS_LINKS_FILE")
@@ -2626,7 +2667,7 @@ def _inbound_subscriptions(*args):
             qr = True
         else:
             user = arg
-    path = env("INBOUNDS_SUBS_FILE", "/run/proxy-suite-inbounds/subscriptions.json")
+    path = env("INBOUNDS_SUBS_FILE", f"{runtime_dir()}/proxy-suite-inbounds/subscriptions.json")
     base = env("INBOUNDS_SUB_BASE_URL")
     if not os.path.isfile(path):
         die("No subscriptions available. Is proxy-suite-inbounds running, and is inbounds.subscriptions enabled?")
@@ -2699,9 +2740,9 @@ ALIASES = {
 def cmd_logs(*units):
     if units:
         # One -u per unit: a bare second name would be taken as a journal match.
-        _exec(["journalctl", "-f", *(f"--unit={u}" for u in units)])
+        _exec(_manager_argv("journalctl", ["-f", *(f"--unit={u}" for u in units)]))
     # journalctl takes unit globs, so the default needs no unit list of its own.
-    _exec(["journalctl", "-f", "-u", "proxy-suite-*"])
+    _exec(_manager_argv("journalctl", ["-f", "-u", "proxy-suite-*"]))
 
 
 COMMANDS = {

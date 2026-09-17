@@ -64,6 +64,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [vpnFile](#services-proxy-suite-amneziawg-profiles-name-vpnfile)
   - [toolsPackage](#services-proxy-suite-amneziawg-toolspackage)
   - [userspacePackage](#services-proxy-suite-amneziawg-userspacepackage)
+  - [wireproxyPackage](#services-proxy-suite-amneziawg-wireproxypackage)
 
 <a id="services-proxy-suite-amneziawg-enable"></a>
 ## services\.proxy-suite\.amneziaWg\.enable
@@ -141,13 +142,18 @@ always runs, leaves the host’s routes and resolver alone, and is not listed by
 
  - “singBox”: a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
    hop\. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning\.
+ - “userspace”: the same hop served by wireproxy on AmneziaWG’s userspace implementation, so
+   obfuscation works\. It needs no interface or root: the only AmneziaWG mode on
+   home-manager and nix-on-droid\. A declared or profile ListenPort is used as is\. An
+   Endpoint hostname resolves through the system resolver: give an address where that
+   resolver cannot reach the name\.
  - “interface”: the AmneziaWG interface comes up without routes (Table = off), and the
    outbound binds to it, so obfuscation works\. With the sing-box backend its DNS goes
    through the interface too (proxy\.dns\.remote); XRay resolves as usual\.
    Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy\.
 
 *Type:*
-null or one of “singBox”, “interface”
+null or one of “singBox”, “userspace”, “interface”
 
 *Default:*
 
@@ -911,4 +917,18 @@ package
 
 ```nix
 <derivation amneziawg-go-3.1.20260828>
+```
+
+<a id="services-proxy-suite-amneziawg-wireproxypackage"></a>
+## services\.proxy-suite\.amneziaWg\.wireproxyPackage
+
+wireproxy build with AWG 3\.1 and FwMark, which runs profiles with asOutbound = “userspace”\.
+
+*Type:*
+package
+
+*Default:*
+
+```nix
+<derivation wireproxy-awg-1.0.18>
 ```

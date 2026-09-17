@@ -9,4 +9,5 @@
     patches = (old.patches or [ ]) ++ [ ./patches/amneziawg-go-random-trailers-transport.patch ];
   });
   kernelModule = kernelPackages: kernelPackages.amneziawg;
+  wireproxy = import ./wireproxy-awg.nix { inherit pkgs; };
 }

@@ -2,6 +2,7 @@
   system,
   nixpkgs,
   proxySuiteModule,
+  proxySuiteModules,
   generatedOptionsDoc,
   generatedReadmeDoc,
   zapret,
@@ -44,11 +45,20 @@ let
   amneziaWgRuntime = import ./checks/amnezia-wg-runtime.nix {
     inherit pkgs nixpkgs proxySuiteModule;
   };
+  hostChecks = import ./checks/hosts.nix {
+    inherit pkgs proxySuiteModules;
+    inherit (checkLib) mkTProxyConfig mkInboundsConfig;
+  };
   proxyInboundsRuntime = import ./checks/proxy-inbounds-runtime.nix {
     inherit pkgs proxySuiteModule;
   };
 in
 moduleSuiteChecks
+// {
+  proxy-suite-hosts = builtins.seq (builtins.deepSeq hostChecks.assertions true) (
+    pkgs.writeText "proxy-suite-hosts-check" "ok"
+  );
+}
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   amneziawg-runtime = amneziaWgRuntime;
   proxy-inbounds-runtime = proxyInboundsRuntime;

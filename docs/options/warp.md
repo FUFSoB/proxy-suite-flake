@@ -55,11 +55,13 @@ Add WARP as an outbound tagged “warp”\.
    endpoint on 127\.0\.0\.1:18538, as the proxy-suite-daemon user\. The tunnel starts again on a
    new source port when WARP does not answer within 15 seconds of a start, or misses three
    probes later on, unless the uplink itself is down\.
+ - “userspace”: an AmneziaWG profile named “warp” with asOutbound = “userspace”, which honours
+   the AmneziaWG lines of the profile without an interface or root\. Requires amneziaWg\.enable\.
  - “interface”: an AmneziaWG profile named “warp” with asOutbound = “interface”, which honours
    the AmneziaWG lines of the profile\. Requires amneziaWg\.enable\.
 
 *Type:*
-null or one of “singBox”, “interface”
+null or one of “singBox”, “userspace”, “interface”
 
 *Default:*
 

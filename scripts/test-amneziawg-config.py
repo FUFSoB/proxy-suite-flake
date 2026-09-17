@@ -458,6 +458,28 @@ class AmneziaWgConfigTests(unittest.TestCase):
         # The peer is untouched.
         self.assertIn("Endpoint = vpn.example.com:51820", rendered)
 
+    def test_wireproxy_render_joins_lists_and_adds_socks_listener(self):
+        config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1").replace(
+            "Address = 10.8.0.2/32",
+            "Address = 10.8.0.2/32\nAddress = fd00::2/128\nTable = off\nPostUp = true\nDNS = 9.9.9.9",
+        ) + "AllowedIPs = ::/0\n\n[Peer]\nPublicKey = other\nAllowedIPs = 10.0.0.0/8\n"
+        rendered = amneziawg_config.as_wireproxy(config, "127.0.0.1:18700", 2)
+        sections = amneziawg_config.conf_sections(rendered)
+        self.assertEqual([name for name, _ in sections], ["interface", "peer", "peer", "socks5"])
+        interface = dict(sections[0][1])
+        self.assertEqual(interface["address"], "10.8.0.2/32,fd00::2/128")
+        self.assertEqual(interface["dns"], "9.9.9.9,1.1.1.1")
+        self.assertEqual(interface["fwmark"], "2")
+        self.assertEqual(interface["headerprotectionkey"], "header")
+        self.assertNotIn("table", interface)
+        self.assertNotIn("postup", interface)
+        self.assertEqual(dict(sections[1][1])["allowedips"], "0.0.0.0/0,::/0")
+        self.assertEqual(dict(sections[2][1])["publickey"], "other")
+        self.assertEqual(sections[3][1], [("bindaddress", "127.0.0.1:18700")])
+        # Rootless: no mark.
+        unmarked = amneziawg_config.as_wireproxy(config, "127.0.0.1:18700")
+        self.assertEqual(amneziawg_config.section_values(unmarked, "interface", "fwmark"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

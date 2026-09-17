@@ -7,6 +7,7 @@
   perAppRoutingTun,
   perAppRoutingTproxy,
   perAppZapretCfg,
+  runtimeDir,
 }:
 
 let
@@ -55,7 +56,7 @@ let
 
   proxychainsConfigFile =
     if localProxyAuthEnabled then
-      "/run/proxy-suite-socks/proxychains.conf"
+      "${runtimeDir}/proxy-suite-socks/proxychains.conf"
     else
       pkgs.writeText "proxy-suite-per-app" ''
         strict_chain

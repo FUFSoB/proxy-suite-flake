@@ -264,10 +264,11 @@ in
   # shape out of the same backend primitives.
   inherit mkDnsServer;
 
+  # As sing-box's: without TProxy and marks on a rootless host.
   tproxy = mkConfig {
     enableMixed = true;
-    enableTProxy = true;
-    useOutboundRoutingMark = true;
+    enableTProxy = constants.privileged;
+    useOutboundRoutingMark = constants.privileged;
   };
 
   tun = mkConfig {

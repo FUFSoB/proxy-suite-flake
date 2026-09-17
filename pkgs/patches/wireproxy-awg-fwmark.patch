@@ -1,0 +1,40 @@
+diff --git a/config.go b/config.go
+--- a/config.go
++++ b/config.go
+@@ -32,6 +32,7 @@
+ 	DNS                []netip.Addr
+ 	MTU                int
+ 	ListenPort         *int
++	FwMark             *int
+ 	CheckAlive         []netip.Addr
+ 	CheckAliveInterval int
+ 	ASecConfig         *ASecConfigType
+@@ -296,6 +297,14 @@
+ 		device.ListenPort = &value
+ 	}
+ 
++	if sectionKey, err := section.GetKey("FwMark"); err == nil {
++		value, err := sectionKey.Int()
++		if err != nil {
++			return err
++		}
++		device.FwMark = &value
++	}
++
+ 	checkAlive, err := parseNetIP(section, "CheckAlive")
+ 	if err != nil {
+ 		return err
+diff --git a/wireguard.go b/wireguard.go
+--- a/wireguard.go
++++ b/wireguard.go
+@@ -54,6 +54,10 @@
+ 		fmt.Fprintf(&request, "listen_port=%d\n", *conf.ListenPort)
+ 	}
+ 
++	if conf.FwMark != nil {
++		fmt.Fprintf(&request, "fwmark=%d\n", *conf.FwMark)
++	}
++
+ 	if conf.ASecConfig != nil {
+ 		aSecConfig := conf.ASecConfig
+ 

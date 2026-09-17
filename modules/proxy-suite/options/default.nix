@@ -21,6 +21,7 @@
     ./tray.nix
     ./tui.nix
     ./user-control.nix
+    ./host.nix
   ];
 
   options.services.proxy-suite.enable = lib.mkEnableOption "proxy-suite";
