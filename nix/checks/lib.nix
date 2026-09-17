@@ -264,5 +264,8 @@ in
     mkBadProxySuiteFixture
     mkFailingAssertions
     mkProxyCtlDerived
+    system
+    nixpkgs
+    proxySuiteModule
     ;
 }

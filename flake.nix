@@ -56,6 +56,9 @@
       # Main module – bakes in the zapret flake so consumers don't need it as a separate input.
       nixosModules.default = proxySuiteModule;
 
+      # A single-user VPS: VLESS REALITY, TLS and WS inbounds, ACME and SSH. Includes default.
+      nixosModules.server = import ./deploy/server-module.nix { inherit proxySuiteModule; };
+
       # Re-export zapret standalone for users who want just that.
       nixosModules.zapret = zapret.nixosModules.default;
 
@@ -119,6 +122,17 @@
             zapret2
             ;
           xray = import ./pkgs/xray.nix { inherit pkgs; };
+          # Console installer for a proxy-suite VPS (deploy/iso.nix).
+          installer-iso =
+            (nixpkgs.lib.nixosSystem {
+              modules = [
+                (import ./deploy/iso.nix {
+                  inherit self;
+                  serverModule = self.nixosModules.server;
+                })
+                { nixpkgs.hostPlatform = system; }
+              ];
+            }).config.system.build.isoImage;
           optionsDoc = mkOptionsDoc system;
           readmeDoc = mkReadmeDoc system;
           update-docs = updateDocs;

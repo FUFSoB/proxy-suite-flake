@@ -245,6 +245,11 @@ let
     zapretSyncService = zapretChecks.syncService;
   };
 
+  serverModuleChecks = import ./server-module.nix {
+    inherit pkgs mkInboundsSpec;
+    inherit (checkLib) system nixpkgs proxySuiteModule;
+  };
+
   xrayBackendChecks = import ./xray-backends.nix {
     inherit
       pkgs
@@ -285,6 +290,7 @@ let
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
     ++ perAppRoutingChecks.assertions
+    ++ serverModuleChecks.assertions
   );
 in
 {
