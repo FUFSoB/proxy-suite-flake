@@ -378,6 +378,8 @@ in
         has --download proxy outbounds test own-vps --ping
         has own-vps proxy auto probe example.com --via
         has community-de proxy outbounds add hop https://example.com --detour
+        # chain takes the outbound to copy, then the hop it dials through.
+        has community-de proxy outbounds chain own-vps
         has outbound inbounds stats --by
         # Unreadable state loses the values, not the flags.
         has --qr inbounds sub

@@ -140,6 +140,9 @@ Secrets and changes need root, or the userControl group.
                                          add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
                                          chained through another outbound with --detour; the tag first,
                                          or left out to name it after the link
+  proxy outbounds chain <tag> <through-tag> [new tag]
+                                         add a copy of an existing outbound that dials through
+                                         another one; the original keeps dialing the way it did
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds disable|enable <tag>   keep an outbound out of automatic use (selection, autoProxy, pins),
                                          or let it back in; declared ones too

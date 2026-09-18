@@ -471,6 +471,13 @@ TABS = [
                 when=ROW,
                 prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
             ),
+            Action(
+                "H",
+                "chain it through another outbound…",
+                lambda r, t, _: ["proxy", "outbounds", "chain", r["tag"], *t.split()],
+                when=ROW,
+                prompt="<hop tag> [new tag] - a copy of this one dialing through the hop",
+            ),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
             Action(
                 "x",
@@ -588,6 +595,39 @@ TABS = [
 ]
 
 WHERE = Action("w", "How is a domain routed", lambda r, t, _: ["where", t], prompt="<domain>", mode="dialog")
+
+# The share-link schemes scripts/proxy_url_parsers.py parses. http(s) is both an HTTP proxy
+# and how a subscription is spelled, so for those the tab pasted into decides.
+PROXY_SCHEMES = ("vless", "vmess", "trojan", "ss", "hysteria2", "hy2", "tuic", "anytls", "naive+https", "naive+quic", "socks5", "socks5h", "socks4", "socks4a")
+HOST = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+")
+# A bare host means something only where a tab collects hosts.
+HOST_ARGV = {"zapret": ["zapret", "auto", "add"], "autoproxy": ["proxy", "auto", "learn"]}
+OUTBOUND_ADD = ["proxy", "outbounds", "add"]
+
+
+def paste_argv(tab_id, text):
+    """What pasting the clipboard onto a tab runs: (argv, ""), or (None, why it runs nothing).
+
+    Dumb on purpose: a share link becomes an outbound, a subscription URL a subscription,
+    a bare host a pinned or learned one. The tag comes from the link, as `add` derives it.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, "Nothing to paste."
+    if text.startswith("{"):
+        return [*OUTBOUND_ADD, text], ""  # only outbounds take JSON
+    if len(text.splitlines()) > 1:
+        return None, "Paste one link at a time."
+    scheme = text.split("://", 1)[0].lower() if "://" in text else ""
+    if scheme in PROXY_SCHEMES:
+        return [*OUTBOUND_ADD, text], ""
+    if scheme in ("http", "https"):
+        return ([*OUTBOUND_ADD, text] if tab_id == "outbounds" else ["proxy", "subs", "add", text]), ""
+    if scheme:
+        return None, f"Nothing takes a {scheme}:// link."
+    if HOST.fullmatch(text) and tab_id in HOST_ARGV:
+        return [*HOST_ARGV[tab_id], text], ""
+    return None, "Not a share link, a subscription URL or a host."
 
 
 def available_tabs(states):

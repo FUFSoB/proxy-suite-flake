@@ -158,6 +158,31 @@ class ModelTest(unittest.TestCase):
         self.assertEqual([i.id for i in model.tray_menu(None)], ["status", "open", "sep-0", "quit"])
         self.assertEqual(model.icon_name(ctl._overall_state(None)), "proxy-suite-disabled-unknown")
 
+    def test_paste_argv(self):
+        paste = model.paste_argv
+        self.assertEqual(paste("outbounds", " vless://u@de.test:443#DE\n")[0], ["proxy", "outbounds", "add", "vless://u@de.test:443#DE"])
+        # The tab pasted onto does not matter for an unambiguous link.
+        self.assertEqual(paste("services", "ss://x@a.test:8388")[0], ["proxy", "outbounds", "add", "ss://x@a.test:8388"])
+        self.assertEqual(paste("services", '{"type": "socks",\n "server": "1.2.3.4"}')[0][:3], ["proxy", "outbounds", "add"])
+        # http(s) is both a subscription and an HTTP proxy: the tab decides.
+        self.assertEqual(paste("subs", "https://sub.test/s")[0], ["proxy", "subs", "add", "https://sub.test/s"])
+        self.assertEqual(paste("services", "https://sub.test/s")[0], ["proxy", "subs", "add", "https://sub.test/s"])
+        self.assertEqual(paste("outbounds", "https://u:p@proxy.test:8443")[0], ["proxy", "outbounds", "add", "https://u:p@proxy.test:8443"])
+        # A bare host means something only where a tab collects hosts.
+        self.assertEqual(paste("zapret", "blocked.example")[0], ["zapret", "auto", "add", "blocked.example"])
+        self.assertEqual(paste("autoproxy", "blocked.example")[0], ["proxy", "auto", "learn", "blocked.example"])
+        for tab, text, why in [
+            ("outbounds", "", "Nothing to paste."),
+            ("outbounds", "vless://a\nvless://b", "one link at a time"),
+            ("outbounds", "ftp://a.test/x", "ftp:// link"),
+            ("outbounds", "blocked.example", "Not a share link"),
+            ("zapret", "not a host", "Not a share link"),
+        ]:
+            with self.subTest(text=text):
+                argv, message = paste(tab, text)
+                self.assertIsNone(argv)
+                self.assertIn(why, message)
+
     def test_load_tab(self):
         tab = next(t for t in model.TABS if t.id == "outbounds")
         inventory = {"tags": ["a", "b"], "pinned": "b", "detours": {"a": "b"}, "excluded": ["b"]}
@@ -166,7 +191,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual([(r["tag"], r["mark"], r["notes"]) for r in rows], [("a", "▸", "via b"), ("b", "★", "never picked")])
         self.assertIn("Pinned: b", summary)
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
-            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "x", "l", "c", "Q", "J", "F", "X"])
+            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "H", "x", "l", "c", "Q", "J", "F", "X"])
         chain = next(a for a in tab.actions if a.key == "h")
         self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
         # Probe exits go by the backend's tag.

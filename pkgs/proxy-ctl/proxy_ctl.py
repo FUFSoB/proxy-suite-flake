@@ -62,6 +62,9 @@ Secrets and changes need root, or the userControl group.
                                          add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
                                          chained through another outbound with --detour; the tag first,
                                          or left out to name it after the link
+  proxy outbounds chain <tag> <through-tag> [new tag]
+                                         add a copy of an existing outbound that dials through
+                                         another one; the original keeps dialing the way it did
   proxy outbounds rm <tag>               remove a runtime outbound
   proxy outbounds disable|enable <tag>   keep an outbound out of automatic use (selection, autoProxy, pins),
                                          or let it back in; declared ones too
@@ -492,6 +495,7 @@ COMPLETE = {
         "words": {
             "list": "outbounds, where each came from, and the pick",
             "add": "add an outbound at runtime: [tag] <url or JSON>",
+            "chain": "copy an outbound so it dials through another one",
             "rm": "remove a runtime outbound",
             "disable": "keep it out of automatic use",
             "enable": "let a disabled outbound back in",
@@ -504,6 +508,8 @@ COMPLETE = {
         "args": _outbound_choices,
         "flags": {"--qr": "print a QR code", "--json": "backend JSON", "--config": "client config for this server"},
     },
+    # The outbound to copy, then the hop; the third word is the new tag, which nothing can suggest.
+    "proxy outbounds chain": {"args": _outbound_choices, "repeat": True},
     "proxy outbounds rm": {"args": lambda: _names(_runtime_tags("outbound"))},
     "proxy outbounds disable": {"args": lambda: {t: d for t, d in _outbound_choices().items() if t not in _outbound_disabled()}},
     "proxy outbounds enable": {"args": lambda: _names(_outbound_disabled())},
@@ -941,6 +947,8 @@ def cmd_outbounds(verb="list", *args):
             if not detour:
                 usage("proxy outbounds add [tag] <url|json|-> [--detour <tag>]")
         _runtime_entry_add("outbound", *args, detour=detour)
+    elif verb == "chain":
+        cmd_outbound_chain(*args)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("outbound", *args)
     elif verb == "disable":
@@ -952,7 +960,7 @@ def cmd_outbounds(verb="list", *args):
     elif verb == "link":
         _outbound_link(*args)
     else:
-        usage("proxy outbounds [list|add [tag] <url|json|->|rm <tag>|disable <tag>|enable <tag>|test [tag...]|link <tag>]")
+        usage("proxy outbounds [list|add [tag] <url|json|->|chain <tag> <through-tag>|rm <tag>|disable <tag>|enable <tag>|test [tag...]|link <tag>]")
 
 
 def _outbound_inventory():
@@ -1217,14 +1225,20 @@ def _json_text(value):
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
+def _outbound_share_entry(tag):
+    """What the socks start script recorded for an outbound: the URL it was given, and its backend JSON."""
+    entry = (_read_root_json(_runtime_file("outbound-share.json"), "outbounds").get("outbounds") or {}).get(tag)
+    if entry is None:
+        die(f"Unknown outbound: {tag}")
+    return entry
+
+
 def _outbound_link(*args):
     tag, flag = _share_args(args, ("--qr", "--json", "--config"), "proxy outbounds")
     if flag == "--config":
         _config_export(only=tag)
         return
-    entry = (_read_root_json(_runtime_file("outbound-share.json"), "outbounds").get("outbounds") or {}).get(tag)
-    if entry is None:
-        die(f"Unknown outbound: {tag}")
+    entry = _outbound_share_entry(tag)
     if flag == "--json":
         print(_json_text(_proxy_export().portable_outbound(entry.get("outbound") or {})))
     elif not entry.get("url"):
@@ -1427,8 +1441,12 @@ def _runtime_tag_for(kind, source):
             if not name and host:
                 label = _host_label(host)
                 name = label if kind == "subscription" else f"{parts.scheme.lower()}-{label}"
-    base = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")[:RUNTIME_TAG_MAX].strip("-._")
-    base = base or ("sub" if kind == "subscription" else "outbound")
+    return _unique_runtime_tag(kind, name, "sub" if kind == "subscription" else "outbound")
+
+
+def _unique_runtime_tag(kind, name, fallback):
+    """`name` as a tag nothing else has taken: -2, -3... after it."""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")[:RUNTIME_TAG_MAX].strip("-._") or fallback
     taken = {"proxy", "direct", "block", *_runtime_tags(kind), *(_outbound_tags() if kind == "outbound" else _sub_tags())}
     tag, n = base, 1
     while tag in taken:
@@ -1485,6 +1503,39 @@ def _runtime_entry_add(kind, *args, detour=""):
         os.umask(old)
     _runtime_reload()
     _runtime_entry_verify(kind, tag)
+
+
+def cmd_outbound_chain(tag="", hop="", new_tag="", *_):
+    """A runtime copy of an existing outbound that dials through another one.
+
+    A detour belongs to the outbound that carries it, so chaining two that already exist
+    means a third: the original keeps dialing the way it did.
+    """
+    if not tag or not hop:
+        usage("proxy outbounds chain <tag> <through-tag> [new tag]")
+    _require_outbound_inventory()
+    tags = _outbound_tags()
+    if tag not in tags:
+        die(f"Unknown outbound: {tag}")
+    if hop not in tags:
+        die(f"Cannot chain through '{hop}': not an outbound. See: proxy-ctl proxy outbounds")
+    if tag == hop:
+        die(f"'{tag}' cannot chain through itself; name another outbound as the hop.")
+    entry = _outbound_share_entry(tag)
+    source = _s(entry.get("url") or "")
+    if not source:
+        ob = entry.get("outbound") or {}
+        if not ob:
+            die(f"Nothing to copy from '{tag}': the backend recorded neither a URL nor JSON for it.")
+        source = _json_text(_proxy_export().portable_outbound(ob))
+    if new_tag:
+        _check_runtime_tag("outbound", new_tag)
+    else:
+        new_tag = _unique_runtime_tag("outbound", f"{tag}-via-{hop}", "chain")
+        print(f"Tag: {new_tag} (none given; pass one after the hop to choose it)")
+    if own_hop := _s((_outbound_inventory().get("detours") or {}).get(tag) or ""):
+        print(f"Note: '{tag}' chains through {own_hop}; the copy chains through {hop} instead.")
+    _runtime_entry_add("outbound", new_tag, source, detour=hop)
 
 
 def _runtime_entry_rm(kind, tag="", *_):

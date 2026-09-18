@@ -54,6 +54,7 @@ GLOBAL_KEYS = [
     ("← → ⇥", "switch tab; 1-8 jump to one"),
     ("/", "filter the rows (list:learned for one column); esc clears"),
     ("click", "a column heading sorts by it, again reverses, a third time unsorts"),
+    ("paste", "a link in the clipboard is added to this tab"),
     ("w", "how is a domain routed"),
     ("L", "follow all logs"),
     ("o", "output of the last command"),
@@ -501,7 +502,13 @@ class ProxyTui(App):
     # --- reading --------------------------------------------------------------
 
     def action_reload(self):
-        self.load(self.active_tab())
+        tab_id = self.active_tab()
+        if tab_id not in self.loaded:
+            # Nothing has landed here yet, and an empty table reads as an empty tab.
+            widget = self.main.query_one(f"#{tab_id}-summary", Static)
+            _update(widget, Text("loading…"))
+            widget.display = True
+        self.load(tab_id)
 
     @work(thread=True, exclusive=True, group="load")
     def load(self, tab_id):
@@ -535,6 +542,11 @@ class ProxyTui(App):
             widget.display = True
 
     def fill_table(self, tab_id, states, visible, status, rows, summary):
+        # Nothing read, after a read that worked: keep the last good view, so one bad refresh
+        # does not blink every tab and row out and back.
+        if not states and self.states:
+            self.feedback("cannot read service states: showing the last good read", False)
+            return
         rows = model.unique_keys(rows)
         self.loaded[tab_id] = (states, visible, status, rows, summary)
         self.states, self.status = states, status
@@ -622,6 +634,18 @@ class ProxyTui(App):
 
     def action_act(self, index):
         self.perform(self.tabs[self.active_tab()].actions[index], self.selected_row())
+
+    def on_paste(self, event):
+        """The terminal's paste, bracketed: whatever it carries is added to the tab it lands on.
+        A prompt or a dialog takes its own paste, so this only fires on the table."""
+        if self.screen is not self.main:
+            return
+        event.stop()
+        argv, what = model.paste_argv(self.active_tab(), event.text)
+        if argv is None:
+            self.feedback(what, False)
+        else:
+            self.run_argv("run", argv)
 
     def action_where(self):
         self.perform(model.WHERE, None)

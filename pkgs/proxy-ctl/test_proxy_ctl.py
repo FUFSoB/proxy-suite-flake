@@ -580,6 +580,47 @@ class RuntimeEntryTest(EnvTest):
         self.assertIn("Cannot see the entry for 'de'", err)
         self.assertNotIn("No runtime outbound", err)
 
+    def share(self, outbounds):
+        """outbound-share.json as the socks start script writes it, beside the inventory."""
+        self.write("outbound-share.json", {"outbounds": outbounds})
+
+    def test_chain_copies_an_existing_outbound_through_a_hop(self):
+        self.share({"primary": {"url": "vless://u@de.test:443"}, "vless-example": {"url": "vless://u@nl.test:443"}})
+        out = ok(ctl.cmd_outbounds, "chain", "primary", "vless-example")
+        self.assertIn("Tag: primary-via-vless-example", out)
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/primary-via-vless-example.url")), "vless://u@de.test:443\n")
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/primary-via-vless-example.detour")), "vless-example\n")
+        # The original is untouched: a detour belongs to the outbound carrying it.
+        self.assertFalse(os.path.exists(self.path("outbounds.d/primary.detour")))
+        self.assertEqual(self.started, ["proxy-suite-outbound-reload.service"])
+        # A name of one's own, and a second copy of the same pair gets its own tag.
+        ok(ctl.cmd_outbounds, "chain", "primary", "vless-example", "de-via-nl")
+        self.assertTrue(os.path.exists(self.path("outbounds.d/de-via-nl.url")))
+        self.assertIn("Tag: primary-via-vless-example-2", ok(ctl.cmd_outbounds, "chain", "primary", "vless-example"))
+
+    def test_chain_without_a_url_copies_the_backend_json(self):
+        self.share({"primary": {"outbound": {"tag": "primary", "type": "socks", "server": "1.2.3.4", "routing_mark": 99}}})
+        ok(ctl.cmd_outbounds, "chain", "primary", "vless-example", "hop")
+        written = json.loads(ctl.read_text(self.path("outbounds.d/hop.json")))
+        # Portable and untagged: the entry's name is the tag, and the host's mark is not shared.
+        self.assertEqual(written, {"type": "socks", "server": "1.2.3.4"})
+
+    def test_chain_refuses_what_it_cannot_chain(self):
+        self.share({"primary": {"url": "vless://u@de.test:443"}, "vless-example": {}})
+        for args, message in (
+            (("chain",), "proxy outbounds chain"),
+            (("chain", "primary"), "proxy outbounds chain"),
+            (("chain", "primary", "primary"), "cannot chain through itself"),
+            (("chain", "nope", "primary"), "Unknown outbound: nope"),
+            (("chain", "primary", "nope"), "Cannot chain through 'nope'"),
+            (("chain", "vless-example", "primary"), "Nothing to copy from 'vless-example'"),
+        ):
+            with self.subTest(args=args):
+                status, _, err = run(ctl.cmd_outbounds, *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn(message, err)
+        self.assertEqual(os.listdir(self.path("outbounds.d")), [])
+
     def test_rm_takes_the_marker_along(self):
         ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
         ok(ctl.cmd_outbounds, "disable", "de")

@@ -13,7 +13,7 @@ import proxy_ctl as ctl
 import proxy_gui as gui
 import proxy_model as model
 import proxy_sni as sni
-from gi.repository import Gio, GLib
+from gi.repository import Adw, Gio, GLib, Gtk
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons"))
 import badges  # noqa: E402
@@ -76,6 +76,14 @@ class GuiTest(unittest.TestCase):
         self.assertTrue(gui.is_badge("state", "active"))
         self.assertTrue(gui.is_badge("status", "ok"))
         self.assertFalse(gui.is_badge("mark", "★"))
+
+    def test_toast_title_is_a_wrapping_label(self):
+        """A toast's own title is one ellipsized line; the properties the wrapping one needs are there.
+        Widgets cannot be built here: GTK segfaults without a display."""
+        self.assertIsNotNone(Adw.Toast.find_property("custom-title"))
+        for name in ("wrap", "wrap-mode", "natural-wrap-mode", "lines", "ellipsize", "max-width-chars"):
+            self.assertIsNotNone(Gtk.Label.find_property(name), name)
+        self.assertGreater(gui.TOAST_LINES, 1)
 
     def test_ansi(self):
         self.assertEqual(

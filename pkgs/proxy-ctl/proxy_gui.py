@@ -59,12 +59,14 @@ TAB_ICONS = {
     "apps": "view-app-grid-symbolic",
 }
 STATUS_ICONS = {"ok": "emblem-ok-symbolic", "warn": "dialog-warning-symbolic", "bad": "dialog-error-symbolic", "": "network-wired-symbolic"}
+TOAST_LINES = 4  # a toast says this much of what ran; the Output button, and `o`, have the whole of it
 
 GLOBAL_SHORTCUTS = [
     ("<Control>f slash", "Filter the rows (list:learned for one column)"),
     ("Escape", "Clear the filter"),
     ("Menu <Shift>F10", "Actions for the selected row (or right-click it)"),
     ("<Alt>1...<Alt>8", "Jump to a tab"),
+    ("<Control>v", "Paste a link: it is added to this tab"),
     ("w", "How is a domain routed"),
     ("<Shift>l", "Follow all logs"),
     ("o", "Output of the last command"),
@@ -297,6 +299,7 @@ class Page(Gtk.Box):
         self.rows = []  # the last load, unfiltered
         self.summary_text = ""
         self.detail_shape = None
+        self.loaded = False  # whether a load has landed here: before that the tab is not empty, it is unread
 
         self.summary = Gtk.Label(xalign=0, wrap=True, selectable=True, visible=False, css_classes=["summary", "dim-label"])
 
@@ -353,6 +356,12 @@ class Page(Gtk.Box):
         self.empty = Adw.StatusPage(title="Nothing here yet", icon_name=self.tab_icon, visible=False, vexpand=True)
         self.empty.set_child(self.tab_actions_box())
         self.append(self.empty)
+        # Until this tab has loaded once there is nothing to keep on screen: say it is coming,
+        # rather than claim the tab is empty.
+        self.loading = Adw.StatusPage(title="Loading…", visible=True, vexpand=True)
+        self.loading.set_child(Adw.Spinner(width_request=32, height_request=32, halign=Gtk.Align.CENTER))
+        self.append(self.loading)
+        self.split.set_visible(False)
         self.popover = None
 
     # --- cells ---------------------------------------------------------------------
@@ -438,7 +447,7 @@ class Page(Gtk.Box):
     # --- filling ------------------------------------------------------------------------
 
     def fill(self, rows, summary):
-        self.rows, self.summary_text = rows, summary
+        self.rows, self.summary_text, self.loaded = rows, summary, True
         self.refill()
 
     def refill(self):
@@ -468,10 +477,12 @@ class Page(Gtk.Box):
                         self.selection.set_selected(pos)
                         break
         empty = not self.rows and not text
+        loading = empty and not self.loaded
         self.split.set_visible(not empty)
-        self.empty.set_visible(empty)
+        self.empty.set_visible(empty and not loading)
+        self.loading.set_visible(loading)
         self.summary.set_visible(bool(summary) and not empty)
-        if empty:
+        if empty and not loading:
             unreadable = summary.startswith("✗")
             self.empty.set_title("Cannot read this" if unreadable else "Nothing here yet")
             self.empty.set_icon_name("dialog-error-symbolic" if unreadable else self.tab_icon)
@@ -761,6 +772,7 @@ class Window(Adw.ApplicationWindow):
         header.pack_start(self.root_badge)
         menu = Gio.Menu()
         section = Gio.Menu()
+        section.append("Paste a link into this tab", "win.paste")
         section.append("How is a domain routed…", "win.where")
         section.append("Follow all logs", "win.logs")
         section.append("Output of the last command", "win.last-output")
@@ -809,6 +821,7 @@ class Window(Adw.ApplicationWindow):
 
         for name, callback, param in (
             ("where", lambda *_: self.where(), None),
+            ("paste", lambda *_: self.paste(), None),
             ("logs", lambda *_: self.follow_logs(), None),
             ("last-output", lambda *_: self.show_last_output(), None),
             ("shortcuts", lambda *_: self.show_shortcuts(), None),
@@ -821,6 +834,7 @@ class Window(Adw.ApplicationWindow):
             action.connect("activate", callback)
             self.add_action(action)
         app.set_accels_for_action("win.filter", ["<Control>f"])
+        app.set_accels_for_action("win.paste", ["<Control>v"])
         app.set_accels_for_action("app.elevated", ["<Control>e"])
         app.set_accels_for_action("win.shortcuts", ["<Control>question"])
         app.set_accels_for_action("app.reload", ["F5"])
@@ -896,7 +910,13 @@ class Window(Adw.ApplicationWindow):
             chip.append(Gtk.Label(label=value, css_classes=["chip-value"], ellipsize=Pango.EllipsizeMode.END))
             self.status.append(chip)
 
-    def fill(self, states, visible, status, tab_id, rows, summary):
+    def fill(self, states, visible, status, tab_id, rows, summary, stale=False):
+        # A read that came back empty after a good one keeps what is on screen: every tab
+        # and row blinking out and back is worse than a banner saying the read failed.
+        if stale:
+            self.banner.set_title("Cannot read service states: showing the last good read")
+            self.banner.set_revealed(True)
+            return
         self.show_status(status)
         unreadable = not states
         self.banner.set_title("Cannot read service states: is systemd reachable?" if unreadable else "")
@@ -918,6 +938,27 @@ class Window(Adw.ApplicationWindow):
     def where(self):
         self.perform(model.WHERE, None)
         return True
+
+    def paste(self):
+        """Ctrl+V anywhere but a text field: whatever is in the clipboard is added to this tab."""
+        if isinstance(self.get_focus(), Gtk.Editable) or self.get_visible_dialog() is not None:
+            return False
+        page = self.page()
+        if page is not None:
+            self.get_clipboard().read_text_async(None, lambda clipboard, result: self.pasted(page, clipboard, result))
+        return True
+
+    def pasted(self, page, clipboard, result):
+        try:
+            text = clipboard.read_text_finish(result)
+        except GLib.Error as e:
+            self.toast(f"Cannot read the clipboard: {e.message}")
+            return
+        argv, what = model.paste_argv(page.tab.id, text)
+        if argv is None:
+            self.toast(what)
+        else:
+            self.app.run_argv("run", argv, self)
 
     def follow_logs(self):
         self.app.run_argv("suspend", ["logs"], self)
@@ -969,7 +1010,20 @@ class Window(Adw.ApplicationWindow):
         entry.grab_focus()
 
     def toast(self, message, output=None, retry=None):
-        toast = Adw.Toast(title=GLib.markup_escape_text(message), timeout=6)
+        # A toast title is one ellipsized line, which hides most of what a command said:
+        # wrap it over a few lines instead, and keep the rest one button (or `o`) away.
+        label = Gtk.Label(
+            label=message,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+            lines=TOAST_LINES,
+            ellipsize=Pango.EllipsizeMode.END,
+            xalign=0,
+            justify=Gtk.Justification.LEFT,
+            max_width_chars=64,
+        )
+        toast = Adw.Toast(custom_title=label, timeout=8)
         if retry:  # one button: the output stays a keypress away (o)
             toast.set_button_label("Retry as Root")
             toast.connect("button-clicked", lambda *_: retry())
@@ -1171,16 +1225,19 @@ class ProxySuiteGui(Adw.Application):
         if self.window:
             self.window.set_busy(False)
         if generation == self.generation:
-            self.states = result["states"]
-            snap = result["snap"]
-            tree, overall, outbound = result["tray"]
-            if self.tray:
-                failed = snap["failed"] if snap else []
-                tooltip = overall["label"] + (f"\nOutbound: {outbound}" if outbound else "") + (f"\nFailed: {', '.join(failed)}" if failed else "")
-                self.tray.update(model.icon_name(overall), tooltip, tree, attention=bool(failed))
-            self.notify_failures(snap)
+            # Nothing read, after a read that worked: keep the last good one, tray and all.
+            stale = not result["states"] and bool(self.states)
+            if not stale:
+                self.states = result["states"]
+                snap = result["snap"]
+                tree, overall, outbound = result["tray"]
+                if self.tray:
+                    failed = snap["failed"] if snap else []
+                    tooltip = overall["label"] + (f"\nOutbound: {outbound}" if outbound else "") + (f"\nFailed: {', '.join(failed)}" if failed else "")
+                    self.tray.update(model.icon_name(overall), tooltip, tree, attention=bool(failed))
+                self.notify_failures(snap)
             if "tab" in result and self.window:
-                self.window.fill(self.states, result["visible"], result["status"], *result["tab"])
+                self.window.fill(self.states, result["visible"], result["status"], *result["tab"], stale=stale)
         if self.pending:
             self.pending = False
             self.reload()
@@ -1280,7 +1337,8 @@ class ProxySuiteGui(Adw.Application):
                 win.copy_text(last, f"Copied: {last}")
             else:
                 message = f"{last}  ({command})" if last else command
-                win.toast(f"exit {status}: {message}" if status else message, output if len(out) > 1 or status else None, retry)
+                # Anything it printed is worth a button: the toast shows a few lines of it at most.
+                win.toast(f"exit {status}: {message}" if status else message, output if out else None, retry)
         elif status:
             # From the tray: nothing else would say it failed.
             note = Gio.Notification.new(f"{command} failed")

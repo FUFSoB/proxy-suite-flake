@@ -121,6 +121,25 @@ class TuiTest(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_paste_lands_on_the_tab_it_was_pasted_onto(self):
+        async def run():
+            self.units = {"proxy-suite-socks": "active", **self.units}
+            app = tui.ProxyTui()
+            async with app.run_test(size=(100, 30)) as pilot:
+                await self.settle(app, pilot)
+                app.main.query_one("#tabs", tui.TabbedContent).active = "outbounds"
+                await self.settle(app, pilot)
+                app.post_message(tui.events.Paste("vless://u@de.test:443#DE"))
+                await pilot.pause()
+                self.assertEqual(self.ran.pop(), ["proxy", "outbounds", "add", "vless://u@de.test:443#DE"])
+                # Whatever else was in the clipboard runs nothing, and the bar says why.
+                app.post_message(tui.events.Paste("ftp://a.test/x"))
+                await pilot.pause()
+                self.assertEqual(self.ran, [])
+                self.assertIn("ftp:// link", str(app.main.query_one("#feedback").content))
+
+        asyncio.run(run())
+
     def test_ui(self):
         # Not IsolatedAsyncioTestCase: its asyncio debug mode makes Textual crawl.
         asyncio.run(self.ui())
