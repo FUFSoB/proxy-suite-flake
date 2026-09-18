@@ -17,10 +17,23 @@ let
   perAppZapretCfg = cfg.perAppRouting.zapret;
   cutoffCfg = zapretCfg.zapret2.cutoff;
   inherit (import ./derived.nix { inherit lib cfg; }) constants userControlAllows;
-  # Global AmneziaWG profiles only: an outbound one leaves the host's routes alone.
-  awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
-    builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
-  );
+  inherit
+    (import ./zapret/common.nix {
+      inherit
+        lib
+        pkgs
+        cfg
+        nft
+        perAppZapretRulesFile
+        ;
+      scriptName = "proxy-suite-zapret2";
+    })
+    awgServiceNames
+    tunInterfaces
+    perAppConflicts
+    perAppZapretMarkUpScript
+    perAppZapretMarkDownScript
+    ;
 
   runtime = import ./zapret2/runtime.nix {
     inherit
@@ -31,11 +44,6 @@ let
       zapret2Sources
       ;
   };
-
-  tunInterfaces = lib.unique (
-    lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
-    ++ lib.optional (cfg.proxy.enable && cfg.perAppRouting.tun.enable) cfg.perAppRouting.tun.interface
-  );
 
   globalRuntime = runtime.mkRuntime {
     name = "proxy-suite-zapret2";
@@ -91,16 +99,6 @@ let
       ;
   };
 
-  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-zapret2" ''
-    set -euo pipefail
-    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
-    ${nft} -f ${perAppZapretRulesFile}
-  '';
-
-  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-zapret2" ''
-    set -euo pipefail
-    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
-  '';
 in
 {
   services.proxy-suite.internal.earlyPackages = [ runtime.package ];
@@ -138,11 +136,7 @@ in
         description = "proxy-suite per-app-routing zapret2 backend";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
-        conflicts = [
-          "proxy-suite-tproxy.service"
-          "proxy-suite-tun.service"
-        ]
-        ++ awgServiceNames;
+        conflicts = perAppConflicts ++ awgServiceNames;
         preStart = mkPreStart;
         runtimeDirectory = "proxy-suite-per-app-zapret";
         stateDirectory = "proxy-suite";

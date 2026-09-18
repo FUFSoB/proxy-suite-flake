@@ -1,13 +1,7 @@
 { lib, ... }:
 
 let
-  p =
-    path:
-    [
-      "services"
-      "proxy-suite"
-    ]
-    ++ lib.splitString "." path;
+  p = (import ./lib.nix { inherit lib; }).path;
   rm = path: replacement: lib.mkRemovedOptionModule (p path) replacement;
   # Top-level zapret options that moved under the engine namespace; the value is
   # the leaf name they carry there.
@@ -24,6 +18,11 @@ let
 in
 {
   imports = [
+    # The tray indicator became Proxy Suite GUI, which has the tray icon built in.
+    (lib.mkRenamedOptionModule (p "tray.enable") (p "gui.enable"))
+    (lib.mkRenamedOptionModule (p "tray.autostart") (p "gui.autostart"))
+    (lib.mkRenamedOptionModule (p "tray.pollInterval") (p "gui.refreshInterval"))
+
     # These were aliases; they are removal notices now, so there is one
     # compatibility policy instead of two.
     (rm "proxyInbounds" "Use services.proxy-suite.inbounds.")

@@ -14,17 +14,7 @@ let
     proxyInboundsResolveInSingBox
     ;
 
-  localProxyAddress =
-    if
-      builtins.elem proxyCfg.listener.address [
-        "0.0.0.0"
-        "::"
-        ""
-      ]
-    then
-      "127.0.0.1"
-    else
-      proxyCfg.listener.address;
+  localProxyAddress = derived.localProxy.host;
 
   # The client stack's SOCKS listener; credentials are injected at start.
   localProxyOutbound = lib.optional proxyInboundsNeedLocalProxy {

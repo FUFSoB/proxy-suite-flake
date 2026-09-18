@@ -1,16 +1,18 @@
 # Per-app routing profile expansion and proxychains config.
-{
-  lib,
-  pkgs,
-  proxyCfg,
-  perAppRoutingCfg,
-  perAppRoutingTun,
-  perAppRoutingTproxy,
-  perAppZapretCfg,
-  runtimeDir,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    proxyCfg
+    perAppRoutingCfg
+    perAppRoutingTun
+    perAppRoutingTproxy
+    perAppZapretCfg
+    constants
+    ;
+  inherit (constants) runtimeDir;
   perAppRoutingProfileNames = map (profile: profile.name) perAppRoutingCfg.profiles;
   defaultPerAppRoutingProfiles = lib.optionals perAppRoutingCfg.createDefaultProfiles (
     [
@@ -46,9 +48,7 @@ let
   effectivePerAppRoutingProfileNames = map (profile: profile.name) effectivePerAppRoutingProfiles;
 
   localProxyAuth = proxyCfg.listener.auth;
-  localProxyAuthEnabled =
-    localProxyAuth.username != null
-    && (localProxyAuth.password != null || localProxyAuth.passwordFile != null);
+  localProxyAuthEnabled = ctx.localProxy.authEnabled;
 
   perAppRoutingProfilesFile = pkgs.writeText "proxy-suite-per-app" (
     builtins.toJSON effectivePerAppRoutingProfiles

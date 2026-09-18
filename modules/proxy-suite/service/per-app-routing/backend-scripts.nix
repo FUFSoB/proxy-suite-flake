@@ -1,21 +1,23 @@
 # Per-app TUN and TProxy backend lifecycle scripts.
-{
-  lib,
-  pkgs,
-  builders,
-  perAppRoutingTun,
-  perAppRoutingTproxy,
-  ipv6,
-  constants,
-  perAppTunChainFile,
-  perAppTproxyRulesFile,
-  ip,
-  nft,
-  seqBin,
-  sleepBin,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    builders
+    perAppRoutingTun
+    perAppRoutingTproxy
+    proxyCfg
+    constants
+    perAppTunChainFile
+    perAppTproxyRulesFile
+    ip
+    nft
+    seqBin
+    sleepBin
+    ;
+  inherit (proxyCfg) ipv6;
   inherit (constants)
     perAppTunIPv6Address
     perAppTunIPv6RoutePrefix

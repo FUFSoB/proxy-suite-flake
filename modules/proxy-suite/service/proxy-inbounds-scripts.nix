@@ -1,32 +1,33 @@
 # Start script of the inbound service: renders the listeners with their secrets into the
 # template and runs XRay.
-{
-  lib,
-  pkgs,
-  proxyCfg,
-  proxyInboundsCfg,
-  proxyInboundsAwg,
-  awgBin,
-  proxyInboundsNeedLocalProxy,
-  torOnionEnabled,
-  proxyInboundViaOutbounds,
-  userControlCfg,
-  userControlAllows,
-  localProxyAuth,
-  localProxyAuthEnabled,
-  localProxyAuthPasswordSource,
-  jq,
-  python3,
-  parserScriptsPythonPath,
-  buildInboundPy,
-  buildOutboundPy,
-  proxyInboundsFile,
-  proxyInboundsSpecFile,
-  builders,
-  constants,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    proxyCfg
+    proxyInboundsCfg
+    proxyInboundsAwg
+    awgBin
+    proxyInboundsNeedLocalProxy
+    torOnionEnabled
+    proxyInboundViaOutbounds
+    userControlCfg
+    userControlAllows
+    localProxyAuth
+    localProxyAuthEnabled
+    localProxyAuthPasswordSource
+    jq
+    python3
+    parserScriptsPythonPath
+    buildInboundPy
+    buildOutboundPy
+    proxyInboundsFile
+    proxyInboundsSpecFile
+    builders
+    constants
+    ;
   runtimeDir = "${constants.runtimeDir}/proxy-suite-inbounds";
   linksFile = "${runtimeDir}/links.json";
   subscriptionsFile = "${runtimeDir}/subscriptions.json";

@@ -9,10 +9,7 @@
 let
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
-  tunInterfaces = lib.unique (
-    lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
-    ++ lib.optional (cfg.proxy.enable && cfg.perAppRouting.tun.enable) cfg.perAppRouting.tun.interface
-  );
+  inherit (import ./common.nix { inherit lib pkgs cfg; }) tunInterfaces;
   zapretDomainGroups = import ../zapret-domain-groups.nix { inherit lib zapret; };
 
   runtimeDeps = lib.attrValues {
@@ -84,12 +81,7 @@ let
   );
 
   selectedConfigName = lib.strings.sanitizeDerivationName zapretCfg.zapret-discord-youtube.configName;
-  patchConfigScriptSrc = "${
-    builtins.path {
-      name = "proxy-suite-scripts";
-      path = ../../../scripts;
-    }
-  }/patch-zapret-config.py";
+  patchConfigScriptSrc = "${import ../lib/scripts-dir.nix { inherit lib; }}/patch-zapret-config.py";
   patchConfigScript = "${pkgs.python3}/bin/python3 ${patchConfigScriptSrc}";
 
   packageBuilder = import ./package-builder.nix {

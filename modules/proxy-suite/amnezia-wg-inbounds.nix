@@ -23,13 +23,10 @@ let
   lanListeners = builtins.filter (listener: listener.mode == "lan") listeners;
   lanIPv6 = lib.any (listener: listener.subnet6 != null) lanListeners;
 
-  scriptsDir = builtins.path {
-    name = "proxy-suite-scripts";
-    path = ../../scripts;
-  };
+  scriptsDir = import ./lib/scripts-dir.nix { inherit lib; };
   python3 = "${pkgs.python3}/bin/python3";
   awg = "${awgCfg.toolsPackage}/bin/awg";
-  awgQuick = "${awgCfg.toolsPackage}/bin/awg-quick";
+  awgCommon = import ./awg-common.nix { inherit lib pkgs awgCfg; };
 
   # Diverted packets are delivered locally; only "lan" listeners forward.
   sysctl =
@@ -128,9 +125,7 @@ let
     set -Eeuo pipefail
     trap ${stop} ERR
 
-    ${lib.optionalString (awgCfg.kernelModulePackage != null) ''
-      ${pkgs.kmod}/bin/modprobe amneziawg 2>/dev/null || true
-    ''}
+    ${awgCommon.modprobe}
 
     ${stop}
 
@@ -139,15 +134,7 @@ let
       > "$RUNTIME_DIRECTORY/interfaces"
 
     while read -r _interface implementation config; do
-      # The 3.1 kernel module drops RandomTrailers packets with ranged H1-H3; userspace does not.
-      if [[ "$implementation" == userspace ]]; then
-        WG_QUICK_FORCE_USERSPACE_IMPLEMENTATION=1 \
-          WG_QUICK_USERSPACE_IMPLEMENTATION=${awgCfg.userspacePackage}/bin/amneziawg-go \
-          ${awgQuick} up "$config"
-      else
-        WG_QUICK_USERSPACE_IMPLEMENTATION=${awgCfg.userspacePackage}/bin/amneziawg-go \
-          ${awgQuick} up "$config"
-      fi
+      ${awgCommon.awgQuickUp "$implementation" "\"$config\""}
     done < "$RUNTIME_DIRECTORY/interfaces"
 
     ${lib.concatStrings (

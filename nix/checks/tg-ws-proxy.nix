@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -13,7 +14,9 @@
 }:
 
 let
+  inherit (checkLib) ok;
   fixtures = import ./tg-ws-proxy/fixtures.nix {
+    inherit checkLib;
     inherit
       evalProxySuite
       baseModule
@@ -38,18 +41,9 @@ let
 in
 {
   assertions = [
-    (
-      assert tgSecretFile.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1";
-      true
-    )
-    (
-      assert minimal.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1";
-      true
-    )
-    (
-      assert minimal.config.services.proxy-suite.tgWsProxy.dcIps == { };
-      true
-    )
+    (ok (tgSecretFile.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1"))
+    (ok (minimal.config.services.proxy-suite.tgWsProxy.listener.address == "127.0.0.1"))
+    (ok (minimal.config.services.proxy-suite.tgWsProxy.dcIps == { }))
 
     # Upstream runtime flags are exposed as typed module options.
     (

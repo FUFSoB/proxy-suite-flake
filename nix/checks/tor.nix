@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkBadProxySuiteFixture,
@@ -12,6 +13,7 @@
 }:
 
 let
+  inherit (checkLib) ok mkProxySuite;
   generated = import ./read-generated.nix;
   inherit (pkgs) lib;
   inherit (lib) hasInfix;
@@ -108,32 +110,27 @@ let
   viaProxyStart = torStartOf viaProxy;
   viaProxyTor = (services viaProxy).proxy-suite-tor;
 
-  onion = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
+  onion = mkProxySuite {
+    enable = true;
+    tor = {
+      enable = true;
+      onionService = {
         enable = true;
-        tor = {
-          enable = true;
-          onionService = {
-            enable = true;
-            secretKeyFile = "/run/secrets/hs_ed25519_secret_key";
-          };
-        };
-        inbounds = {
-          enable = true;
-          serverAddress = "vpn.example.com";
-          routing.via = "direct";
-          listeners.plain = listener;
-          listeners.shared = listener // {
-            port = 10444;
-            address = "127.0.0.1";
-            sharePort = 443;
-          };
-        };
+        secretKeyFile = "/run/secrets/hs_ed25519_secret_key";
       };
-    }
-  ];
+    };
+    inbounds = {
+      enable = true;
+      serverAddress = "vpn.example.com";
+      routing.via = "direct";
+      listeners.plain = listener;
+      listeners.shared = listener // {
+        port = 10444;
+        address = "127.0.0.1";
+        sharePort = 443;
+      };
+    };
+  };
   # An exit node: its clients' .onion names still reach Tor, through the local proxy.
   exitInbounds = {
     inbounds = {
@@ -326,8 +323,8 @@ in
         !(lib.any (r: r.ruleTag or "" == "inbound-tor-onion") (mkInboundsConfig onion).routing.rules);
       true
     )
-    (
-      assert lib.all (f: failedAssertions f == [ ]) [
+    (ok (
+      lib.all (f: failedAssertions f == [ ]) [
         singBox
         xray
         hybrid
@@ -335,25 +332,17 @@ in
         bridges
         viaProxy
         onion
-      ];
-      true
-    )
+      ]
+    ))
 
     # Every backend dials Tor's SOCKS listener as the "tor" outbound.
-    (
-      assert hasInfix ''{"server":"127.0.0.1","server_port":18530,"tag":"tor","type":"socks"}''
-        singBoxStart;
-      true
-    )
-    (
-      assert hasInfix ''{"protocol":"socks","settings":{"address":"127.0.0.1","port":18530},"tag":"tor"}''
-        xrayStart;
-      true
-    )
-    (
-      assert hasInfix ''"tag":"tor","type":"socks"'' hybridStart;
-      true
-    )
+    (ok (
+      hasInfix ''{"server":"127.0.0.1","server_port":18530,"tag":"tor","type":"socks"}'' singBoxStart
+    ))
+    (ok (
+      hasInfix ''{"protocol":"socks","settings":{"address":"127.0.0.1","port":18530},"tag":"tor"}'' xrayStart
+    ))
+    (ok (hasInfix ''"tag":"tor","type":"socks"'' hybridStart))
     # Only rules and detours reach it: never selected, tested, or used as an autoProxy exit.
     (
       assert
@@ -522,10 +511,7 @@ in
         && builtins.elem "proxy-suite-tor.service" onionInbounds.wants;
       true
     )
-    (
-      assert !(onion.config.systemd.services ? proxy-suite-socks);
-      true
-    )
+    (ok (!(onion.config.systemd.services ? proxy-suite-socks)))
   ]
   ++ invalidAssertions;
 }

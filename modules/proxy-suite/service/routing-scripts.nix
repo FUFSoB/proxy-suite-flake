@@ -1,18 +1,20 @@
-{
-  lib,
-  pkgs,
-  builders,
-  ip,
-  nft,
-  nftablesRulesFile,
-  constants,
-  globalTun,
-  globalTproxy,
-  perAppRoutingTun,
-  ipv6,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    builders
+    ip
+    nft
+    nftablesRulesFile
+    constants
+    globalTun
+    globalTproxy
+    perAppRoutingTun
+    proxyCfg
+    ;
+  inherit (proxyCfg) ipv6;
   inherit (constants)
     tunAutoRouteTableIndex
     tunAutoRouteRulePriority

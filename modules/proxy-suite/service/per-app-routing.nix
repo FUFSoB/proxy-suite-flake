@@ -1,135 +1,47 @@
 # App routing backend infrastructure (TUN, TProxy, zapret).
-{
-  lib,
-  pkgs,
-  cfg,
-  singBoxCfg,
-  proxyCfg,
-  perAppRoutingCfg,
-  perAppRoutingTun,
-  perAppRoutingTproxy,
-  constants,
-  perAppZapretCfg,
-  perAppTunChainFile,
-  perAppTproxyRulesFile,
-  perAppZapretRulesFile,
-  ip,
-  nft,
-  awk,
-  grepBin,
-  findBin,
-  headBin,
-  seqBin,
-  sleepBin,
-}:
+{ ctx }:
 
 let
-  builders = import ./builders.nix { inherit lib pkgs; };
-  inherit (builders) mkAnchorService;
-
-  perAppTunSliceName = "proxy-suite-per-app-tun.slice";
-  perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
-  perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
-
-  profiles = import ./per-app-routing/profiles.nix {
-    inherit (constants) runtimeDir;
-    inherit
-      lib
-      pkgs
-      proxyCfg
-      perAppRoutingCfg
-      perAppRoutingTun
-      perAppRoutingTproxy
-      perAppZapretCfg
-      ;
-  };
-  inherit (profiles)
-    effectivePerAppRoutingProfiles
-    effectivePerAppRoutingProfileNames
-    perAppRoutingProfilesFile
-    proxychainsConfigFile
-    proxychainsQuietArg
-    hasProxychainsProfiles
-    hasTunProfiles
-    hasTproxyProfiles
-    hasZapretProfiles
+  inherit (ctx)
+    builders
+    nft
+    awk
+    grepBin
+    findBin
+    headBin
+    perAppRoutingTun
+    perAppRoutingTproxy
+    perAppZapretCfg
     ;
 
-  backendScripts = import ./per-app-routing/backend-scripts.nix {
-    inherit
-      lib
-      pkgs
-      builders
-      perAppRoutingTun
-      perAppRoutingTproxy
-      constants
-      perAppTunChainFile
-      perAppTproxyRulesFile
-      ip
-      nft
-      seqBin
-      sleepBin
-      ;
-    inherit (proxyCfg) ipv6;
+  slices = {
+    perAppTunSliceName = "proxy-suite-per-app-tun.slice";
+    perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
+    perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
   };
-  inherit (backendScripts)
-    perAppTunUpScript
-    perAppTunDownScript
-    perAppTproxyUpScript
-    perAppTproxyDownScript
-    ;
 
-  userRules = import ./per-app-routing/user-rules.nix {
-    inherit
-      lib
-      pkgs
-      perAppRoutingTun
-      perAppRoutingTproxy
-      perAppZapretCfg
-      perAppTunSliceName
-      perAppTproxySliceName
-      perAppZapretSliceName
-      nft
-      awk
-      grepBin
-      findBin
-      headBin
-      ;
-  };
-  inherit (userRules)
-    perAppTunUserRuleStart
-    perAppTunUserRuleStop
-    perAppTproxyUserRuleStart
-    perAppTproxyUserRuleStop
-    perAppZapretUserRuleStart
-    perAppZapretUserRuleStop
-    ;
-
+  # user-rules.nix is also imported by the checks, so it keeps an explicit argument list.
+  userRules = import ./per-app-routing/user-rules.nix (
+    {
+      inherit (ctx) lib pkgs;
+      inherit
+        perAppRoutingTun
+        perAppRoutingTproxy
+        perAppZapretCfg
+        nft
+        awk
+        grepBin
+        findBin
+        headBin
+        ;
+    }
+    // slices
+  );
 in
-{
-  inherit
-    perAppTunSliceName
-    perAppTproxySliceName
-    perAppZapretSliceName
-    perAppTunUpScript
-    perAppTunDownScript
-    perAppTproxyUpScript
-    perAppTproxyDownScript
-    perAppTunUserRuleStart
-    perAppTunUserRuleStop
-    perAppTproxyUserRuleStart
-    perAppTproxyUserRuleStop
-    perAppZapretUserRuleStart
-    perAppZapretUserRuleStop
-    mkAnchorService
-    effectivePerAppRoutingProfiles
-    effectivePerAppRoutingProfileNames
-    perAppRoutingProfilesFile
-    proxychainsConfigFile
-    proxychainsQuietArg
-    hasProxychainsProfiles
-    hasTunProfiles
-    hasTproxyProfiles
-    hasZapretProfiles
-    ;
+slices
+// import ./per-app-routing/profiles.nix { inherit ctx; }
+// import ./per-app-routing/backend-scripts.nix { inherit ctx; }
+// userRules
+// {
+  inherit (builders) mkAnchorService;
 }

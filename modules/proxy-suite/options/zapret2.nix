@@ -2,12 +2,7 @@
 
 let
   inherit (lib) mkEnableOption mkOption types;
-  int =
-    default: description:
-    mkOption {
-      type = types.ints.positive;
-      inherit default description;
-    };
+  int = (import ./lib.nix { inherit lib; }).positiveInt;
   fromSource = what: "null uses the ${what} of strategySource.";
 in
 {

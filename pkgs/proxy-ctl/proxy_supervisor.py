@@ -188,37 +188,44 @@ class Unit:
             self.done.notify_all()
 
 
-class Timer:
+class Activator:
+    """A .timer or .path unit: it is active or not, and it starts one service."""
+
+    section = ""
+    suffix = ""
+
     def __init__(self, name, definition):
         self.name = name
         self.definition = definition
         self.active = False
+
+    @property
+    def config(self):
+        return self.definition.get(self.section) or {}
+
+    def target(self):
+        return self.config.get("Unit") or self.name.replace(self.suffix, ".service")
+
+
+class Timer(Activator):
+    section = "Timer"
+    suffix = ".timer"
+
+    def __init__(self, name, definition):
+        super().__init__(name, definition)
         self.activated = None
         self.fired = set()
         self.last = None
         self.jitter = 0.0
 
-    @property
-    def config(self):
-        return self.definition.get("Timer") or {}
 
-    def target(self):
-        return (self.definition.get("Timer") or {}).get("Unit") or self.name.replace(".timer", ".service")
+class PathWatch(Activator):
+    section = "Path"
+    suffix = ".path"
 
-
-class PathWatch:
     def __init__(self, name, definition):
-        self.name = name
-        self.definition = definition
-        self.active = False
+        super().__init__(name, definition)
         self.seen = {}
-
-    @property
-    def config(self):
-        return self.definition.get("Path") or {}
-
-    def target(self):
-        return self.config.get("Unit") or self.name.replace(".path", ".service")
 
 
 def signature(path):
@@ -570,24 +577,34 @@ class Supervisor:
 
     # timers and paths
 
-    def start_timer(self, name):
-        name = full_name(name, "timer")
+    def _activator(self, registry, kind, cls, name):
+        """The unit's Timer/PathWatch, made or replaced when its definition changed."""
+        name = full_name(name, kind)
         definition = self.definition(name)
         if definition is None:
-            return 5
+            return None
+        current = registry.get(name)
+        if current is None or current.definition is not definition:
+            current = registry[name] = cls(name, definition)
+        return current
+
+    def start_timer(self, name):
         with self.guard:
-            timer = self.timers.get(name)
-            if timer is None or timer.definition is not definition:
-                timer = self.timers[name] = Timer(name, definition)
+            timer = self._activator(self.timers, "timer", Timer, name)
+            if timer is None:
+                return 5
             if not timer.active:
                 timer.active, timer.activated, timer.fired = True, time.time(), set()
                 timer.jitter = self.jitter(timer)
         return 0
 
     def stop_timer(self, name):
-        timer = self.timers.get(full_name(name, "timer"))
-        if timer:
-            timer.active = False
+        return self._stop_activator(self.timers, "timer", name)
+
+    def _stop_activator(self, registry, kind, name):
+        unit = registry.get(full_name(name, kind))
+        if unit:
+            unit.active = False
         return 0
 
     @staticmethod
@@ -611,24 +628,17 @@ class Supervisor:
         return at + timer.jitter, {base for base, when in candidates if when <= at}
 
     def start_path(self, name):
-        name = full_name(name, "path")
-        definition = self.definition(name)
-        if definition is None:
-            return 5
         with self.guard:
-            watch = self.paths.get(name)
-            if watch is None or watch.definition is not definition:
-                watch = self.paths[name] = PathWatch(name, definition)
+            watch = self._activator(self.paths, "path", PathWatch, name)
+            if watch is None:
+                return 5
             if not watch.active:
                 watch.active = True
                 watch.seen = {p: signature(p) for key in ("PathChanged", "PathModified") for p in as_list(watch.config.get(key))}
         return 0
 
     def stop_path(self, name):
-        watch = self.paths.get(full_name(name, "path"))
-        if watch:
-            watch.active = False
-        return 0
+        return self._stop_activator(self.paths, "path", name)
 
     def in_background(self, fn, *args):
         threading.Thread(target=fn, args=args, daemon=True).start()

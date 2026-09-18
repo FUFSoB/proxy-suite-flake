@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkBadFixtureRaw,
@@ -9,6 +10,7 @@
 
 let
   runtimeChecks = import ./subscriptions-runtime.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -17,6 +19,7 @@ let
       ;
   };
   validationChecks = import ./subscriptions-validation.nix {
+    inherit checkLib;
     inherit
       evalProxySuite
       mkBadFixtureRaw

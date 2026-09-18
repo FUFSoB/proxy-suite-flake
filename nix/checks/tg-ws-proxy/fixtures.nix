@@ -1,4 +1,5 @@
 {
+  checkLib,
   evalProxySuite,
   baseModule,
   mkRoutingRules,
@@ -8,6 +9,7 @@
 }:
 
 let
+  inherit (checkLib) unitScript;
   generated = import ../read-generated.nix;
 
   tgSecretFile = evalProxySuite [
@@ -47,9 +49,7 @@ let
       };
     }
   ];
-  tgAllOptionsStartScript = generated.readDerivation (
-    tgAllOptions.config.systemd.services."proxy-suite-tg-ws-proxy".serviceConfig.ExecStart
-  );
+  tgAllOptionsStartScript = unitScript tgAllOptions "proxy-suite-tg-ws-proxy";
 
   tgWithGlobalTun = evalProxySuite [
     baseModule

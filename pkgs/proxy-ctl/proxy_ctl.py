@@ -162,6 +162,21 @@ def read_json(path):
         return json.load(f)
 
 
+def require_enabled(variable, feature):
+    """Refuses when the module did not build this feature in."""
+    if env(variable) != "1":
+        die(f"{feature} is not enabled in this configuration.")
+
+
+def read_json_or(path, fallback):
+    """The JSON at path, or fallback when it is missing, unreadable or not JSON."""
+    try:
+        value = read_json(path)
+    except (OSError, ValueError):
+        return fallback
+    return value if isinstance(value, type(fallback)) else fallback
+
+
 def read_text(path):
     with open(path, encoding="utf-8", errors="replace") as f:
         return f.read()
@@ -396,10 +411,7 @@ def _emit(text, qr):
 
 
 def _json_list(path):
-    try:
-        return [_s(x) for x in read_json(path)]
-    except (OSError, ValueError, TypeError):
-        return []
+    return [_s(x) for x in read_json_or(path, [])]
 
 
 def _sub_tags():
@@ -948,14 +960,7 @@ def _outbound_inventory():
 
     Empty until the proxy has started once.
     """
-    path = env("OUTBOUND_INVENTORY_FILE")
-    if not readable(path):
-        return {}
-    try:
-        inventory = read_json(path)
-    except (OSError, ValueError):
-        return {}
-    return inventory if isinstance(inventory, dict) else {}
+    return read_json_or(env("OUTBOUND_INVENTORY_FILE"), {})
 
 
 def _outbound_tags():
@@ -2032,10 +2037,7 @@ def cmd_proxy_probe(*args):
 
 def _backend_tags():
     """User outbound tag -> the backend's tag, which probe exits and their reputation are keyed by."""
-    try:
-        return read_json(_runtime_file("outbound-test.json")).get("outbounds") or {}
-    except (OSError, ValueError, AttributeError):
-        return {}
+    return read_json_or(_runtime_file("outbound-test.json"), {}).get("outbounds") or {}
 
 
 def _backend_tag(tag, backend=None):
@@ -2061,8 +2063,7 @@ def _autoproxy_dir():
 
 
 def _require_autoproxy():
-    if env("AUTOPROXY_ENABLED") != "1":
-        die("proxy.autoProxy is not enabled in this configuration.")
+    require_enabled("AUTOPROXY_ENABLED", "proxy.autoProxy")
 
 
 def _autoproxy_unreadable(path):
@@ -2089,11 +2090,7 @@ def _require_autoproxy_readable(path):
 
 
 def _autoproxy_state(path):
-    try:
-        state = read_json(os.path.join(path, "state.json"))
-    except (OSError, ValueError):
-        return {}
-    return state if isinstance(state, dict) else {}
+    return read_json_or(os.path.join(path, "state.json"), {})
 
 
 def cmd_proxy_auto(verb="list", *args):
@@ -2729,8 +2726,7 @@ def _per_app_profiles():
 
 
 def _ensure_app_routing():
-    if env("PER_APP_ROUTING_ENABLED") != "1":
-        die("perAppRouting is not enabled in this configuration.")
+    require_enabled("PER_APP_ROUTING_ENABLED", "perAppRouting")
 
 
 def _check_no_global_proxy(route):
@@ -3081,8 +3077,7 @@ def _inbound_subscriptions(*args):
 
 
 def cmd_inbounds(verb="list", *args):
-    if env("INBOUNDS_ENABLED") != "1":
-        die("inbounds is not enabled in this configuration.")
+    require_enabled("INBOUNDS_ENABLED", "inbounds")
     if verb == "list":
         state = svc_state("proxy-suite-inbounds")
         row = "  {:<24} {:<16} {:<14} {:<8} {}"

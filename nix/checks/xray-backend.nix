@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -13,6 +14,7 @@
 
 let
   runtimeChecks = import ./xray-backend-runtime.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -24,6 +26,7 @@ let
       ;
   };
   featureChecks = import ./xray-backend-features.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -8,6 +9,7 @@
 }:
 
 let
+  inherit (checkLib) startScript unitScript;
   generated = import ../read-generated.nix;
 
   xrayModule = {
@@ -49,18 +51,12 @@ let
   xrayTproxyConfig = mkTProxyConfig xrayFixture;
   xrayTunConfig = mkTunConfig xrayFixture;
   xrayPerAppTunConfig = mkPerAppTunConfig xrayFixture;
-  xrayStartScript = generated.readDerivation (
-    xrayFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
-  xrayTunStartScript = generated.readDerivation (
-    xrayFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStart
-  );
+  xrayStartScript = startScript xrayFixture;
+  xrayTunStartScript = unitScript xrayFixture "proxy-suite-tun";
   xrayTunUpScript = generated.readDerivation (
     xrayFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost
   );
-  xrayPerAppTunStartScript = generated.readDerivation (
-    xrayFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart
-  );
+  xrayPerAppTunStartScript = unitScript xrayFixture "proxy-suite-per-app-tun";
   xrayPerAppTunUpScript = generated.readDerivation (
     xrayFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStartPost
   );

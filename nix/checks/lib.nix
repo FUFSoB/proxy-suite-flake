@@ -17,85 +17,54 @@ let
     };
   forceEval = value: builtins.tryEval (builtins.deepSeq value true);
   rg = "${pkgs.ripgrep}/bin/rg";
-  mkRouting =
+  # The module's own wiring, so a check sees exactly what a running system generates.
+  mkAssembly =
     fixture:
-    let
-      cfg = fixture.config.services.proxy-suite;
-    in
-    import ../../modules/proxy-suite/rules.nix {
+    import ../../modules/proxy-suite/assembly.nix {
       lib = pkgs.lib;
-      inherit pkgs cfg zapret;
+      inherit pkgs zapret;
+      cfg = fixture.config.services.proxy-suite;
+      packages = import ../../pkgs/default.nix { inherit pkgs; };
     };
+  mkRouting = fixture: (mkAssembly fixture).rules;
   mkRoutingRules = fixture: (mkRouting fixture).routingRules;
   mkRouteModeRules = fixture: (mkRouting fixture).routeModeRules;
   mkProxyConfig =
     fixture: configAttr:
-    let
-      cfg = fixture.config.services.proxy-suite;
-      rules = mkRouting fixture;
-      configs = import ../../modules/proxy-suite/config.nix {
-        lib = pkgs.lib;
-        inherit pkgs cfg rules;
-      };
-    in
     builtins.fromJSON (
-      builtins.unsafeDiscardStringContext (generated.readDerivation configs.${configAttr})
+      builtins.unsafeDiscardStringContext (
+        generated.readDerivation (mkAssembly fixture).configs.${configAttr}
+      )
     );
   mkTProxyConfig = fixture: mkProxyConfig fixture "tproxyFile";
   mkTunConfig = fixture: mkProxyConfig fixture "tunFile";
   mkPerAppTunConfig = fixture: mkProxyConfig fixture "perAppTunFile";
   mkInboundsConfig = fixture: mkProxyConfig fixture "proxyInboundsFile";
   mkInboundsSpec = fixture: mkProxyConfig fixture "proxyInboundsSpecFile";
-  mkTProxyNftRules =
-    fixture:
-    let
-      cfg = fixture.config.services.proxy-suite;
-      nftr = import ../../modules/proxy-suite/nftables.nix {
-        lib = pkgs.lib;
-        inherit pkgs cfg;
-      };
-    in
-    generated.readDerivation nftr.nftablesRulesFile;
-  mkPerAppZapretNftRules =
-    fixture:
-    let
-      cfg = fixture.config.services.proxy-suite;
-      nftr = import ../../modules/proxy-suite/nftables.nix {
-        lib = pkgs.lib;
-        inherit pkgs cfg;
-      };
-    in
-    generated.readDerivation nftr.perAppZapretRulesFile;
-  mkPerAppUserRules =
-    fixture:
-    let
-      cfg = fixture.config.services.proxy-suite;
-      derived = import ../../modules/proxy-suite/derived.nix {
-        lib = pkgs.lib;
-        inherit cfg;
-      };
-      nftr = import ../../modules/proxy-suite/nftables.nix {
-        lib = pkgs.lib;
-        inherit pkgs cfg;
-      };
-    in
-    import ../../modules/proxy-suite/service/per-app-routing/user-rules.nix {
-      lib = pkgs.lib;
-      inherit pkgs;
-      inherit (derived)
-        perAppRoutingTun
-        perAppRoutingTproxy
-        perAppZapretCfg
-        ;
-      perAppTunSliceName = "proxy-suite-per-app-tun.slice";
-      perAppTproxySliceName = "proxy-suite-per-app-tproxy.slice";
-      perAppZapretSliceName = "proxy-suite-per-app-zapret.slice";
-      inherit (nftr) nft;
-      awk = "${pkgs.gawk}/bin/awk";
-      grepBin = "${pkgs.gnugrep}/bin/grep";
-      findBin = "${pkgs.findutils}/bin/find";
-      headBin = "${pkgs.coreutils}/bin/head";
-    };
+  mkNftRules = fixture: attr: generated.readDerivation (mkAssembly fixture).nftr.${attr};
+  mkTProxyNftRules = fixture: mkNftRules fixture "nftablesRulesFile";
+  mkPerAppZapretNftRules = fixture: mkNftRules fixture "perAppZapretRulesFile";
+  mkPerAppUserRules = fixture: (mkAssembly fixture).context.perAppRouting;
+  # One assertion as a list element: `ok (x == y)` where the check lists want a true.
+  ok =
+    condition:
+    assert condition;
+    true;
+  # A fixture from nothing but proxy-suite settings, the shape most checks want.
+  mkProxySuite =
+    proxySuiteConfig:
+    evalProxySuite [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = proxySuiteConfig;
+      }
+    ];
+  # The text of the program a unit starts, without import-from-derivation.
+  unitScript =
+    fixture: unit:
+    generated.readDerivation fixture.config.systemd.services.${unit}.serviceConfig.ExecStart;
+  # The local proxy's start script, which most checks read their expectations out of.
+  startScript = fixture: unitScript fixture "proxy-suite-socks";
   hasDirectDomain =
     rules: domain:
     builtins.any (
@@ -142,11 +111,6 @@ let
     text: prefix:
     builtins.head (
       builtins.filter (line: pkgs.lib.hasPrefix prefix line) (pkgs.lib.splitString "\n" text)
-    );
-  lineContaining =
-    text: infix:
-    builtins.head (
-      builtins.filter (line: pkgs.lib.hasInfix infix line) (pkgs.lib.splitString "\n" text)
     );
   shellValueByPrefix =
     text: prefix:
@@ -210,6 +174,42 @@ let
       assert (evaluate case).success == false;
       true
     ) cases;
+  # The messages of the assertions a config fails. Only the failing ones are forced, so an
+  # unrelated module's lazily-broken message (nixpkgs has some) never gets in the way. A
+  # fixture that does not evaluate at all reports that instead, so it cannot pass silently.
+  failedAssertions =
+    modules:
+    let
+      messages = map (a: a.message) (
+        builtins.filter (a: !a.assertion) (evalProxySuite modules).config.assertions
+      );
+      forced = builtins.tryEval (builtins.deepSeq messages messages);
+    in
+    if forced.success then forced.value else [ "the fixture does not evaluate" ];
+  # A bad config must fail *for the stated reason*: without the message, a case that stops
+  # evaluating for an unrelated reason (a renamed option, say) passes while testing nothing.
+  # Forcing the assertions rather than a whole system toplevel is also ~30x cheaper.
+  rejectsRaw =
+    expected: modules:
+    let
+      messages = failedAssertions modules;
+    in
+    if builtins.any (message: pkgs.lib.hasInfix expected message) messages then
+      true
+    else
+      throw (
+        "proxy-suite checks: expected a failure mentioning ${builtins.toJSON expected}, got: "
+        + builtins.concatStringsSep " | " messages
+      );
+  rejects = expected: modules: rejectsRaw expected ([ baseModule ] ++ modules);
+  rejectsProxySuite =
+    expected: proxySuiteConfig:
+    rejectsRaw expected [
+      {
+        system.stateVersion = "26.05";
+        services.proxy-suite = proxySuiteConfig;
+      }
+    ];
   mkProxyCtlDerived =
     fixture:
     let
@@ -235,6 +235,7 @@ in
     rg
     evalProxySuite
     forceEval
+    mkAssembly
     mkRouting
     mkRoutingRules
     mkRouteModeRules
@@ -246,6 +247,10 @@ in
     mkTProxyNftRules
     mkPerAppZapretNftRules
     mkPerAppUserRules
+    ok
+    mkProxySuite
+    unitScript
+    startScript
     hasDirectDomain
     hasDirectIP
     hasRuleSet
@@ -256,13 +261,16 @@ in
     packagePathMatches
     packageByPattern
     lineByPrefix
-    lineContaining
     shellValueByPrefix
     baseModule
     mkBadFixture
     mkBadFixtureRaw
     mkBadProxySuiteFixture
     mkFailingAssertions
+    failedAssertions
+    rejects
+    rejectsRaw
+    rejectsProxySuite
     mkProxyCtlDerived
     system
     nixpkgs

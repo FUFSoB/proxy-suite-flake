@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkBadProxySuiteFixture,
@@ -9,6 +10,7 @@
 }:
 
 let
+  inherit (checkLib) mkProxySuite;
   generated = import ./read-generated.nix;
   inherit (pkgs.lib) hasInfix;
 
@@ -57,21 +59,16 @@ let
   plainTunnel = generated.readDerivation services.proxy-suite-awg-plain.serviceConfig.ExecStart;
   dnsServer = dnsServerByTag (mkTProxyConfig singBox) "awg-dns-de";
 
-  warpInterface = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
-        enable = true;
-        proxy.enable = true;
-        amneziaWg.enable = true;
-        warp = {
-          enable = true;
-          configFile = "/run/secrets/wgcf-profile.conf";
-          asOutbound = "interface";
-        };
-      };
-    }
-  ];
+  warpInterface = mkProxySuite {
+    enable = true;
+    proxy.enable = true;
+    amneziaWg.enable = true;
+    warp = {
+      enable = true;
+      configFile = "/run/secrets/wgcf-profile.conf";
+      asOutbound = "interface";
+    };
+  };
 in
 {
   assertions = [

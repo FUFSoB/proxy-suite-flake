@@ -1,49 +1,36 @@
 # Assembles proxy backend startup and control scripts.
-{
-  lib,
-  pkgs,
-  singBoxCfg,
-  proxyCfg,
-  sshProxyCfg,
-  warpCfg,
-  torCfg,
-  awgOutbounds,
-  xrayEnabled,
-  hybridEnabled,
-  pureXrayEnabled,
-  activeBackend,
-  perAppRoutingCfg,
-  userControlCfg,
-  selectionMode,
-  collapseNamedOutbounds,
-  constants,
-  zapretCutoffProxyFallback,
-  jq,
-  python3,
-  singBox,
-  xray,
-  parserScriptsPythonPath,
-  buildOutboundPy,
-  fetchSubscriptionPy,
-  tproxyFile,
-  tunFile,
-  perAppTunFile,
-  routeModeRulesFile,
-  proxyInboundsCfg,
-  proxyInboundsAwg,
-  awgBin,
-  proxyInboundsNeedLocalProxy,
-  torOnionEnabled,
-  proxyInboundsGuardPrivate,
-  proxyInboundViaOutbounds,
-  userControlAllows,
-  buildInboundPy,
-  proxyInboundsFile,
-  proxyInboundsSpecFile,
-  builders,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    singBoxCfg
+    proxyCfg
+    activeBackend
+    xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
+    perAppRoutingCfg
+    userControlCfg
+    userControlAllows
+    selectionMode
+    constants
+    zapretCutoffProxyFallback
+    jq
+    python3
+    singBox
+    xray
+    proxyInboundsCfg
+    proxyInboundsGuardPrivate
+    routeModeRulesFile
+    tproxyFile
+    tunFile
+    perAppTunFile
+    proxyInboundsFile
+    proxyInboundsSpecFile
+    builders
+    ;
   globalTproxy = proxyCfg.tproxy;
   backend = if activeBackend == null then "sing-box" else activeBackend;
   mainBackend = if pureXrayEnabled then "xray" else "sing-box";
@@ -81,23 +68,43 @@ let
     else
       " | .routing_mark = ${toString routingMark}";
 
-  subscriptionScripts = import ./script-blocks/subscriptions.nix {
-    inherit (constants) stateDir;
+  # ctx plus this layer's own values; the script blocks read what they need off it. Lazy, so
+  # a block may use a sibling's output (start-scripts uses the subscription helpers).
+  sctx = ctx // {
     inherit
-      lib
-      pkgs
-      proxyCfg
-      hybridEnabled
-      mainBackend
       backend
-      runtimeSubscriptionsDir
-      jq
-      python3
-      parserScriptsPythonPath
-      fetchSubscriptionPy
+      mainBackend
+      backendArg
+      backendBin
+      globalTproxy
+      localProxyAuth
+      localProxyAuthEnabled
+      localProxyAuthPasswordSource
+      routeModeStateFile
+      xrayLoglevelFile
+      runtimeProxychainsConfig
+      xraySidecarRoutingMark
       routingMarkJq
+      pinnedOutboundFile
+      runtimeOutboundsDir
+      runtimeSubscriptionsDir
+      outboundInventoryFile
+      clashApi
       ;
+    inherit (subscriptionScripts)
+      subscriptionCacheDir
+      subscriptionCacheHelpersBlock
+      mkSubscriptionLoadHelperBlock
+      mkSubscriptionBlock
+      runtimeSubscriptionsBlock
+      mkSubscriptionFetchBlock
+      runtimeSubscriptionsFetchBlock
+      ;
+    inherit (outboundScripts) mkOutboundScript;
+    inherit hybridRuntimeHelpersBlock backendJqFilterFile;
   };
+
+  subscriptionScripts = import ./script-blocks/subscriptions.nix { ctx = sctx; };
   inherit (subscriptionScripts)
     subscriptionCacheDir
     subscriptionCacheHelpersBlock
@@ -110,7 +117,7 @@ let
     ;
 
   outboundScripts = import ./script-blocks/outbounds.nix {
-    inherit
+    inherit (sctx)
       lib
       pkgs
       singBoxCfg
@@ -140,14 +147,7 @@ let
   };
   inherit (outboundScripts) mkOutboundScript;
 
-  hybridRuntimeHelpersBlock = import ./script-blocks/hybrid-runtime-helpers.nix {
-    inherit
-      lib
-      jq
-      hybridEnabled
-      xraySidecarRoutingMark
-      ;
-  };
+  hybridRuntimeHelpersBlock = import ./script-blocks/hybrid-runtime-helpers.nix { ctx = sctx; };
 
   backendJqFilter = import ./script-blocks/backend-jq-filter.nix {
     inherit
@@ -160,69 +160,10 @@ let
   };
   backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 
-  startScripts = import ./start-scripts.nix {
-    inherit
-      lib
-      pkgs
-      proxyCfg
-      perAppRoutingCfg
-      userControlCfg
-      userControlAllows
-      globalTproxy
-      xrayEnabled
-      hybridEnabled
-      pureXrayEnabled
-      constants
-      zapretCutoffProxyFallback
-      jq
-      singBox
-      xray
-      backendBin
-      routeModeStateFile
-      routeModeRulesFile
-      xrayLoglevelFile
-      runtimeProxychainsConfig
-      localProxyAuth
-      localProxyAuthEnabled
-      localProxyAuthPasswordSource
-      backendJqFilterFile
-      hybridRuntimeHelpersBlock
-      subscriptionCacheHelpersBlock
-      mkOutboundScript
-      tproxyFile
-      tunFile
-      perAppTunFile
-      ;
-  };
+  startScripts = import ./start-scripts.nix { ctx = sctx; };
   inherit (startScripts) startSocks startTun startPerAppTun;
 
-  proxyInboundsScripts = import ./proxy-inbounds-scripts.nix {
-    inherit
-      lib
-      pkgs
-      proxyCfg
-      proxyInboundsCfg
-      proxyInboundsAwg
-      awgBin
-      proxyInboundsNeedLocalProxy
-      torOnionEnabled
-      proxyInboundViaOutbounds
-      userControlCfg
-      userControlAllows
-      localProxyAuth
-      localProxyAuthEnabled
-      localProxyAuthPasswordSource
-      jq
-      python3
-      parserScriptsPythonPath
-      buildInboundPy
-      buildOutboundPy
-      proxyInboundsFile
-      proxyInboundsSpecFile
-      builders
-      constants
-      ;
-  };
+  proxyInboundsScripts = import ./proxy-inbounds-scripts.nix { ctx = sctx; };
   inherit (proxyInboundsScripts) startInbounds collectInboundStats;
   proxyInboundsLinksFile = proxyInboundsScripts.linksFile;
   proxyInboundsSubscriptionsFile = proxyInboundsScripts.subscriptionsFile;
@@ -271,11 +212,5 @@ in
     subscriptionUpdateScript
     subscriptionTagsFile
     subscriptionCacheDir
-    runtimeProxychainsConfig
-    pinnedOutboundFile
-    runtimeOutboundsDir
-    runtimeSubscriptionsDir
-    outboundInventoryFile
-    clashApi
     ;
 }

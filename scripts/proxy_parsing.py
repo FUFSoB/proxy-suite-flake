@@ -286,6 +286,46 @@ def _subscription_tag(line: str, tag_prefix: str, index: int, seen_tags: set[str
     return _unique_tag(make_tag(tag_prefix, _remark_from_line(line), index), seen_tags)
 
 
+def _walk_subscription(
+    lines: list[str],
+    tag_prefix: str,
+    routing_mark: int | None,
+    backends: list[str],
+    links: dict[str, str] | None,
+    keep,
+) -> None:
+    """Parses every supported line, trying each backend in turn, and hands the result to keep.
+
+    A line no backend accepts is reported with every backend's complaint and skipped.
+    """
+    seen_tags: set[str] = set()
+
+    for index, line in enumerate(lines):
+        scheme = detect_scheme(line)
+        if scheme not in PARSERS:
+            continue
+
+        tag = _subscription_tag(line, tag_prefix, index, seen_tags)
+        errors = []
+        for backend in backends:
+            try:
+                outbound = build_outbound(line, tag, routing_mark, backend)
+            except Exception as exc:
+                errors.append(f"{backend}: {exc}" if len(backends) > 1 else str(exc))
+                continue
+
+            seen_tags.add(tag)
+            keep(backend, outbound)
+            if links is not None:
+                links[tag] = line
+            break
+        else:
+            print(
+                f"warning: skipping entry {index} ({scheme}): " + "; ".join(errors),
+                file=sys.stderr,
+            )
+
+
 def parse_subscription(
     lines: list[str],
     tag_prefix: str,
@@ -294,66 +334,24 @@ def parse_subscription(
     links: dict[str, str] | None = None,
 ) -> list[dict]:
     """links, when given, collects tag -> the line it came from, to share it back."""
-    outbounds = []
-    seen_tags: set[str] = set()
-
-    for index, line in enumerate(lines):
-        scheme = detect_scheme(line)
-        if scheme not in PARSERS:
-            continue
-
-        tag = _subscription_tag(line, tag_prefix, index, seen_tags)
-
-        try:
-            outbound = build_outbound(line, tag, routing_mark, backend)
-        except Exception as exc:
-            print(f"warning: skipping entry {index} ({scheme}): {exc}", file=sys.stderr)
-            continue
-
-        seen_tags.add(tag)
-        outbounds.append(outbound)
-        if links is not None:
-            links[tag] = line
-
+    outbounds: list[dict] = []
+    _walk_subscription(
+        lines, tag_prefix, routing_mark, [backend], links, lambda _, ob: outbounds.append(ob)
+    )
     return outbounds
 
 
 def parse_hybrid_subscription(
     lines: list[str], tag_prefix: str, routing_mark: int | None = None, links: dict[str, str] | None = None
 ) -> dict[str, list[dict]]:
+    """Each line goes to whichever backend can dial it, sing-box first."""
     outbounds: dict[str, list[dict]] = {"singBox": [], "xray": []}
-    seen_tags: set[str] = set()
-
-    for index, line in enumerate(lines):
-        scheme = detect_scheme(line)
-        if scheme not in PARSERS:
-            continue
-
-        tag = _subscription_tag(line, tag_prefix, index, seen_tags)
-
-        try:
-            outbound = build_outbound(line, tag, routing_mark, "sing-box")
-            outbounds["singBox"].append(outbound)
-            seen_tags.add(tag)
-            if links is not None:
-                links[tag] = line
-            continue
-        except Exception as sing_box_exc:
-            sing_box_error = sing_box_exc
-
-        try:
-            outbound = build_outbound(line, tag, routing_mark, "xray")
-        except Exception as xray_exc:
-            print(
-                f"warning: skipping entry {index} ({scheme}): "
-                f"sing-box: {sing_box_error}; xray: {xray_exc}",
-                file=sys.stderr,
-            )
-            continue
-
-        outbounds["xray"].append(outbound)
-        seen_tags.add(tag)
-        if links is not None:
-            links[tag] = line
-
+    _walk_subscription(
+        lines,
+        tag_prefix,
+        routing_mark,
+        ["sing-box", "xray"],
+        links,
+        lambda backend, ob: outbounds["singBox" if backend == "sing-box" else "xray"].append(ob),
+    )
     return outbounds

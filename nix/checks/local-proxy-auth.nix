@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -10,6 +11,7 @@
 }:
 
 let
+  inherit (checkLib) startScript;
   generated = import ./read-generated.nix;
 
   localProxyAuthFixture = evalProxySuite [
@@ -21,9 +23,7 @@ let
       };
     }
   ];
-  localProxyAuthStartScript = generated.readDerivation (
-    localProxyAuthFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  localProxyAuthStartScript = startScript localProxyAuthFixture;
   localProxyAuthBackendJqFilter =
     import ../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
@@ -57,9 +57,7 @@ let
   _localProxyAuthPasswordFile = mkProxyCtlDerived localProxyAuthPasswordFileFixture;
   localProxyAuthPasswordFileWrapper = _localProxyAuthPasswordFile.wrapper;
   localProxyAuthPasswordFileScript = _localProxyAuthPasswordFile.script;
-  localProxyAuthPasswordFileStartScript = generated.readDerivation (
-    localProxyAuthPasswordFileFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  localProxyAuthPasswordFileStartScript = startScript localProxyAuthPasswordFileFixture;
 
   invalidLocalProxyAuthAssertions = mkFailingAssertions mkBadFixture [
     # Auth requires both username and a password source.

@@ -12,20 +12,10 @@ let
   inherit (derived.constants) unprivilegedServiceConfig;
   inherit (cfg.host) privileged;
 
+  inherit (derived.localProxy) auth;
   listener = cfg.proxy.listener;
-  auth = listener.auth;
-  # Tor dials the local proxy by address: a wildcard listener is reached on loopback.
-  proxyHost =
-    if
-      builtins.elem listener.address [
-        "0.0.0.0"
-        "::"
-      ]
-    then
-      "127.0.0.1"
-    else
-      listener.address;
-  proxyHostPart = if lib.hasInfix ":" proxyHost then "[${proxyHost}]" else proxyHost;
+  proxyHost = derived.localProxy.host;
+  proxyHostPart = derived.localProxy.hostPart;
   passwordSource =
     if auth.passwordFile != null then
       auth.passwordFile
@@ -34,7 +24,7 @@ let
     else
       null;
   viaProxy = t.upstream == "proxy";
-  withProxyAuth = viaProxy && auth.username != null && passwordSource != null;
+  withProxyAuth = viaProxy && derived.localProxy.authEnabled;
   bridgesEnabled = t.bridges.lines != [ ] || t.bridges.file != null;
 
   # The control socket's directory: members of userControl.group may use it for

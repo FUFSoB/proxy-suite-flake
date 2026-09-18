@@ -3,12 +3,7 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   t = import ./types.nix { inherit lib; };
-  int =
-    default: description:
-    mkOption {
-      type = types.int;
-      inherit default description;
-    };
+  inherit (import ./lib.nix { inherit lib; }) int;
   localSubnets =
     description:
     mkOption {

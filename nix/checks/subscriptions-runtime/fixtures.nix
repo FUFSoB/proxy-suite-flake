@@ -1,9 +1,11 @@
 {
+  checkLib,
   evalProxySuite,
   mkProxyCtlDerived,
 }:
 
 let
+  inherit (checkLib) startScript unitScript;
   generated = import ../read-generated.nix;
 
   subscriptionOnlyFixture = evalProxySuite [
@@ -60,9 +62,7 @@ let
       };
     }
   ];
-  subscriptionWithStaticStartScript = generated.readDerivation (
-    subscriptionWithStaticFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  subscriptionWithStaticStartScript = startScript subscriptionWithStaticFixture;
 
   subscriptionFirstSelectionFixture = evalProxySuite [
     {
@@ -83,9 +83,7 @@ let
       };
     }
   ];
-  subscriptionFirstSelectionStartScript = generated.readDerivation (
-    subscriptionFirstSelectionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  subscriptionFirstSelectionStartScript = startScript subscriptionFirstSelectionFixture;
 
   subscriptionPerAppTunFixture = evalProxySuite [
     {
@@ -109,9 +107,7 @@ let
       };
     }
   ];
-  subscriptionPerAppTunUpdateScript = generated.readDerivation (
-    subscriptionPerAppTunFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
-  );
+  subscriptionPerAppTunUpdateScript = unitScript subscriptionPerAppTunFixture "proxy-suite-subscription-update";
 in
 {
   inherit

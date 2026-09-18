@@ -2,13 +2,7 @@
 
 let
   inherit (lib) mkEnableOption mkOption types;
-  domains =
-    description: example:
-    mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      inherit description example;
-    };
+  domains = (import ./lib.nix { inherit lib; }).list;
 in
 {
   options.services.proxy-suite.tgWsProxy = {

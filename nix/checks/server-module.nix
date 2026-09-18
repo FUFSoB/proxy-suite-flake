@@ -1,6 +1,7 @@
 # nixosModules.server as the installer writes it: once for an IP certificate, once for
 # a domain.
 {
+  checkLib,
   pkgs,
   system,
   nixpkgs,
@@ -9,6 +10,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   inherit (pkgs) lib;
 
   serverModule = import ../../deploy/server-module.nix { inherit proxySuiteModule; };
@@ -66,14 +68,8 @@ let
 in
 {
   assertions = [
-    (
-      assert failedAssertions ipServer == [ ];
-      true
-    )
-    (
-      assert failedAssertions domainServer == [ ];
-      true
-    )
+    (ok (failedAssertions ipServer == [ ]))
+    (ok (failedAssertions domainServer == [ ]))
 
     (
       assert
@@ -95,14 +91,8 @@ in
         (listener ipSpec "vless-tls").tls.certificateFile == "/var/lib/acme/203.0.113.10/fullchain.pem";
       true
     )
-    (
-      assert (listener domainSpec "vless-ws").tls.keyFile == "/var/lib/acme/vpn.example.com/key.pem";
-      true
-    )
-    (
-      assert (listener ipSpec "vless-ws").transport.path == "/3f9a1c07b2e4";
-      true
-    )
+    (ok ((listener domainSpec "vless-ws").tls.keyFile == "/var/lib/acme/vpn.example.com/key.pem"))
+    (ok ((listener ipSpec "vless-ws").transport.path == "/3f9a1c07b2e4"))
     (
       assert
         (lib.head (listener ipSpec "vless-tls").users).uuidFile == "/var/lib/proxy-suite-server/uuid";
@@ -110,28 +100,13 @@ in
     )
 
     # IP certificates exist only in the short-lived profile.
-    (
-      assert ipCert.profile == "shortlived" && domainCert.profile == null;
-      true
-    )
-    (
-      assert ipCert.group == "proxy-suite-daemon";
-      true
-    )
-    (
-      assert ipServer.config.services.proxy-suite.inbounds.serverAddress == "203.0.113.10";
-      true
-    )
-    (
-      assert domainServer.config.services.proxy-suite.inbounds.serverAddress == "vpn.example.com";
-      true
-    )
+    (ok (ipCert.profile == "shortlived" && domainCert.profile == null))
+    (ok (ipCert.group == "proxy-suite-daemon"))
+    (ok (ipServer.config.services.proxy-suite.inbounds.serverAddress == "203.0.113.10"))
+    (ok (domainServer.config.services.proxy-suite.inbounds.serverAddress == "vpn.example.com"))
 
     # A /32 with a gateway outside it only works on-link.
-    (
-      assert (uplink ipServer).address == [ "203.0.113.10/32" ];
-      true
-    )
+    (ok ((uplink ipServer).address == [ "203.0.113.10/32" ]))
     (
       assert
         (uplink ipServer).routes == [
@@ -142,31 +117,21 @@ in
         ];
       true
     )
-    (
-      assert (uplink domainServer).networkConfig.DHCP == "yes" && (uplink domainServer).address == [ ];
-      true
-    )
+    (ok ((uplink domainServer).networkConfig.DHCP == "yes" && (uplink domainServer).address == [ ]))
 
-    (
-      assert lib.all (p: builtins.elem p ipServer.config.networking.firewall.allowedTCPPorts) [
+    (ok (
+      lib.all (p: builtins.elem p ipServer.config.networking.firewall.allowedTCPPorts) [
         80
         443
         8443
         2053
         22
-      ];
-      true
-    )
-    (
-      assert ipServer.config.services.openssh.settings.PermitRootLogin == "no";
-      true
-    )
+      ]
+    ))
+    (ok (ipServer.config.services.openssh.settings.PermitRootLogin == "no"))
 
     # onion.enable: every listener behind the onion service, and nothing opened for it.
-    (
-      assert failedAssertions onionServer == [ ];
-      true
-    )
+    (ok (failedAssertions onionServer == [ ]))
     (
       assert
         lib.sort (a: b: a < b) onionSpec.onionListeners == [
@@ -181,11 +146,9 @@ in
         !(ipServer.config.systemd.services ? proxy-suite-tor) && (ipSpec.onionListeners or [ ]) == [ ];
       true
     )
-    (
-      assert builtins.elem "proxy-suite-tor.service"
-        onionServer.config.systemd.services.proxy-suite-inbounds.after;
-      true
-    )
+    (ok (
+      builtins.elem "proxy-suite-tor.service" onionServer.config.systemd.services.proxy-suite-inbounds.after
+    ))
     (
       assert
         onionServer.config.networking.firewall.allowedTCPPorts
@@ -196,6 +159,13 @@ in
       assert
         lib.hasInfix "--onion" onionServer.config.services.getty.helpLine
         && !(lib.hasInfix "--onion" ipServer.config.services.getty.helpLine);
+      true
+    )
+    # The console banner names the server and the admin account, interpolated: an escaped
+    # ''${...} used to reach the login screen verbatim.
+    (
+      assert lib.hasInfix "proxy-suite server 203.0.113.10." ipServer.config.services.getty.helpLine;
+      assert !(lib.hasInfix "\${" ipServer.config.services.getty.helpLine);
       true
     )
   ];

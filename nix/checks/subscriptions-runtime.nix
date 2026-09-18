@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkProxyCtlDerived,
@@ -6,7 +7,9 @@
 }:
 
 let
+  inherit (checkLib) ok;
   fixtures = import ./subscriptions-runtime/fixtures.nix {
+    inherit checkLib;
     inherit
       evalProxySuite
       mkProxyCtlDerived
@@ -28,10 +31,7 @@ in
 {
   assertions = [
     # Basic config is accepted.
-    (
-      assert subscriptionOnlyFixture.config.services.proxy-suite.proxy.subscriptions != [ ];
-      true
-    )
+    (ok (subscriptionOnlyFixture.config.services.proxy-suite.proxy.subscriptions != [ ]))
 
     # Wrapper exposes tags through a JSON file, not shell word splitting.
     (
@@ -42,14 +42,8 @@ in
     )
 
     # Update service and timer are created when subscriptions are configured.
-    (
-      assert subscriptionOnlyFixture.config.systemd.services ? "proxy-suite-subscription-update";
-      true
-    )
-    (
-      assert subscriptionOnlyFixture.config.systemd.timers ? "proxy-suite-subscription-update";
-      true
-    )
+    (ok (subscriptionOnlyFixture.config.systemd.services ? "proxy-suite-subscription-update"))
+    (ok (subscriptionOnlyFixture.config.systemd.timers ? "proxy-suite-subscription-update"))
     # A oneshot left active would swallow every later timer run.
     (
       assert
@@ -176,14 +170,8 @@ in
 
     # The update service and timer exist whenever the proxy does, because a
     # subscription can be added at runtime after the rebuild.
-    (
-      assert minimal.config.systemd.services ? "proxy-suite-subscription-update";
-      true
-    )
-    (
-      assert minimal.config.systemd.timers ? "proxy-suite-subscription-update";
-      true
-    )
+    (ok (minimal.config.systemd.services ? "proxy-suite-subscription-update"))
+    (ok (minimal.config.systemd.timers ? "proxy-suite-subscription-update"))
 
     # Runtime spool dirs are root-only unless userControl grants outbounds (see user-control.nix).
     (

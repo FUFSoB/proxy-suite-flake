@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -9,6 +10,7 @@
 }:
 
 let
+  inherit (checkLib) ok startScript;
   generated = import ./read-generated.nix;
 
   routeModeFixture = evalProxySuite [
@@ -38,9 +40,7 @@ let
       };
     }
   ];
-  routeModeStartScript = generated.readDerivation (
-    routeModeFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  routeModeStartScript = startScript routeModeFixture;
   routeModeBackendJqFilter =
     import ../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
@@ -81,11 +81,9 @@ in
     )
 
     # proxy-ctl help/status exposes default plus the explicit route modes.
-    (
-      assert pkgs.lib.hasInfix "proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]"
-        minimalProxyCtlScript;
-      true
-    )
+    (ok (
+      pkgs.lib.hasInfix "proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]" minimalProxyCtlScript
+    ))
 
     # The socks start script includes every override branch and uses volatile state.
     (
@@ -118,9 +116,9 @@ in
       in
       assert !(setterSvc.serviceConfig ? RuntimeDirectory);
       assert pkgs.lib.hasInfix "/run/proxy-suite/route-mode" routeModeSetterScript;
-      assert pkgs.lib.hasInfix "default)" routeModeSetterScript;
-      assert pkgs.lib.hasInfix "all-proxy)" routeModeSetterScript;
-      assert pkgs.lib.hasInfix "all-bypass)" routeModeSetterScript;
+      # One case arm lists every mode the setter accepts.
+      assert pkgs.lib.hasInfix "default | whitelist | blacklist | all-proxy | all-bypass)"
+        routeModeSetterScript;
       true
     )
 

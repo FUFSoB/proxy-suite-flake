@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -13,6 +14,7 @@
 
 let
   xrayChecks = import ./xray-backend.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -27,6 +29,7 @@ let
       ;
   };
   hybridChecks = import ./hybrid-backend.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

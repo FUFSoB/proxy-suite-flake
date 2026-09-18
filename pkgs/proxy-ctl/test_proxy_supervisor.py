@@ -81,6 +81,10 @@ class SupervisorTest(unittest.TestCase):
                     "Unit": {"Description": "timer job"},
                     "Service": {"Type": "oneshot", "ExecStart": sh(f"echo tick >> {out}/ticks")},
                 },
+                "proxy-suite-watched": {
+                    "Unit": {"Description": "path job"},
+                    "Service": {"Type": "oneshot", "ExecStart": sh(f"echo changed >> {out}/watched")},
+                },
                 "proxy-suite-pin@": {
                     "Unit": {"Description": "template"},
                     "Service": {"Type": "oneshot", "ExecStart": sh(f"echo '%I' >> {out}/pins")},
@@ -93,7 +97,13 @@ class SupervisorTest(unittest.TestCase):
                     "Install": {"WantedBy": ["timers.target"]},
                 },
             },
-            "paths": {},
+            "paths": {
+                "proxy-suite-watched": {
+                    "Unit": {"Description": "watch a file"},
+                    "Path": {"PathChanged": [os.path.join(self.tmp, "trigger")]},
+                    "Install": {"WantedBy": ["paths.target"]},
+                },
+            },
             "tmpfiles": [f"d {self.run_dir} 0700 - - -"],
         }
         with open(self.manifest + ".tmp", "w") as f:
@@ -166,6 +176,26 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("start 2 two", self.ctl("journal", "-u", "proxy-suite-counter", "-o", "cat")[1])
         # The unchanged oneshot is not run again.
         self.assertEqual(self.read("once"), ["ran"])
+
+
+    def test_path_unit_starts_its_service_when_the_file_changes(self):
+        trigger = os.path.join(self.tmp, "trigger")
+        # boot brings up the .path unit with the rest of paths.target.
+        self.assertEqual(self.ctl("boot")[0], 0)
+        # A .path unit is active itself, and quiet until the file it watches appears.
+        self.assertEqual(self.ctl("is-active", "--quiet", "proxy-suite-watched.path")[0], 0)
+        self.assertEqual(self.read("watched"), [])
+
+        with open(trigger, "w") as f:
+            f.write("one")
+        wait_for(lambda: self.read("watched") == ["changed"])
+
+        # Stopped, further changes are ignored.
+        self.assertEqual(self.ctl("stop", "proxy-suite-watched.path")[0], 0)
+        with open(trigger, "w") as f:
+            f.write("two")
+        time.sleep(1)
+        self.assertEqual(self.read("watched"), ["changed"])
 
 
 if __name__ == "__main__":

@@ -3,23 +3,24 @@
 # Everything is emitted as shell functions taking a tag and a file holding the
 # subscription URL, so a subscription declared in Nix and one added at runtime
 # under `subscriptions.d/` go through exactly the same code.
-{
-  lib,
-  pkgs,
-  proxyCfg,
-  hybridEnabled,
-  mainBackend,
-  backend,
-  stateDir,
-  runtimeSubscriptionsDir,
-  jq,
-  python3,
-  parserScriptsPythonPath,
-  fetchSubscriptionPy,
-  routingMarkJq,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    proxyCfg
+    hybridEnabled
+    mainBackend
+    backend
+    constants
+    jq
+    python3
+    parserScriptsPythonPath
+    fetchSubscriptionPy
+    routingMarkJq
+    ;
+  inherit (constants) stateDir runtimeSubscriptionsDir;
   subscriptionBackend = if hybridEnabled then "hybrid" else mainBackend;
   subscriptionBackendArg = "--backend ${subscriptionBackend}";
   subscriptionCacheDir = "${stateDir}/subscriptions/${backend}";

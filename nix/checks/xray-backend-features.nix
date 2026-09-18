@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -9,6 +10,7 @@
 
 let
   fixtures = import ./xray-backend-features/fixtures.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

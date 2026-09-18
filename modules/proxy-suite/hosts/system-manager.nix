@@ -14,8 +14,10 @@ let
   cfg = config.services.proxy-suite;
   internal = options.services.proxy-suite.internal;
   inherit (import ./common.nix { inherit lib; })
-    forwardWith
     forward
+    systemdForward
+    systemUsersAndGroups
+    firewallPortForward
     unitsWithOwnSyslogIdentifier
     ;
 
@@ -72,47 +74,33 @@ in
       };
     }
 
-    (lib.mkIf cfg.enable {
-      assertions = [
+    (lib.mkIf cfg.enable (
+      lib.mkMerge [
+        (systemdForward internal)
+        (systemUsersAndGroups cfg)
+        # Only reported: system-manager leaves the host firewall alone. The routing modes load
+        # their own nftables tables, and the distribution's loose reverse-path filter already
+        # lets AmneziaWG replies in.
+        (firewallPortForward internal)
         {
-          assertion = cfg.internal.kernelModulePackages == [ ];
-          message = "proxy-suite: system-manager cannot load kernel modules from Nix; leave amneziaWg.kernelModulePackage at null";
+          assertions = [
+            {
+              assertion = cfg.internal.kernelModulePackages == [ ];
+              message = "proxy-suite: system-manager cannot load kernel modules from Nix; leave amneziaWg.kernelModulePackage at null";
+            }
+          ];
+
+          environment.etc = lib.mkMerge [
+            userServiceFiles
+            # Read by polkit 0.106 and later; the distribution runs the daemon. The rules
+            # go through the host's setuid pkexec: nothing here needs a wrapper.
+            (lib.mkIf cfg.internal.polkit.enable {
+              "polkit-1/rules.d/50-proxy-suite.rules".text = cfg.internal.polkit.rules;
+            })
+          ];
+
         }
-      ];
-
-      systemd.services = forward internal.services;
-      systemd.timers = forward internal.timers;
-      systemd.paths = forward internal.paths;
-      systemd.tmpfiles.rules = forward internal.tmpfiles;
-
-      environment.systemPackages = lib.mkMerge [
-        (forwardWith lib.mkBefore internal.earlyPackages)
-        (forward internal.packages)
-      ];
-
-      environment.etc = lib.mkMerge [
-        userServiceFiles
-        # Read by polkit 0.106 and later; the distribution runs the daemon. The rules
-        # go through the host's setuid pkexec: nothing here needs a wrapper.
-        (lib.mkIf cfg.internal.polkit.enable {
-          "polkit-1/rules.d/50-proxy-suite.rules".text = cfg.internal.polkit.rules;
-        })
-      ];
-
-      users.users = lib.genAttrs cfg.internal.systemUsers (name: {
-        isSystemUser = true;
-        group = name;
-        description = "proxy-suite daemons";
-      });
-      users.groups = lib.genAttrs (cfg.internal.systemUsers ++ cfg.internal.groups) (_: { });
-
-      # Only reported: system-manager leaves the host firewall alone. The routing modes
-      # load their own nftables tables, and the distribution's loose reverse-path filter
-      # already lets AmneziaWG replies in.
-      networking.firewall = {
-        allowedTCPPorts = forward internal.firewall.allowedTCPPorts;
-        allowedUDPPorts = forward internal.firewall.allowedUDPPorts;
-      };
-    })
+      ]
+    ))
   ];
 }

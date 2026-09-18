@@ -38,9 +38,10 @@ let
   requireEnabled =
     featureEnabled: dependencyEnabled: message:
     mkAssertion (!featureEnabled || dependencyEnabled) message;
-  requireAvailable =
-    featureUsed: dependencyEnabled: message:
-    mkAssertion (!featureUsed || dependencyEnabled) message;
+  # The shape of nearly every dependency assertion: "<used> requires <dependency> = true".
+  requires =
+    used: dependency: usedLabel: dependencyLabel:
+    mkAssertion (!used || dependency) "proxy-suite: ${usedLabel} requires ${dependencyLabel} = true";
   uniqueValues =
     condition: values: message:
     mkAssertion (!condition || builtins.length values == builtins.length (lib.unique values)) message;
@@ -55,6 +56,13 @@ let
   forbiddenValues =
     condition: value: disallowed: message:
     mkAssertion (!(condition && builtins.elem value disallowed)) message;
+  # Two values that must not coincide; the message names the config that conflicts them.
+  distinct =
+    condition: left: right: message:
+    notEqualWhen condition left right "proxy-suite: ${message}";
+  positive =
+    condition: value: label:
+    mkAssertion (!condition || value > 0) "proxy-suite: ${label} must be greater than zero";
 
   # Every loopback listener proxy-suite opens with a fixed port of its own, which
   # the autoProxy prober's range must stay clear of.
@@ -238,54 +246,49 @@ let
     )
   ];
 
+  # Each case reads "<used> requires <dependency> = true", with option paths as labels.
   perAppRoutingAssertions = [
-    (requireAvailable (perAppRoutingCfg.profiles != [ ]) perAppRoutingCfg.enable
-      "proxy-suite: perAppRouting.profiles requires perAppRouting.enable = true"
+    (requires (
+      perAppRoutingCfg.profiles != [ ]
+    ) perAppRoutingCfg.enable "perAppRouting.profiles" "perAppRouting.enable")
+    (requires perAppRoutingCfg.proxychains.enable perAppRoutingCfg.enable
+      "perAppRouting.proxychains.enable"
+      "perAppRouting.enable"
     )
-    (requireEnabled perAppRoutingCfg.proxychains.enable perAppRoutingCfg.enable
-      "proxy-suite: perAppRouting.proxychains.enable requires perAppRouting.enable = true"
-    )
-    (requireEnabled perAppRoutingCfg.proxychains.enable proxyEnabled
-      "proxy-suite: perAppRouting.proxychains.enable requires proxy.enable = true"
+    (requires perAppRoutingCfg.proxychains.enable proxyEnabled "perAppRouting.proxychains.enable"
+      "proxy.enable"
     )
     (uniqueValues true effectivePerAppRoutingProfileNames
       "proxy-suite: perAppRouting profile names must be unique"
     )
-    (requireAvailable hasProxychainsProfiles perAppRoutingCfg.proxychains.enable
-      "proxy-suite: route=proxychains in perAppRouting.profiles requires perAppRouting.proxychains.enable = true"
+    (requires hasProxychainsProfiles perAppRoutingCfg.proxychains.enable
+      "route=proxychains in perAppRouting.profiles"
+      "perAppRouting.proxychains.enable"
     )
-    (requireAvailable hasProxychainsProfiles proxyEnabled
-      "proxy-suite: route=proxychains in perAppRouting.profiles requires proxy.enable = true"
+    (requires hasProxychainsProfiles proxyEnabled "route=proxychains in perAppRouting.profiles"
+      "proxy.enable"
     )
-    (requireEnabled perAppRoutingTun.enable perAppRoutingCfg.enable
-      "proxy-suite: perAppRouting.tun.enable requires perAppRouting.enable = true"
+    (requires perAppRoutingTun.enable perAppRoutingCfg.enable "perAppRouting.tun.enable"
+      "perAppRouting.enable"
     )
-    (requireEnabled perAppRoutingTun.enable proxyEnabled
-      "proxy-suite: perAppRouting.tun.enable requires proxy.enable = true"
+    (requires perAppRoutingTun.enable proxyEnabled "perAppRouting.tun.enable" "proxy.enable")
+    (requires hasTunProfiles perAppRoutingTun.enable "route=tun in perAppRouting.profiles"
+      "perAppRouting.tun.enable"
     )
-    (requireAvailable hasTunProfiles perAppRoutingTun.enable
-      "proxy-suite: route=tun in perAppRouting.profiles requires perAppRouting.tun.enable = true"
+    (requires hasTunProfiles proxyEnabled "route=tun in perAppRouting.profiles" "proxy.enable")
+    (requires perAppRoutingTproxy.enable perAppRoutingCfg.enable "perAppRouting.tproxy.enable"
+      "perAppRouting.enable"
     )
-    (requireAvailable hasTunProfiles proxyEnabled
-      "proxy-suite: route=tun in perAppRouting.profiles requires proxy.enable = true"
+    (requires perAppRoutingTproxy.enable proxyEnabled "perAppRouting.tproxy.enable" "proxy.enable")
+    (requires hasTproxyProfiles perAppRoutingTproxy.enable "route=tproxy in perAppRouting.profiles"
+      "perAppRouting.tproxy.enable"
     )
-    (requireEnabled perAppRoutingTproxy.enable perAppRoutingCfg.enable
-      "proxy-suite: perAppRouting.tproxy.enable requires perAppRouting.enable = true"
+    (requires hasTproxyProfiles proxyEnabled "route=tproxy in perAppRouting.profiles" "proxy.enable")
+    (requires perAppZapretCfg.enable perAppRoutingCfg.enable "perAppRouting.zapret.enable"
+      "perAppRouting.enable"
     )
-    (requireEnabled perAppRoutingTproxy.enable proxyEnabled
-      "proxy-suite: perAppRouting.tproxy.enable requires proxy.enable = true"
-    )
-    (requireAvailable hasTproxyProfiles perAppRoutingTproxy.enable
-      "proxy-suite: route=tproxy in perAppRouting.profiles requires perAppRouting.tproxy.enable = true"
-    )
-    (requireAvailable hasTproxyProfiles proxyEnabled
-      "proxy-suite: route=tproxy in perAppRouting.profiles requires proxy.enable = true"
-    )
-    (requireEnabled perAppZapretCfg.enable perAppRoutingCfg.enable
-      "proxy-suite: perAppRouting.zapret.enable requires perAppRouting.enable = true"
-    )
-    (requireAvailable hasZapretProfiles perAppZapretCfg.enable
-      "proxy-suite: route=zapret in perAppRouting.profiles requires perAppRouting.zapret.enable = true"
+    (requires hasZapretProfiles perAppZapretCfg.enable "route=zapret in perAppRouting.profiles"
+      "perAppRouting.zapret.enable"
     )
   ];
 
@@ -528,7 +531,7 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || !l.reality.enable || l.reality.serverNames != [ ]
       ) "${prefix}: reality.serverNames must not be empty")
-      (requireAvailable (proxyInboundsEnabled && l.reality.enable && proxyInboundsCfg.shareLinks)
+      (requireEnabled (proxyInboundsEnabled && l.reality.enable && proxyInboundsCfg.shareLinks)
         (l.reality.publicKey != null)
         "${prefix}: reality.publicKey is required to generate share links. Run `xray x25519` to print it alongside the private key, or set inbounds.shareLinks = false."
       )
@@ -692,254 +695,132 @@ let
 
   globalTunAutoRouteTable = constants.tunAutoRouteTableIndex;
   globalZapretQnum = constants.zapretGlobalQnum.${zapretEngine};
-  collisionAssertions = map (item: notEqualWhen item.condition item.left item.right item.message) [
-    {
-      condition = globalTun.enable && perAppRoutingTun.enable;
-      left = globalTun.interface;
-      right = perAppRoutingTun.interface;
-      message = "proxy-suite: proxy.tun.interface and perAppRouting.tun.interface must differ";
-    }
-    {
-      condition = globalTun.enable && perAppRoutingTun.enable;
-      left = globalTun.address;
-      right = perAppRoutingTun.address;
-      message = "proxy-suite: proxy.tun.address and perAppRouting.tun.address must differ";
-    }
-    {
-      condition = globalTun.enable && perAppRoutingTun.enable;
-      left = perAppRoutingTun.routeTable;
-      right = globalTunAutoRouteTable;
-      message = "proxy-suite: perAppRouting.tun.routeTable must differ from the global TUN auto-route table ${toString globalTunAutoRouteTable}";
-    }
-    {
-      condition = perAppRoutingTun.enable && globalTproxy.enable;
-      left = perAppRoutingTun.fwmark;
-      right = globalTproxy.fwmark;
-      message = "proxy-suite: perAppRouting.tun.fwmark must differ from proxy.tproxy.fwmark when global TProxy is enabled";
-    }
-    {
-      condition = perAppRoutingTun.enable && globalTproxy.enable;
-      left = perAppRoutingTun.fwmark;
-      right = globalTproxy.proxyMark;
-      message = "proxy-suite: perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark when global TProxy is enabled";
-    }
-    {
-      condition = perAppRoutingTun.enable && globalTproxy.enable;
-      left = perAppRoutingTun.routeTable;
-      right = globalTproxy.routeTable;
-      message = "proxy-suite: perAppRouting.tun.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled";
-    }
-    {
-      condition = perAppZapretCfg.enable && zapretCfg.enable;
-      left = perAppZapretCfg.qnum;
-      right = globalZapretQnum;
-      message = "proxy-suite: perAppRouting.zapret.qnum must differ from the global zapret instance's NFQUEUE ${toString globalZapretQnum}";
-    }
-    {
-      condition = perAppRoutingTproxy.enable;
-      left = perAppRoutingTproxy.fwmark;
-      right = globalTproxy.fwmark;
-      message = "proxy-suite: perAppRouting.tproxy.fwmark must differ from proxy.tproxy.fwmark";
-    }
-    {
-      condition = perAppRoutingTproxy.enable;
-      left = perAppRoutingTproxy.fwmark;
-      right = globalTproxy.proxyMark;
-      message = "proxy-suite: perAppRouting.tproxy.fwmark must differ from proxy.tproxy.proxyMark";
-    }
-    {
-      condition = perAppRoutingTproxy.enable;
-      left = perAppRoutingTproxy.routeTable;
-      right = globalTproxy.routeTable;
-      message = "proxy-suite: perAppRouting.tproxy.routeTable must differ from proxy.tproxy.routeTable";
-    }
-    {
-      condition = perAppRoutingTun.enable && perAppRoutingTproxy.enable;
-      left = perAppRoutingTun.fwmark;
-      right = perAppRoutingTproxy.fwmark;
-      message = "proxy-suite: perAppRouting.tun.fwmark and perAppRouting.tproxy.fwmark must differ";
-    }
-    {
-      condition = perAppRoutingTun.enable && perAppRoutingTproxy.enable;
-      left = perAppRoutingTun.routeTable;
-      right = perAppRoutingTproxy.routeTable;
-      message = "proxy-suite: perAppRouting.tun.routeTable and perAppRouting.tproxy.routeTable must differ";
-    }
-    {
-      condition = perAppZapretCfg.enable;
-      left = perAppZapretCfg.filterMark;
-      right = globalTproxy.fwmark;
-      message = "proxy-suite: perAppRouting.zapret.filterMark must differ from proxy.tproxy.fwmark";
-    }
-    {
-      condition = perAppZapretCfg.enable;
-      left = perAppZapretCfg.filterMark;
-      right = globalTproxy.proxyMark;
-      message = "proxy-suite: perAppRouting.zapret.filterMark must differ from proxy.tproxy.proxyMark";
-    }
-    {
-      condition = perAppRoutingTun.enable && perAppZapretCfg.enable;
-      left = perAppRoutingTun.fwmark;
-      right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: perAppRouting.tun.fwmark and perAppRouting.zapret.filterMark must differ";
-    }
-    {
-      condition = perAppRoutingTproxy.enable && perAppZapretCfg.enable;
-      left = perAppRoutingTproxy.fwmark;
-      right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: perAppRouting.tproxy.fwmark and perAppRouting.zapret.filterMark must differ";
-    }
-    {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
-      left = tgWsProxyCfg.fwmark;
-      right = globalTproxy.fwmark;
-      message = "proxy-suite: tgWsProxy.fwmark must differ from proxy.tproxy.fwmark";
-    }
-    {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && globalTproxy.enable;
-      left = tgWsProxyCfg.fwmark;
-      right = globalTproxy.proxyMark;
-      message = "proxy-suite: tgWsProxy.fwmark must differ from proxy.tproxy.proxyMark";
-    }
-    {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTun.enable;
-      left = tgWsProxyCfg.fwmark;
-      right = perAppRoutingTun.fwmark;
-      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.tun.fwmark";
-    }
-    {
-      condition =
-        tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppRoutingTproxy.enable;
-      left = tgWsProxyCfg.fwmark;
-      right = perAppRoutingTproxy.fwmark;
-      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.tproxy.fwmark";
-    }
-    {
-      condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
-      left = tgWsProxyCfg.fwmark;
-      right = perAppZapretCfg.filterMark;
-      message = "proxy-suite: tgWsProxy.fwmark must differ from perAppRouting.zapret.filterMark";
-    }
-  ];
+  collisionAssertions =
+    let
+      bothTun = globalTun.enable && perAppRoutingTun.enable;
+      perAppTunWithTproxy = perAppRoutingTun.enable && globalTproxy.enable;
+      bothPerApp = perAppRoutingTun.enable && perAppRoutingTproxy.enable;
+      tgWsBypass = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
+    in
+    [
+      (distinct bothTun globalTun.interface perAppRoutingTun.interface
+        "proxy.tun.interface and perAppRouting.tun.interface must differ"
+      )
+      (distinct bothTun globalTun.address perAppRoutingTun.address
+        "proxy.tun.address and perAppRouting.tun.address must differ"
+      )
+      (distinct bothTun perAppRoutingTun.routeTable globalTunAutoRouteTable
+        "perAppRouting.tun.routeTable must differ from the global TUN auto-route table ${toString globalTunAutoRouteTable}"
+      )
+      (distinct perAppTunWithTproxy perAppRoutingTun.fwmark globalTproxy.fwmark
+        "perAppRouting.tun.fwmark must differ from proxy.tproxy.fwmark when global TProxy is enabled"
+      )
+      (distinct perAppTunWithTproxy perAppRoutingTun.fwmark globalTproxy.proxyMark
+        "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark when global TProxy is enabled"
+      )
+      (distinct perAppTunWithTproxy perAppRoutingTun.routeTable globalTproxy.routeTable
+        "perAppRouting.tun.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled"
+      )
+      (distinct (perAppZapretCfg.enable && zapretCfg.enable) perAppZapretCfg.qnum globalZapretQnum
+        "perAppRouting.zapret.qnum must differ from the global zapret instance's NFQUEUE ${toString globalZapretQnum}"
+      )
+      (distinct perAppRoutingTproxy.enable perAppRoutingTproxy.fwmark globalTproxy.fwmark
+        "perAppRouting.tproxy.fwmark must differ from proxy.tproxy.fwmark"
+      )
+      (distinct perAppRoutingTproxy.enable perAppRoutingTproxy.fwmark globalTproxy.proxyMark
+        "perAppRouting.tproxy.fwmark must differ from proxy.tproxy.proxyMark"
+      )
+      (distinct perAppRoutingTproxy.enable perAppRoutingTproxy.routeTable globalTproxy.routeTable
+        "perAppRouting.tproxy.routeTable must differ from proxy.tproxy.routeTable"
+      )
+      (distinct bothPerApp perAppRoutingTun.fwmark perAppRoutingTproxy.fwmark
+        "perAppRouting.tun.fwmark and perAppRouting.tproxy.fwmark must differ"
+      )
+      (distinct bothPerApp perAppRoutingTun.routeTable perAppRoutingTproxy.routeTable
+        "perAppRouting.tun.routeTable and perAppRouting.tproxy.routeTable must differ"
+      )
+      (distinct perAppZapretCfg.enable perAppZapretCfg.filterMark globalTproxy.fwmark
+        "perAppRouting.zapret.filterMark must differ from proxy.tproxy.fwmark"
+      )
+      (distinct perAppZapretCfg.enable perAppZapretCfg.filterMark globalTproxy.proxyMark
+        "perAppRouting.zapret.filterMark must differ from proxy.tproxy.proxyMark"
+      )
+      (distinct (perAppRoutingTun.enable && perAppZapretCfg.enable) perAppRoutingTun.fwmark
+        perAppZapretCfg.filterMark
+        "perAppRouting.tun.fwmark and perAppRouting.zapret.filterMark must differ"
+      )
+      (distinct (perAppRoutingTproxy.enable && perAppZapretCfg.enable) perAppRoutingTproxy.fwmark
+        perAppZapretCfg.filterMark
+        "perAppRouting.tproxy.fwmark and perAppRouting.zapret.filterMark must differ"
+      )
+      (distinct (
+        tgWsBypass && globalTproxy.enable
+      ) tgWsProxyCfg.fwmark globalTproxy.fwmark "tgWsProxy.fwmark must differ from proxy.tproxy.fwmark")
+      (distinct (tgWsBypass && globalTproxy.enable) tgWsProxyCfg.fwmark globalTproxy.proxyMark
+        "tgWsProxy.fwmark must differ from proxy.tproxy.proxyMark"
+      )
+      (distinct (tgWsBypass && perAppRoutingTun.enable) tgWsProxyCfg.fwmark perAppRoutingTun.fwmark
+        "tgWsProxy.fwmark must differ from perAppRouting.tun.fwmark"
+      )
+      (distinct (tgWsBypass && perAppRoutingTproxy.enable) tgWsProxyCfg.fwmark perAppRoutingTproxy.fwmark
+        "tgWsProxy.fwmark must differ from perAppRouting.tproxy.fwmark"
+      )
+      (distinct (tgWsBypass && perAppZapretCfg.enable) tgWsProxyCfg.fwmark perAppZapretCfg.filterMark
+        "tgWsProxy.fwmark must differ from perAppRouting.zapret.filterMark"
+      )
+    ];
 
   perAppZapretDesyncMarks = [
     67108864
     134217728
   ];
-  positiveNumberAssertions =
-    map (item: mkAssertion (!item.condition || item.value > 0) item.message)
-      [
-        {
-          condition = globalTun.enable;
-          value = globalTun.mtu;
-          message = "proxy-suite: proxy.tun.mtu must be greater than zero";
-        }
-        {
-          condition = perAppRoutingTun.enable;
-          value = perAppRoutingTun.mtu;
-          message = "proxy-suite: perAppRouting.tun.mtu must be greater than zero";
-        }
-        {
-          condition = globalTproxy.enable;
-          value = globalTproxy.fwmark;
-          message = "proxy-suite: proxy.tproxy.fwmark must be greater than zero";
-        }
-        {
-          condition = globalTproxy.enable;
-          value = globalTproxy.proxyMark;
-          message = "proxy-suite: proxy.tproxy.proxyMark must be greater than zero";
-        }
-        {
-          condition = globalTproxy.enable;
-          value = globalTproxy.routeTable;
-          message = "proxy-suite: proxy.tproxy.routeTable must be greater than zero";
-        }
-        {
-          condition = perAppRoutingTun.enable;
-          value = perAppRoutingTun.fwmark;
-          message = "proxy-suite: perAppRouting.tun.fwmark must be greater than zero";
-        }
-        {
-          condition = perAppRoutingTun.enable;
-          value = perAppRoutingTun.routeTable;
-          message = "proxy-suite: perAppRouting.tun.routeTable must be greater than zero";
-        }
-        {
-          condition = perAppRoutingTproxy.enable;
-          value = perAppRoutingTproxy.fwmark;
-          message = "proxy-suite: perAppRouting.tproxy.fwmark must be greater than zero";
-        }
-        {
-          condition = perAppRoutingTproxy.enable;
-          value = perAppRoutingTproxy.routeTable;
-          message = "proxy-suite: perAppRouting.tproxy.routeTable must be greater than zero";
-        }
-        {
-          condition = perAppZapretCfg.enable;
-          value = perAppZapretCfg.filterMark;
-          message = "proxy-suite: perAppRouting.zapret.filterMark must be greater than zero";
-        }
-        {
-          condition = perAppZapretCfg.enable;
-          value = perAppZapretCfg.qnum;
-          message = "proxy-suite: perAppRouting.zapret.qnum must be greater than zero";
-        }
-        {
-          condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
-          value = tgWsProxyCfg.fwmark;
-          message = "proxy-suite: tgWsProxy.fwmark must be greater than zero";
-        }
-      ];
+  positiveNumberAssertions = [
+    (positive globalTun.enable globalTun.mtu "proxy.tun.mtu")
+    (positive perAppRoutingTun.enable perAppRoutingTun.mtu "perAppRouting.tun.mtu")
+    (positive globalTproxy.enable globalTproxy.fwmark "proxy.tproxy.fwmark")
+    (positive globalTproxy.enable globalTproxy.proxyMark "proxy.tproxy.proxyMark")
+    (positive globalTproxy.enable globalTproxy.routeTable "proxy.tproxy.routeTable")
+    (positive perAppRoutingTun.enable perAppRoutingTun.fwmark "perAppRouting.tun.fwmark")
+    (positive perAppRoutingTun.enable perAppRoutingTun.routeTable "perAppRouting.tun.routeTable")
+    (positive perAppRoutingTproxy.enable perAppRoutingTproxy.fwmark "perAppRouting.tproxy.fwmark")
+    (positive perAppRoutingTproxy.enable perAppRoutingTproxy.routeTable
+      "perAppRouting.tproxy.routeTable"
+    )
+    (positive perAppZapretCfg.enable perAppZapretCfg.filterMark "perAppRouting.zapret.filterMark")
+    (positive perAppZapretCfg.enable perAppZapretCfg.qnum "perAppRouting.zapret.qnum")
+    (positive (
+      tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy
+    ) tgWsProxyCfg.fwmark "tgWsProxy.fwmark")
+  ];
 
   forbiddenValueAssertions =
-    map (item: forbiddenValues item.condition item.value item.disallowed item.message)
-      [
-        {
-          condition = perAppZapretCfg.enable;
-          value = perAppZapretCfg.filterMark;
-          disallowed = [
-            536870912
-            1073741824
-          ];
-          message = "proxy-suite: perAppRouting.zapret.filterMark must not use zapret internal desync mark bits";
-        }
-        {
-          condition = perAppZapretCfg.enable;
-          value = globalTproxy.fwmark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: proxy.tproxy.fwmark must not use per-app-zapret internal desync mark bits";
-        }
-        {
-          condition = perAppZapretCfg.enable;
-          value = globalTproxy.proxyMark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: proxy.tproxy.proxyMark must not use per-app-zapret internal desync mark bits";
-        }
-        {
-          condition = perAppRoutingTun.enable && perAppZapretCfg.enable;
-          value = perAppRoutingTun.fwmark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: perAppRouting.tun.fwmark must not use per-app-zapret internal desync mark bits";
-        }
-        {
-          condition = perAppRoutingTproxy.enable && perAppZapretCfg.enable;
-          value = perAppRoutingTproxy.fwmark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: perAppRouting.tproxy.fwmark must not use per-app-zapret internal desync mark bits";
-        }
-        {
-          condition = perAppZapretCfg.enable;
-          value = perAppZapretCfg.filterMark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: perAppRouting.zapret.filterMark must not use per-app-zapret internal desync mark bits";
-        }
-        {
-          condition = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy && perAppZapretCfg.enable;
-          value = tgWsProxyCfg.fwmark;
-          disallowed = perAppZapretDesyncMarks;
-          message = "proxy-suite: tgWsProxy.fwmark must not use per-app-zapret internal desync mark bits";
-        }
+    let
+      # zapret's own desync marks: v1's pair, and the bits nfqws2 sets for per-app zapret.
+      zapretInternalMarks = [
+        536870912
+        1073741824
       ];
+      noDesyncBits =
+        condition: value: label:
+        forbiddenValues condition value perAppZapretDesyncMarks
+          "proxy-suite: ${label} must not use per-app-zapret internal desync mark bits";
+      tgWsBypass = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
+    in
+    [
+      (forbiddenValues perAppZapretCfg.enable perAppZapretCfg.filterMark zapretInternalMarks
+        "proxy-suite: perAppRouting.zapret.filterMark must not use zapret internal desync mark bits"
+      )
+      (noDesyncBits perAppZapretCfg.enable globalTproxy.fwmark "proxy.tproxy.fwmark")
+      (noDesyncBits perAppZapretCfg.enable globalTproxy.proxyMark "proxy.tproxy.proxyMark")
+      (noDesyncBits (
+        perAppRoutingTun.enable && perAppZapretCfg.enable
+      ) perAppRoutingTun.fwmark "perAppRouting.tun.fwmark")
+      (noDesyncBits (
+        perAppRoutingTproxy.enable && perAppZapretCfg.enable
+      ) perAppRoutingTproxy.fwmark "perAppRouting.tproxy.fwmark")
+      (noDesyncBits perAppZapretCfg.enable perAppZapretCfg.filterMark "perAppRouting.zapret.filterMark")
+      (noDesyncBits (tgWsBypass && perAppZapretCfg.enable) tgWsProxyCfg.fwmark "tgWsProxy.fwmark")
+    ];
 
   torCfg = cfg.tor;
   torOnionListeners =

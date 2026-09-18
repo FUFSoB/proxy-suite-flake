@@ -18,7 +18,6 @@ let
   singBoxEnabled = proxyEnabled && proxyCfg.backend != "xray";
   xrayEnabled = proxyEnabled && proxyCfg.backend != "sing-box";
   hybridEnabled = proxyEnabled && proxyCfg.backend == "hybrid";
-  pureSingBoxEnabled = proxyEnabled && proxyCfg.backend == "sing-box";
   pureXrayEnabled = proxyEnabled && proxyCfg.backend == "xray";
   activeBackend = if proxyEnabled then proxyCfg.backend else null;
   perAppRoutingCfg = cfg.perAppRouting;
@@ -36,6 +35,29 @@ let
   # Only sing-box dials SSH natively; XRay and standalone tunnels use the OpenSSH unit.
   sshProxyNativeOutbound = sshProxyOutboundEnabled && !pureXrayEnabled;
   sshProxyUnitEnabled = sshProxyCfg.enable && !sshProxyNativeOutbound;
+  # The local proxy as the other services dial it: a wildcard listener is reached on loopback.
+  # (The secret itself stays with whoever needs it on disk: derived.nix has no pkgs.)
+  localProxy =
+    let
+      auth = proxyCfg.listener.auth;
+      host =
+        if
+          builtins.elem proxyCfg.listener.address [
+            "0.0.0.0"
+            "::"
+            ""
+          ]
+        then
+          "127.0.0.1"
+        else
+          proxyCfg.listener.address;
+    in
+    {
+      inherit auth host;
+      hostPart = if lib.hasInfix ":" host then "[${host}]" else host;
+      authEnabled = auth.username != null && (auth.password != null || auth.passwordFile != null);
+    };
+
   warpCfg = cfg.warp // {
     # Without a configFile, proxy-suite-warp registers with wgcf into its state dir.
     autoRegister = cfg.warp.enable && cfg.warp.configFile == null;
@@ -402,13 +424,13 @@ in
 {
   inherit
     proxyCfg
+    localProxy
     singBoxCfg
     xrayCfg
     proxyEnabled
     singBoxEnabled
     xrayEnabled
     hybridEnabled
-    pureSingBoxEnabled
     pureXrayEnabled
     activeBackend
     perAppRoutingCfg
@@ -426,12 +448,10 @@ in
     userControlEnabled
     userControlAllows
     sshProxyCfg
-    sshProxyOutboundTag
     sshProxyOutboundEnabled
     sshProxyNativeOutbound
     sshProxyUnitEnabled
     warpCfg
-    warpOutboundTag
     warpOutboundEnabled
     torCfg
     torOutboundTag
@@ -464,7 +484,6 @@ in
     outboundTags
     effectiveOutboundTags
     subscriptionTags
-    hasStaticOutbounds
     hasSubscriptions
     hasAvailableOutbounds
     collapseNamedOutbounds

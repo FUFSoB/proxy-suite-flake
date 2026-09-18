@@ -3,43 +3,11 @@
 {
   lib,
   pkgs,
-  packages,
   cfg,
-  tproxyFile,
-  tunFile,
-  perAppTunFile,
-  routeModeRulesFile,
-  proxyInboundsFile,
-  proxyInboundsSpecFile,
-  nftablesRulesFile,
-  perAppTproxyRulesFile,
-  perAppZapretRulesFile,
-  perAppTunChainFile,
-  ip,
-  nft,
+  context,
 }:
 
 let
-  context = import ./context.nix {
-    inherit
-      lib
-      pkgs
-      packages
-      cfg
-      tproxyFile
-      tunFile
-      perAppTunFile
-      routeModeRulesFile
-      proxyInboundsFile
-      proxyInboundsSpecFile
-      perAppTunChainFile
-      perAppTproxyRulesFile
-      perAppZapretRulesFile
-      ip
-      nft
-      ;
-  };
-
   builders = import ./builders.nix { inherit lib pkgs; };
   inherit (builders) mkNamedUnits;
 
@@ -79,46 +47,12 @@ let
     builtinTags
     ;
   constants = derived.constants;
-  routingScripts = import ./routing-scripts.nix {
-    inherit
-      lib
-      pkgs
-      builders
-      ip
-      nft
-      nftablesRulesFile
-      constants
-      globalTun
-      globalTproxy
-      perAppRoutingTun
-      ;
-    inherit (proxyCfg) ipv6;
-  };
+  routingScripts = import ./routing-scripts.nix { inherit (context) ctx; };
 
   serviceUnits = import ./units.nix {
-    inherit
-      lib
-      builders
-      proxyCfg
-      proxyEnabled
-      hybridEnabled
-      pureXrayEnabled
-      globalTun
-      globalTproxy
-      perAppRoutingTun
-      perAppRoutingTproxy
-      perAppZapretEnabled
-      sshProxyOutboundEnabled
-      sshProxyUnitEnabled
-      torOutboundEnabled
-      torOnionEnabled
-      proxyInboundsEnabled
-      proxyInboundsNeedLocalProxy
-      scripts
-      perAppRouting
-      routingScripts
-      ;
-    inherit (cfg) geodata;
+    ctx = context.ctx // {
+      inherit routingScripts;
+    };
   };
   inherit (serviceUnits)
     localProxyAuthEnabled

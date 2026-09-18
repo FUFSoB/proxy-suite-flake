@@ -3,13 +3,7 @@
 let
   inherit (lib) mkOption types;
   t = import ./types.nix { inherit lib; };
-  list =
-    description: example:
-    mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      inherit description example;
-    };
+  inherit (import ./lib.nix { inherit lib; }) list;
 in
 {
   options.services.proxy-suite.proxy.routing = {

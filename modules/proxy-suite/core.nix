@@ -18,8 +18,16 @@
 let
   cfg = config.services.proxy-suite;
   packages = import ../../pkgs/default.nix { inherit pkgs; };
-  nftr = import ./nftables.nix { inherit lib pkgs cfg; };
-  derived = import ./derived.nix { inherit lib cfg; };
+  assembly = import ./assembly.nix {
+    inherit
+      lib
+      pkgs
+      cfg
+      packages
+      zapret
+      ;
+  };
+  inherit (assembly) nftr derived;
 in
 {
   imports = [
@@ -44,48 +52,10 @@ in
     }
 
     (lib.mkIf cfg.enable (
-      let
-        rules = import ./rules.nix {
-          inherit
-            lib
-            pkgs
-            cfg
-            zapret
-            ;
-        };
-        configs = import ./config.nix {
-          inherit
-            lib
-            pkgs
-            cfg
-            rules
-            ;
-        };
-      in
       lib.mkMerge [
         (import ./service {
-          inherit
-            lib
-            pkgs
-            packages
-            cfg
-            ;
-          inherit (configs)
-            tproxyFile
-            tunFile
-            perAppTunFile
-            routeModeRulesFile
-            proxyInboundsFile
-            proxyInboundsSpecFile
-            ;
-          inherit (nftr)
-            nftablesRulesFile
-            perAppTproxyRulesFile
-            perAppZapretRulesFile
-            perAppTunChainFile
-            ip
-            nft
-            ;
+          inherit lib pkgs cfg;
+          inherit (assembly) context;
         })
 
         (lib.mkIf
@@ -176,7 +146,7 @@ in
               cfg
               derived
               ;
-            inherit (configs) proxyInboundsSpecFile;
+            inherit (assembly.configs) proxyInboundsSpecFile;
             inherit (nftr) reservedIpBlock ip nft;
           }
         ))

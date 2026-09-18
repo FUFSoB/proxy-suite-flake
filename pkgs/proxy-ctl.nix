@@ -4,47 +4,16 @@
 }:
 
 {
-  clashApi,
-  selection,
+  # NAME -> value, exported into proxy-ctl and both front ends. The module builds it
+  # (modules/proxy-suite/service/control.nix); proxy_ctl.py reads every name with env().
+  env,
+  guiRefreshInterval ? 3,
+  # These four are also passed as derivations: the checks read the files' contents through
+  # passthru.proxySuiteCheck, which toString in env would lose.
   subscriptionTagsFile,
-  subscriptionCacheDir,
-  perAppRoutingEnabled,
-  perAppRoutingProxychainsEnabled,
-  perAppRoutingTunEnabled,
-  perAppRoutingTproxyEnabled,
-  perAppRoutingZapretEnabled,
   perAppRoutingProfilesFile,
   proxychainsConfigFile,
-  proxychainsQuietArg,
-  routeModeStateFile,
-  defaultRouteMode,
   amneziaWgProfileNamesFile,
-  inboundsEnabled,
-  inboundsLinksFile,
-  inboundsStatsFile,
-  inboundsXray,
-  inboundsApi,
-  inboundsSubscriptionsFile,
-  inboundsSubscriptionsBaseUrl,
-  zapretAutoEnabled,
-  zapretStateDir,
-  zapretCutoffEnabled,
-  outboundInventoryFile,
-  runtimeOutboundsDir,
-  runtimeSubscriptionsDir,
-  userControlGroup,
-  localProxyUrl,
-  autoProxyEnabled,
-  autoProxyStateDir,
-  torControlSocket ? "",
-  singBox,
-  stateDir ? "/var/lib/proxy-suite",
-  runtimeDir ? "/run",
-  serviceManager ? "systemd",
-  privileged ? "1",
-  # proxy-suitectl, when serviceManager is "supervisor".
-  supervisorCtl ? "",
-  guiRefreshInterval ? 3,
 }:
 
 let
@@ -52,49 +21,7 @@ let
   unwrapped = pkgs.writeScriptBin "proxy-ctl" (
     "#!${pkgs.python3}/bin/python3\n" + builtins.readFile ./proxy-ctl/proxy_ctl.py
   );
-  wrapperEnv = {
-    CLASH_API = clashApi;
-    SELECTION = selection;
-    SUB_TAGS_FILE = toString subscriptionTagsFile;
-    SUB_CACHE_DIR = subscriptionCacheDir;
-    PER_APP_ROUTING_ENABLED = perAppRoutingEnabled;
-    PER_APP_ROUTING_PROXYCHAINS_ENABLED = perAppRoutingProxychainsEnabled;
-    PER_APP_ROUTING_TUN_ENABLED = perAppRoutingTunEnabled;
-    PER_APP_ROUTING_TPROXY_ENABLED = perAppRoutingTproxyEnabled;
-    PER_APP_ROUTING_ZAPRET_ENABLED = perAppRoutingZapretEnabled;
-    PER_APP_ROUTING_PROFILES_FILE = toString perAppRoutingProfilesFile;
-    PROXYCHAINS_CONFIG = toString proxychainsConfigFile;
-    PROXYCHAINS_QUIET_ARG = lib.removeSuffix " " proxychainsQuietArg;
-    ROUTE_MODE_STATE_FILE = routeModeStateFile;
-    DEFAULT_ROUTE_MODE = defaultRouteMode;
-    AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
-    INBOUNDS_ENABLED = inboundsEnabled;
-    INBOUNDS_LINKS_FILE = inboundsLinksFile;
-    INBOUNDS_STATS_FILE = inboundsStatsFile;
-    INBOUNDS_XRAY = inboundsXray;
-    INBOUNDS_API = inboundsApi;
-    INBOUNDS_SUBS_FILE = inboundsSubscriptionsFile;
-    INBOUNDS_SUB_BASE_URL = inboundsSubscriptionsBaseUrl;
-    ZAPRET_AUTO_ENABLED = zapretAutoEnabled;
-    ZAPRET_STATE_DIR = zapretStateDir;
-    ZAPRET_CUTOFF_ENABLED = zapretCutoffEnabled;
-    OUTBOUND_INVENTORY_FILE = outboundInventoryFile;
-    RUNTIME_OUTBOUNDS_DIR = runtimeOutboundsDir;
-    RUNTIME_SUBS_DIR = runtimeSubscriptionsDir;
-    USER_CONTROL_GROUP = userControlGroup;
-    LOCAL_PROXY_URL = localProxyUrl;
-    AUTOPROXY_ENABLED = autoProxyEnabled;
-    AUTOPROXY_STATE_DIR = autoProxyStateDir;
-    TOR_CONTROL_SOCKET = torControlSocket;
-    SING_BOX = singBox;
-    STATE_DIR = stateDir;
-    RUNTIME_DIR = runtimeDir;
-    SERVICE_MANAGER = serviceManager;
-    PRIVILEGED = privileged;
-  }
-  // lib.optionalAttrs (supervisorCtl != "") {
-    SUPERVISOR_CTL = supervisorCtl;
-  };
+  wrapperEnv = env;
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
   );

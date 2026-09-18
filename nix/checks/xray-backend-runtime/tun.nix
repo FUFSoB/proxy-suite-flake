@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   checkConstants,
   xrayTunConfig,

@@ -321,7 +321,7 @@ in
 
     services.getty.helpLine = ''
 
-      proxy-suite server ''${certName}. Share links (as ''${cfg.adminUser}):
+      proxy-suite server ${certName}. Share links (as ${cfg.adminUser}):
         proxy-ctl inbounds link vless-reality --qr   (or vless-tls, vless-ws)
     ''
     + lib.optionalString cfg.onion.enable "  proxy-ctl inbounds link vless-reality --onion --qr   (through Tor)\n"

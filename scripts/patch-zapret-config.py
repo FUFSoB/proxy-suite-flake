@@ -13,14 +13,18 @@ BUILTIN_ACTIVATION_FALLBACKS = {
 }
 
 
-def _hostlist_remove_pattern(stem: str) -> str:
+def _remove_pattern(option: str, stem: str) -> str:
+    """Matches --hostlist=/--ipset= pointing at one of the config's own list files."""
     escaped = re.escape(stem)
-    return rf'\s+--hostlist=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
+    return rf'\s+--{option}=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
+
+
+def _hostlist_remove_pattern(stem: str) -> str:
+    return _remove_pattern("hostlist", stem)
 
 
 def _ipset_remove_pattern(stem: str) -> str:
-    escaped = re.escape(stem)
-    return rf'\s+--ipset=(?:"[^"]*/hostlists/{escaped}\.txt"|[^ ]*/hostlists/{escaped}\.txt)'
+    return _remove_pattern("ipset", stem)
 
 
 def _mk_family(match_stems: list[str], remove_stems: list[str]) -> dict:
@@ -117,40 +121,28 @@ def add_standard_excludes(line: str, standard_excludes: list[str]) -> str:
 
 def _render_args(
     line: str,
-    hostlist_path: str,
+    option: str,
+    list_path: str,
     standard_excludes: list[str],
     *,
-    preset_family: str | None = None,
+    family_patterns: dict | None = None,
+    family: str | None = None,
 ) -> str:
+    """The line with its own list arguments dropped and list_path put in their place.
+
+    `option` is "hostlist" or "ipset": the other kind is always removed, and the named
+    family's own patterns are removed instead of every argument when cloning a preset.
+    """
+    other = "ipset" if option == "hostlist" else "hostlist"
     rendered = strip_trailing_new(line)
-    if preset_family is not None:
-        for pattern in FAMILY_PATTERNS[preset_family]["remove"]:
+    if family is not None:
+        for pattern in family_patterns[family]["remove"]:
             rendered = re.sub(pattern, "", rendered)
     else:
-        rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
-    rendered = re.sub(r'\s+--ipset=(?:"[^"]+"|\S+)', "", rendered)
+        rendered = re.sub(rf'\s+--{option}=(?:"[^"]+"|\S+)', "", rendered)
+    rendered = re.sub(rf'\s+--{other}=(?:"[^"]+"|\S+)', "", rendered)
     rendered = normalize_spaces(rendered)
-    rendered = f'{rendered} --hostlist="{hostlist_path}"'
-    rendered = add_standard_excludes(rendered, standard_excludes)
-    return f"{normalize_spaces(rendered)} --new"
-
-
-def _render_ipset_args(
-    line: str,
-    ipset_path: str,
-    standard_excludes: list[str],
-    *,
-    ipset_family: str | None = None,
-) -> str:
-    rendered = strip_trailing_new(line)
-    if ipset_family is not None:
-        for pattern in IPSET_PATTERNS[ipset_family]["remove"]:
-            rendered = re.sub(pattern, "", rendered)
-    else:
-        rendered = re.sub(r'\s+--ipset=(?:"[^"]+"|\S+)', "", rendered)
-    rendered = re.sub(r'\s+--hostlist=(?:"[^"]+"|\S+)', "", rendered)
-    rendered = normalize_spaces(rendered)
-    rendered = f'{rendered} --ipset="{ipset_path}"'
+    rendered = f'{normalize_spaces(rendered)} --{option}="{list_path}"'
     rendered = add_standard_excludes(rendered, standard_excludes)
     return f"{normalize_spaces(rendered)} --new"
 
@@ -159,30 +151,12 @@ def render_protocol_clone(line: str) -> str:
     return f"{normalize_spaces(strip_trailing_new(line))} --new"
 
 
-def render_preset_clone(
-    line: str,
-    family: str,
-    hostlist_path: str,
-    standard_excludes: list[str],
-) -> str:
-    return _render_args(line, hostlist_path, standard_excludes, preset_family=family)
-
-
 def render_custom_args(
     fragment: str,
     hostlist_path: str,
     standard_excludes: list[str],
 ) -> str:
-    return _render_args(fragment, hostlist_path, standard_excludes)
-
-
-def render_ipset_clone(
-    line: str,
-    family: str,
-    ipset_path: str,
-    standard_excludes: list[str],
-) -> str:
-    return _render_ipset_args(line, ipset_path, standard_excludes, ipset_family=family)
+    return _render_args(fragment, "hostlist", hostlist_path, standard_excludes)
 
 
 def render_custom_ipset_args(
@@ -190,7 +164,21 @@ def render_custom_ipset_args(
     ipset_path: str,
     standard_excludes: list[str],
 ) -> str:
-    return _render_ipset_args(fragment, ipset_path, standard_excludes)
+    return _render_args(fragment, "ipset", ipset_path, standard_excludes)
+
+
+def _clone_lines(
+    existing_lines: list[str], patterns: dict, family: str, what: str, render
+) -> list[str]:
+    """Every line of the config carrying the family's marker, rendered anew."""
+    if family not in patterns:
+        raise ValueError(f"{what} '{family}' is unknown")
+    matches = [
+        line for line in existing_lines if any(m in line for m in patterns[family]["match"])
+    ]
+    if not matches:
+        raise ValueError(f"{what} '{family}' is not present in the selected zapret config")
+    return [render(line) for line in matches]
 
 
 def clone_family_lines(
@@ -199,19 +187,21 @@ def clone_family_lines(
     hostlist_path: str,
     standard_excludes: list[str],
 ) -> list[str]:
-    matches = [
-        line
-        for line in existing_lines
-        if any(marker in line for marker in FAMILY_PATTERNS[family]["match"])
-    ]
-    if not matches:
-        raise ValueError(
-            f"Preset family '{family}' is not present in the selected zapret config"
-        )
-    return [
-        render_preset_clone(line, family, hostlist_path, standard_excludes)
-        for line in matches
-    ]
+    """The preset family's rules, pointed at this entry's own hostlist."""
+    return _clone_lines(
+        existing_lines,
+        FAMILY_PATTERNS,
+        family,
+        "Preset family",
+        lambda line: _render_args(
+            line,
+            "hostlist",
+            hostlist_path,
+            standard_excludes,
+            family_patterns=FAMILY_PATTERNS,
+            family=family,
+        ),
+    )
 
 
 def clone_ipset_lines(
@@ -220,32 +210,26 @@ def clone_ipset_lines(
     ipset_path: str,
     standard_excludes: list[str],
 ) -> list[str]:
-    matches = [
-        line
-        for line in existing_lines
-        if any(marker in line for marker in IPSET_PATTERNS[family]["match"])
-    ]
-    if not matches:
-        raise ValueError(
-            f"IP set family '{family}' is not present in the selected zapret config"
-        )
-    return [
-        render_ipset_clone(line, family, ipset_path, standard_excludes)
-        for line in matches
-    ]
+    return _clone_lines(
+        existing_lines,
+        IPSET_PATTERNS,
+        family,
+        "IP set family",
+        lambda line: _render_args(
+            line,
+            "ipset",
+            ipset_path,
+            standard_excludes,
+            family_patterns=IPSET_PATTERNS,
+            family=family,
+        ),
+    )
 
 
 def clone_protocol_lines(existing_lines: list[str], family: str) -> list[str]:
-    matches = [
-        line
-        for line in existing_lines
-        if any(marker in line for marker in PROTOCOL_PATTERNS[family]["match"])
-    ]
-    if not matches:
-        raise ValueError(
-            f"Protocol family '{family}' is not present in the selected zapret config"
-        )
-    return [render_protocol_clone(line) for line in matches]
+    return _clone_lines(
+        existing_lines, PROTOCOL_PATTERNS, family, "Protocol family", render_protocol_clone
+    )
 
 
 def activate_builtin_hostlists(

@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -9,6 +10,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   generated = import ./read-generated.nix;
 
   perAppRoutingTunFixture = evalProxySuite [
@@ -79,10 +81,7 @@ in
     )
 
     # -- perAppRouting: generated proxy-ctl script dispatches tun profiles through systemd slices --
-    (
-      assert pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "PER_APP_ROUTING_TUN_ENABLED" perAppRoutingTunScript))
 
     # -- perAppRouting: user mark script installs fwmark + conntrack mark rules --
     (
@@ -122,10 +121,7 @@ in
     )
 
     # -- perAppRouting: app TUN uses local domain resolver and avoids global auto-routing --
-    (
-      assert perAppRoutingTunConfig.route.default_domain_resolver == "local";
-      true
-    )
+    (ok (perAppRoutingTunConfig.route.default_domain_resolver == "local"))
 
     # -- perAppRouting: app TUN does not set outbound routing marks when TProxy is disabled --
     (
@@ -165,12 +161,11 @@ in
 
     # -- perAppRouting: wrapped apps' replies to incoming connections skip the mark (and the
     # user rule appended after it), so they leave directly --
-    (
-      assert pkgs.lib.hasInfix "ct direction reply return" (
+    (ok (
+      pkgs.lib.hasInfix "ct direction reply return" (
         builtins.head (pkgs.lib.splitString "ct mark 16 meta mark set 16" perAppRoutingTunNftRules)
-      );
-      true
-    )
+      )
+    ))
 
     # -- perAppRouting: wrapped apps' DNS reaches the app TUN even when the resolver sits on
     # a local or reserved address, and their local IPv6 still leaves directly --
@@ -191,9 +186,6 @@ in
     )
 
     # -- perAppRouting: app TUN enables nftables --
-    (
-      assert perAppRoutingTunFixture.config.networking.nftables.enable;
-      true
-    )
+    (ok (perAppRoutingTunFixture.config.networking.nftables.enable))
   ];
 }

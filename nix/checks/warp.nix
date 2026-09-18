@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkBadProxySuiteFixture,
@@ -6,6 +7,7 @@
 }:
 
 let
+  inherit (checkLib) mkProxySuite;
   generated = import ./read-generated.nix;
   inherit (pkgs.lib) hasInfix escapeShellArg;
 
@@ -67,20 +69,15 @@ let
   autoRegister = registerOf auto;
   generatorRegister = registerOf generator;
 
-  amneziaWg = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
-        enable = true;
-        amneziaWg.enable = true;
-        warp = {
-          enable = true;
-          configFile = profile;
-          asAmneziaWg = true;
-        };
-      };
-    }
-  ];
+  amneziaWg = mkProxySuite {
+    enable = true;
+    amneziaWg.enable = true;
+    warp = {
+      enable = true;
+      configFile = profile;
+      asAmneziaWg = true;
+    };
+  };
 
   invalidAssertions = mkFailingAssertions mkBadProxySuiteFixture [
     # Enabled but used for nothing.

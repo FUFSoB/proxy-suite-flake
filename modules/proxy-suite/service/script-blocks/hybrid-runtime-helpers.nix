@@ -1,9 +1,13 @@
-{
-  lib,
-  jq,
-  hybridEnabled,
-  xraySidecarRoutingMark,
-}:
+{ ctx }:
+
+let
+  inherit (ctx)
+    lib
+    jq
+    hybridEnabled
+    xraySidecarRoutingMark
+    ;
+in
 
 routingMark: xraySidecarBasePort: xrayDnsBridgePort:
 

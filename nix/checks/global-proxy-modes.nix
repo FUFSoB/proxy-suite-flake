@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -12,6 +13,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   fixtures = import ./global-proxy-modes/fixtures.nix {
     inherit
       evalProxySuite
@@ -49,10 +51,7 @@ let
 in
 {
   assertions = [
-    (
-      assert tproxyWithFirewall.config.networking.firewall.enable;
-      true
-    )
+    (ok (tproxyWithFirewall.config.networking.firewall.enable))
     (
       assert tproxyManualFixture.config.services.proxy-suite.proxy.autostart == null;
       assert tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".wantedBy == [ ];
@@ -140,10 +139,7 @@ in
       assert tunDefaultConfig.route.auto_detect_interface == true;
       true
     )
-    (
-      assert tunManualFixture.config.networking.nftables.enable;
-      true
-    )
+    (ok (tunManualFixture.config.networking.nftables.enable))
     (
       assert tunServiceConfig.ExecStartPre == tunServiceConfig.ExecStopPost;
       assert pkgs.lib.hasInfix "delete table inet sing-box" tunCleanupScript;
@@ -169,10 +165,7 @@ in
       assert !(localDns ? detour);
       true
     )
-    (
-      assert tunDefaultConfig.route.default_domain_resolver == "local";
-      true
-    )
+    (ok (tunDefaultConfig.route.default_domain_resolver == "local"))
     (
       assert builtins.elem "network-online.target"
         tunManualFixture.config.systemd.services."proxy-suite-tun".after;

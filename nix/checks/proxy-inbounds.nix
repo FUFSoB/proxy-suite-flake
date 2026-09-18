@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -7,6 +8,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   inherit (pkgs) lib;
 
   realityListener = {
@@ -515,29 +517,14 @@ let
 
   assertions = [
     # Listeners are rendered at start time.
-    (
-      assert relayConfig.inbounds == [ ];
-      true
-    )
+    (ok (relayConfig.inbounds == [ ]))
 
     # AsIs when relayed through sing-box; IPOnDemand when XRay dials (see the template).
-    (
-      assert relayConfig.routing.domainStrategy == "AsIs";
-      true
-    )
-    (
-      assert exitConfig.routing.domainStrategy == "IPOnDemand";
-      true
-    )
+    (ok (relayConfig.routing.domainStrategy == "AsIs"))
+    (ok (exitConfig.routing.domainStrategy == "IPOnDemand"))
 
-    (
-      assert hasOutbound relayConfig "proxy";
-      true
-    )
-    (
-      assert (ruleByTag relayConfig "inbound-final").outboundTag == "proxy";
-      true
-    )
+    (ok (hasOutbound relayConfig "proxy"))
+    (ok ((ruleByTag relayConfig "inbound-final").outboundTag == "proxy"))
     (
       assert
         (builtins.head (builtins.filter (ob: ob.tag == "proxy") relayConfig.outbounds)).protocol == "socks";
@@ -556,36 +543,15 @@ let
     )
 
     # A pure exit node needs no proxy outbound at all.
-    (
-      assert !hasOutbound exitConfig "proxy";
-      true
-    )
-    (
-      assert (ruleByTag exitConfig "inbound-final").outboundTag == "direct";
-      true
-    )
+    (ok (!hasOutbound exitConfig "proxy"))
+    (ok ((ruleByTag exitConfig "inbound-final").outboundTag == "direct"))
 
     # Safety rules come first.
-    (
-      assert builtins.head (ruleTags relayConfig) == "inbound-block-private";
-      true
-    )
-    (
-      assert (ruleByTag relayConfig "inbound-block-private").outboundTag == "block";
-      true
-    )
-    (
-      assert (ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ];
-      true
-    )
-    (
-      assert (ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ];
-      true
-    )
-    (
-      assert !builtins.elem "inbound-block-private" (ruleTags unguardedConfig);
-      true
-    )
+    (ok (builtins.head (ruleTags relayConfig) == "inbound-block-private"))
+    (ok ((ruleByTag relayConfig "inbound-block-private").outboundTag == "block"))
+    (ok ((ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]))
+    (ok ((ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]))
+    (ok (!builtins.elem "inbound-block-private" (ruleTags unguardedConfig)))
     # serverAddress is exempt after blockPrivate, before the country blocks.
     (
       assert
@@ -596,10 +562,7 @@ let
         ];
       true
     )
-    (
-      assert (ruleByTag namedConfig "inbound-server-address-direct").domain == [ "full:vpn.example.ru" ];
-      true
-    )
+    (ok ((ruleByTag namedConfig "inbound-server-address-direct").domain == [ "full:vpn.example.ru" ]))
     # Names that resolve private are refused where XRay dials them itself.
     (
       assert
@@ -612,64 +575,25 @@ let
       true
     )
     # Only the listener ports, not every service on this host.
-    (
-      assert (ruleByTag namedConfig "inbound-server-address-direct").port == "443";
-      true
-    )
-    (
-      assert (ruleByTag blockedConfig "inbound-proxy-domain").inboundTag == [ "open" ];
-      true
-    )
-    (
-      assert (ruleByTag blockedConfig "inbound-server-address-direct").inboundTag == [ "open" ];
-      true
-    )
+    (ok ((ruleByTag namedConfig "inbound-server-address-direct").port == "443"))
+    (ok ((ruleByTag blockedConfig "inbound-proxy-domain").inboundTag == [ "open" ]))
+    (ok ((ruleByTag blockedConfig "inbound-server-address-direct").inboundTag == [ "open" ]))
     # No address to exempt when it is detected at runtime instead.
-    (
-      assert !builtins.elem "inbound-server-address-direct" (ruleTags relayConfig);
-      true
-    )
-    (
-      assert (ruleByTag ipNamedConfig "inbound-server-address-direct").ip == [ "82.146.44.102" ];
-      true
-    )
-    (
-      assert !builtins.elem "inbound-block-ru-domain" (ruleTags unguardedConfig);
-      true
-    )
+    (ok (!builtins.elem "inbound-server-address-direct" (ruleTags relayConfig)))
+    (ok ((ruleByTag ipNamedConfig "inbound-server-address-direct").ip == [ "82.146.44.102" ]))
+    (ok (!builtins.elem "inbound-block-ru-domain" (ruleTags unguardedConfig)))
 
     # A per-listener via becomes its own rule; listeners on the default do not.
-    (
-      assert builtins.elem "inbound-via-local-exit" (ruleTags mixedConfig);
-      true
-    )
-    (
-      assert !builtins.elem "inbound-via-relayed" (ruleTags mixedConfig);
-      true
-    )
-    (
-      assert (ruleByTag mixedConfig "inbound-via-local-exit").inboundTag == [ "local-exit" ];
-      true
-    )
-    (
-      assert (ruleByTag mixedConfig "inbound-via-local-exit").outboundTag == "direct";
-      true
-    )
+    (ok (builtins.elem "inbound-via-local-exit" (ruleTags mixedConfig)))
+    (ok (!builtins.elem "inbound-via-relayed" (ruleTags mixedConfig)))
+    (ok ((ruleByTag mixedConfig "inbound-via-local-exit").inboundTag == [ "local-exit" ]))
+    (ok ((ruleByTag mixedConfig "inbound-via-local-exit").outboundTag == "direct"))
 
     # The pinned listener gets its own rule; the default one rides the final rule.
-    (
-      assert (ruleByTag pinnedConfig "inbound-via-through-de").outboundTag == "de-vps";
-      true
-    )
-    (
-      assert (ruleByTag pinnedConfig "inbound-final").outboundTag == "nl-vps";
-      true
-    )
+    (ok ((ruleByTag pinnedConfig "inbound-via-through-de").outboundTag == "de-vps"))
+    (ok ((ruleByTag pinnedConfig "inbound-final").outboundTag == "nl-vps"))
     # Pinned outbounds are injected at start and need no local proxy.
-    (
-      assert !hasOutbound pinnedConfig "proxy";
-      true
-    )
+    (ok (!hasOutbound pinnedConfig "proxy"))
     (
       assert
         outboundTags pinnedConfig == [
@@ -690,46 +614,19 @@ let
     )
 
     # The final rule always comes last.
-    (
-      assert lib.last (ruleTags relayConfig) == "inbound-final";
-      true
-    )
-    (
-      assert lib.last (ruleTags mixedConfig) == "inbound-final";
-      true
-    )
+    (ok (lib.last (ruleTags relayConfig) == "inbound-final"))
+    (ok (lib.last (ruleTags mixedConfig) == "inbound-final"))
 
     # Without zapret running there is nothing to route around it.
-    (
-      assert !builtins.elem "inbound-zapret-direct-domain" (ruleTags relayConfig);
-      true
-    )
+    (ok (!builtins.elem "inbound-zapret-direct-domain" (ruleTags relayConfig)))
 
     # The spec carries secret paths, never their contents.
-    (
-      assert builtins.length relaySpec.listeners == 1;
-      true
-    )
-    (
-      assert (builtins.head relaySpec.listeners).tag == "vless-in";
-      true
-    )
-    (
-      assert (builtins.head relaySpec.listeners).listen == "::";
-      true
-    )
-    (
-      assert (builtins.head (builtins.head relaySpec.listeners).users).uuidFile == "/run/secrets/uuid";
-      true
-    )
-    (
-      assert (builtins.head relaySpec.listeners).reality.privateKeyFile == "/run/secrets/reality-key";
-      true
-    )
-    (
-      assert relaySpec.shareLinks;
-      true
-    )
+    (ok (builtins.length relaySpec.listeners == 1))
+    (ok ((builtins.head relaySpec.listeners).tag == "vless-in"))
+    (ok ((builtins.head relaySpec.listeners).listen == "::"))
+    (ok ((builtins.head (builtins.head relaySpec.listeners).users).uuidFile == "/run/secrets/uuid"))
+    (ok ((builtins.head relaySpec.listeners).reality.privateKeyFile == "/run/secrets/reality-key"))
+    (ok (relaySpec.shareLinks))
 
     # Firewall: TCP for every listener, UDP only where the protocol uses it.
     (
@@ -748,33 +645,15 @@ let
         ];
       true
     )
-    (
-      assert wsListener.port == 10002 && wsListener.sharePort == 443;
-      true
-    )
-    (
-      assert noFirewallFixture.config.networking.firewall.allowedTCPPorts == [ ];
-      true
-    )
+    (ok (wsListener.port == 10002 && wsListener.sharePort == 443))
+    (ok (noFirewallFixture.config.networking.firewall.allowedTCPPorts == [ ]))
 
     # The unit exists, and only waits on the client stack when it relays.
-    (
-      assert (service relayFixture).wantedBy == [ "multi-user.target" ];
-      true
-    )
-    (
-      assert builtins.elem "proxy-suite-socks.service" (service relayFixture).after;
-      true
-    )
-    (
-      assert !builtins.elem "proxy-suite-socks.service" (service exitFixture).after;
-      true
-    )
+    (ok ((service relayFixture).wantedBy == [ "multi-user.target" ]))
+    (ok (builtins.elem "proxy-suite-socks.service" (service relayFixture).after))
+    (ok (!builtins.elem "proxy-suite-socks.service" (service exitFixture).after))
     # Not `requires`: direct-routed listeners keep serving if the client is down.
-    (
-      assert (service relayFixture).requires == [ ];
-      true
-    )
+    (ok ((service relayFixture).requires == [ ]))
     # A stop collects what XRay counted since the last timer run.
     (
       assert
@@ -793,44 +672,20 @@ let
     )
 
     # AmneziaWG: the spec carries each listener's loopback inbound, in listener order.
-    (
-      assert (awgSpecListener "home").amneziaWg.internalPort == 18700;
-      true
-    )
-    (
-      assert (awgSpecListener "roam").amneziaWg.internalPort == 18701;
-      true
-    )
-    (
-      assert (awgSpecListener "home").amneziaWg.internalListen == "::";
-      true
-    )
-    (
-      assert (awgSpecListener "roam").amneziaWg.internalListen == "127.0.0.1";
-      true
-    )
-    (
-      assert (awgSpecListener "home").amneziaWg.fwmark == 2;
-      true
-    )
-    (
-      assert (awgSpecListener "home").amneziaWg.interfaceName == "awgi-home";
-      true
-    )
+    (ok ((awgSpecListener "home").amneziaWg.internalPort == 18700))
+    (ok ((awgSpecListener "roam").amneziaWg.internalPort == 18701))
+    (ok ((awgSpecListener "home").amneziaWg.internalListen == "::"))
+    (ok ((awgSpecListener "roam").amneziaWg.internalListen == "127.0.0.1"))
+    (ok ((awgSpecListener "home").amneziaWg.fwmark == 2))
+    (ok ((awgSpecListener "home").amneziaWg.interfaceName == "awgi-home"))
     (
       assert
         (awgSpecListener "roam").amneziaWg.stateFile == "/var/lib/proxy-suite/awg-inbounds/roam/state.json";
       true
     )
-    (
-      assert !((awgSpecListener "vless-in") ? amneziaWg);
-      true
-    )
+    (ok (!((awgSpecListener "vless-in") ? amneziaWg)))
     # UDP only, and the interfaces past the host firewall.
-    (
-      assert awgFixture.config.networking.firewall.allowedTCPPorts == [ 443 ];
-      true
-    )
+    (ok (awgFixture.config.networking.firewall.allowedTCPPorts == [ 443 ]))
     (
       assert
         lib.sort lib.lessThan awgFixture.config.networking.firewall.allowedUDPPorts == [
@@ -844,38 +699,21 @@ let
       assert builtins.elem "awgi-roam" awgFixture.config.networking.firewall.trustedInterfaces;
       true
     )
-    (
-      assert lib.hasInfix ''iifname "awgi-home" accept''
-        awgFixture.config.networking.firewall.extraReversePathFilterRules;
-      true
-    )
+    (ok (
+      lib.hasInfix ''iifname "awgi-home" accept'' awgFixture.config.networking.firewall.extraReversePathFilterRules
+    ))
     # The interfaces come up before XRay renders their links.
-    (
-      assert builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).after;
-      true
-    )
-    (
-      assert builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).wants;
-      true
-    )
-    (
-      assert !(relayFixture.config.systemd.services ? "proxy-suite-inbounds-awg");
-      true
-    )
+    (ok (builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).after))
+    (ok (builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).wants))
+    (ok (!(relayFixture.config.systemd.services ? "proxy-suite-inbounds-awg")))
     (
       assert lib.hasInfix "rule add pref 8990 fwmark 20 table 103" (awgStartScript awgFixture);
       assert lib.hasInfix "awg_inbound.py prepare" (awgStartScript awgFixture);
       true
     )
     # IPv6 routing only where a listener has IPv6.
-    (
-      assert lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgFixture);
-      true
-    )
-    (
-      assert !lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgProxyFixture);
-      true
-    )
+    (ok (lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgFixture)))
+    (ok (!lib.hasInfix "-6 rule add pref 8990" (awgStartScript awgProxyFixture)))
     # Transparent sockets only where there is something to divert.
     (
       assert lib.hasInfix "net_admin" (readInboundsStart awgFixture);
@@ -883,18 +721,9 @@ let
       true
     )
     # Forwarding only for "lan" listeners.
-    (
-      assert awgFixture.config.boot.kernel.sysctl."net.ipv4.ip_forward" == 1;
-      true
-    )
-    (
-      assert awgFixture.config.boot.kernel.sysctl."net.ipv6.conf.all.forwarding" == 1;
-      true
-    )
-    (
-      assert !(awgProxyFixture.config.services.proxy-suite.internal.sysctl ? "net.ipv4.ip_forward");
-      true
-    )
+    (ok (awgFixture.config.boot.kernel.sysctl."net.ipv4.ip_forward" == 1))
+    (ok (awgFixture.config.boot.kernel.sysctl."net.ipv6.conf.all.forwarding" == 1))
+    (ok (!(awgProxyFixture.config.services.proxy-suite.internal.sysctl ? "net.ipv4.ip_forward")))
     # "lan" clients reach private networks and each other natively, "proxy" clients nothing but via.
     (
       let
@@ -914,10 +743,7 @@ let
       assert !lib.hasInfix "10.67.0.0/24 oifname" rules;
       true
     )
-    (
-      assert !lib.hasInfix "masquerade" (awgRules awgProxyFixture);
-      true
-    )
+    (ok (!lib.hasInfix "masquerade" (awgRules awgProxyFixture)))
 
   ]
   ++ failing;

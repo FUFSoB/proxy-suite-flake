@@ -2,13 +2,7 @@
 
 let
   inherit (lib) mkOption types;
-  nullStr =
-    description: example:
-    mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      inherit description example;
-    };
+  inherit (import ../lib.nix { inherit lib; }) nullStr;
   nullAttrs =
     description: example:
     mkOption {

@@ -81,12 +81,8 @@ let
         // source profile
       )
     );
-  configTool = "${
-    builtins.path {
-      name = "proxy-suite-scripts";
-      path = ../../scripts;
-    }
-  }/amneziawg_config.py";
+  configTool = "${import ./lib/scripts-dir.nix { inherit lib; }}/amneziawg_config.py";
+  awgCommon = import ./awg-common.nix { inherit lib pkgs awgCfg; };
   runtimeDir = name: "/run/${serviceName name}";
   runtimeConfig = name: profile: "${runtimeDir name}/${profile.interfaceName}.conf";
   # Keep proxy backend sockets (proxyMark) out of AWG's default-route table.
@@ -204,22 +200,11 @@ let
         }
         trap cleanup ERR
 
-        ${lib.optionalString (awgCfg.kernelModulePackage != null) ''
-          ${pkgs.kmod}/bin/modprobe amneziawg 2>/dev/null || true
-        ''}
+        ${awgCommon.modprobe}
 
         read -r implementation probe _ < <(${pkgs.python3}/bin/python3 ${configTool} \
           --inspect ${lib.escapeShellArg configPath})
-        # The 3.1 kernel module dropped RandomTrailers packets with ranged H1-H3 (seen on 20260812);
-        # userspace carries the fix.
-        if [[ "$implementation" == userspace ]]; then
-          WG_QUICK_FORCE_USERSPACE_IMPLEMENTATION=1 \
-            WG_QUICK_USERSPACE_IMPLEMENTATION=${awgCfg.userspacePackage}/bin/amneziawg-go \
-            ${awgCfg.toolsPackage}/bin/awg-quick up ${lib.escapeShellArg configPath}
-        else
-          WG_QUICK_USERSPACE_IMPLEMENTATION=${awgCfg.userspacePackage}/bin/amneziawg-go \
-            ${awgCfg.toolsPackage}/bin/awg-quick up ${lib.escapeShellArg configPath}
-        fi
+        ${awgCommon.awgQuickUp "$implementation" (lib.escapeShellArg configPath)}
 
         ${mkHandshakeHelpers profile}
         # A handshake is retried every 5 seconds: each retry after the first gets a new port.

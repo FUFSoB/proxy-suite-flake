@@ -3,13 +3,7 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   token = types.nullOr (types.strMatching "[^[:space:]]+");
-  path =
-    description: example:
-    mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      inherit description example;
-    };
+  path = (import ./lib.nix { inherit lib; }).nullStr;
 in
 {
   options.services.proxy-suite.sshProxy = {

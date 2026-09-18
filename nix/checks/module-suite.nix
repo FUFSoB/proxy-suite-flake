@@ -5,6 +5,7 @@
 
 let
   inherit (checkLib)
+    ok
     mkRouting
     evalProxySuite
     mkRoutingRules
@@ -25,13 +26,14 @@ let
     mkZapretBaseFor
     mkZapretBase
     packagePathMatches
-    packageByPattern
     shellValueByPrefix
     baseModule
     mkBadFixture
     mkBadFixtureRaw
     mkBadProxySuiteFixture
     mkFailingAssertions
+    rejects
+    rejectsProxySuite
     mkProxyCtlDerived
     ;
 
@@ -47,6 +49,7 @@ let
   minimalSocksService = minimal.config.systemd.services."proxy-suite-socks";
 
   coreProxyChecks = import ./core-proxy.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -62,6 +65,7 @@ let
   inherit (coreProxyChecks) ruDefaultConfig;
 
   routeModeChecks = import ./route-mode.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -74,6 +78,7 @@ let
   };
 
   subscriptionChecks = import ./subscriptions.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -93,6 +98,7 @@ let
   };
 
   localProxyAuthChecks = import ./local-proxy-auth.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -106,6 +112,7 @@ let
   };
 
   sshProxyChecks = import ./ssh-proxy.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -117,6 +124,7 @@ let
   };
 
   warpChecks = import ./warp.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -126,6 +134,7 @@ let
   };
 
   torChecks = import ./tor.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -141,6 +150,7 @@ let
   };
 
   proxyInboundsChecks = import ./proxy-inbounds.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -151,6 +161,7 @@ let
   };
 
   perAppRoutingChecks = import ./per-app-routing.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -164,6 +175,7 @@ let
       mkZapretBaseFor
       mkBadFixture
       mkFailingAssertions
+      rejects
       minimalProxyCtlScript
       ;
   };
@@ -172,6 +184,7 @@ let
     inherit mkBadProxySuiteFixture mkFailingAssertions;
   };
   chainingDnsChecks = import ./chaining-dns.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -184,7 +197,9 @@ let
   };
 
   amneziaWgChecks = import ./amnezia-wg.nix {
+    inherit checkLib;
     inherit
+      rejectsProxySuite
       pkgs
       evalProxySuite
       mkBadProxySuiteFixture
@@ -194,6 +209,7 @@ let
   };
 
   amneziaWgOutboundChecks = import ./amnezia-wg-outbound.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -206,6 +222,7 @@ let
   };
 
   globalProxyModeChecks = import ./global-proxy-modes.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -221,6 +238,7 @@ let
   };
 
   zapretChecks = import ./zapret.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -246,6 +264,7 @@ let
   };
 
   tgWsProxyChecks = import ./tg-ws-proxy.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -262,11 +281,12 @@ let
   };
 
   serverModuleChecks = import ./server-module.nix {
-    inherit pkgs mkInboundsSpec;
+    inherit checkLib pkgs mkInboundsSpec;
     inherit (checkLib) system nixpkgs proxySuiteModule;
   };
 
   xrayBackendChecks = import ./xray-backends.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -283,10 +303,7 @@ let
 
   validated = builtins.all (x: x) (
     [
-      (
-        assert minimal.config.services.proxy-suite.proxy.listener.address == "127.0.0.1";
-        true
-      )
+      (ok (minimal.config.services.proxy-suite.proxy.listener.address == "127.0.0.1"))
     ]
     ++ coreProxyChecks.assertions
     ++ localProxyAuthChecks.assertions

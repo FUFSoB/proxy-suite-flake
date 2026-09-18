@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -9,6 +10,7 @@
 
 let
   fixtures = import ./hybrid-backend/fixtures.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

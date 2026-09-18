@@ -14,8 +14,9 @@
   systemd,
 }:
 
-writeShellApplication {
+import ./script.nix { inherit lib writeShellApplication; } {
   name = "proxy-suite-net";
+  script = ./net-rescue.sh;
   runtimeInputs = [
     coreutils
     curl
@@ -26,9 +27,5 @@ writeShellApplication {
     iproute2
     iputils
     systemd
-  ];
-  text = lib.concatStringsSep "\n" [
-    (builtins.readFile ./net-lib.sh)
-    (builtins.readFile ./net-rescue.sh)
   ];
 }

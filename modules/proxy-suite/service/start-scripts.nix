@@ -1,38 +1,39 @@
 # Backend startup script derivations.
-{
-  lib,
-  pkgs,
-  proxyCfg,
-  perAppRoutingCfg,
-  userControlCfg,
-  userControlAllows,
-  globalTproxy,
-  xrayEnabled,
-  hybridEnabled,
-  pureXrayEnabled,
-  constants,
-  zapretCutoffProxyFallback,
-  jq,
-  singBox,
-  xray,
-  backendBin,
-  routeModeStateFile,
-  routeModeRulesFile,
-  xrayLoglevelFile,
-  runtimeProxychainsConfig,
-  localProxyAuth,
-  localProxyAuthEnabled,
-  localProxyAuthPasswordSource,
-  backendJqFilterFile,
-  hybridRuntimeHelpersBlock,
-  subscriptionCacheHelpersBlock,
-  mkOutboundScript,
-  tproxyFile,
-  tunFile,
-  perAppTunFile,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    pkgs
+    proxyCfg
+    perAppRoutingCfg
+    userControlCfg
+    userControlAllows
+    globalTproxy
+    xrayEnabled
+    hybridEnabled
+    pureXrayEnabled
+    constants
+    zapretCutoffProxyFallback
+    jq
+    singBox
+    xray
+    backendBin
+    routeModeStateFile
+    routeModeRulesFile
+    xrayLoglevelFile
+    runtimeProxychainsConfig
+    localProxyAuth
+    localProxyAuthEnabled
+    localProxyAuthPasswordSource
+    backendJqFilterFile
+    hybridRuntimeHelpersBlock
+    subscriptionCacheHelpersBlock
+    mkOutboundScript
+    tproxyFile
+    tunFile
+    perAppTunFile
+    ;
   inherit (constants)
     autoProxyStateDir
     outboundTestPort
@@ -60,62 +61,89 @@ let
         + .proxyGeo
       '';
 
+  # Every route mode is the same four assignments over one jq program on the rule buckets.
+  routeModeArms = [
+    {
+      mode = "blacklist";
+      final = "proxy";
+      dns = "remote";
+      rules = ''
+        .common
+        + (.custom | map(.entries) | add // [])
+        + .proxyPrimary
+        + .direct
+        + .safetyDirect
+        ${routeModeBlacklistTail}
+      '';
+    }
+    {
+      mode = "whitelist";
+      final = "direct";
+      dns = "local";
+      rules = ''
+        .common
+        + (.custom | map(.entries) | add // [])
+        + .proxyPrimary
+        + .direct
+        + .safetyDirect
+        ${routeModeBlacklistTail}
+      '';
+    }
+    {
+      # Only the proxy and block lists are kept: everything else follows the final action.
+      mode = "all-proxy";
+      final = "proxy";
+      dns = "remote";
+      clearDns = true;
+      rules = ''
+        .common
+        + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
+        + .proxyPrimary
+        + .safetyDirect
+        ${routeModeBlacklistTail}
+      '';
+    }
+    {
+      mode = "all-bypass";
+      final = "direct";
+      dns = "local";
+      clearDns = true;
+      rules = ''
+        .common
+        + (.custom | map(select(.category == "block") | .entries) | add // [])
+        + .safetyDirect
+        + .block
+      '';
+    }
+  ];
+
+  # Written out line by line: the block lands inside a `case`, where the indentation of an
+  # interpolated multi-line value would otherwise be lost.
+  mkRouteModeArm =
+    arm:
+    lib.concatStringsSep "\n" (
+      [
+        "  ${arm.mode})"
+        "    ROUTE_FINAL=\"${arm.final}\""
+        "    DNS_FINAL=\"${arm.dns}\""
+        "    ROUTE_MODE_ACTIVE=true"
+      ]
+      ++ lib.optional (arm.clearDns or false) "    CLEAR_DNS_RULES=true"
+      ++ [ "    ROUTE_RULES_JSON=$(${jq} -c '" ]
+      ++ map (line: if line == "" then "" else "      ${line}") (
+        lib.splitString "\n" (lib.removeSuffix "\n" arm.rules)
+      )
+      ++ [
+        "    ' \"${routeModeRulesFile}\")"
+        "    ;;"
+      ]
+    );
+
   routeModeCaseBlock = ''
     if [ -r "$ROUTE_MODE_STATE_FILE" ]; then
       ROUTE_MODE="$(tr -d '\r\n[:space:]' < "$ROUTE_MODE_STATE_FILE" 2>/dev/null || true)"
     fi
-    case "$ROUTE_MODE" in
-      blacklist)
-        ROUTE_FINAL="proxy"
-        DNS_FINAL="remote"
-        ROUTE_MODE_ACTIVE=true
-        ROUTE_RULES_JSON=$(${jq} -c '
-          .common
-          + (.custom | map(.entries) | add // [])
-          + .proxyPrimary
-          + .direct
-          + .safetyDirect
-          ${routeModeBlacklistTail}
-        ' "${routeModeRulesFile}")
-        ;;
-      whitelist)
-        ROUTE_FINAL="direct"
-        DNS_FINAL="local"
-        ROUTE_MODE_ACTIVE=true
-        ROUTE_RULES_JSON=$(${jq} -c '
-          .common
-          + (.custom | map(.entries) | add // [])
-          + .proxyPrimary
-          + .direct
-          + .safetyDirect
-          ${routeModeBlacklistTail}
-        ' "${routeModeRulesFile}")
-        ;;
-      all-proxy)
-        ROUTE_FINAL="proxy"
-        DNS_FINAL="remote"
-        ROUTE_MODE_ACTIVE=true
-        CLEAR_DNS_RULES=true
-        ROUTE_RULES_JSON=$(${jq} -c '
-          .common
-          + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
-          + .proxyPrimary
-          + .safetyDirect
-          ${routeModeBlacklistTail}
-        ' "${routeModeRulesFile}")
-        ;;
-      all-bypass)
-        ROUTE_FINAL="direct"
-        DNS_FINAL="local"
-        ROUTE_MODE_ACTIVE=true
-        CLEAR_DNS_RULES=true
-        ROUTE_RULES_JSON=$(${jq} -c '
-          .common
-          + (.custom | map(select(.category == "block") | .entries) | add // [])
-          + .safetyDirect
-          + .block
-        ' "${routeModeRulesFile}")
-        ;;
+    case "$ROUTE_MODE" in${lib.concatMapStrings (arm: "\n" + mkRouteModeArm arm) routeModeArms}
       *)
         ROUTE_MODE=""
         ;;

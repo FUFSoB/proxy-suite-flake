@@ -8,6 +8,22 @@
   controlModuleSource,
 }:
 
+let
+  # Every proxy-ctl CLI check runs against the same disabled-feature defaults; only the
+  # files and the feature under test differ.
+  perAppRoutingOff = ''
+    PER_APP_ROUTING_ENABLED="0" \
+    PER_APP_ROUTING_PROXYCHAINS_ENABLED="0" \
+    PER_APP_ROUTING_TUN_ENABLED="0" \
+    PER_APP_ROUTING_TPROXY_ENABLED="0" \
+    PER_APP_ROUTING_ZAPRET_ENABLED="0" \
+    PER_APP_ROUTING_PROFILES_FILE="$PWD/profiles.json" \
+    PROXYCHAINS_CONFIG="$PWD/proxychains.conf" \
+    PROXYCHAINS_QUIET_ARG="" \
+    ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
+    DEFAULT_ROUTE_MODE="blacklist" \
+  '';
+in
 {
   no-secrets = pkgs.runCommand "proxy-suite-no-secrets-check" { } ''
     repo_root=${../../.}
@@ -65,17 +81,7 @@
           SUB_CACHE_DIR="$PWD/cache" \
           CLASH_API="http://127.0.0.1:9090" \
           SELECTION="first" \
-          PER_APP_ROUTING_ENABLED="0" \
-          PER_APP_ROUTING_PROXYCHAINS_ENABLED="0" \
-          PER_APP_ROUTING_TUN_ENABLED="0" \
-          PER_APP_ROUTING_TPROXY_ENABLED="0" \
-          PER_APP_ROUTING_ZAPRET_ENABLED="0" \
-          PER_APP_ROUTING_PROFILES_FILE="$PWD/profiles.json" \
-          PROXYCHAINS_CONFIG="$PWD/proxychains.conf" \
-          PROXYCHAINS_QUIET_ARG="" \
-          ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
-          DEFAULT_ROUTE_MODE="blacklist" \
-          python3 "$proxy_ctl" proxy subs list > output
+          ${perAppRoutingOff}          python3 "$proxy_ctl" proxy subs list > output
         # The old spelling still dispatches.
         env SUB_TAGS_FILE="$PWD/tags.json" SUB_CACHE_DIR="$PWD/cache" \
           python3 "$proxy_ctl" subscription list | cmp - output
@@ -137,17 +143,7 @@
             USER_CONTROL_GROUP="proxy-suite" \
             CLASH_API="http://127.0.0.1:1" \
             SELECTION="urltest" \
-            PER_APP_ROUTING_ENABLED="0" \
-            PER_APP_ROUTING_PROXYCHAINS_ENABLED="0" \
-            PER_APP_ROUTING_TUN_ENABLED="0" \
-            PER_APP_ROUTING_TPROXY_ENABLED="0" \
-            PER_APP_ROUTING_ZAPRET_ENABLED="0" \
-            PER_APP_ROUTING_PROFILES_FILE="$PWD/profiles.json" \
-            PROXYCHAINS_CONFIG="$PWD/proxychains.conf" \
-            PROXYCHAINS_QUIET_ARG="" \
-            ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
-            DEFAULT_ROUTE_MODE="blacklist" \
-            python3 "$proxy_ctl" "$@"
+            ${perAppRoutingOff}            python3 "$proxy_ctl" "$@"
         }
 
         # Listing works from the inventory alone, with no Clash API answering.
@@ -450,75 +446,6 @@
 
         ! python3 "$proxy_ctl" where 2>/dev/null
 
-        touch "$out"
-      '';
-
-  # proxy_ctl.py's function-level tests: the probe verdict table and exit walk,
-  # autoProxy learn/queue, inbound stats and subscriptions, apps run.
-  proxy-ctl-unit =
-    pkgs.runCommand "proxy-suite-proxy-ctl-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
-      ''
-        export SING_BOX=${pkgs.sing-box}/bin/sing-box
-        export PYTHONDONTWRITEBYTECODE=1
-        python ${../../pkgs/proxy-ctl}/test_proxy_ctl.py
-        touch "$out"
-      '';
-
-  # proxy-suitectl, nix-on-droid's service manager: real processes restarted, timed and stopped.
-  proxy-suite-supervisor-unit =
-    pkgs.runCommand "proxy-suite-supervisor-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
-      ''
-        export PYTHONDONTWRITEBYTECODE=1 HOME="$TMPDIR"
-        python ${../../pkgs/proxy-ctl}/test_proxy_supervisor.py
-        touch "$out"
-      '';
-
-  # proxy_export: the running config made portable, and sing-box still accepts it.
-  proxy-export-unit =
-    pkgs.runCommand "proxy-suite-proxy-export-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
-      ''
-        export SING_BOX=${pkgs.sing-box}/bin/sing-box
-        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-        python ${../../pkgs/proxy-ctl}/test_proxy_export.py
-        touch "$out"
-      '';
-
-  # proxy-tui driven headless: keys turn into the right proxy-ctl argv.
-  proxy-tui-unit =
-    pkgs.runCommand "proxy-suite-proxy-tui-unit-check"
-      { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.textual ])) ]; }
-      ''
-        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-        python ${../../pkgs/proxy-ctl}/test_proxy_tui.py
-        touch "$out"
-      '';
-
-  # proxy_model: the status strip, tab loads and the tray menu tree, without a UI toolkit.
-  proxy-model-unit =
-    pkgs.runCommand "proxy-suite-proxy-model-unit-check" { nativeBuildInputs = [ pkgs.python3 ]; }
-      ''
-        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-        python ${../../pkgs/proxy-ctl}/test_proxy_model.py
-        touch "$out"
-      '';
-
-  # proxy_gui and proxy_sni import against GTK4/libadwaita, the D-Bus interfaces parse,
-  # and the tray menu serializes to dbusmenu's layout type. No display needed.
-  proxy-gui-smoke =
-    pkgs.runCommand "proxy-suite-proxy-gui-smoke-check"
-      {
-        nativeBuildInputs = [
-          (pkgs.python3.withPackages (ps: [ ps.pygobject3 ]))
-          pkgs.gobject-introspection
-        ];
-        buildInputs = [
-          pkgs.gtk4
-          pkgs.libadwaita
-        ];
-      }
-      ''
-        export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${../../pkgs/proxy-ctl}
-        python ${../../pkgs/proxy-ctl}/test_proxy_gui.py
         touch "$out"
       '';
 

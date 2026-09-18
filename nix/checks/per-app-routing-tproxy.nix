@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -7,6 +8,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   generated = import ./read-generated.nix;
 
   perAppRoutingTproxyFixture = evalProxySuite [
@@ -51,10 +53,7 @@ in
     )
 
     # -- perAppRouting: generated proxy-ctl script dispatches tproxy profiles through systemd slices --
-    (
-      assert pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "PER_APP_ROUTING_TPROXY_ENABLED" perAppRoutingTproxyScript))
 
     # -- perAppRouting: app TProxy service and helper units are created --
     (

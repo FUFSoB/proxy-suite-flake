@@ -1,10 +1,12 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
 }:
 
 let
+  inherit (checkLib) ok;
   inherit (pkgs.lib) hasInfix;
 
   mkFixture =
@@ -136,11 +138,10 @@ in
     )
 
     # -- userControl: scopes without enable is refused, not silently ignored --
-    (
-      assert builtins.any (
+    (ok (
+      builtins.any (
         a: !a.assertion && hasInfix "userControl.scopes is set" a.message
-      ) scopesWithoutEnableFixture.config.assertions;
-      true
-    )
+      ) scopesWithoutEnableFixture.config.assertions
+    ))
   ];
 }

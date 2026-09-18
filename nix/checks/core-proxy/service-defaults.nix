@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   minimal,
   customSingBoxPackageBin,
@@ -9,27 +10,18 @@
   noProxyBackendDefaultFixture,
 }:
 
+let
+  inherit (checkLib) ok;
+in
 {
   assertions = [
     # -- sing-box package override propagates into generated service scripts --
-    (
-      assert pkgs.lib.hasInfix customSingBoxPackageBin customSingBoxPackageStartScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix customSingBoxPackageBin customSingBoxPackageStartScript))
 
     # -- proxy defaults and urltest settings are applied --
-    (
-      assert proxyDirectConfig.dns.final == "local";
-      true
-    )
-    (
-      assert ruDefaultConfig.dns.final == "remote";
-      true
-    )
-    (
-      assert ruDefaultConfig.route.default_domain_resolver == "local";
-      true
-    )
+    (ok (proxyDirectConfig.dns.final == "local"))
+    (ok (ruDefaultConfig.dns.final == "remote"))
+    (ok (ruDefaultConfig.route.default_domain_resolver == "local"))
     (
       assert builtins.match ".*telegram\\.org.*" urlTestCustomStartScript != null;
       assert builtins.match ".*1m.*" urlTestCustomStartScript != null;

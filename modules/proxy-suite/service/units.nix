@@ -1,29 +1,31 @@
 # Systemd unit definitions for proxy-suite services and timers.
-{
-  lib,
-  builders,
-  proxyCfg,
-  proxyEnabled,
-  hybridEnabled,
-  pureXrayEnabled,
-  globalTun,
-  globalTproxy,
-  perAppRoutingTun,
-  perAppRoutingTproxy,
-  perAppZapretEnabled,
-  sshProxyOutboundEnabled,
-  sshProxyUnitEnabled,
-  torOutboundEnabled,
-  torOnionEnabled,
-  proxyInboundsEnabled,
-  proxyInboundsNeedLocalProxy,
-  scripts,
-  perAppRouting,
-  routingScripts,
-  geodata,
-}:
+{ ctx }:
 
 let
+  inherit (ctx)
+    lib
+    builders
+    proxyCfg
+    proxyEnabled
+    hybridEnabled
+    pureXrayEnabled
+    globalTun
+    globalTproxy
+    perAppRoutingTun
+    perAppRoutingTproxy
+    perAppZapretEnabled
+    sshProxyOutboundEnabled
+    sshProxyUnitEnabled
+    torOutboundEnabled
+    torOnionEnabled
+    proxyInboundsEnabled
+    proxyInboundsNeedLocalProxy
+    scripts
+    perAppRouting
+    routingScripts
+    cfg
+    ;
+  inherit (cfg) geodata;
   inherit (builders)
     mkAnchorService
     mkRestartingService
@@ -58,9 +60,7 @@ let
     else
       "sing-box";
 
-  localProxyAuthEnabled =
-    proxyCfg.listener.auth.username != null
-    && (proxyCfg.listener.auth.password != null || proxyCfg.listener.auth.passwordFile != null);
+  localProxyAuthEnabled = ctx.localProxy.authEnabled;
 
   # XRay finds geoip.dat/geosite.dat through this; sing-box ignores it.
   xrayAssetEnv = lib.optionalAttrs (geodata.xray.assets != null) {
@@ -336,7 +336,6 @@ let
 in
 {
   inherit
-    serviceNames
     localProxyAuthEnabled
     systemServiceEntries
     userServiceEntries

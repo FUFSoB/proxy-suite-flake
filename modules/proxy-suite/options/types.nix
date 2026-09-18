@@ -2,14 +2,7 @@
 
 let
   inherit (lib) mkOption types;
-
-  list =
-    description: example:
-    mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      inherit description example;
-    };
+  inherit (import ./lib.nix { inherit lib; }) list;
 
   routingFields = {
     domains = list "Domain suffixes to match." [ "youtube.com" ];

@@ -19,41 +19,18 @@ let
     ];
   };
   cfg = eval.config.services.proxy-suite;
-  rules = import ../modules/proxy-suite/rules.nix {
-    lib = pkgs.lib;
-    inherit pkgs cfg zapret;
-  };
-  configs = import ../modules/proxy-suite/config.nix {
-    lib = pkgs.lib;
-    inherit pkgs cfg rules;
-  };
-  nftr = import ../modules/proxy-suite/nftables.nix {
-    lib = pkgs.lib;
-    inherit pkgs cfg;
-  };
-  context = import ../modules/proxy-suite/service/context.nix {
-    lib = pkgs.lib;
-    inherit
-      pkgs
-      packages
-      cfg
-      ;
-    inherit (configs)
-      tproxyFile
-      tunFile
-      perAppTunFile
-      routeModeRulesFile
-      proxyInboundsFile
-      proxyInboundsSpecFile
-      ;
-    inherit (nftr)
-      perAppTunChainFile
-      perAppTproxyRulesFile
-      perAppZapretRulesFile
-      ip
-      nft
-      ;
-  };
+  inherit
+    (import ../modules/proxy-suite/assembly.nix {
+      lib = pkgs.lib;
+      inherit
+        pkgs
+        packages
+        cfg
+        zapret
+        ;
+    })
+    context
+    ;
 in
 pkgs.runCommand "proxy-suite-README.md" { nativeBuildInputs = [ pkgs.python3 ]; } ''
   src=${../README.md}

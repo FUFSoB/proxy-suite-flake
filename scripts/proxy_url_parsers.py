@@ -209,6 +209,15 @@ def _mk_auth(userinfo: str) -> "tuple[str | None, str | None]":
     return urllib.parse.unquote(username), urllib.parse.unquote(password) if separator else None
 
 
+def _set_auth(ob: dict, userinfo: str) -> None:
+    """Copies userinfo onto the outbound, password only when it is there."""
+    username, password = _mk_auth(userinfo)
+    if username is not None:
+        ob["username"] = username
+        if password is not None:
+            ob["password"] = password
+
+
 def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = _param(params, "security", "none")
@@ -478,50 +487,35 @@ def parse_naive(url: str, tag: str) -> dict:
         "server_port": _port(port),
         "tls": {"enabled": True, "server_name": params.get("sni") or host},
     }
-    username, password = _mk_auth(userinfo)
-    if username is not None:
-        ob["username"] = username
-        if password is not None:
-            ob["password"] = password
+    _set_auth(ob, userinfo)
     if scheme == "naive+quic":
         ob["quic"] = True
     return ob
 
 
-def parse_socks(url: str, tag: str) -> dict:
-    scheme = url.split("://")[0].lower()
-    version = "4" if scheme.startswith("socks4") else "5"
-    userinfo, host, port, _ = _parse_url_parts(url, scheme)
-
-    ob: dict = {"type": "socks", "tag": tag, "version": version}
-    username, password = _mk_auth(userinfo)
-    if username is not None:
-        ob["username"] = username
-        if password is not None:
-            ob["password"] = password
-    ob["server"] = host
-    ob["server_port"] = _port(port)
-
-    return ob
-
-
-def parse_http_proxy(url: str, tag: str) -> dict:
+def _parse_plain_proxy(url: str, tag: str, kind: str) -> dict:
+    """socks:// and http(s)://: host, port and optional credentials, nothing else."""
     scheme = url.split("://")[0].lower()
     userinfo, host, port, _ = _parse_url_parts(url, scheme)
 
-    ob: dict = {"type": "http", "tag": tag}
-    username, password = _mk_auth(userinfo)
-    if username is not None:
-        ob["username"] = username
-        if password is not None:
-            ob["password"] = password
+    ob: dict = {"type": kind, "tag": tag}
+    if kind == "socks":
+        ob["version"] = "4" if scheme.startswith("socks4") else "5"
+    _set_auth(ob, userinfo)
     ob["server"] = host
     ob["server_port"] = _port(port)
-
-    if scheme == "https":
+    if kind == "http" and scheme == "https":
         ob["tls"] = {"enabled": True, "server_name": host}
 
     return ob
+
+
+def parse_socks(url: str, tag: str) -> dict:
+    return _parse_plain_proxy(url, tag, "socks")
+
+
+def parse_http_proxy(url: str, tag: str) -> dict:
+    return _parse_plain_proxy(url, tag, "http")
 
 
 PARSERS = {

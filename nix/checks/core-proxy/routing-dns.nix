@@ -1,4 +1,5 @@
 {
+  checkLib,
   hasRuleSet,
   dnsHasRuleSet,
   dnsServerByTag,
@@ -14,25 +15,16 @@
   routingOrGeoIPRules,
 }:
 
+let
+  inherit (checkLib) ok;
+in
 {
   assertions = [
     # -- routing rule entries with domains and geoips preserve both matchers, and the named outbound --
-    (
-      assert builtins.length routingOrDomainRules == 1;
-      true
-    )
-    (
-      assert builtins.length routingOrGeoIPRules == 1;
-      true
-    )
-    (
-      assert (builtins.head routingOrDomainRules).outbound == "primary";
-      true
-    )
-    (
-      assert (builtins.head routingOrGeoIPRules).outbound == "primary";
-      true
-    )
+    (ok (builtins.length routingOrDomainRules == 1))
+    (ok (builtins.length routingOrGeoIPRules == 1))
+    (ok ((builtins.head routingOrDomainRules).outbound == "primary"))
+    (ok ((builtins.head routingOrGeoIPRules).outbound == "primary"))
 
     # -- default RU direct route and DNS rules are generated --
     (
@@ -50,34 +42,13 @@
       assert remoteDns.detour == "proxy";
       true
     )
-    (
-      assert hasRuleSet ruDefaultRules "direct" "geosite-category-ru";
-      true
-    )
-    (
-      assert hasRuleSet ruDefaultRules "direct" "geoip-ru";
-      true
-    )
-    (
-      assert dnsHasRuleSet ruDefaultConfig.dns.rules "geosite-category-ru";
-      true
-    )
-    (
-      assert !(hasRuleSet ruDisabledRules "direct" "geosite-category-ru");
-      true
-    )
-    (
-      assert !(hasRuleSet ruDisabledRules "direct" "geoip-ru");
-      true
-    )
-    (
-      assert !(dnsHasRuleSet ruDisabledConfig.dns.rules "geosite-category-ru");
-      true
-    )
-    (
-      assert dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru";
-      true
-    )
+    (ok (hasRuleSet ruDefaultRules "direct" "geosite-category-ru"))
+    (ok (hasRuleSet ruDefaultRules "direct" "geoip-ru"))
+    (ok (dnsHasRuleSet ruDefaultConfig.dns.rules "geosite-category-ru"))
+    (ok (!(hasRuleSet ruDisabledRules "direct" "geosite-category-ru")))
+    (ok (!(hasRuleSet ruDisabledRules "direct" "geoip-ru")))
+    (ok (!(dnsHasRuleSet ruDisabledConfig.dns.rules "geosite-category-ru")))
+    (ok (dnsHasRuleSet ruExplicitConfig.dns.rules "geosite-category-ru"))
 
     # -- DNS overrides map to sing-box server entries --
     (
@@ -102,13 +73,7 @@
     )
 
     # -- block route geosite and geoip sets are emitted --
-    (
-      assert hasRuleSet blockGeoRules "block" "geosite-category-ads-all";
-      true
-    )
-    (
-      assert hasRuleSet blockGeoRules "block" "geoip-cn";
-      true
-    )
+    (ok (hasRuleSet blockGeoRules "block" "geosite-category-ads-all"))
+    (ok (hasRuleSet blockGeoRules "block" "geoip-cn"))
   ];
 }

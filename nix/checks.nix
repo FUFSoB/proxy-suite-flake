@@ -20,7 +20,7 @@ let
       }
     );
   };
-  parserChecks = import ./checks/parsers.nix { inherit pkgs; };
+  pythonChecks = import ./checks/python-tests.nix { inherit pkgs; };
   checkLib = import ./checks/lib.nix {
     inherit
       pkgs
@@ -67,5 +67,5 @@ moduleSuiteChecks
   proxy-inbounds-runtime = proxyInboundsRuntime;
   amneziawg-inbounds-runtime = amneziaWgInboundsRuntime;
 }
-// parserChecks
+// pythonChecks
 // repoChecks

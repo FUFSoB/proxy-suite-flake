@@ -27,8 +27,9 @@
   xkcdpass,
 }:
 
-writeShellApplication {
+import ./script.nix { inherit lib writeShellApplication; } {
   name = "proxy-suite-install";
+  script = ./installer.sh;
   runtimeInputs = [
     coreutils
     curl
@@ -56,8 +57,4 @@ writeShellApplication {
     PSI_FLAKE_SRC = "${flakeSource}";
     PSI_STATE_VERSION = stateVersion;
   };
-  text = lib.concatStringsSep "\n" [
-    (builtins.readFile ./net-lib.sh)
-    (builtins.readFile ./installer.sh)
-  ];
 }

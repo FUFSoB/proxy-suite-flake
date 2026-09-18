@@ -1,25 +1,23 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkBadProxySuiteFixture,
   mkFailingAssertions,
+  rejectsProxySuite,
   mkProxyCtlDerived,
 }:
 
 let
+  inherit (checkLib) mkProxySuite;
   generated = import ./read-generated.nix;
-  defaultPackages = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
-        enable = true;
-        amneziaWg = {
-          enable = true;
-          profiles.home.configFile = "/run/secrets/awg.conf";
-        };
-      };
-    }
-  ];
+  defaultPackages = mkProxySuite {
+    enable = true;
+    amneziaWg = {
+      enable = true;
+      profiles.home.configFile = "/run/secrets/awg.conf";
+    };
+  };
   awgOnly = evalProxySuite [
     {
       system.stateVersion = "26.05";
@@ -108,21 +106,16 @@ let
   fakeKernelModule = pkgs.runCommand "fake-amneziawg-module" { } ''
     mkdir -p "$out/lib/modules"
   '';
-  overrideFixture = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
-        enable = true;
-        amneziaWg = {
-          enable = true;
-          toolsPackage = fakeTools;
-          userspacePackage = fakeUserspace;
-          kernelModulePackage = fakeKernelModule;
-          profiles.home.configFile = "/run/secrets/client.conf";
-        };
-      };
-    }
-  ];
+  overrideFixture = mkProxySuite {
+    enable = true;
+    amneziaWg = {
+      enable = true;
+      toolsPackage = fakeTools;
+      userspacePackage = fakeUserspace;
+      kernelModulePackage = fakeKernelModule;
+      profiles.home.configFile = "/run/secrets/client.conf";
+    };
+  };
 
   withGlobalTun = evalProxySuite [
     {
@@ -340,7 +333,11 @@ in
         };
       };
     }
-    {
+  ]
+  # An AmneziaWG profile and a global proxy mode both autostarting. Message-matched: with
+  # `proxy.tun.autostart` (removed) this case used to fail on the option name instead.
+  ++ [
+    (rejectsProxySuite "at most one AmneziaWG, TUN, or TProxy global mode may autostart" {
       enable = true;
       proxy = {
         enable = true;
@@ -351,10 +348,8 @@ in
             url = "http://proxy.example.com:8080";
           }
         ];
-        tun = {
-          enable = true;
-          autostart = true;
-        };
+        tun.enable = true;
+        autostart = "tun";
       };
       amneziaWg = {
         enable = true;
@@ -364,6 +359,6 @@ in
           configFile = "/run/home.conf";
         };
       };
-    }
+    })
   ];
 }

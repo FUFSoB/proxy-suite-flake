@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -10,6 +11,7 @@
 
 let
   fixtures = import ./xray-backend-runtime/fixtures.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -100,6 +102,7 @@ let
       ;
   };
   tunChecks = import ./xray-backend-runtime/tun.nix {
+    inherit checkLib;
     inherit
       pkgs
       checkConstants

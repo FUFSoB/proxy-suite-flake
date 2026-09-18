@@ -9,12 +9,7 @@ let
     types
     ;
   t = import ./types.nix { inherit lib; };
-  bool =
-    default: description:
-    mkOption {
-      type = types.bool;
-      inherit default description;
-    };
+  inherit (import ./lib.nix { inherit lib; }) bool;
 in
 {
   options.services.proxy-suite.inbounds = {

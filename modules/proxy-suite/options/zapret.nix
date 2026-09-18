@@ -3,19 +3,7 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   t = import ./types.nix { inherit lib; };
-  list =
-    description: example:
-    mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      inherit description example;
-    };
-  bool =
-    default: description:
-    mkOption {
-      type = types.bool;
-      inherit default description;
-    };
+  inherit (import ./lib.nix { inherit lib; }) list bool;
 in
 {
   options.services.proxy-suite.zapret = {

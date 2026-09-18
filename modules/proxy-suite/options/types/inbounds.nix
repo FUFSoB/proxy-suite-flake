@@ -3,13 +3,7 @@
 let
   inherit (lib) mkOption types;
   inherit (import ./amnezia-wg.nix { inherit lib; }) obfuscationType;
-  nullStr =
-    description: example:
-    mkOption {
-      type = types.nullOr types.str;
-      default = null;
-      inherit description example;
-    };
+  inherit (import ../lib.nix { inherit lib; }) nullStr;
 
   userType = types.submodule {
     options = {

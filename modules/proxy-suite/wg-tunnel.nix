@@ -10,10 +10,7 @@
 
 let
   inherit (derived.constants) serviceUser runAsServiceUser ifPrivileged;
-  scriptsDir = builtins.path {
-    name = "proxy-suite-scripts";
-    path = ../../scripts;
-  };
+  scriptsDir = import ./lib/scripts-dir.nix { inherit lib; };
 
   # sing-box's "local" server has no upstream on hosts behind systemd-resolved, so the tunnel
   # resolves the peer hostname like the main config, with proxy.dns.local. Destinations are

@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -8,6 +9,7 @@
 }:
 
 let
+  inherit (checkLib) startScript;
   generated = import ../read-generated.nix;
 
   customSingBoxPackage = pkgs.writeShellScriptBin "sing-box" ''
@@ -20,9 +22,7 @@ let
     }
   ];
   customSingBoxPackageBin = "${builtins.unsafeDiscardStringContext (toString customSingBoxPackage)}/bin/sing-box";
-  customSingBoxPackageStartScript = generated.readDerivation (
-    customSingBoxPackageFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  customSingBoxPackageStartScript = startScript customSingBoxPackageFixture;
 
   routingOrFixture = evalProxySuite [
     {
@@ -125,9 +125,7 @@ let
       };
     }
   ];
-  urlTestCustomStartScript = generated.readDerivation (
-    urlTestCustomFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  urlTestCustomStartScript = startScript urlTestCustomFixture;
 
   noProxyBackendDefaultFixture = evalProxySuite [
     {

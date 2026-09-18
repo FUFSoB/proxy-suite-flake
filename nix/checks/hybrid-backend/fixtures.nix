@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -7,6 +8,7 @@
 }:
 
 let
+  inherit (checkLib) startScript unitScript;
   generated = import ../read-generated.nix;
 
   hybridModule = {
@@ -36,15 +38,9 @@ let
   hybridFixture = evalProxySuite [ hybridModule ];
   hybridTproxyConfig = mkTProxyConfig hybridFixture;
   hybridTunConfig = mkTunConfig hybridFixture;
-  hybridStartScript = generated.readDerivation (
-    hybridFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
-  hybridTunStartScript = generated.readDerivation (
-    hybridFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStart
-  );
-  hybridPerAppTunStartScript = generated.readDerivation (
-    hybridFixture.config.systemd.services."proxy-suite-per-app-tun".serviceConfig.ExecStart
-  );
+  hybridStartScript = startScript hybridFixture;
+  hybridTunStartScript = unitScript hybridFixture "proxy-suite-tun";
+  hybridPerAppTunStartScript = unitScript hybridFixture "proxy-suite-per-app-tun";
   hybridBackendJqFilter =
     import ../../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix
       {
@@ -75,9 +71,7 @@ let
       };
     }
   ];
-  hybridXrayRawStartScript = generated.readDerivation (
-    hybridXrayRawFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  hybridXrayRawStartScript = startScript hybridXrayRawFixture;
 
   hybridSubscriptionFixture = evalProxySuite [
     {
@@ -98,12 +92,8 @@ let
       };
     }
   ];
-  hybridSubscriptionStartScript = generated.readDerivation (
-    hybridSubscriptionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
-  hybridSubscriptionUpdateScript = generated.readDerivation (
-    hybridSubscriptionFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
-  );
+  hybridSubscriptionStartScript = startScript hybridSubscriptionFixture;
+  hybridSubscriptionUpdateScript = unitScript hybridSubscriptionFixture "proxy-suite-subscription-update";
 in
 {
   inherit

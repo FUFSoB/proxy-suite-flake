@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -12,6 +13,7 @@
 
 let
   fixtures = import ./core-proxy/fixtures.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -40,6 +42,7 @@ let
     ;
 
   routingDnsChecks = import ./core-proxy/routing-dns.nix {
+    inherit checkLib;
     inherit
       hasRuleSet
       dnsHasRuleSet
@@ -57,6 +60,7 @@ let
       ;
   };
   serviceDefaultChecks = import ./core-proxy/service-defaults.nix {
+    inherit checkLib;
     inherit
       pkgs
       minimal

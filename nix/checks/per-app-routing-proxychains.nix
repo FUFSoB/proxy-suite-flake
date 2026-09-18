@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -7,6 +8,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   generated = import ./read-generated.nix;
 
   perAppRoutingProxychainsFixture = evalProxySuite [
@@ -67,20 +69,14 @@ in
 {
   assertions = [
     # -- perAppRouting: proxychains/direct profile config is accepted --
-    (
-      assert perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.enable;
-      true
-    )
+    (ok (perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.enable))
     (
       assert
         builtins.length perAppRoutingProxychainsFixture.config.services.proxy-suite.perAppRouting.profiles
         == 2;
       true
     )
-    (
-      assert builtins.length perAppRoutingProxychainsProfiles == 2;
-      true
-    )
+    (ok (builtins.length perAppRoutingProxychainsProfiles == 2))
 
     # -- perAppRouting: createDefaultProfiles injects curated proxychains profile --
     (
@@ -91,10 +87,7 @@ in
     )
 
     # -- perAppRouting: createDefaultProfiles = false injects no curated profiles --
-    (
-      assert builtins.length perAppRoutingNoDefaultProfiles == 0;
-      true
-    )
+    (ok (builtins.length perAppRoutingNoDefaultProfiles == 0))
 
     # -- perAppRouting: proxy-ctl script embeds wrap/apps commands --
     (
@@ -115,15 +108,9 @@ in
     )
 
     # -- proxy-ctl: restart skips services that are not present in zapret-only or tg-only builds --
-    (
-      assert pkgs.lib.hasInfix "proxy-suite-tg-ws-proxy" minimalProxyCtlScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "proxy-suite-tg-ws-proxy" minimalProxyCtlScript))
 
     # -- perAppRouting: generated proxy-ctl script dispatches through proxychains4 --
-    (
-      assert pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG=-q" perAppRoutingProxychainsScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "export PROXYCHAINS_QUIET_ARG=-q" perAppRoutingProxychainsScript))
   ];
 }

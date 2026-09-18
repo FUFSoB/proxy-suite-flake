@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -9,11 +10,8 @@
 }:
 
 let
+  inherit (checkLib) startScript;
   generated = import ./read-generated.nix;
-  startScript =
-    fixture:
-    generated.readDerivation
-      fixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart;
 
   chained = evalProxySuite [
     baseModule

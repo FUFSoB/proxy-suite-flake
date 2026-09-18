@@ -10,19 +10,8 @@
 let
   w = derived.warpCfg;
   inherit (derived.constants) unprivilegedServiceConfig;
+  inherit (derived.localProxy) auth host hostPart;
   listener = cfg.proxy.listener;
-  auth = listener.auth;
-  host =
-    if
-      builtins.elem listener.address [
-        "0.0.0.0"
-        "::"
-      ]
-    then
-      "127.0.0.1"
-    else
-      listener.address;
-  hostPart = if lib.hasInfix ":" host then "[${host}]" else host;
   passwordSource =
     if auth.passwordFile != null then
       auth.passwordFile
@@ -30,7 +19,7 @@ let
       pkgs.writeText "proxy-suite-warp" auth.password
     else
       null;
-  withProxyAuth = auth.username != null && passwordSource != null;
+  withProxyAuth = derived.localProxy.authEnabled;
   userinfo = lib.optionalString withProxyAuth ''
     userinfo=$(${pkgs.jq}/bin/jq -rn --arg u ${lib.escapeShellArg auth.username} \
       --rawfile p "$CREDENTIALS_DIRECTORY/proxy-password" '"\($u | @uri):\($p | rtrimstr("\n") | @uri)@"')

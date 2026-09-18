@@ -15,30 +15,21 @@ let
   internal = cfg.internal;
   home = config.user.home;
 
-  inherit
-    (import ./user-units.nix {
-      inherit lib pkgs;
-      inherit (host) runtimeDir;
-      stateDir = dirOf host.stateDir;
-      hostPath = "${home}/.nix-profile/bin";
-    })
-    toService
-    toTimer
-    toPath
-    ;
-
-  enabled = lib.filterAttrs (_: unit: unit.enable);
+  userUnits = (import ./common.nix { inherit lib; }).userUnitsFor {
+    inherit
+      lib
+      pkgs
+      host
+      internal
+      ;
+    hostPath = "${home}/.nix-profile/bin";
+  };
 
   supervisorDir = "${host.runtimeDir}/proxy-suite-supervisor";
   # Outside the store, so proxy-suitectl stays the same from one generation to the next.
   manifestLink = "${host.stateDir}/supervisor/manifest.json";
   manifest = pkgs.writeText "proxy-suite-units.json" (
-    builtins.toJSON {
-      services = lib.mapAttrs toService (enabled (internal.services // internal.userServices));
-      timers = lib.mapAttrs toTimer (enabled internal.timers);
-      paths = lib.mapAttrs toPath (enabled internal.paths);
-      inherit (internal) tmpfiles;
-    }
+    builtins.toJSON (userUnits // { inherit (internal) tmpfiles; })
   );
 
   suitectl = import ../../../pkgs/proxy-suite-supervisor.nix { inherit lib pkgs; } {

@@ -14,10 +14,21 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
-  # Global AmneziaWG profiles only: an outbound one leaves the host's routes alone.
-  awgServiceNames = map (name: "proxy-suite-awg-${name}.service") (
-    builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
-  );
+  inherit
+    (import ./zapret/common.nix {
+      inherit
+        lib
+        pkgs
+        cfg
+        nft
+        perAppZapretRulesFile
+        ;
+    })
+    awgServiceNames
+    perAppConflicts
+    perAppZapretMarkUpScript
+    perAppZapretMarkDownScript
+    ;
   zapretPackages = import ./zapret/packages.nix {
     inherit
       lib
@@ -45,17 +56,6 @@ let
     if ! ${pkgs.ipset}/bin/ipset list nozapret >/dev/null 2>&1; then
       ${pkgs.ipset}/bin/ipset create nozapret hash:net
     fi
-  '';
-
-  perAppZapretMarkUpScript = pkgs.writeShellScript "proxy-suite-zapret" ''
-    set -euo pipefail
-    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
-    ${nft} -f ${perAppZapretRulesFile}
-  '';
-
-  perAppZapretMarkDownScript = pkgs.writeShellScript "proxy-suite-zapret" ''
-    set -euo pipefail
-    ${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true
   '';
 
   exemptStart = ''
@@ -108,11 +108,7 @@ in
         description = "proxy-suite per-app-routing zapret backend";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
-        conflicts = [
-          "proxy-suite-tproxy.service"
-          "proxy-suite-tun.service"
-        ]
-        ++ awgServiceNames;
+        conflicts = perAppConflicts ++ awgServiceNames;
         preStart = zapretCommonPreStart perAppZapretPackage;
         runtimeDirectory = "proxy-suite-per-app-zapret";
         execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";

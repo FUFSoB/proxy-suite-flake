@@ -1,102 +1,102 @@
-{
-  mkBadFixture,
-  mkFailingAssertions,
-}:
+# Marks and route tables per-app routing must not share with the global backends. Each case
+# names the assertion it expects, so a case that stops evaluating for another reason fails.
+{ rejects }:
 
 {
-  assertions = mkFailingAssertions mkBadFixture [
-    # app TUN fwmark must not collide with global TProxy proxyMark.
-    [
-      {
-        services.proxy-suite = {
-          proxy.tproxy.proxyMark = 7;
-          proxy.tun.perApp = {
-            enable = true;
-            fwmark = 7;
-          };
-          perAppRouting.enable = true;
-        };
-      }
-    ]
-
-    # app TProxy fwmark must not collide with global TProxy proxyMark.
-    [
+  assertions = [
+    (rejects "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark" [
       {
         services.proxy-suite = {
           proxy.tproxy = {
+            enable = true;
+            proxyMark = 7;
+          };
+          perAppRouting = {
+            enable = true;
+            tun = {
+              enable = true;
+              fwmark = 7;
+            };
+          };
+        };
+      }
+    ])
+    (rejects "perAppRouting.tproxy.fwmark must differ from proxy.tproxy.proxyMark" [
+      {
+        services.proxy-suite = {
+          proxy.tproxy = {
+            enable = true;
             proxyMark = 8;
-            perApp = {
+          };
+          perAppRouting = {
+            enable = true;
+            tproxy = {
               enable = true;
               fwmark = 8;
             };
           };
-          perAppRouting.enable = true;
         };
       }
-    ]
-
-    # app TUN and TProxy backends must use distinct marks and route tables.
-    [
+    ])
+    (rejects "perAppRouting.tun.fwmark and perAppRouting.tproxy.fwmark must differ" [
       {
-        services.proxy-suite = {
-          proxy.tun.perApp = {
+        services.proxy-suite.perAppRouting = {
+          enable = true;
+          tun = {
             enable = true;
             fwmark = 11;
           };
-          proxy.tproxy.perApp = {
+          tproxy = {
             enable = true;
             fwmark = 11;
           };
-          perAppRouting.enable = true;
         };
       }
-    ]
-    [
+    ])
+    (rejects "perAppRouting.tun.routeTable and perAppRouting.tproxy.routeTable must differ" [
       {
-        services.proxy-suite = {
-          proxy.tun.perApp = {
+        services.proxy-suite.perAppRouting = {
+          enable = true;
+          tun = {
             enable = true;
             routeTable = 100;
           };
-          proxy.tproxy.perApp = {
+          tproxy = {
             enable = true;
             routeTable = 100;
           };
-          perAppRouting.enable = true;
         };
       }
-    ]
-
-    # per-app zapret marks must not collide with TUN/TProxy marks.
-    [
+    ])
+    (rejects "perAppRouting.tun.fwmark and perAppRouting.zapret.filterMark must differ" [
       {
-        services.proxy-suite = {
-          proxy.tun.perApp = {
+        services.proxy-suite.perAppRouting = {
+          enable = true;
+          tun = {
             enable = true;
             fwmark = 12;
           };
-          zapret.perApp = {
+          zapret = {
             enable = true;
             filterMark = 12;
           };
-          perAppRouting.enable = true;
         };
       }
-    ]
-    [
+    ])
+    (rejects "perAppRouting.tproxy.fwmark and perAppRouting.zapret.filterMark must differ" [
       {
-        services.proxy-suite = {
-          proxy.tproxy.perApp = {
+        services.proxy-suite.perAppRouting = {
+          enable = true;
+          tproxy = {
             enable = true;
             fwmark = 13;
           };
-          zapret.perApp = {
+          zapret = {
             enable = true;
             filterMark = 13;
           };
-          perAppRouting.enable = true;
         };
       }
-    ]
+    ])
   ];
 }

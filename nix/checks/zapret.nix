@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -40,6 +41,7 @@ let
     ;
 
   zapretHostlistRoutingChecks = import ./zapret-hostlist-routing.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

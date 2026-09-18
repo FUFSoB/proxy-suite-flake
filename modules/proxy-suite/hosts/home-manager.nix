@@ -13,18 +13,14 @@ let
   host = cfg.host;
   internal = cfg.internal;
 
-  inherit
-    (import ./user-units.nix {
-      inherit lib pkgs;
-      inherit (host) runtimeDir;
-      stateDir = dirOf host.stateDir;
-    })
-    toService
-    toTimer
-    toPath
-    ;
-
-  enabled = lib.filterAttrs (_: unit: unit.enable);
+  userUnits = (import ./common.nix { inherit lib; }).userUnitsFor {
+    inherit
+      lib
+      pkgs
+      host
+      internal
+      ;
+  };
 in
 {
   config = lib.mkMerge [
@@ -44,11 +40,9 @@ in
     (lib.mkIf cfg.enable (
       lib.mkMerge [
         {
-          systemd.user.services = lib.mapAttrs toService (
-            enabled (internal.services // internal.userServices)
-          );
-          systemd.user.timers = lib.mapAttrs toTimer (enabled internal.timers);
-          systemd.user.paths = lib.mapAttrs toPath (enabled internal.paths);
+          systemd.user.services = userUnits.services;
+          systemd.user.timers = userUnits.timers;
+          systemd.user.paths = userUnits.paths;
 
           home.packages = lib.mkMerge [
             (lib.mkBefore internal.earlyPackages)

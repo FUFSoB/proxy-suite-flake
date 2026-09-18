@@ -52,15 +52,7 @@ let
     mode="''${1:-}"
 
     case "$mode" in
-      default)
-        ;;
-      whitelist)
-        ;;
-      blacklist)
-        ;;
-      all-proxy)
-        ;;
-      all-bypass)
+      default | whitelist | blacklist | all-proxy | all-bypass)
         ;;
       *)
         echo "proxy-suite: route mode must be default, whitelist, blacklist, all-proxy, or all-bypass" >&2

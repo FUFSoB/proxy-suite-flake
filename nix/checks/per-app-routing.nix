@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -11,11 +12,13 @@
   mkZapretBaseFor,
   mkBadFixture,
   mkFailingAssertions,
+  rejects,
   minimalProxyCtlScript,
 }:
 
 let
   tunChecks = import ./per-app-routing-tun.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -27,6 +30,7 @@ let
       ;
   };
   tproxyChecks = import ./per-app-routing-tproxy.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -36,6 +40,7 @@ let
       ;
   };
   zapretChecks = import ./per-app-routing-zapret.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -48,9 +53,11 @@ let
       ;
   };
   validationChecks = import ./per-app-routing-validation.nix {
-    inherit mkBadFixture mkFailingAssertions;
+    inherit checkLib;
+    inherit mkBadFixture mkFailingAssertions rejects;
   };
   userControlChecks = import ./user-control.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite
@@ -58,6 +65,7 @@ let
       ;
   };
   proxychainsChecks = import ./per-app-routing-proxychains.nix {
+    inherit checkLib;
     inherit
       pkgs
       evalProxySuite

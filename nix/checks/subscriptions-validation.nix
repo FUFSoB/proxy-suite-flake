@@ -1,10 +1,12 @@
 {
+  checkLib,
   evalProxySuite,
   mkBadFixtureRaw,
   mkFailingAssertions,
 }:
 
 let
+  inherit (checkLib) ok;
   proxyWithSubscriptions = subscriptions: {
     system.stateVersion = "26.05";
     services.proxy-suite = {
@@ -71,9 +73,6 @@ in
     ])
     ++ [
       # urlFile form is accepted.
-      (
-        assert subscriptionUrlFileFixture.config.services.proxy-suite.proxy.subscriptions != [ ];
-        true
-      )
+      (ok (subscriptionUrlFileFixture.config.services.proxy-suite.proxy.subscriptions != [ ]))
     ];
 }

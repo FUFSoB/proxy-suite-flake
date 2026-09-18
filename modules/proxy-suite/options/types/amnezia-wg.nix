@@ -54,139 +54,50 @@ let
     };
   };
 
-  obfuscationType = types.submodule {
-    options = {
-      jc = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Junk packet count (Jc).";
-      };
-      jmin = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Minimum junk packet size (Jmin).";
-      };
-      jmax = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Maximum junk packet size (Jmax).";
-      };
-      s1 = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Handshake-init padding (S1).";
-      };
-      s2 = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Handshake-response padding (S2).";
-      };
-      s3 = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Cookie-reply padding (S3).";
-      };
-      s4 = mkOption {
-        type = optionalUnsigned;
-        default = null;
-        description = "Transport-message padding (S4).";
-      };
-      h1 = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "Handshake-init header or range (H1).";
-      };
-      h2 = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "Handshake-response header or range (H2).";
-      };
-      h3 = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "Cookie-reply header or range (H3).";
-      };
-      h4 = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "Transport-message header or range (H4).";
-      };
-      i1 = mkOption {
-        type = optionalString;
-        default = null;
-        description = "First custom signature packet (I1).";
-      };
-      i2 = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Second custom signature packet (I2).";
-      };
-      i3 = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Third custom signature packet (I3).";
-      };
-      i4 = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Fourth custom signature packet (I4).";
-      };
-      i5 = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Fifth custom signature packet (I5).";
-      };
-      headerProtectionKey = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Inline AWG 3 header-protection key. Prefer headerProtectionKeyFile.";
-      };
-      headerProtectionKeyFile = mkOption {
-        type = optionalString;
-        default = null;
-        description = "Runtime path containing the AWG 3 header-protection key.";
-      };
-      contentPaddingAddition = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 content-padding addition or range.";
-      };
-      rekeyAfterTime = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 rekey interval or range.";
-      };
-      rekeyTimeout = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 rekey timeout or range.";
-      };
-      rejectAfterTime = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 reject-after interval or range.";
-      };
-      keepaliveTimeout = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 keepalive timeout or range.";
-      };
-      maxHandshakeAttempts = mkOption {
-        type = optionalRange;
-        default = null;
-        description = "AWG 3 maximum handshake attempts or range.";
-      };
-      randomTrailers = mkOption {
-        type = types.nullOr types.bool;
-        default = null;
-        description = "AWG 3 random transport trailers (RandomTrailers).";
-      };
-      disableCookies = mkOption {
-        type = types.nullOr types.bool;
-        default = null;
-        description = "AWG 3 cookie suppression (DisableCookies).";
-      };
+  # Every AWG obfuscation field is an optional scalar with a one-line description, so they
+  # are declared as tables per value type rather than 27 near-identical mkOption blocks.
+  optional =
+    type: description:
+    mkOption {
+      inherit type description;
+      default = null;
     };
+  obfuscationType = types.submodule {
+    options =
+      lib.mapAttrs (_: optional optionalUnsigned) {
+        jc = "Junk packet count (Jc).";
+        jmin = "Minimum junk packet size (Jmin).";
+        jmax = "Maximum junk packet size (Jmax).";
+        s1 = "Handshake-init padding (S1).";
+        s2 = "Handshake-response padding (S2).";
+        s3 = "Cookie-reply padding (S3).";
+        s4 = "Transport-message padding (S4).";
+      }
+      // lib.mapAttrs (_: optional optionalRange) {
+        h1 = "Handshake-init header or range (H1).";
+        h2 = "Handshake-response header or range (H2).";
+        h3 = "Cookie-reply header or range (H3).";
+        h4 = "Transport-message header or range (H4).";
+        contentPaddingAddition = "AWG 3 content-padding addition or range.";
+        rekeyAfterTime = "AWG 3 rekey interval or range.";
+        rekeyTimeout = "AWG 3 rekey timeout or range.";
+        rejectAfterTime = "AWG 3 reject-after interval or range.";
+        keepaliveTimeout = "AWG 3 keepalive timeout or range.";
+        maxHandshakeAttempts = "AWG 3 maximum handshake attempts or range.";
+      }
+      // lib.mapAttrs (_: optional optionalString) {
+        i1 = "First custom signature packet (I1).";
+        i2 = "Second custom signature packet (I2).";
+        i3 = "Third custom signature packet (I3).";
+        i4 = "Fourth custom signature packet (I4).";
+        i5 = "Fifth custom signature packet (I5).";
+        headerProtectionKey = "Inline AWG 3 header-protection key. Prefer headerProtectionKeyFile.";
+        headerProtectionKeyFile = "Runtime path containing the AWG 3 header-protection key.";
+      }
+      // lib.mapAttrs (_: optional (types.nullOr types.bool)) {
+        randomTrailers = "AWG 3 random transport trailers (RandomTrailers).";
+        disableCookies = "AWG 3 cookie suppression (DisableCookies).";
+      };
   };
 
   settingsType = types.submodule {

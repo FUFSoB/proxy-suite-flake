@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   baseModule,
@@ -10,6 +11,7 @@
 }:
 
 let
+  inherit (checkLib) ok;
   generated = import ./read-generated.nix;
 
   perAppRoutingZapretFixture = evalProxySuite [
@@ -168,10 +170,7 @@ in
     )
 
     # -- perAppRouting: generated proxy-ctl script dispatches zapret profiles through systemd slices --
-    (
-      assert pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "PER_APP_ROUTING_ZAPRET_ENABLED" perAppRoutingZapretScript))
 
     # -- perAppRouting: app zapret service and helper units are created --
     (
@@ -213,10 +212,7 @@ in
     )
 
     # -- perAppRouting: app zapret startup installs nftables backend --
-    (
-      assert pkgs.lib.hasInfix "proxy_suite_per_app_zapret_mark" perAppRoutingZapretStartScript;
-      true
-    )
+    (ok (pkgs.lib.hasInfix "proxy_suite_per_app_zapret_mark" perAppRoutingZapretStartScript))
 
   ];
 

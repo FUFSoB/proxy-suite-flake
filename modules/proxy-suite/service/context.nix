@@ -13,54 +13,15 @@
   perAppTunChainFile,
   perAppTproxyRulesFile,
   perAppZapretRulesFile,
+  nftablesRulesFile,
   ip,
   nft,
 }:
 
 let
   derived = import ../derived.nix { inherit lib cfg; };
-  constants = derived.constants;
-  inherit (derived)
-    singBoxCfg
-    proxyCfg
-    xrayCfg
-    proxyEnabled
-    singBoxEnabled
-    xrayEnabled
-    hybridEnabled
-    pureXrayEnabled
-    activeBackend
-    perAppRoutingCfg
-    globalTun
-    globalTproxy
-    perAppRoutingTun
-    perAppRoutingTproxy
-    perAppZapretCfg
-    zapretEngine
-    zapretCutoffEnabled
-    zapretCutoffProxyFallback
-    userControlCfg
-    selectionMode
-    builtinTags
-    outboundTags
-    subscriptionTags
-    invalidRoutingTargets
-    collapseNamedOutbounds
-    sshProxyCfg
-    sshProxyOutboundEnabled
-    sshProxyUnitEnabled
-    warpCfg
-    torCfg
-    awgOutbounds
-    proxyInboundsCfg
-    proxyInboundsEnabled
-    proxyInboundsAwg
-    proxyInboundsNeedLocalProxy
-    torOnionEnabled
-    proxyInboundsGuardPrivate
-    proxyInboundViaOutbounds
-    userControlAllows
-    ;
+  # Only what this file itself needs; the rest reaches the sub-modules through ctx.
+  inherit (derived) singBoxCfg xrayCfg userControlCfg;
 
   # Tool paths – defined once here and passed into sub-modules as needed.
   jq = "${pkgs.jq}/bin/jq";
@@ -81,10 +42,7 @@ let
     )
   );
 
-  proxySuiteScriptsDir = builtins.path {
-    name = "proxy-suite-scripts";
-    path = ../../../scripts;
-  };
+  proxySuiteScriptsDir = import ../lib/scripts-dir.nix { inherit lib; };
   parserScriptsPythonPath = proxySuiteScriptsDir;
   buildOutboundPy = "${proxySuiteScriptsDir}/build-outbound.py";
   buildInboundPy = "${proxySuiteScriptsDir}/build-inbound.py";
@@ -94,36 +52,38 @@ let
 
   polkit = import ./polkit.nix { inherit userControlCfg; };
 
-  scripts = import ./scripts.nix {
+  # One context for the service layer: everything derived.nix computes, the tool paths and
+  # generated files above, and the shell-snippet builders. Sub-modules take it whole and
+  # `inherit` the names they use, so adding a value needs no plumbing in between.
+  ctx = derived // {
     inherit
       lib
       pkgs
-      singBoxCfg
-      proxyCfg
-      sshProxyCfg
-      warpCfg
-      torCfg
-      awgOutbounds
-      xrayEnabled
-      hybridEnabled
-      pureXrayEnabled
-      activeBackend
-      perAppRoutingCfg
-      userControlCfg
-      selectionMode
-      collapseNamedOutbounds
-      constants
-      zapretCutoffProxyFallback
+      packages
+      cfg
+      builders
+      polkit
       ;
     inherit
       jq
       python3
       singBox
       xray
+      grepBin
+      awk
+      sleepBin
+      headBin
+      seqBin
+      findBin
+      awgBin
+      ;
+    inherit
+      proxySuiteScriptsDir
       parserScriptsPythonPath
       buildOutboundPy
       buildInboundPy
       fetchSubscriptionPy
+      amneziaWgProfileNamesFile
       ;
     inherit
       tproxyFile
@@ -132,102 +92,28 @@ let
       routeModeRulesFile
       proxyInboundsFile
       proxyInboundsSpecFile
+      perAppTunChainFile
+      perAppTproxyRulesFile
+      perAppZapretRulesFile
+      nftablesRulesFile
+      ip
+      nft
       ;
-    inherit
-      proxyInboundsCfg
-      proxyInboundsAwg
-      awgBin
-      proxyInboundsNeedLocalProxy
-      torOnionEnabled
-      proxyInboundsGuardPrivate
-      proxyInboundViaOutbounds
-      userControlAllows
-      builders
-      ;
+    # Filled in below; lazily, so the sub-modules can read each other's results.
+    inherit scripts perAppRouting;
   };
 
-  perAppRouting = import ./per-app-routing.nix {
-    inherit
-      lib
-      pkgs
-      cfg
-      singBoxCfg
-      proxyCfg
-      perAppRoutingCfg
-      perAppRoutingTun
-      perAppRoutingTproxy
-      constants
-      ;
-    perAppZapretCfg = perAppZapretCfg;
-    inherit perAppTunChainFile perAppTproxyRulesFile perAppZapretRulesFile;
-    inherit ip nft;
-    inherit
-      awk
-      grepBin
-      findBin
-      headBin
-      seqBin
-      sleepBin
-      ;
-  };
-
-  control = import ./control.nix {
-    inherit
-      packages
-      singBoxCfg
-      proxyCfg
-      perAppRoutingCfg
-      perAppRoutingTun
-      perAppRoutingTproxy
-      perAppZapretCfg
-      zapretEngine
-      zapretCutoffEnabled
-      constants
-      selectionMode
-      userControlCfg
-      ;
-    inherit (scripts) subscriptionTagsFile subscriptionCacheDir;
-    inherit (scripts) routeModeStateFile;
-    inherit proxyInboundsEnabled;
-    inherit (scripts) proxyInboundsLinksFile proxyInboundsSubscriptionsFile;
-    proxyInboundsSubscriptionsBaseUrl = proxyInboundsCfg.subscriptions.baseUrl;
-    proxyInboundsXray = "${proxyInboundsCfg.package}/bin/xray";
-    inherit amneziaWgProfileNamesFile;
-    guiRefreshInterval = cfg.gui.refreshInterval;
-    inherit (perAppRouting)
-      perAppRoutingProfilesFile
-      proxychainsConfigFile
-      proxychainsQuietArg
-      ;
-  };
+  scripts = import ./scripts.nix { inherit ctx; };
+  perAppRouting = import ./per-app-routing.nix { inherit ctx; };
+  control = import ./control.nix { inherit ctx; };
 in
 {
   inherit
+    ctx
     derived
-    singBoxCfg
-    proxyCfg
-    xrayCfg
-    proxyEnabled
-    singBoxEnabled
-    xrayEnabled
-    hybridEnabled
-    pureXrayEnabled
-    activeBackend
-    perAppRoutingCfg
-    globalTun
-    globalTproxy
-    perAppRoutingTun
-    perAppRoutingTproxy
-    perAppZapretCfg
-    userControlCfg
-    builtinTags
-    outboundTags
-    subscriptionTags
-    invalidRoutingTargets
     polkit
     scripts
     perAppRouting
     control
-    amneziaWgProfileNamesFile
     ;
 }

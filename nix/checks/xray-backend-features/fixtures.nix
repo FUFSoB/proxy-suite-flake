@@ -1,4 +1,5 @@
 {
+  checkLib,
   pkgs,
   evalProxySuite,
   mkTProxyConfig,
@@ -7,6 +8,7 @@
 }:
 
 let
+  inherit (checkLib) mkProxySuite startScript;
   generated = import ../read-generated.nix;
   rawOutboundJson =
     (import ../../../modules/proxy-suite/service/script-blocks/outbounds.nix {
@@ -75,23 +77,16 @@ let
       };
     }
   ];
-  xraySubscriptionStartScript = generated.readDerivation (
-    xraySubscriptionFixture.config.systemd.services."proxy-suite-socks".serviceConfig.ExecStart
-  );
+  xraySubscriptionStartScript = startScript xraySubscriptionFixture;
 
-  xrayRawStreamFixture = evalProxySuite [
-    {
-      system.stateVersion = "26.05";
-      services.proxy-suite = {
-        enable = true;
-        proxy = {
-          enable = true;
-          backend = "xray";
-          outbounds = [ xrayRawStreamDefinition ];
-        };
-      };
-    }
-  ];
+  xrayRawStreamFixture = mkProxySuite {
+    enable = true;
+    proxy = {
+      enable = true;
+      backend = "xray";
+      outbounds = [ xrayRawStreamDefinition ];
+    };
+  };
   xrayRawStreamOutbound =
     rawOutboundJson (builtins.head xrayRawStreamFixture.config.services.proxy-suite.proxy.outbounds)
       "proxy"
