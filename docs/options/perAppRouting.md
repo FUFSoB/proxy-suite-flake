@@ -308,7 +308,7 @@ string
 <a id="services-proxy-suite-perapprouting-tun-localsubnets"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.localSubnets
 
-Subnets wrapped apps reach directly\.
+Subnets wrapped apps reach directly (DNS excepted)\.
 
 *Type:*
 list of string

@@ -66,7 +66,7 @@ in
       enable = mkEnableOption "the per-app TUN backend";
       fwmark = int 16 "Mark that steers wrapped apps into routeTable.";
       routeTable = int 101 "Policy-routing table of the per-app TUN.";
-      localSubnets = localSubnets "Subnets wrapped apps reach directly.";
+      localSubnets = localSubnets "Subnets wrapped apps reach directly (DNS excepted).";
 
       interface = mkOption {
         type = types.str;

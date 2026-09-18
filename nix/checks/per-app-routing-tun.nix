@@ -172,6 +172,24 @@ in
       true
     )
 
+    # -- perAppRouting: wrapped apps' DNS reaches the app TUN even when the resolver sits on
+    # a local or reserved address, and their local IPv6 still leaves directly --
+    (
+      let
+        beforeReserved = builtins.head (
+          pkgs.lib.splitString "ip daddr $RESERVED_IP return" perAppRoutingTunNftRules
+        );
+      in
+      assert pkgs.lib.hasInfix "meta l4proto { tcp, udp } th dport 53 goto app_mark" beforeReserved;
+      assert pkgs.lib.hasInfix "ip6 daddr $RESERVED_IP6 return" perAppRoutingTunNftRules;
+      assert pkgs.lib.hasInfix "goto app_mark" (
+        builtins.elemAt (pkgs.lib.splitString "192.168.0.0/16 return" perAppRoutingTunNftRules) 1
+      );
+      # The mark rules live in the jumped-to chain, which both paths reach.
+      assert pkgs.lib.hasInfix "proxy_suite_per_app_tun app_mark" perAppRoutingTunUserStartScript;
+      true
+    )
+
     # -- perAppRouting: app TUN enables nftables --
     (
       assert perAppRoutingTunFixture.config.networking.nftables.enable;

@@ -86,7 +86,8 @@ let
     name = "per-app-tun";
     nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tun";
-    nftChain = "output";
+    # Not "output": both of that chain's paths into the marking rules jump here.
+    nftChain = "app_mark";
     sliceName = perAppTunSliceName;
     sliceLabel = "app TUN";
     markRule = "meta mark set ${toString perAppRoutingTun.fwmark} ct mark set ${toString perAppRoutingTun.fwmark}";
@@ -95,7 +96,7 @@ let
     name = "per-app-tun";
     nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tun";
-    nftChain = "output";
+    nftChain = "app_mark";
   };
 
   perAppTproxyUserRuleStart = mkUserRuleStart {

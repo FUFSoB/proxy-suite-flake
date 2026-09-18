@@ -2752,6 +2752,34 @@ def _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc):
         systemctl("stop", backend_svc)
 
 
+def _stub_resolver_nameservers(path="/etc/resolv.conf"):
+    """The resolvers /etc/resolv.conf names, if every one of them is a local stub."""
+    try:
+        found = [
+            line.split()[1]
+            for line in lines(read_text(path))
+            if line.split()[:1] == ["nameserver"] and len(line.split()) > 1
+        ]
+    except OSError:
+        return []
+    stub = [x for x in found if x.startswith("127.") or x in ("::1", "localhost")]
+    return stub if found and len(stub) == len(found) else []
+
+
+def _warn_stub_resolver(route):
+    """A wrapped app asking a local stub resolver leaks its names: the stub answers from
+    its own process, which is outside the app's cgroup and so outside the app's route."""
+    stub = _stub_resolver_nameservers()
+    if not stub:
+        return
+    print(
+        f"warning: {stub[0]} is this host's only resolver, and it answers from outside the "
+        f"wrapped app's cgroup, so names resolve outside route={route}. Point the app at a "
+        "resolver of its own to keep its DNS in the tunnel.",
+        file=sys.stderr,
+    )
+
+
 def _wrap_slice(slice_base, profile, backend_svc, cmd):
     """Runs cmd in a user scope inside the route's slice, then stops what went idle."""
     uid = os.getuid()
@@ -2823,6 +2851,7 @@ def cmd_apps_run(profile="", *cmd):
         _check_no_global_proxy(route)
         if env(enabled) != "1":
             die(f"Profile '{profile}' uses route={route}, but {option} is false.")
+        _warn_stub_resolver(route)
         _wrap_slice(slice_base, profile, f"{slice_base}.service", list(cmd))
     else:
         die(f"Route backend '{route}' is not implemented.")

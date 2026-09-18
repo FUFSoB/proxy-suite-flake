@@ -44,6 +44,33 @@ def ok(fn, *args):
     return out
 
 
+class StubResolverTest(unittest.TestCase):
+    def resolv(self, content):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
+        tmp.write(content)
+        tmp.close()
+        self.addCleanup(os.unlink, tmp.name)
+        return tmp.name
+
+    def test_only_stub_nameservers_are_reported(self):
+        path = self.resolv("nameserver 127.0.0.53\noptions edns0\n")
+        assert ctl._stub_resolver_nameservers(path) == ["127.0.0.53"]
+
+    def test_a_real_resolver_alongside_the_stub_is_not_a_leak(self):
+        path = self.resolv("nameserver 127.0.0.53\nnameserver 192.168.1.1\n")
+        assert ctl._stub_resolver_nameservers(path) == []
+
+    def test_missing_resolv_conf_is_quiet(self):
+        assert ctl._stub_resolver_nameservers("/nonexistent/resolv.conf") == []
+
+    def test_wrap_warns_once_on_the_stub(self):
+        with mock.patch.object(ctl, "_stub_resolver_nameservers", return_value=["127.0.0.53"]):
+            status, out, err = run(ctl._warn_stub_resolver, "tun")
+        assert status == 0, (status, out, err)
+        assert "route=tun" in err
+        assert "127.0.0.53" in err
+
+
 class EnvTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

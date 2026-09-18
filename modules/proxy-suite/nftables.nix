@@ -50,6 +50,22 @@ let
       ${ipFamily cidr} daddr ${cidr} udp dport != 53 return
     '') subnets;
 
+  # Skipping interception for these ranges excepts DNS, as localSubnets does: a resolver
+  # living in one of them (a router on 10.0.0.1, CGNAT, 100.100.100.100) would otherwise
+  # answer every name outside the proxy. Loopback is the exception to the exception -
+  # taking the stub resolver would bypass its cache, split-DNS and mDNS, and its own
+  # upstream queries pass through here anyway.
+  reservedLines = ''
+    ip daddr 127.0.0.0/8 return
+    ip6 daddr ::1/128 return
+    ip daddr $RESERVED_IP tcp dport != 53 return
+    ip daddr $RESERVED_IP udp dport != 53 return
+    ip daddr $RESERVED_IP meta l4proto != { tcp, udp } return
+    ip6 daddr $RESERVED_IP6 tcp dport != 53 return
+    ip6 daddr $RESERVED_IP6 udp dport != 53 return
+    ip6 daddr $RESERVED_IP6 meta l4proto != { tcp, udp } return
+  '';
+
   tproxyLocalSubnetLines = mkLocalSubnetLines globalTproxy.localSubnets;
   perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
@@ -68,10 +84,10 @@ let
           table inet singbox {
               chain prerouting {
                   type filter hook prerouting priority mangle; policy accept;
-                  ip daddr $RESERVED_IP return
-                  ip6 daddr $RESERVED_IP6 return
+        ${reservedLines}
                   # Connections to this host itself (inbounds, sshd on a public address)
-                  # are served here, not taken by the tproxy socket.
+                  # are served here, not taken by the tproxy socket. A resolver this host
+                  # runs for the LAN is one of them.
                   fib daddr type local return
                   # Packets re-entering via loopback after output marking should not
                   # be skipped just because the host has an RFC1918 source address.
@@ -82,8 +98,7 @@ let
               }
               chain output {
                   type route hook output priority mangle; policy accept;
-                  ip daddr $RESERVED_IP return
-                  ip6 daddr $RESERVED_IP6 return
+        ${reservedLines}
         ${tproxyLocalSubnetLines}
                   meta mark ${toString globalTproxy.proxyMark} return
                   # Replies to connections from outside, and proxy-suite's own daemons (the
@@ -100,8 +115,7 @@ let
           table inet proxy_suite_per_app_tproxy {
               chain prerouting {
                   type filter hook prerouting priority mangle; policy accept;
-                  ip daddr $RESERVED_IP return
-                  ip6 daddr $RESERVED_IP6 return
+        ${reservedLines}
                   iifname != "lo" ip saddr $RESERVED_IP return
                   iifname != "lo" ip6 saddr $RESERVED_IP6 return
                   # This host's own addresses are served here, not detoured through the proxy.
@@ -116,8 +130,7 @@ let
 
               chain output {
                   type route hook output priority mangle; policy accept;
-                  ip daddr $RESERVED_IP return
-                  ip6 daddr $RESERVED_IP6 return
+        ${reservedLines}
         ${perAppTproxyLocalSubnetLines}
                   meta mark ${toString globalTproxy.proxyMark} return
                   ct direction reply return
@@ -145,16 +158,28 @@ let
   perAppTunChainFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
           table inet proxy_suite_per_app_tun {
+              # The per-user cgroup mark rules are added here at runtime; `output` reaches it
+              # by two paths, so they are written once. Defined first: a jump only resolves
+              # to a chain nft has already read.
+              chain app_mark {
+              }
               chain output {
                   type route hook output priority mangle; policy accept;
-                  ip daddr $RESERVED_IP return
-    ${lib.concatMapStrings (cidr: ''
-      ${ipFamily cidr} daddr ${cidr} return
-    '') perAppTun.localSubnets}
                   # Replies to connections from outside leave the way they came, not through the TUN.
                   ct direction reply return
                   ct mark ${toString perAppTun.fwmark} meta mark set ${toString perAppTun.fwmark}
                   meta mark ${toString perAppTun.fwmark} return
+                  # A wrapped app's DNS goes through the TUN even when its resolver sits on a
+                  # local or reserved address, as the global TUN's dport 53 ip rules do:
+                  # otherwise names resolve outside the proxy, fake DNS never sees them, and
+                  # domain rules match nothing.
+                  meta l4proto { tcp, udp } th dport 53 goto app_mark
+                  ip daddr $RESERVED_IP return
+                  ip6 daddr $RESERVED_IP6 return
+    ${lib.concatMapStrings (cidr: ''
+      ${ipFamily cidr} daddr ${cidr} return
+    '') perAppTun.localSubnets}
+                  goto app_mark
               }
           }
   '';
