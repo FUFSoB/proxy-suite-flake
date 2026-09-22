@@ -14,7 +14,8 @@
 # interface). The newest handshake counts as seen, and .awgPeers keeps each user's latest.
 reduce ($q.stat // [])[] as $s (.;
   ($s.name | split(">>>")) as $n
-  | if ($n | length) == 4 and ($n[0] | IN("user", "inbound", "outbound")) and $n[2] == "traffic" then
+  | if ($n | length) == 4 and ($n[0] | IN("user", "inbound", "outbound")) and $n[2] == "traffic"
+      and ([$n[0], $n[1]] | IN(["inbound", "api-in"], ["outbound", "api"]) | not) then
       .days[$day][$n[0]][$n[1]][if $n[3] == "uplink" then "up" else "down" end] += (($s.value // 0) | tonumber)
     else . end)
 | reduce ($online.users // [])[] as $u (.;

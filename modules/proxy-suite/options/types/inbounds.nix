@@ -254,6 +254,7 @@ let
               "vless"
               "vmess"
               "trojan"
+              "hysteria2"
               "shadowsocks"
               "socks"
               "http"
@@ -264,7 +265,8 @@ let
           description = ''
             Protocol. Set exactly one of type, xrayJson, or jsonFile. "amneziawg" is an AmneziaWG
             server on UDP port, with its own interface (see amneziaWg); its traffic is handed to XRay
-            and leaves like any other listener's.
+            and leaves like any other listener's. "hysteria2" is QUIC on UDP port: it needs tls (a
+            certificate) and takes passwords, and no transport, reality or flow.
           '';
           example = "vless";
         };
@@ -344,6 +346,11 @@ let
         };
 
         jsonFile = nullStr "Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in." "/run/secrets/proxy-inbound-vless.json";
+
+        hysteria.masquerade = nullStr ''
+          Site that a hysteria2 listener serves, reverse-proxied, to anything that is not a client
+          (a browser, a prober). Null answers them with 404.
+        '' "https://www.example.com";
 
         amneziaWg = mkOption {
           type = mkAmneziaWgType name;

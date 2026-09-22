@@ -130,6 +130,7 @@ TOGGLES = {
     "proxy-suite-socks": ["proxy"],
     "proxy-suite-tun": ["proxy", "tun"],
     "proxy-suite-tproxy": ["proxy", "tproxy"],
+    "proxy-suite-killswitch": ["killswitch"],
     "proxy-suite-ssh-proxy": ["ssh"],
     "proxy-suite-warp-tunnel": ["warp"],
     # WARP as an AmneziaWG outbound: `proxy-ctl warp`, not `awg`, which only knows global profiles.

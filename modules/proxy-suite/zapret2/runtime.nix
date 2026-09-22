@@ -106,13 +106,11 @@ let
     end
   '';
 
-  # The state layer wraps circular, so it loads after the source's Lua. z2k-tcp16
-  # does nothing until the cutoff probe has written its maps.
+  # The state layer wraps circular, so it loads after the source's Lua.
   optPrefix = lib.concatStringsSep " " (
     map (file: "--lua-init=@${file}") (
       source.luaInit
       ++ [
-        "${zapret2Sources.z2k}/files/lua/z2k-tcp16.lua"
         failStamp
         "${zapret2Sources.z2k}/files/lua/z2k-state-persist.lua"
       ]
@@ -318,13 +316,26 @@ let
       "Z2K_STATE_DIR_OVERRIDE=${circularStateDir}"
       "Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE=${pidDir}"
     ]
-    # The cutoff probe's maps, read by z2k-tcp16.lua; pin.txt forces one name for the line.
-    ++ lib.optionals zapret2Cfg.cutoff.enable [
+    # The cutoff probe's maps, read by z2k's tcp16 name step; pin.txt forces one name for the line.
+    ++ lib.optionals (zapret2Cfg.cutoff.enable && isZ2k) [
       "Z2K_TCP16_ASN=${constants.zapret2CutoffDir}/asn.txt"
       "Z2K_TCP16_SNI=${constants.zapret2CutoffDir}/sni.txt"
       "Z2K_SNI_PIN=${constants.zapret2CutoffDir}/pin.txt"
       "Z2K_TCP16_NETS=${zapret2Sources.z2k}/files/lists/tcp16_nets.txt"
     ];
+  initScript = "${zapretBase}/init.d/sysv/zapret2";
+
+  # nfqws2 as the unit's main process, with the command line the init script would
+  # build. The init script backgrounds it with stdout on /dev/null in a oneshot
+  # unit: when it dies, the unit stays active and the queue's bypass flag lets
+  # every packet through untouched, with nothing in the log.
+  daemonScript = pkgs.writeShellScript "proxy-suite-zapret2" ''
+    . "$ZAPRET_BASE/init.d/sysv/functions"
+    opt="--qnum=$QNUM $NFQWS2_OPT"
+    filter_apply_hostlist_target opt
+    set -f
+    exec "$NFQWS2" $NFQWS2_OPT_BASE $opt
+  '';
 in
 {
   inherit
@@ -337,7 +348,7 @@ in
     mkCustomScript
     mkRuntime
     mkEnv
+    initScript
+    daemonScript
     ;
-
-  initScript = "${zapretBase}/init.d/sysv/zapret2";
 }

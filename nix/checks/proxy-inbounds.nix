@@ -171,6 +171,17 @@ let
         alpn = [ "h3" ];
       };
     };
+    # hysteria2 is QUIC: UDP only.
+    listeners.hy2-in = {
+      type = "hysteria2";
+      port = 8444;
+      users = [ { passwordFile = "/run/secrets/hy2"; } ];
+      tls = {
+        certificateFile = "/run/acme/fullchain.pem";
+        keyFile = "/run/acme/key.pem";
+      };
+      hysteria.masquerade = "https://www.example.com";
+    };
   };
   firewallSpec = mkInboundsSpec firewallFixture;
   wsListener = lib.head (builtins.filter (l: l.tag == "ws-in") firewallSpec.listeners);
@@ -314,7 +325,7 @@ let
 
   failing = [
     (mkRejectsListener (
-      realityListener // { port = 18536; }
+      realityListener // { port = 18533; }
     ) "collides with a port proxy-suite uses internally")
     # Every user is checked, not only the first.
     (mkRejectsListener (
@@ -439,6 +450,39 @@ let
       // {
         inbounds = {
           enable = true;
+          listeners.hy2-in = {
+            type = "hysteria2";
+            port = 8444;
+            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            transport.type = "ws";
+            tls = {
+              certificateFile = "/c";
+              keyFile = "/k";
+            };
+          };
+        };
+      }
+    ) "hysteria2 takes no reality or transport")
+
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.hy2-in = {
+            type = "hysteria2";
+            port = 8444;
+            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+          };
+        };
+      }
+    ) "needs both tls.certificateFile and tls.keyFile")
+
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
           routing.via = "no-such-outbound";
           listeners.vless-in = realityListener;
         };
@@ -516,8 +560,8 @@ let
   ];
 
   assertions = [
-    # Listeners are rendered at start time.
-    (ok (relayConfig.inbounds == [ ]))
+    # Listeners are rendered at start time; only the stats API's is fixed.
+    (ok (map (ib: ib.tag) relayConfig.inbounds == [ "api-in" ]))
 
     # AsIs when relayed through sing-box; IPOnDemand when XRay dials (see the template).
     (ok (relayConfig.routing.domainStrategy == "AsIs"))
@@ -547,7 +591,7 @@ let
     (ok ((ruleByTag exitConfig "inbound-final").outboundTag == "direct"))
 
     # Safety rules come first.
-    (ok (builtins.head (ruleTags relayConfig) == "inbound-block-private"))
+    (ok (lib.take 2 (ruleTags relayConfig) == [ "inbound-stats-api" "inbound-block-private" ]))
     (ok ((ruleByTag relayConfig "inbound-block-private").outboundTag == "block"))
     (ok ((ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]))
     (ok ((ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]))
@@ -555,7 +599,8 @@ let
     # serverAddress is exempt after blockPrivate, before the country blocks.
     (
       assert
-        lib.take 3 (ruleTags namedConfig) == [
+        lib.take 4 (ruleTags namedConfig) == [
+          "inbound-stats-api"
           "inbound-block-private"
           "inbound-server-address-direct"
           "inbound-block-ru-domain"
@@ -642,10 +687,15 @@ let
         lib.sort lib.lessThan firewallFixture.config.networking.firewall.allowedUDPPorts == [
           8388
           8443
+          8444
         ];
       true
     )
     (ok (wsListener.port == 10002 && wsListener.sharePort == 443))
+    (ok (
+      (lib.head (builtins.filter (l: l.tag == "hy2-in") firewallSpec.listeners)).hysteria.masquerade
+      == "https://www.example.com"
+    ))
     (ok (noFirewallFixture.config.networking.firewall.allowedTCPPorts == [ ]))
 
     # The unit exists, and only waits on the client stack when it relays.

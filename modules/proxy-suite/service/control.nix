@@ -21,6 +21,8 @@ let
     proxyInboundsCfg
     proxyInboundsEnabled
     amneziaWgProfileNamesFile
+    ruleSets
+    pkgs
     ;
   inherit (ctx.scripts)
     subscriptionTagsFile
@@ -54,6 +56,11 @@ in
       SELECTION = selectionMode;
       SUB_TAGS_FILE = toString subscriptionTagsFile;
       SUB_CACHE_DIR = subscriptionCacheDir;
+      RULE_SETS_FILE = toString (
+        pkgs.writeText "proxy-suite-control" (
+          builtins.toJSON (map (rs: { inherit (rs) name path; }) ruleSets)
+        )
+      );
       PER_APP_ROUTING_ENABLED = flag perAppRoutingCfg.enable;
       PER_APP_ROUTING_PROXYCHAINS_ENABLED = flag perAppRoutingCfg.proxychains.enable;
       PER_APP_ROUTING_TUN_ENABLED = flag perAppRoutingTun.enable;
@@ -69,7 +76,7 @@ in
       INBOUNDS_LINKS_FILE = proxyInboundsLinksFile;
       INBOUNDS_STATS_FILE = constants.inboundStatsFile;
       INBOUNDS_XRAY = proxyInboundsXray;
-      INBOUNDS_API = "127.0.0.1:${toString constants.inboundStatsApiPort}";
+      INBOUNDS_API = "unix://${constants.inboundStatsApiSocket}";
       INBOUNDS_SUBS_FILE = proxyInboundsSubscriptionsFile;
       INBOUNDS_SUB_BASE_URL =
         if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;

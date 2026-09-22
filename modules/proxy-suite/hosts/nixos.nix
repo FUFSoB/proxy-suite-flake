@@ -49,11 +49,22 @@ in
             allowedTCPPorts = forward internal.firewall.allowedTCPPorts;
             allowedUDPPorts = forward internal.firewall.allowedUDPPorts;
             extraReversePathFilterRules = forward internal.firewall.extraReversePathFilterRules;
+            extraInputRules = forward internal.firewall.extraInputRules;
             trustedInterfaces = forward internal.firewall.trustedInterfaces;
           };
 
           boot.extraModulePackages = forward internal.kernelModulePackages;
           boot.kernel.sysctl = lib.mapAttrs (_: lib.mkDefault) cfg.internal.sysctl;
+
+          assertions = [
+            {
+              assertion =
+                cfg.internal.firewall.extraInputRules == ""
+                || !config.networking.firewall.enable
+                || config.networking.nftables.enable;
+              message = "proxy-suite: proxy.tproxy.lanInterfaces needs the nftables firewall (networking.nftables.enable); the iptables one drops the gateway clients' diverted traffic";
+            }
+          ];
         }
       ]
     ))

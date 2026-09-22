@@ -8,9 +8,11 @@ let
     ip
     nft
     nftablesRulesFile
+    killSwitchRulesFile
     constants
     globalTun
     globalTproxy
+    tproxyLanSysctl
     perAppRoutingTun
     proxyCfg
     ;
@@ -62,8 +64,24 @@ let
     family = "inet";
     table = xrayTunReplyTable;
   };
+  deleteKillSwitchTable = builders.mkNftDeleteTable {
+    inherit nft;
+    family = "inet";
+    table = "proxy_suite_killswitch";
+  };
 in
 {
+  killSwitchUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set -euo pipefail
+    ${deleteKillSwitchTable}
+    ${nft} -f ${killSwitchRulesFile}
+  '';
+
+  killSwitchDownScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set +e
+    ${deleteKillSwitchTable}
+  '';
+
   xrayTunUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
 
@@ -139,6 +157,12 @@ in
     }}
 
     ${nft} -f ${nftablesRulesFile}
+    # Set on NixOS already; system-manager hosts only get them here.
+    ${lib.concatStrings (
+      lib.mapAttrsToList (name: value: ''
+        ${pkgs.procps}/bin/sysctl -q -w ${name}=${toString value}
+      '') tproxyLanSysctl
+    )}
     ${builders.mkTproxyRoutingUp {
       inherit ip;
       inherit ipv6;

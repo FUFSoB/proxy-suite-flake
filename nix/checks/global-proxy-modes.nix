@@ -8,6 +8,7 @@
   mkTunConfig,
   mkTProxyConfig,
   mkTProxyNftRules,
+  mkNftRules,
   dnsServerByTag,
   checkConstants,
 }:
@@ -23,6 +24,7 @@ let
       mkTunConfig
       mkTProxyConfig
       mkTProxyNftRules
+      mkNftRules
       ;
   };
 
@@ -34,6 +36,14 @@ let
     tproxyManualStopScript
     tproxyManualConfig
     tproxyManualNftRules
+    tproxyLanFixture
+    tproxyLanNftRules
+    tproxyLanStartScript
+    killSwitchFixture
+    killSwitchNftRules
+    awgKillSwitchFixture
+    awgKillSwitchNftRules
+    awgKillSwitchPrepare
     tproxyIPv4OnlyStartScript
     tproxyIPv4OnlyConfig
     tproxyIPv4OnlyNftRules
@@ -68,6 +78,85 @@ in
       assert pkgs.lib.hasInfix "rule del fwmark 1 table 100" tproxyManualStartScript;
       assert pkgs.lib.hasInfix "route replace local default dev lo table 100" tproxyManualStartScript;
       assert pkgs.lib.hasInfix "set +e" tproxyManualStopScript;
+      true
+    )
+    # Gateway clients: diverted past the LAN destinations, let through the host firewall by
+    # mark only, with forwarding for the rest.
+    (
+      let
+        cfg = tproxyLanFixture.config;
+        rules = tproxyLanNftRules;
+        at =
+          needle:
+          pkgs.lib.lists.findFirstIndex (pkgs.lib.hasInfix needle) null (pkgs.lib.splitString "\n" rules);
+      in
+      assert pkgs.lib.hasInfix
+        ''iifname { "br0" } meta l4proto { tcp, udp } tproxy ip to 127.0.0.1:1085 meta mark set 1''
+        rules;
+      assert pkgs.lib.hasInfix ''iifname { "br0" } meta l4proto { tcp, udp } tproxy ip6'' rules;
+      assert at "ip daddr 192.168.0.0/16 tcp dport != 53 return" < at ''iifname { "br0" }'';
+      assert at ''iifname { "br0" }'' < at "ip saddr $RESERVED_IP return";
+      assert pkgs.lib.hasInfix ''iifname "br0" meta mark 1 accept''
+        cfg.networking.firewall.extraInputRules;
+      assert pkgs.lib.hasInfix ''iifname "br0" meta mark 1 accept''
+        cfg.networking.firewall.extraReversePathFilterRules;
+      assert !builtins.elem "br0" cfg.networking.firewall.trustedInterfaces;
+      assert cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1;
+      assert pkgs.lib.hasInfix "sysctl -q -w net.ipv4.ip_forward=1" tproxyLanStartScript;
+      assert !(pkgs.lib.hasInfix "iifname {" tproxyManualNftRules);
+      assert !(pkgs.lib.hasInfix "sysctl" tproxyManualStartScript);
+      true
+    )
+    # The kill switch: pulled in by both modes, but not stopped with them; it lets the proxy's
+    # own traffic and its DNS hand-off past, and cuts gateway clients off from the internet.
+    (
+      let
+        units = killSwitchFixture.config.systemd.services;
+        ks = units."proxy-suite-killswitch";
+        rules = killSwitchNftRules;
+        before =
+          a: b:
+          pkgs.lib.lists.findFirstIndex (pkgs.lib.hasInfix a) null (pkgs.lib.splitString "\n" rules)
+          < pkgs.lib.lists.findFirstIndex (pkgs.lib.hasInfix b) null (pkgs.lib.splitString "\n" rules);
+      in
+      assert builtins.elem "proxy-suite-killswitch.service" units."proxy-suite-tun".wants;
+      assert builtins.elem "proxy-suite-killswitch.service" units."proxy-suite-tproxy".wants;
+      assert !(units."proxy-suite-tun" ? bindsTo) || units."proxy-suite-tun".bindsTo == [ ];
+      assert !(ks ? partOf) || ks.partOf == [ ];
+      assert builtins.elem "proxy-suite-tun.service" ks.after;
+      assert ks.wantedBy == [ ];
+      assert pkgs.lib.hasInfix ''meta skuid "proxy-suite-daemon" accept'' rules;
+      assert pkgs.lib.hasInfix "meta mark { 1, 2 } accept" rules;
+      assert pkgs.lib.hasInfix ''oifname "singtun0" accept'' rules;
+      assert before "ip daddr 172.19.0.1/30 accept" "th dport 53 reject";
+      assert before "th dport 53 reject" "ip daddr $RESERVED_IP accept";
+      assert pkgs.lib.hasInfix ''iifname { "br0" } reject'' rules;
+      assert !(tproxyManualFixture.config.systemd.services ? "proxy-suite-killswitch");
+      true
+    )
+    # A global AmneziaWG profile under the kill switch: a mark the rules know, its interface,
+    # and a group for awg-quick's own lookups. Stopping the profile no longer lifts it.
+    (
+      let
+        cfg = awgKillSwitchFixture.config;
+        units = cfg.systemd.services;
+        home = units.proxy-suite-awg-home;
+        rules = awgKillSwitchNftRules;
+      in
+      assert builtins.elem "proxy-suite-killswitch.service" home.wants;
+      assert builtins.elem "proxy-suite-awg-home.service" units.proxy-suite-killswitch.after;
+      assert !builtins.elem "proxy-suite-killswitch.service" (home.conflicts or [ ]);
+      assert (units.proxy-suite-killswitch.conflicts or [ ]) == [ ];
+      assert home.serviceConfig.Group == "proxy-suite-awg";
+      assert cfg.users.groups ? proxy-suite-awg;
+      assert pkgs.lib.hasInfix "--fwmark 51820" awgKillSwitchPrepare;
+      assert pkgs.lib.hasInfix ''meta skgid "proxy-suite-awg" accept'' rules;
+      assert pkgs.lib.hasInfix
+        ''oifname { "${cfg.services.proxy-suite.amneziaWg.profiles.home.interfaceName}" } accept''
+        rules;
+      assert pkgs.lib.hasInfix "meta mark { 1, 2, 51820 } accept" rules;
+      assert !(pkgs.lib.hasInfix "skgid" killSwitchNftRules);
+      assert !(units.proxy-suite-awg-home-watchdog.serviceConfig ? Group);
       true
     )
     # IPv6 goes through the same port on ::1; without it IPv6 is left alone.

@@ -332,6 +332,42 @@ class ServiceManagerTest(EnvTest):
         self.assertEqual(seen, [["systemctl", "--user", "start", "anchor.service"], ["systemctl", "start", "proxy-suite-socks"]])
         self.assertEqual(ctl.journal_hint("proxy-suite-autoproxy-learn", 20), "journalctl -u proxy-suite-autoproxy-learn -n 20")
 
+    def test_kill_switch_lifts_only_on_purpose(self):
+        seen = self.calls()
+        stops = lambda: [argv[2] for argv in seen if argv[1] == "stop"]
+        ctl.cmd_proxy("tun", "on")
+        self.assertEqual(stops(), [])
+        ctl.cmd_proxy("tun", "off")
+        self.assertEqual(stops(), ["proxy-suite-tun", ctl.KILL_SWITCH])
+        seen.clear()
+        ctl.cmd_proxy("off")
+        self.assertEqual(stops(), ["proxy-suite-tproxy", "proxy-suite-tun", ctl.KILL_SWITCH, "proxy-suite-socks"])
+        # A profile that already failed is not active, and its kill switch still lifts.
+        seen.clear()
+        self.patch("_active_awg_profiles", lambda: [])
+        ctl.cmd_awg("off")
+        self.assertEqual(stops(), [ctl.KILL_SWITCH])
+        seen.clear()
+        ctl.COMMANDS["killswitch"]("off")
+        self.assertEqual(stops(), [ctl.KILL_SWITCH])
+
+    def test_rulesets_list(self):
+        self.calls()
+        with tempfile.TemporaryDirectory() as tmp:
+            fetched = os.path.join(tmp, "antifilter.srs")
+            with open(fetched, "wb") as handle:
+                handle.write(b"SRS" + b"\0" * 29)
+            listing = os.path.join(tmp, "rulesets.json")
+            with open(listing, "w", encoding="utf-8") as handle:
+                json.dump([{"name": "antifilter", "path": fetched}, {"name": "gone", "path": os.path.join(tmp, "x.srs")}], handle)
+            os.environ["RULE_SETS_FILE"] = listing
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ctl.cmd_proxy("rulesets")
+        rows = out.getvalue().splitlines()
+        self.assertRegex(rows[1], r"^  antifilter +\d{4}-\d\d-\d\d \d\d:\d\d:\d\d +32$")
+        self.assertRegex(rows[2], r"^  gone +\(missing\) +-$")
+
     def test_user_units(self):
         # home-manager: every unit is the user's, and a --user of the caller's is not doubled.
         os.environ["SERVICE_MANAGER"] = "systemd-user"

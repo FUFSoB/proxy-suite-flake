@@ -16,6 +16,7 @@ Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [
 
 - Local SOCKS5/HTTP proxy on `127.0.0.1:1080`, backed by sing-box, XRay, or both
 - Global TProxy or TUN mode, on demand or at boot
+- A kill switch for the global tunnels (TUN, TProxy, AmneziaWG): nothing leaves outside them while they restart or after they fail
 - Per-app routing: `proxy-ctl apps run <profile> -- <cmd>` through proxychains, a per-app TUN/TProxy, or zapret
 - Outbounds from URLs, raw JSON or subscriptions; manual or latency-based selection; per-outbound routing
 - vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC, AnyTLS and NaïveProxy on sing-box, XHTTP/ECH on XRay
@@ -26,7 +27,7 @@ Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
 - Tor as an outbound, with `.onion` names routed to it automatically, bridges (obfs4, webtunnel, meek, snowflake), and an onion service in front of the server inbounds
-- Server inbounds (XRay protocols and multi-user AmneziaWG) with share links, QR codes, per-user subscriptions and traffic stats
+- Server inbounds (XRay protocols, hysteria2, and multi-user AmneziaWG) with share links, QR codes, per-user subscriptions and traffic stats
 - Proxy Suite GUI (a desktop app with a tray icon), the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
 ## Setup
@@ -158,6 +159,7 @@ Secrets and changes need root, or the userControl group.
   proxy subs add [tag] <url>             add a subscription at runtime; no tag: named after its host
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
+  proxy rulesets [list|update]           routing rule sets: when each was fetched; update fetches them now
   proxy config [--raw]                   client config to import elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
@@ -181,6 +183,9 @@ Secrets and changes need root, or the userControl group.
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
+
+  killswitch [status|on|off]             reject traffic outside the global tunnel; up with
+                                         TUN, TProxy or AWG, lifted only by off here or on them
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
   warp [status|on|off]                   WARP tunnel behind the warp outbound

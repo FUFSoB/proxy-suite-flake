@@ -68,6 +68,8 @@ in
       allowedTCPPorts = internalOption (types.listOf types.port) [ ];
       allowedUDPPorts = internalOption (types.listOf types.port) [ ];
       extraReversePathFilterRules = internalOption types.lines "";
+      # nftables firewall only: iptables has no such hook.
+      extraInputRules = internalOption types.lines "";
       trustedInterfaces = internalOption (types.listOf types.str) [ ];
     };
     # Kernel parameters the services also set when they start.

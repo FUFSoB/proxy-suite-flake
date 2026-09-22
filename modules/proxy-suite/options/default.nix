@@ -21,6 +21,7 @@
     ./gui.nix
     ./tui.nix
     ./user-control.nix
+    ./kill-switch.nix
     ./host.nix
   ];
 

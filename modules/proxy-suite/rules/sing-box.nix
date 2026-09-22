@@ -8,6 +8,7 @@
   customRuleCategory,
   onionOutbound,
   geodata,
+  ruleSets,
 }:
 
 let
@@ -28,6 +29,7 @@ let
       (mkIPRule rule.outbound rule.ips)
       (mkRulesetRule rule.outbound (map (s: "geosite-${s}") rule.geosites))
       (mkRulesetRule rule.outbound (map (s: "geoip-${s}") rule.geoips))
+      (mkRulesetRule rule.outbound (map remoteTag rule.ruleSets))
     ];
 
   allGeositeNames = lib.unique (
@@ -50,6 +52,24 @@ let
 
   geositeRuleSets = map (mkRuleSet "geosite" geodata.singBox.geosite) allGeositeNames;
   geoIPRuleSets = map (mkRuleSet "geoip" geodata.singBox.geoip) allGeoIPNames;
+
+  # Downloaded at runtime; sing-box reloads a local rule set when its file changes.
+  # DNS rules read each one's domain-only copy (see derived.ruleSets).
+  remoteTag = name: "ruleset-${name}";
+  remoteDnsTag = name: "ruleset-${name}-dns";
+  remoteRuleSets = lib.concatMap (rs: [
+    {
+      tag = remoteTag rs.name;
+      type = "local";
+      inherit (rs) format path;
+    }
+    {
+      tag = remoteDnsTag rs.name;
+      type = "local";
+      format = "source";
+      path = rs.dnsPath;
+    }
+  ]) ruleSets;
 
   commonRules = [
     {
@@ -82,6 +102,7 @@ let
     (mkIPRule "direct" direct.ips)
     (mkRulesetRule "direct" (map (s: "geosite-${s}") direct.geosites))
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
+    (mkRulesetRule "direct" (map remoteTag r.direct.ruleSets))
   ];
 
   tgWsProxyRelayDirectRules =
@@ -105,11 +126,13 @@ let
     (mkIPRule "block" r.block.ips)
     (mkRulesetRule "block" (map (s: "geosite-${s}") r.block.geosites))
     (mkRulesetRule "block" (map (s: "geoip-${s}") r.block.geoips))
+    (mkRulesetRule "block" (map remoteTag r.block.ruleSets))
   ];
 
   proxyGeoRules = lib.flatten [
     (mkRulesetRule "proxy" (map (s: "geosite-${s}") r.proxy.geosites))
     (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
+    (mkRulesetRule "proxy" (map remoteTag r.proxy.ruleSets))
   ];
 
   singBoxRoutingRules =
@@ -125,13 +148,16 @@ let
   # the ISP's resolver never sees it and cannot spoof the answer; a direct one is looked up
   # locally. In the routing's order; block entries resolve however the final says.
   mkDnsRules =
-    server: domains: geosites:
+    server: domains: geosites: names:
+    let
+      tags = map (s: "geosite-${s}") geosites ++ map remoteDnsTag names;
+    in
     lib.optional (domains != [ ]) {
       domain_suffix = domains;
       inherit server;
     }
-    ++ lib.optional (geosites != [ ]) {
-      rule_set = map (s: "geosite-${s}") geosites;
+    ++ lib.optional (tags != [ ]) {
+      rule_set = tags;
       inherit server;
     };
   dnsServerFor = category: if category == "direct" then "local" else "remote";
@@ -139,12 +165,14 @@ let
     lib.concatMap (
       rule:
       lib.optionals (customRuleCategory rule.outbound != "block") (
-        mkDnsRules (dnsServerFor (customRuleCategory rule.outbound)) rule.domains rule.geosites
+        mkDnsRules (dnsServerFor (customRuleCategory rule.outbound)) rule.domains rule.geosites (
+          rule.ruleSets or [ ]
+        )
       )
     ) customRules
-    ++ mkDnsRules "remote" r.proxy.domains [ ]
-    ++ mkDnsRules "local" direct.domains direct.geosites
-    ++ mkDnsRules "remote" [ ] r.proxy.geosites;
+    ++ mkDnsRules "remote" r.proxy.domains [ ] [ ]
+    ++ mkDnsRules "local" direct.domains direct.geosites r.direct.ruleSets
+    ++ mkDnsRules "remote" [ ] r.proxy.geosites r.proxy.ruleSets;
 
   singBoxRouteModeRules = {
     common = commonRules;
@@ -160,6 +188,7 @@ in
   inherit
     geositeRuleSets
     geoIPRuleSets
+    remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
     singBoxDnsRules

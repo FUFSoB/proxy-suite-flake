@@ -125,7 +125,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("safety rules are present and ordered first"):
         cfg = "/run/proxy-suite-inbounds/config.json"
-        server.succeed(f"test $(jq -r '.routing.rules[0].ruleTag' {cfg}) = inbound-block-private")
+        server.succeed(f"test $(jq -r '.routing.rules[1].ruleTag' {cfg}) = inbound-block-private")
         server.succeed(f"jq -e '.routing.rules[] | select(.ruleTag == \"inbound-block-ru-domain\")' {cfg}")
         server.succeed(f"test $(jq -r '.routing.rules[-1].outboundTag' {cfg}) = direct")
 

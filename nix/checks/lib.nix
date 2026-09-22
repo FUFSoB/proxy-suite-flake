@@ -245,6 +245,7 @@ in
     mkInboundsConfig
     mkInboundsSpec
     mkTProxyNftRules
+    mkNftRules
     mkPerAppZapretNftRules
     mkPerAppUserRules
     ok

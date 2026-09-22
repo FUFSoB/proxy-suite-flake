@@ -41,5 +41,16 @@ in
         "fd00::/8"
       ];
     };
+
+    lanInterfaces = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = ''
+        Interfaces whose forwarded TCP and UDP is taken through the proxy too: devices on them
+        that use this host as their gateway. Turns on IP forwarding for the rest (ping, the LAN
+        itself), which is routed as it is. Needs the nftables firewall on NixOS.
+      '';
+      example = [ "br0" ];
+    };
   };
 }

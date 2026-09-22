@@ -214,7 +214,7 @@ class RenderInboundTests(unittest.TestCase):
 
     def test_unsupported_type_fails(self):
         with self.assertRaisesRegex(ValueError, "unsupported type"):
-            render_xray_inbound(listener(type="hysteria2"))
+            render_xray_inbound(listener(type="tuic"))
 
 
 class ShareLinkTests(unittest.TestCase):
@@ -373,6 +373,34 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(ob["transport"]["type"], "ws")
         self.assertEqual(ob["transport"]["path"], "/download")
         self.assertEqual(ob["tls"]["server_name"], "cdn.example.com")
+
+    def test_hysteria2_round_trip(self):
+        spec = listener(
+            type="hysteria2",
+            port=8443,
+            users=[{"name": "phone", "password": "p@ss/word", "passwordFile": None}],
+            tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": "hy.example.com"},
+            hysteria={"masquerade": "https://www.example.com"},
+        )
+        ib = render_xray_inbound(spec)
+        self.assertEqual(ib["protocol"], "hysteria")
+        self.assertEqual(ib["settings"], {"version": 2, "clients": [{"auth": "p@ss/word", "email": "phone"}]})
+        stream = ib["streamSettings"]
+        self.assertEqual(stream["network"], "hysteria")
+        self.assertEqual(stream["security"], "tls")
+        self.assertEqual(stream["tlsSettings"]["alpn"], ["h3"])
+        self.assertEqual(stream["hysteriaSettings"]["masquerade"]["url"], "https://www.example.com")
+        link = build_share_link(spec, "vpn.example.com")
+        self.assertTrue(link.startswith("hysteria2://p%40ss%2Fword@vpn.example.com:8443?"), link)
+        self.assertEqual(link_params(link)["alpn"], "h3")
+        ob = build_outbound(link, "round-trip", backend="sing-box")
+        self.assertEqual(ob["type"], "hysteria2")
+        self.assertEqual(ob["password"], "p@ss/word")
+        self.assertEqual(ob["server_port"], 8443)
+        self.assertEqual(ob["tls"]["server_name"], "hy.example.com")
+        # Without masquerade XRay answers non-clients with 404; nothing to render.
+        plain = render_xray_inbound(dict(spec, hysteria={"masquerade": None}))
+        self.assertEqual(plain["streamSettings"]["hysteriaSettings"], {"version": 2})
 
     def test_trojan_round_trip(self):
         link = build_share_link(

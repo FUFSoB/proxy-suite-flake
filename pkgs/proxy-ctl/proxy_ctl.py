@@ -25,6 +25,7 @@ ALL_SERVICES = [
     "proxy-suite-socks",
     "proxy-suite-tproxy",
     "proxy-suite-tun",
+    "proxy-suite-killswitch",
     "proxy-suite-inbounds",
     "proxy-suite-ssh-proxy",
     "proxy-suite-warp",
@@ -80,6 +81,7 @@ Secrets and changes need root, or the userControl group.
   proxy subs add [tag] <url>             add a subscription at runtime; no tag: named after its host
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
+  proxy rulesets [list|update]           routing rule sets: when each was fetched; update fetches them now
   proxy config [--raw]                   client config to import elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
@@ -103,6 +105,9 @@ Secrets and changes need root, or the userControl group.
 
   awg [list]                             AmneziaWG profiles and their state
   awg on <profile> | off [profile] | restart [profile]
+
+  killswitch [status|on|off]             reject traffic outside the global tunnel; up with
+                                         TUN, TProxy or AWG, lifted only by off here or on them
 
   ssh [status|on|off]                    SSH SOCKS5 tunnel
   warp [status|on|off]                   WARP tunnel behind the warp outbound
@@ -464,6 +469,7 @@ COMPLETE = {
             "proxy": "local proxy backend",
             "zapret": "DPI bypass",
             "awg": "AmneziaWG profiles",
+            "killswitch": "reject traffic outside the global tunnel",
             "ssh": "SSH SOCKS5 tunnel",
             "warp": "WARP tunnel behind the warp outbound",
             "tor": "Tor, behind the tor outbound and the onion service",
@@ -484,6 +490,7 @@ COMPLETE = {
             "unpin": "let the configured selection pick again",
             "mode": "show or override the routing mode",
             "subs": "subscription caches",
+            "rulesets": "routing rule sets",
             "tun": "global TUN mode",
             "tproxy": "global TProxy mode",
             "auto": "what autoProxy routed",
@@ -533,6 +540,7 @@ COMPLETE = {
             "link": "its URL",
         }
     },
+    "proxy rulesets": {"words": {"list": "when each rule set was fetched", "update": "fetch the rule sets now"}},
     "proxy subs link": {"args": lambda: _names(_sub_tags() + _runtime_tags("subscription")), "flags": {"--qr": "print a QR code"}},
     "proxy subs rm": {"args": lambda: _names(_runtime_tags("subscription"))},
     "proxy tun": {"words": TOGGLE},
@@ -588,6 +596,7 @@ COMPLETE = {
     "awg restart": {"args": lambda: _names(_awg_profiles())},
     "ssh": {"words": TOGGLE},
     "warp": {"words": TOGGLE},
+    "killswitch": {"words": TOGGLE},
     "tor": {"words": {**TOGGLE, "newnym": "new circuits for new connections"}},
     "tg": {"words": TOGGLE},
     "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
@@ -692,9 +701,11 @@ SNAPSHOT_UNITS = {
     "proxy": "proxy-suite-socks",
     "tproxy": "proxy-suite-tproxy",
     "tun": "proxy-suite-tun",
+    "killswitch": "proxy-suite-killswitch",
     "zapret": "proxy-suite-zapret",
 }
 SUBSCRIPTION_UPDATE = "proxy-suite-subscription-update"
+KILL_SWITCH = "proxy-suite-killswitch"
 BUSY_STATES = ("activating", "deactivating", "reloading")
 
 
@@ -831,6 +842,8 @@ def _status_autoproxy():
     if env("AUTOPROXY_ENABLED") != "1":
         return ""
     state = os.path.join(_autoproxy_dir(), "state.json")
+    if _autoproxy_unreadable(_autoproxy_dir()):
+        return "state not readable"
     if not readable(state):
         return ""
     try:
@@ -906,7 +919,7 @@ def cmd_proxy(verb="status", *args):
     elif verb == "off":
         if not svc_exists("proxy-suite-socks"):
             die("proxy is not enabled in this configuration.")
-        for svc in ("proxy-suite-tproxy", "proxy-suite-tun"):
+        for svc in ("proxy-suite-tproxy", "proxy-suite-tun", KILL_SWITCH):
             if svc_exists(svc):
                 systemctl("stop", svc)
         must("stop", "proxy-suite-socks")
@@ -922,16 +935,19 @@ def cmd_proxy(verb="status", *args):
         cmd_route_mode(*args)
     elif verb == "subs":
         cmd_subscription(*args)
-    elif verb == "tun":
-        _toggle("proxy-suite-tun", "proxy tun", *args)
-    elif verb == "tproxy":
-        _toggle("proxy-suite-tproxy", "proxy tproxy", *args)
+    elif verb == "rulesets":
+        cmd_rulesets(*args)
+    elif verb in ("tun", "tproxy"):
+        _toggle(f"proxy-suite-{verb}", f"proxy {verb}", *args)
+        # A mode stopped on purpose lifts the kill switch; one that fails leaves it up.
+        if args[:1] == ("off",) and svc_exists(KILL_SWITCH):
+            systemctl("stop", KILL_SWITCH)
     elif verb == "auto":
         cmd_proxy_auto(*args)
     elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|tun|tproxy|auto|config]")
+        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -1730,6 +1746,39 @@ def cmd_subscription(verb="list", *args):
         print("Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update")
     else:
         usage("proxy subs [list|update|add [tag] <url>|rm <tag>|link <tag>]")
+
+
+RULE_SETS_UNIT = "proxy-suite-rulesets"
+
+
+def cmd_rulesets(verb="list", *_):
+    rule_sets = read_json_or(env("RULE_SETS_FILE"), [])
+    if verb == "update":
+        if not rule_sets or not svc_exists(RULE_SETS_UNIT):
+            die("No proxy.routing.ruleSets in this configuration.")
+        # A oneshot: this returns once every rule set was tried.
+        status, _ = systemctl("start", RULE_SETS_UNIT)
+        print("Rule sets updated." if status == 0 else f"Some rule sets were not updated: {journal_hint(RULE_SETS_UNIT, 20)}")
+        sys.exit(status)
+    elif verb == "list":
+        if not rule_sets:
+            print("No rule sets configured.")
+            return
+        print(f"  {'NAME':<24} {'LAST UPDATED':<22} SIZE")
+        for rs in rule_sets:
+            try:
+                stat = os.stat(rs["path"])
+            except OSError:
+                print(f"  {rs['name']:<24} {'(missing)':<22} -")
+                continue
+            updated = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"  {rs['name']:<24} {updated:<22} {stat.st_size}")
+        next_run = _timer_next_run(f"{RULE_SETS_UNIT}.timer")
+        if next_run:
+            print()
+            print(f"Next update: {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
+    else:
+        usage("proxy rulesets [list|update]")
 
 
 # --- proxy auto: reachability probe -------------------------------------------
@@ -2648,7 +2697,9 @@ def cmd_where(domain="", *_):
 
         config_path = _runtime_file("config.json")
         geosite_dir = ""
-        if readable(config_path):
+        if os.path.exists(config_path) and not readable(config_path):
+            _where_row("sing-box", f"routing is not readable - {ask_group()}")
+        elif readable(config_path):
             try:
                 config = read_json(config_path)
             except (OSError, ValueError):
@@ -2683,7 +2734,7 @@ def cmd_where(domain="", *_):
                     _where_row("inbounds", f"{shown} - {why}")
 
     if env("AUTOPROXY_ENABLED") == "1":
-        if not readable(os.path.join(_autoproxy_dir(), "state.json")):
+        if _autoproxy_unreadable(_autoproxy_dir()):
             _where_row("autoProxy", f"state is not readable - {ask_group()}")
         else:
             domains = _autoproxy_state(_autoproxy_dir()).get("domains")
@@ -2750,12 +2801,13 @@ def cmd_awg(verb="list", *args):
         must("start", _awg_service(args[0]))
     elif verb in ("off", "restart"):
         targets = list(args[:1]) or _active_awg_profiles()
-        if not targets:
-            if verb == "off":
-                return
+        if not targets and verb == "restart":
             die("No AmneziaWG profile is active.")
         for profile in targets:
             must("stop" if verb == "off" else "restart", _awg_service(profile))
+        # Also after a profile that already failed: off is how its kill switch is lifted.
+        if verb == "off" and svc_exists(KILL_SWITCH):
+            systemctl("stop", KILL_SWITCH)
     else:
         usage("awg [list] | on <profile> | off [profile] | restart [profile]")
 
@@ -3028,9 +3080,20 @@ AWG_ONLINE_SECONDS = 180
 
 
 def _inbound_presence():
-    """user -> (state, addresses): "online", "seen <time>" or "never seen"; dies when the stats API is silent."""
+    """(user -> (state, addresses), links readable): "online", "seen <time>" or "never seen".
+
+    Who is online and from where is as private as the traffic stats, so it takes the
+    same read access; dies without it, or when the stats API is silent.
+    """
+    stats_path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
+    if os.path.exists(stats_path) and not readable(stats_path):
+        denied(stats_path)
+    api = env("INBOUNDS_API", f"unix://{runtime_dir()}/proxy-suite-inbounds/api/stats.sock")
+    sock = api.removeprefix("unix://")
+    if os.path.exists(sock) and not os.access(sock, os.W_OK):
+        denied(sock, "connect to")
     status, out = _run(
-        [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={env('INBOUNDS_API', '127.0.0.1:18536')}", "-all"],
+        [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={api}", "-all"],
         capture=True,
         quiet=True,
     )
@@ -3048,8 +3111,7 @@ def _inbound_presence():
     # the XRay API already told who else is online now.
     if any(x.get("type") == "amneziawg" for x in links):
         systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
-    path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
-    stats = read_json(path) if readable(path) else {}
+    stats = read_json(stats_path) if readable(stats_path) else {}
     seen = stats.get("seen") or {}
     now = time.time()
     for user, peer in (stats.get("awgPeers") or {}).items():
@@ -3071,13 +3133,13 @@ def _inbound_presence():
             presence[user] = (f"seen {when(seen[user])}", "")
         else:
             presence[user] = ("never seen", "")
-    return presence
+    return presence, not path or readable(path)
 
 
 def _inbound_online():
     """Users connected right now with their addresses, then when the others were last seen."""
     row = "  {:<20} {:<24} {}"
-    presence = _inbound_presence()
+    presence, links_read = _inbound_presence()
     print(row.format("USER", "STATE", "ADDRESSES"))
     for user, (state, addresses) in presence.items():
         print(row.format(user, state, addresses))
@@ -3088,6 +3150,8 @@ def _inbound_online():
         "or everyone reads as never seen.",
         file=sys.stderr,
     )
+    if not links_read:
+        print(f"Users never seen are left out: the share links name them - {ask_group()}.", file=sys.stderr)
 
 
 def _inbound_subscriptions(*args):
@@ -3191,6 +3255,7 @@ COMMANDS = {
     "proxy": cmd_proxy,
     "zapret": cmd_zapret,
     "awg": cmd_awg,
+    "killswitch": lambda *args: _toggle(KILL_SWITCH, "killswitch", *args),
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
     "warp": lambda *args: _toggle(_warp_unit(), "warp", *args),
     "tor": cmd_tor,

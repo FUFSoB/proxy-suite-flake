@@ -58,6 +58,7 @@ let
           transport
           tls
           reality
+          hysteria
           xrayJson
           jsonFile
           ;

@@ -23,6 +23,43 @@ let
   perAppRoutingCfg = cfg.perAppRouting;
   globalTun = proxyCfg.tun;
   globalTproxy = proxyCfg.tproxy;
+  # Forwarding for what gateway clients send that TProxy does not take (ping, the LAN itself).
+  tproxyLanSysctl =
+    lib.optionalAttrs (proxyEnabled && globalTproxy.enable && globalTproxy.lanInterfaces != [ ])
+      (
+        {
+          "net.ipv4.ip_forward" = 1;
+        }
+        // lib.optionalAttrs proxyCfg.ipv6 {
+          "net.ipv6.conf.all.forwarding" = 1;
+        }
+      );
+  # proxy.routing.ruleSets, with the format settled and the file sing-box reads.
+  ruleSets = lib.mapAttrsToList (
+    name: rs:
+    let
+      format =
+        if rs.format != null then
+          rs.format
+        else if lib.hasSuffix ".srs" (lib.head (lib.splitString "?" rs.url)) then
+          "binary"
+        else
+          "source";
+    in
+    rs
+    // {
+      inherit name format;
+      path = "${constants.ruleSetsDir}/${name}.${if format == "binary" then "srs" else "json"}";
+      # Its domain rules only, for DNS rules: sing-box 1.14 refuses an IP-only rule set there,
+      # and a legacy address filter would send every other name to that rule's server first.
+      dnsPath = "${constants.ruleSetsDir}/${name}.dns.json";
+    }
+  ) proxyCfg.routing.ruleSets;
+  ruleSetsEnabled = proxyEnabled && ruleSets != [ ];
+  # Some global tunnel for it to guard.
+  killSwitchEnabled =
+    cfg.killSwitch.enable
+    && (proxyEnabled && (globalTun.enable || globalTproxy.enable) || awgGlobalProfiles != { });
   perAppRoutingTun = cfg.perAppRouting.tun;
   perAppRoutingTproxy = cfg.perAppRouting.tproxy;
   zapretCfg = cfg.zapret;
@@ -188,6 +225,7 @@ let
 
   proxyInboundUdpTypes = [
     "amneziawg"
+    "hysteria2"
     "shadowsocks"
     "socks"
   ];
@@ -203,13 +241,16 @@ let
       ]
     )
   ) proxyInbounds;
-  # h3-only xhttp listeners are UDP-only, leaving the TCP port to a web server.
-  proxyInboundIsH3Only =
-    l: l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
+  # QUIC listeners are UDP-only: hysteria2, and h3-only xhttp, which leaves the TCP port to a
+  # web server.
+  proxyInboundIsUdpOnly =
+    l:
+    l.type == "hysteria2"
+    || l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
   # What an onion service can carry: TCP to a listener with a known protocol.
   proxyInboundOnionCapable =
     ib:
-    ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsH3Only ib.listener;
+    ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsUdpOnly ib.listener;
   torOnionEnabled = torCfg.enable && torCfg.onionService.enable && proxyInboundsEnabled;
   torOnionInbounds =
     if !torOnionEnabled then
@@ -221,7 +262,7 @@ let
   proxyInboundFirewallPorts = lib.unique (
     map (ib: ib.listener.port) (
       builtins.filter (
-        ib: !proxyInboundIsH3Only ib.listener && ib.listener.type != "amneziawg"
+        ib: !proxyInboundIsUdpOnly ib.listener && ib.listener.type != "amneziawg"
       ) proxyInboundsPublic
     )
   );
@@ -232,7 +273,7 @@ let
         ib:
         ib.listener.type == null
         || builtins.elem ib.listener.type proxyInboundUdpTypes
-        || proxyInboundIsH3Only ib.listener
+        || proxyInboundIsUdpOnly ib.listener
       ) proxyInboundsPublic
     )
   );
@@ -357,14 +398,21 @@ let
     # Written by every backend start script; proxy-ctl reads the socks copy.
     outboundInventoryFile = "${runtimeDir}/proxy-suite-socks/outbounds.json";
 
-    inboundStatsApiPort = 18536;
+    inboundStatsApiSocket = "${runtimeDir}/proxy-suite-inbounds/api/stats.sock";
     # Mark and table sending the AmneziaWG listeners' diverted packets to the local stack,
     # clear of proxy.tproxy's and perAppRouting's (asserted).
     awgInboundFwmark = 20;
     awgInboundRouteTable = 103;
     awgInboundRulePriority = 8990;
+    # A global AmneziaWG profile's own packets carry this mark (awg-quick's default table,
+    # pinned so the kill switch knows it), and its unit runs with this group, whose lookups
+    # (an Endpoint's name) get past the kill switch.
+    awgGlobalFwmark = 51820;
+    awgGlobalGroup = "proxy-suite-awg";
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
+    # Downloaded proxy.routing.ruleSets, one file each, written by the service user.
+    ruleSetsDir = "${stateDir}/rulesets";
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
     inboundStatsFile = "${stateDir}/inbound-stats.json";
@@ -436,6 +484,10 @@ in
     perAppRoutingCfg
     globalTun
     globalTproxy
+    tproxyLanSysctl
+    killSwitchEnabled
+    ruleSets
+    ruleSetsEnabled
     perAppRoutingTun
     perAppRoutingTproxy
     zapretCfg

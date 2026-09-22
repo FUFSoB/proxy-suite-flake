@@ -458,6 +458,42 @@ class AmneziaWgConfigTests(unittest.TestCase):
         # The peer is untouched.
         self.assertIn("Endpoint = vpn.example.com:51820", rendered)
 
+    def test_resolve_endpoints(self):
+        # Under the kill switch awg-quick gets addresses; a name that does not resolve is left.
+        config = "[Peer]\nEndpoint = vpn.example:51820\n[Peer]\nEndpoint = 192.0.2.1:1\nendpoint = [2001:db8::1]:2\n[Peer]\nEndpoint = gone.invalid:3\n"
+
+        def lookup(host, *_args, **_kwargs):
+            if host == "vpn.example":
+                return [(amneziawg_config.socket.AF_INET6, None, None, "", ("2001:db8::7", 51820, 0, 0))]
+            raise amneziawg_config.socket.gaierror("no such name")
+
+        with patch.object(amneziawg_config.socket, "getaddrinfo", side_effect=lookup):
+            rendered = amneziawg_config.resolve_endpoints(config)
+        self.assertEqual(
+            rendered,
+            "[Peer]\nEndpoint = [2001:db8::7]:51820\n[Peer]\nEndpoint = 192.0.2.1:1\nendpoint = [2001:db8::1]:2\n[Peer]\nEndpoint = gone.invalid:3\n",
+        )
+
+    def test_global_render_pins_the_fwmark(self):
+        # The kill switch knows the tunnel's own packets by it; one set in the file is replaced.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "home.conf"
+            output = Path(directory) / "out" / "home.conf"
+            source.write_text(
+                BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1").replace(
+                    "Address = 10.8.0.2/32", "Address = 10.8.0.2/32\nFwMark = 7"
+                )
+            )
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("amneziawg_config.py")),
+                 "--config", str(source), "--output", str(output), "--fwmark", "51820"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rendered = output.read_text()
+            self.assertEqual(amneziawg_config.section_values(rendered, "interface", "fwmark"), ["51820"])
+            self.assertIn("DNS = 1.1.1.1", rendered)
+
     def test_wireproxy_render_joins_lists_and_adds_socks_listener(self):
         config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1").replace(
             "Address = 10.8.0.2/32",

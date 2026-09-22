@@ -95,7 +95,7 @@ done
 while true; do
   ask SSH_PORT "SSH port" "22"
   if [[ $SSH_PORT =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) &&
-    [[ ! " 80 443 2053 8443 18533 18534 18535 18536 " == *" $SSH_PORT "* ]]; then
+    [[ ! " 80 443 2053 8443 18533 18534 18535 " == *" $SSH_PORT "* ]]; then
     break
   fi
   reject "A free port from 1 to 65535 (80, 443, 2053 and 8443 are taken)." SSH_PORT

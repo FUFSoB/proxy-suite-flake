@@ -10,6 +10,7 @@ Update the module option docs there instead of editing these files by hand.
 - [geodata](./geodata.md)
 - [gui](./gui.md)
 - [inbounds](./inbounds.md)
+- [killSwitch](./killSwitch.md)
 - [perAppRouting](./perAppRouting.md)
 - [proxy](./proxy.md)
 - [sshProxy](./sshProxy.md)
@@ -71,6 +72,9 @@ services.proxy-suite = {
       enable = false;
       group = "nginx";
     };
+  };
+  killSwitch = {
+    enable = false;
   };
   perAppRouting = {
     createDefaultProfiles = false;
@@ -159,6 +163,7 @@ services.proxy-suite = {
         geoips = [ ];
         geosites = [ ];
         ips = [ ];
+        ruleSets = [ ];
       };
       default = "proxy";
       direct = {
@@ -166,6 +171,7 @@ services.proxy-suite = {
         geoips = [ ];
         geosites = [ ];
         ips = [ ];
+        ruleSets = [ ];
       };
       directRu = true;
       proxy = {
@@ -173,7 +179,10 @@ services.proxy-suite = {
         geoips = [ ];
         geosites = [ ];
         ips = [ ];
+        ruleSets = [ ];
       };
+      ruleSetUpdateInterval = "1d";
+      ruleSets = { };
       rules = [ ];
     };
     selection = "first";
@@ -187,6 +196,7 @@ services.proxy-suite = {
     tproxy = {
       enable = false;
       fwmark = 1;
+      lanInterfaces = [ ];
       localSubnets = [
         "192.168.0.0/16"
       ];

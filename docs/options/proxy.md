@@ -51,6 +51,7 @@ Part of the [proxy-suite options reference](./index.md).
         - [geoips](#services-proxy-suite-proxy-outbounds-routing-geoips)
         - [geosites](#services-proxy-suite-proxy-outbounds-routing-geosites)
         - [ips](#services-proxy-suite-proxy-outbounds-routing-ips)
+        - [ruleSets](#services-proxy-suite-proxy-outbounds-routing-rulesets)
       - [singBoxJson](#services-proxy-suite-proxy-outbounds-singboxjson)
       - [tag](#services-proxy-suite-proxy-outbounds-tag)
       - [url](#services-proxy-suite-proxy-outbounds-url)
@@ -62,18 +63,27 @@ Part of the [proxy-suite options reference](./index.md).
       - [geoips](#services-proxy-suite-proxy-routing-block-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-block-geosites)
       - [ips](#services-proxy-suite-proxy-routing-block-ips)
+      - [ruleSets](#services-proxy-suite-proxy-routing-block-rulesets)
     - [default](#services-proxy-suite-proxy-routing-default)
     - direct
       - [domains](#services-proxy-suite-proxy-routing-direct-domains)
       - [geoips](#services-proxy-suite-proxy-routing-direct-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-direct-geosites)
       - [ips](#services-proxy-suite-proxy-routing-direct-ips)
+      - [ruleSets](#services-proxy-suite-proxy-routing-direct-rulesets)
     - [directRu](#services-proxy-suite-proxy-routing-directru)
     - proxy
       - [domains](#services-proxy-suite-proxy-routing-proxy-domains)
       - [geoips](#services-proxy-suite-proxy-routing-proxy-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-proxy-geosites)
       - [ips](#services-proxy-suite-proxy-routing-proxy-ips)
+      - [ruleSets](#services-proxy-suite-proxy-routing-proxy-rulesets)
+    - [ruleSetUpdateInterval](#services-proxy-suite-proxy-routing-rulesetupdateinterval)
+    - [ruleSets](#services-proxy-suite-proxy-routing-rulesets)
+      - `<name>`
+        - [detour](#services-proxy-suite-proxy-routing-rulesets-name-detour)
+        - [format](#services-proxy-suite-proxy-routing-rulesets-name-format)
+        - [url](#services-proxy-suite-proxy-routing-rulesets-name-url)
     - [rules](#services-proxy-suite-proxy-routing-rules)
       - item
         - [domains](#services-proxy-suite-proxy-routing-rules-domains)
@@ -81,6 +91,7 @@ Part of the [proxy-suite options reference](./index.md).
         - [geosites](#services-proxy-suite-proxy-routing-rules-geosites)
         - [ips](#services-proxy-suite-proxy-routing-rules-ips)
         - [outbound](#services-proxy-suite-proxy-routing-rules-outbound)
+        - [ruleSets](#services-proxy-suite-proxy-routing-rules-rulesets)
   - [selection](#services-proxy-suite-proxy-selection)
   - [selectionExclude](#services-proxy-suite-proxy-selectionexclude)
   - singBox
@@ -96,6 +107,7 @@ Part of the [proxy-suite options reference](./index.md).
   - tproxy
     - [enable](#services-proxy-suite-proxy-tproxy-enable)
     - [fwmark](#services-proxy-suite-proxy-tproxy-fwmark)
+    - [lanInterfaces](#services-proxy-suite-proxy-tproxy-laninterfaces)
     - [localSubnets](#services-proxy-suite-proxy-tproxy-localsubnets)
     - [port](#services-proxy-suite-proxy-tproxy-port)
     - [proxyMark](#services-proxy-suite-proxy-tproxy-proxymark)
@@ -859,6 +871,28 @@ list of string
 ]
 ```
 
+<a id="services-proxy-suite-proxy-outbounds-routing-rulesets"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.ruleSets
+
+Names from proxy\.routing\.ruleSets to match (sing-box and hybrid backends)\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "antifilter"
+]
+```
+
 <a id="services-proxy-suite-proxy-outbounds-singboxjson"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.singBoxJson
 
@@ -1050,6 +1084,28 @@ list of string
 ]
 ```
 
+<a id="services-proxy-suite-proxy-routing-block-rulesets"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.ruleSets
+
+Names from ruleSets blocked\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "ads"
+]
+```
+
 <a id="services-proxy-suite-proxy-routing-default"></a>
 ## services\.proxy-suite\.proxy\.routing\.default
 
@@ -1158,6 +1214,28 @@ list of string
 ]
 ```
 
+<a id="services-proxy-suite-proxy-routing-direct-rulesets"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.ruleSets
+
+Names from ruleSets sent direct\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "ru-services"
+]
+```
+
 <a id="services-proxy-suite-proxy-routing-directru"></a>
 ## services\.proxy-suite\.proxy\.routing\.directRu
 
@@ -1258,6 +1336,117 @@ list of string
 [
   "1.1.1.0/24"
 ]
+```
+
+<a id="services-proxy-suite-proxy-routing-proxy-rulesets"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.ruleSets
+
+Names from ruleSets sent through the proxy\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "antifilter"
+]
+```
+
+<a id="services-proxy-suite-proxy-routing-rulesetupdateinterval"></a>
+## services\.proxy-suite\.proxy\.routing\.ruleSetUpdateInterval
+
+How often ruleSets are downloaded again (systemd time span)\.
+
+*Type:*
+string
+
+*Default:*
+
+```nix
+"1d"
+```
+
+*Example:*
+
+```nix
+"6h"
+```
+
+<a id="services-proxy-suite-proxy-routing-rulesets"></a>
+## services\.proxy-suite\.proxy\.routing\.ruleSets
+
+sing-box rule sets kept up to date at runtime, for the ruleSets of proxy, direct, block,
+rules and an outbound’s routing\. They are fetched every ruleSetUpdateInterval and on
+` proxy-ctl proxy rulesets update `, and sing-box picks up a new file without a restart;
+until the first fetch one matches nothing\. Not for backend = “xray”\.
+
+*Type:*
+attribute set of (submodule)
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Example:*
+
+```nix
+{
+  antifilter = {
+    url = "https://example.com/antifilter.srs";
+  };
+}
+```
+
+<a id="services-proxy-suite-proxy-routing-rulesets-name-detour"></a>
+## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.detour
+
+Downloaded through the local proxy, or directly\.
+
+*Type:*
+one of “proxy”, “direct”
+
+*Default:*
+
+```nix
+"proxy"
+```
+
+<a id="services-proxy-suite-proxy-routing-rulesets-name-format"></a>
+## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.format
+
+“binary” (\.srs) or “source” (JSON)\. Null goes by the URL: \.srs is binary\.
+
+*Type:*
+null or one of “binary”, “source”
+
+*Default:*
+
+```nix
+null
+```
+
+<a id="services-proxy-suite-proxy-routing-rulesets-name-url"></a>
+## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.url
+
+Where the sing-box rule set is downloaded from\.
+
+*Type:*
+string matching the pattern https?://\.+
+
+*Example:*
+
+```nix
+"https://example.com/antifilter.srs"
 ```
 
 <a id="services-proxy-suite-proxy-routing-rules"></a>
@@ -1393,6 +1582,28 @@ string
 
 ```nix
 "vps-de"
+```
+
+<a id="services-proxy-suite-proxy-routing-rules-rulesets"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.ruleSets
+
+Names from proxy\.routing\.ruleSets to match (sing-box and hybrid backends)\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "antifilter"
+]
 ```
 
 <a id="services-proxy-suite-proxy-selection"></a>
@@ -1636,6 +1847,30 @@ signed integer
 
 ```nix
 1
+```
+
+<a id="services-proxy-suite-proxy-tproxy-laninterfaces"></a>
+## services\.proxy-suite\.proxy\.tproxy\.lanInterfaces
+
+Interfaces whose forwarded TCP and UDP is taken through the proxy too: devices on them
+that use this host as their gateway\. Turns on IP forwarding for the rest (ping, the LAN
+itself), which is routed as it is\. Needs the nftables firewall on NixOS\.
+
+*Type:*
+list of string
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Example:*
+
+```nix
+[
+  "br0"
+]
 ```
 
 <a id="services-proxy-suite-proxy-tproxy-localsubnets"></a>

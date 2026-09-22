@@ -68,10 +68,7 @@ let
   # the autoProxy prober's range must stay clear of.
   reservedLoopbackPorts =
     builtins.attrValues constants.xrayDnsBridgePorts
-    ++ [
-      constants.inboundStatsApiPort
-      constants.outboundTestPort
-    ]
+    ++ [ constants.outboundTestPort ]
     ++ lib.optionals derived.warpOutboundEnabled [
       derived.warpCfg.tunnelPort
       derived.warpCfg.directPort
@@ -116,6 +113,7 @@ let
   rootlessAssertions = [
     (rootlessForbids (proxyEnabled && globalTun.enable) "proxy.tun")
     (rootlessForbids (proxyEnabled && globalTproxy.enable) "proxy.tproxy")
+    (rootlessForbids cfg.killSwitch.enable "killSwitch")
     (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTun.enable) "perAppRouting.tun")
     (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTproxy.enable) "perAppRouting.tproxy")
     (rootlessForbids perAppZapretCfg.enable "perAppRouting.zapret")
@@ -143,6 +141,18 @@ let
     mkAssertion (!(rootless && item.port < 1024))
       "proxy-suite: ${item.name} = ${toString item.port} is a privileged port, which services on a ${hostKind} host cannot bind; pick one from 1024 up"
   ) rootlessPorts;
+
+  unknownRuleSets = lib.unique (
+    builtins.filter (name: !proxyCfg.routing.ruleSets ? ${name}) (
+      lib.concatMap (category: proxyCfg.routing.${category}.ruleSets) [
+        "proxy"
+        "direct"
+        "block"
+      ]
+      ++ lib.concatMap (rule: rule.ruleSets) proxyCfg.routing.rules
+      ++ lib.concatMap (ob: ob.routing.ruleSets) proxyCfg.outbounds
+    )
+  );
 
   featureAssertions = [
     # Declaring no outbound at all is legal: they can be added at runtime with
@@ -212,6 +222,12 @@ let
     (mkAssertion (!proxyEnabled || invalidRoutingTargets == [ ])
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )
+    (mkAssertion (!proxyEnabled || unknownRuleSets == [ ])
+      "proxy-suite: routing refers to rule set(s) proxy.routing.ruleSets does not declare: ${lib.concatStringsSep ", " unknownRuleSets}"
+    )
+    (mkAssertion (!(pureXrayEnabled && proxyCfg.routing.ruleSets != { }))
+      "proxy-suite: proxy.routing.ruleSets are sing-box rule sets, which proxy.backend = \"xray\" cannot read; use \"sing-box\" or \"hybrid\""
+    )
     (mkAssertion (
       !(pureXrayEnabled && proxyCfg.selection == "selector")
     ) "proxy-suite: proxy.selection = \"selector\" requires proxy.backend = \"sing-box\" or \"hybrid\"")
@@ -243,6 +259,36 @@ let
     ) globalTun.enable ''proxy-suite: proxy.autostart = "tun" requires proxy.tun.enable = true'')
     (requireEnabled (proxyCfg.autostart == "tproxy") globalTproxy.enable
       ''proxy-suite: proxy.autostart = "tproxy" requires proxy.tproxy.enable = true''
+    )
+    (requireEnabled (
+      globalTproxy.lanInterfaces != [ ]
+    ) globalTproxy.enable "proxy-suite: proxy.tproxy.lanInterfaces requires proxy.tproxy.enable = true")
+    (requireEnabled cfg.killSwitch.enable derived.killSwitchEnabled
+      "proxy-suite: killSwitch.enable needs a global tunnel to guard: proxy.tun, proxy.tproxy or a global amneziaWg profile"
+    )
+    (mkAssertion
+      (
+        !derived.killSwitchEnabled
+        || derived.awgGlobalProfiles == { }
+        || !builtins.elem constants.awgGlobalFwmark (
+          [
+            globalTproxy.fwmark
+            globalTproxy.proxyMark
+            globalTproxy.routeTable
+            constants.tunAutoRouteTableIndex
+          ]
+          ++ lib.optionals perAppRoutingTun.enable [
+            perAppRoutingTun.fwmark
+            perAppRoutingTun.routeTable
+          ]
+          ++ lib.optionals perAppRoutingTproxy.enable [
+            perAppRoutingTproxy.fwmark
+            perAppRoutingTproxy.routeTable
+          ]
+          ++ lib.optional tgWsProxyCfg.enable tgWsProxyCfg.fwmark
+        )
+      )
+      "proxy-suite: global AmneziaWG profiles mark and route with ${toString constants.awgGlobalFwmark}, which a proxy.tproxy, perAppRouting or tgWsProxy mark or table also uses"
     )
   ];
 
@@ -406,12 +452,11 @@ let
       (
         !proxyInboundsEnabled
         || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
-          [ derived.constants.inboundStatsApiPort ]
-          ++ map (listener: listener.internalPort) derived.proxyInboundsAwg
+          map (listener: listener.internalPort) derived.proxyInboundsAwg
           ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
         )
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the inbounds' stats API on ${toString derived.constants.inboundStatsApiPort}, the AmneziaWG listeners' loopback inbounds from 18700, or 18533-18535)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, or 18533-18535)"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -441,11 +486,12 @@ let
       ];
       needsPassword = builtins.elem l.type [
         "trojan"
+        "hysteria2"
         "shadowsocks"
         "socks"
         "http"
       ];
-      tlsTerminated = l.tls.enable || l.type == "trojan";
+      tlsTerminated = l.tls.enable || l.type == "trojan" || l.type == "hysteria2";
       multiUserShadowsocks = l.type == "shadowsocks" && builtins.length l.users > 1;
       eachUser =
         condition: fields: message:
@@ -544,12 +590,24 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.flow == null || (l.type == "vless" && l.transport.type == "raw")
       ) "${prefix}: flow is only valid on a vless listener with transport.type = \"raw\"")
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || l.tls.alpn == null
+          || !builtins.elem "h3" l.tls.alpn
+          || l.type == "hysteria2"
+          || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
+        )
+        "${prefix}: tls.alpn \"h3\" is served only by hysteria2, and by the xhttp transport with tls.enable (not REALITY)"
+      )
+      # hysteria2 is its own QUIC transport, under a certificate of its own.
+      (mkAssertion
+        (!proxyInboundsEnabled || l.type != "hysteria2" || (!l.reality.enable && l.transport.type == "raw"))
+        "${prefix}: hysteria2 takes no reality or transport; it needs tls.certificateFile and tls.keyFile"
+      )
       (mkAssertion (
-        !proxyInboundsEnabled
-        || l.tls.alpn == null
-        || !builtins.elem "h3" l.tls.alpn
-        || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
-      ) "${prefix}: tls.alpn \"h3\" is served only by the xhttp transport with tls.enable (not REALITY)")
+        !proxyInboundsEnabled || l.hysteria.masquerade == null || l.type == "hysteria2"
+      ) "${prefix}: hysteria.masquerade is for hysteria2 listeners only")
     ]
   ) proxyInbounds;
 
@@ -891,10 +949,7 @@ let
           || (proxyInboundsEnabled && builtins.elem torCfg.socksPort derived.proxyInboundPorts)
           || builtins.elem torCfg.socksPort (
             builtins.attrValues constants.xrayDnsBridgePorts
-            ++ [
-              constants.inboundStatsApiPort
-              constants.outboundTestPort
-            ]
+            ++ [ constants.outboundTestPort ]
           )
         )
       )

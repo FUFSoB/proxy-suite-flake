@@ -11,6 +11,8 @@ let
   profiles = awgCfg.profiles;
   profileNames = builtins.attrNames profiles;
   globalProfileNames = builtins.attrNames derived.awgGlobalProfiles;
+  inherit (derived.constants) awgGlobalFwmark awgGlobalGroup;
+  killSwitchUnit = "proxy-suite-killswitch.service";
   # Profiles behind a loopback SOCKS hop, in a tunnel unit rather than awg-quick.
   tunnelOutbounds = derived.awgTunnelOutbounds;
   interfaceProfiles = lib.filterAttrs (
@@ -135,15 +137,29 @@ let
     ) " -I ${lib.escapeShellArg profile.interfaceName}";
 
   # An outbound interface keeps the host's routes and resolver, and marks its packets so TUN and
-  # TProxy let them past.
+  # TProxy let them past. A global one under the kill switch marks them with a mark it knows.
   prepareCommand = profile: output: ''
     ${pkgs.python3}/bin/python3 ${configTool} \
       --manifest ${lib.escapeShellArg (toString (manifestFor profile))} \
       --output ${output}${
-        lib.optionalString (
-          profile.asOutbound == "interface"
-        ) " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
+        if profile.asOutbound == "interface" then
+          " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
+        else
+          lib.optionalString (derived.killSwitchEnabled && profile.asOutbound == null) " --fwmark ${toString awgGlobalFwmark} --resolve-endpoints"
       }
+  '';
+
+  # Under the kill switch, glibc would hand the Endpoint lookup to nscd or systemd-resolved,
+  # whose own queries the kill switch rejects. With both out of the way it asks resolved's
+  # upstreams itself, under the unit's group, and awg-quick gets the Endpoint as an address.
+  ownLookups = pkgs.writeShellScript "proxy-suite-awg" ''
+    mount=${pkgs.util-linux}/bin/mount
+    # Best effort: at worst the lookup goes the usual way.
+    if [ -S /run/nscd/socket ]; then $mount --bind /dev/null /run/nscd/socket || true; fi
+    if [ -s /run/systemd/resolve/resolv.conf ]; then
+      $mount --bind /run/systemd/resolve/resolv.conf /etc/resolv.conf || true
+    fi
+    exec "$@"
   '';
 
   mkService =
@@ -153,7 +169,7 @@ let
       configPath = runtimeConfig name profile;
       prepare = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
-        ${prepareCommand profile (lib.escapeShellArg configPath)}
+        ${lib.optionalString (derived.killSwitchEnabled && !outbound) "${pkgs.util-linux}/bin/unshare --mount ${ownLookups} "}${prepareCommand profile (lib.escapeShellArg configPath)}
       '';
       proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
@@ -247,7 +263,11 @@ let
             "proxy-suite-zapret.service"
           ]
           ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
-          wants = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
+          wants = [
+            "network-online.target"
+          ]
+          ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service"
+          ++ lib.optional derived.killSwitchEnabled killSwitchUnit;
           wantedBy = lib.optionals profile.autostart [ "multi-user.target" ];
           conflicts = allProfileConflicts name ++ [
             "proxy-suite-tun.service"
@@ -290,6 +310,11 @@ let
       }
       // lib.optionalAttrs (cfg.proxy.enable && !outbound) {
         ExecStopPost = proxyBypassDown;
+      }
+      # The Endpoint lookup (ownLookups) gets past the kill switch by this group, so a
+      # profile that dropped can come back while the kill switch holds.
+      // lib.optionalAttrs (derived.killSwitchEnabled && !outbound) {
+        Group = awgGlobalGroup;
       }
       # A failed handshake leaves no routes behind here, so try again later.
       // lib.optionalAttrs outbound {
@@ -450,6 +475,10 @@ in
     awgCfg.userspacePackage
   ]
   ++ lib.optional (builtins.any (ob: ob.kind == "userspace") tunnelOutbounds) awgCfg.wireproxyPackage;
+
+  services.proxy-suite.internal.groups = lib.optional (
+    derived.killSwitchEnabled && globalProfileNames != [ ]
+  ) awgGlobalGroup;
 
   services.proxy-suite.internal.kernelModulePackages =
     lib.optionals (awgCfg.kernelModulePackage != null)

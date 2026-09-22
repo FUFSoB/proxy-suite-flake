@@ -219,7 +219,7 @@ let
 
           route = {
             default_domain_resolver = "local";
-            rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets;
+            rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets ++ rules.remoteRuleSets;
             rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
             final = if (proxyCfg.routing.default == "proxy") then "proxy" else "direct";
           }

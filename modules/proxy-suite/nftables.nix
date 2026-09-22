@@ -6,7 +6,8 @@
 }:
 
 let
-  inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser;
+  inherit (import ./derived.nix { inherit lib cfg; }) constants awgGlobalProfiles;
+  inherit (constants) serviceUser;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
   perAppTun = cfg.perAppRouting.tun;
@@ -67,6 +68,12 @@ let
   '';
 
   tproxyLocalSubnetLines = mkLocalSubnetLines globalTproxy.localSubnets;
+
+  lanInterfaceSet = "{ ${lib.concatMapStringsSep ", " (i: ''"${i}"'') globalTproxy.lanInterfaces} }";
+  # Devices using this host as their gateway, past the destinations nobody diverts.
+  tproxyLanLines = lib.optionalString (globalTproxy.lanInterfaces != [ ]) (
+    mkTproxyLines "iifname ${lanInterfaceSet} " " meta mark set ${toString globalTproxy.fwmark}"
+  );
   perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
   # Without ipv6, IPv6 packets are left alone, as if the table were still `ip`.
@@ -89,11 +96,12 @@ let
                   # are served here, not taken by the tproxy socket. A resolver this host
                   # runs for the LAN is one of them.
                   fib daddr type local return
+        ${tproxyLocalSubnetLines}
+        ${tproxyLanLines}
                   # Packets re-entering via loopback after output marking should not
                   # be skipped just because the host has an RFC1918 source address.
                   iifname != "lo" ip saddr $RESERVED_IP return
                   iifname != "lo" ip6 saddr $RESERVED_IP6 return
-        ${tproxyLocalSubnetLines}
         ${mkTproxyLines "" " meta mark set ${toString globalTproxy.fwmark}"}
               }
               chain output {
@@ -138,6 +146,67 @@ let
                   meta mark ${toString perAppTproxy.fwmark} return
               }
           }
+  '';
+
+  # Everything proxy-suite sends itself, or has already taken into the proxy, gets past; the
+  # rest is what TUN, TProxy or a global AmneziaWG profile would have taken, had it been up.
+  sshProxyUser = cfg.sshProxy.serviceUser;
+  killSwitchMarks = [
+    globalTproxy.fwmark
+    globalTproxy.proxyMark
+  ]
+  ++ lib.optional perAppTun.enable perAppTun.fwmark
+  ++ lib.optional perAppTproxy.enable perAppTproxy.fwmark
+  ++ lib.optional tgWsProxyBypassEnabled tgWsProxyCfg.fwmark
+  ++ lib.optional (awgGlobalProfiles != { }) constants.awgGlobalFwmark;
+  awgGlobalInterfaces = lib.mapAttrsToList (_: profile: profile.interfaceName) awgGlobalProfiles;
+  globalTunEnabled = proxyCfg.enable && proxyCfg.tun.enable;
+  killSwitchAllowLines = ''
+    ip daddr $RESERVED_IP accept
+    ip6 daddr $RESERVED_IP6 accept
+    ${lib.concatMapStrings (cidr: ''
+      ${ipFamily cidr} daddr ${cidr} accept
+    '') globalTproxy.localSubnets}
+    ct direction reply accept
+  '';
+  killSwitchRulesFile = pkgs.writeText "proxy-suite-routing" ''
+    ${reservedIpBlock}
+    table inet proxy_suite_killswitch {
+        chain output {
+            type filter hook output priority filter; policy accept;
+            oifname "lo" accept
+            meta skuid "${serviceUser}" accept
+    ${lib.optionalString globalTunEnabled ''
+      oifname "${proxyCfg.tun.interface}" accept
+      # sing-box's auto_redirect hands DNS to the TUN by rewriting it to the TUN's peer,
+      # while the route still points at the uplink.
+      ip daddr ${proxyCfg.tun.address} accept
+      ${lib.optionalString proxyCfg.ipv6 "ip6 daddr ${constants.globalTunIPv6Address} accept"}
+    ''}
+    ${lib.optionalString (awgGlobalProfiles != { }) ''
+      oifname { ${lib.concatMapStringsSep ", " (i: ''"${i}"'') awgGlobalInterfaces} } accept
+      meta skgid "${constants.awgGlobalGroup}" accept
+    ''}
+    ${lib.optionalString (
+      cfg.sshProxy.enable && sshProxyUser != null && sshProxyUser != serviceUser
+    ) ''meta skuid "${sshProxyUser}" accept''}
+            meta mark { ${lib.concatMapStringsSep ", " toString (lib.unique killSwitchMarks)} } accept
+            # A lookup the proxy did not take would name every site to the LAN resolver.
+            meta l4proto { tcp, udp } th dport 53 reject with icmpx admin-prohibited
+    ${killSwitchAllowLines}
+            # DHCP keeps the uplink, NTP the clock that TLS depends on.
+            udp dport { 67, 68, 123 } accept
+            reject with icmpx admin-prohibited
+        }
+    ${lib.optionalString (globalTproxy.lanInterfaces != [ ]) ''
+      # Gateway clients: what TProxy does not divert is forwarded, to the LAN only.
+      chain forward {
+          type filter hook forward priority filter; policy accept;
+      ${killSwitchAllowLines}
+          iifname ${lanInterfaceSet} reject with icmpx admin-prohibited
+      }
+    ''}
+    }
   '';
 
   perAppZapretRulesFile = pkgs.writeText "proxy-suite-routing" ''
@@ -192,6 +261,7 @@ in
   inherit
     reservedIpBlock
     nftablesRulesFile
+    killSwitchRulesFile
     perAppTproxyRulesFile
     perAppZapretRulesFile
     perAppTunChainFile

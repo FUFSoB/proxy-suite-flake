@@ -173,7 +173,7 @@ let
       --argjson auth_enabled ${if needsLocalProxyAuth then "true" else "false"} \
       --arg user ${if needsLocalProxyAuth then lib.escapeShellArg localProxyAuth.username else "''"} \
       --arg password ${if needsLocalProxyAuth then "\"$LOCAL_PROXY_PASSWORD\"" else "''"} \
-      '.inbounds = $ibs
+      '.inbounds += $ibs
        | .outbounds = $obs + .outbounds
        | if $auth_enabled then
            (.outbounds[] | select(.tag == "proxy") | .settings.servers[0].users)
@@ -220,6 +220,20 @@ let
     }
     mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
 
+    # The stats API's socket takes this setgid directory's group: XRay cannot chown it.
+    API_DIR=$(dirname ${lib.escapeShellArg constants.inboundStatsApiSocket})
+    rm -rf "$API_DIR"
+    ${
+      if !constants.privileged then
+        ''mkdir -m 0700 "$API_DIR"''
+      else if userControlAllows "stats" then
+        ''
+          install -d -m 2750 -o ${constants.serviceUser} -g ${lib.escapeShellArg userControlCfg.group} "$API_DIR" ||
+            install -d -m 2750 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
+      else
+        ''install -d -m 2750 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
+    }
+
     ${writeLinksBlock}
     ${writeSubscriptionsBlock}
 
@@ -231,7 +245,7 @@ let
   collectInboundStats = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     file=${lib.escapeShellArg constants.inboundStatsFile}
-    api=--server=127.0.0.1:${toString constants.inboundStatsApiPort}
+    api=--server=unix://${constants.inboundStatsApiSocket}
     # A timer run and a stop can overlap: each reads and resets part, and both rewrite the file.
     exec 9> "$file.lock"
     ${pkgs.util-linux}/bin/flock 9

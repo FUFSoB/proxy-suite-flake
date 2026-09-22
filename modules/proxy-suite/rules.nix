@@ -47,7 +47,8 @@ let
     ob:
     let
       ro = ob.routing;
-      hasAny = ro.domains != [ ] || ro.ips != [ ] || ro.geosites != [ ] || ro.geoips != [ ];
+      hasAny =
+        ro.domains != [ ] || ro.ips != [ ] || ro.geosites != [ ] || ro.geoips != [ ] || ro.ruleSets != [ ];
     in
     lib.optional hasAny {
       outbound = resolveTag ob.tag;
@@ -56,6 +57,7 @@ let
         ips
         geosites
         geoips
+        ruleSets
         ;
     }
   ) proxyCfg.outbounds;
@@ -78,10 +80,12 @@ let
       onionOutbound
       ;
     inherit (cfg) geodata;
+    inherit (derived) ruleSets;
   };
   inherit (singBoxRules)
     geositeRuleSets
     geoIPRuleSets
+    remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
     singBoxDnsRules
@@ -111,6 +115,7 @@ in
     zapretDirectRules
     geositeRuleSets
     geoIPRuleSets
+    remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
     singBoxDnsRules

@@ -11,7 +11,7 @@
 
 let
   builders = import ./service/builders.nix { inherit lib pkgs; };
-  inherit (builders) mkOneshotService;
+  inherit (builders) mkRestartingService;
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
@@ -87,7 +87,15 @@ let
       if userControlAllows "zapret" then "2775 -g ${lib.escapeShellArg cfg.userControl.group}" else "0755"
     } ${runtime.stateDir} ${runtime.circularStateDir}
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
+    ${runtime.initScript} start_fw
   '';
+
+  # nfqws2 runs supervised; the firewall comes and goes around it.
+  daemonConfig = runtimeEnv: {
+    Type = "notify";
+    ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
+    Environment = runtimeEnv;
+  };
 
   cutoff = import ./zapret2/cutoff.nix {
     inherit
@@ -110,7 +118,7 @@ in
 
   services.proxy-suite.internal.services.proxy-suite-zapret =
     lib.mkIf zapretCfg.enable
-      (mkOneshotService {
+      (mkRestartingService {
         description = "zapret2 DPI bypass";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -119,20 +127,19 @@ in
         preStart = mkPreStart;
         runtimeDirectory = "proxy-suite-zapret";
         stateDirectory = "proxy-suite";
-        execStart = "${runtime.initScript} start";
-        execStop = "${runtime.initScript} stop";
-        extraServiceConfig = {
-          ExecReload = "${runtime.initScript} restart";
-          Environment = runtime.mkEnv {
+        execStart = "${runtime.daemonScript}";
+        execStopPost = "${runtime.initScript} stop_fw";
+        extraServiceConfig = daemonConfig (
+          runtime.mkEnv {
             runtime = globalRuntime;
             pidDir = "/run/proxy-suite-zapret";
-          };
-        };
+          }
+        );
       });
 
   services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
     lib.mkIf perAppZapretCfg.enable
-      (mkOneshotService {
+      (mkRestartingService {
         description = "proxy-suite per-app-routing zapret2 backend";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -140,13 +147,17 @@ in
         preStart = mkPreStart;
         runtimeDirectory = "proxy-suite-per-app-zapret";
         stateDirectory = "proxy-suite";
-        execStart = "${runtime.initScript} start";
-        execStop = "${runtime.initScript} stop";
+        execStart = "${runtime.daemonScript}";
         execStartPre = "${perAppZapretMarkUpScript}";
-        execStopPost = "${perAppZapretMarkDownScript}";
-        extraServiceConfig.Environment = runtime.mkEnv {
-          runtime = perAppRuntime;
-          pidDir = "/run/proxy-suite-per-app-zapret";
-        };
+        execStopPost = [
+          "${runtime.initScript} stop_fw"
+          "${perAppZapretMarkDownScript}"
+        ];
+        extraServiceConfig = daemonConfig (
+          runtime.mkEnv {
+            runtime = perAppRuntime;
+            pidDir = "/run/proxy-suite-per-app-zapret";
+          }
+        );
       });
 }

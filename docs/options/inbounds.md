@@ -48,6 +48,8 @@ Part of the [proxy-suite options reference](./index.md).
         - [subnet](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet)
         - [subnet6](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet6)
       - [flow](#services-proxy-suite-inbounds-listeners-name-flow)
+      - hysteria
+        - [masquerade](#services-proxy-suite-inbounds-listeners-name-hysteria-masquerade)
       - [jsonFile](#services-proxy-suite-inbounds-listeners-name-jsonfile)
       - [method](#services-proxy-suite-inbounds-listeners-name-method)
       - [port](#services-proxy-suite-inbounds-listeners-name-port)
@@ -770,6 +772,27 @@ null
 "xtls-rprx-vision"
 ```
 
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-masquerade"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.masquerade
+
+Site that a hysteria2 listener serves, reverse-proxied, to anything that is not a client
+(a browser, a prober)\. Null answers them with 404\.
+
+*Type:*
+null or string
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"https://www.example.com"
+```
+
 <a id="services-proxy-suite-inbounds-listeners-name-jsonfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.jsonFile
 
@@ -1292,10 +1315,11 @@ one of “raw”, “ws”, “grpc”, “httpupgrade”, “xhttp”
 
 Protocol\. Set exactly one of type, xrayJson, or jsonFile\. “amneziawg” is an AmneziaWG
 server on UDP port, with its own interface (see amneziaWg); its traffic is handed to XRay
-and leaves like any other listener’s\.
+and leaves like any other listener’s\. “hysteria2” is QUIC on UDP port: it needs tls (a
+certificate) and takes passwords, and no transport, reality or flow\.
 
 *Type:*
-null or one of “vless”, “vmess”, “trojan”, “shadowsocks”, “socks”, “http”, “amneziawg”
+null or one of “vless”, “vmess”, “trojan”, “hysteria2”, “shadowsocks”, “socks”, “http”, “amneziawg”
 
 *Default:*
 

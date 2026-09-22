@@ -10,6 +10,12 @@ let
     geosites = list "Geosite names to match (see geodata)." [ "netflix" ];
     geoips = list "Geoip names to match (see geodata; the defaults are country codes only)." [ "us" ];
   };
+  # The client's routing also matches downloaded rule sets, which XRay cannot read.
+  clientRoutingFields = routingFields // {
+    ruleSets = list "Names from proxy.routing.ruleSets to match (sing-box and hybrid backends)." [
+      "antifilter"
+    ];
+  };
 
   routingRuleType = types.submodule {
     options = {
@@ -19,7 +25,7 @@ let
         example = "vps-de";
       };
     }
-    // routingFields;
+    // clientRoutingFields;
   };
 
   dnsUpstreamType = types.submodule {
@@ -78,10 +84,14 @@ in
     dnsUpstreamType
     perAppRoutingProfileType
     routingFields
+    clientRoutingFields
     routingRuleType
     ;
 }
-// import ./types/outbounds.nix { inherit lib routingFields; }
+// import ./types/outbounds.nix {
+  inherit lib;
+  routingFields = clientRoutingFields;
+}
 // import ./types/zapret.nix { inherit lib; }
 // import ./types/inbounds.nix { inherit lib; }
 // import ./types/amnezia-wg.nix { inherit lib; }

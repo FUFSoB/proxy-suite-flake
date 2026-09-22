@@ -146,7 +146,8 @@ let
   };
   exitNode = mkFixture "sing-box" exitInbounds;
   exitNodeConfig = mkInboundsConfig exitNode;
-  exitNodeRules = exitNodeConfig.routing.rules;
+  # Past the stats API's own rule, which matches only its inbound.
+  exitNodeRules = builtins.tail exitNodeConfig.routing.rules;
   exitNodeNoOnion = mkInboundsConfig (
     mkFixture "sing-box" (exitInbounds // { tor.routeOnion = false; })
   );

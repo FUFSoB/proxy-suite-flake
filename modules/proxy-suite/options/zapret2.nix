@@ -125,7 +125,8 @@ in
           Some lines let TLS to certain hosting networks handshake and then cut it at 12-34 KB,
           which no strategy fixes. z2k's probe checks this line against ~110 known targets when
           its network changes and once a day, and for each cut-off network searches a whitelisted
-          name that nfqws2 then puts into a fake ClientHello: thousands of short TLS connections to
+          name that nfqws2 then puts into a fake ClientHello (strategySource "z2k" only; ahead of
+          the nfqws2-keenetic strategies it breaks them): thousands of short TLS connections to
           foreign hosting IPs per full run, sent directly and never touched by zapret2. State and
           maps live in /var/lib/proxy-suite/zapret2/cutoff; `proxy-ctl zapret cutoff` shows them.
         '';

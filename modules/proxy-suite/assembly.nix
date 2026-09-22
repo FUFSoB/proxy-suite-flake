@@ -46,6 +46,7 @@ let
       perAppTproxyRulesFile
       perAppZapretRulesFile
       nftablesRulesFile
+      killSwitchRulesFile
       ip
       nft
       ;

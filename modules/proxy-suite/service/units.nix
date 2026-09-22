@@ -11,6 +11,8 @@ let
     pureXrayEnabled
     globalTun
     globalTproxy
+    killSwitchEnabled
+    awgGlobalProfiles
     perAppRoutingTun
     perAppRoutingTproxy
     perAppZapretEnabled
@@ -37,6 +39,8 @@ let
     xrayTunUpScript
     tproxyUpScript
     tproxyDownScript
+    killSwitchUpScript
+    killSwitchDownScript
     tunCleanupScript
     ;
 
@@ -44,6 +48,7 @@ let
     socks = "proxy-suite-socks";
     tproxy = "proxy-suite-tproxy";
     tun = "proxy-suite-tun";
+    killSwitch = "proxy-suite-killswitch";
     perAppTun = "proxy-suite-per-app-tun";
     perAppTproxy = "proxy-suite-per-app-tproxy";
     perAppZapret = "proxy-suite-per-app-zapret";
@@ -132,6 +137,23 @@ let
         extraServiceConfig.RemainAfterExit = false;
       };
     }
+    # Pulled in by every global tunnel and left up when it stops or crashes: only
+    # proxy-ctl's off verbs take it down. After them, so a first start still fetches
+    # subscriptions and resolves endpoints directly.
+    {
+      enable = killSwitchEnabled;
+      name = serviceNames.killSwitch;
+      value = mkOneshotService {
+        description = "proxy-suite kill switch - reject traffic outside the global tunnel";
+        after = [
+          "${serviceNames.socks}.service"
+          "${serviceNames.tun}.service"
+        ]
+        ++ map (name: "proxy-suite-awg-${name}.service") (builtins.attrNames awgGlobalProfiles);
+        execStart = killSwitchUpScript;
+        execStop = killSwitchDownScript;
+      };
+    }
     {
       enable = proxyEnabled && globalTproxy.enable;
       name = serviceNames.tproxy;
@@ -143,6 +165,7 @@ let
         ];
         wantedBy = lib.optionals (proxyCfg.autostart == "tproxy") [ "multi-user.target" ];
         requires = [ "${serviceNames.socks}.service" ];
+        wants = lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
         conflicts = [
           "${serviceNames.tun}.service"
           "${serviceNames.perAppTproxy}.service"
@@ -157,7 +180,10 @@ let
       value = mkRestartingService {
         description = "${backendDescription} TUN proxy client";
         after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
+        wants = [
+          "network-online.target"
+        ]
+        ++ lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
         wantedBy = lib.optionals (proxyCfg.autostart == "tun") [ "multi-user.target" ];
         conflicts = [ "${serviceNames.tproxy}.service" ];
         execStartPre = tunCleanupScript;

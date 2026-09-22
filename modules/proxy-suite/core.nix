@@ -138,6 +138,17 @@ in
           }
         ))
 
+        (lib.mkIf derived.ruleSetsEnabled (
+          import ./rulesets.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
         (lib.mkIf (derived.proxyInboundsEnabled && derived.proxyInboundsAwg != [ ]) (
           import ./amnezia-wg-inbounds.nix {
             inherit

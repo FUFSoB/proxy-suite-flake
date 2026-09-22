@@ -38,14 +38,24 @@ in
     (mkDnsServer "local" proxyCfg.dns.local)
   ];
 
-  inbounds = [ ];
-
   # Counters per user, inbound and outbound for proxy-suite-inbound-stats, and who is
-  # connected right now, on loopback only.
+  # connected right now, from where. A socket rather than loopback, which any local
+  # user could ask: the start script's setgid directory gives it the group that may
+  # read the stats. The listeners are appended at start.
+  inbounds = [
+    {
+      tag = "api-in";
+      protocol = "dokodemo-door";
+      listen = "${derived.constants.inboundStatsApiSocket},0660";
+      settings = {
+        address = "127.0.0.1";
+        network = "unix";
+      };
+    }
+  ];
   stats = { };
   api = {
     tag = "api";
-    listen = "127.0.0.1:${toString derived.constants.inboundStatsApiPort}";
     services = [ "StatsService" ];
   };
   policy = {
@@ -95,6 +105,13 @@ in
     # IPIfNonMatch the network-only final rule matches names unresolved.
     domainStrategy = if proxyInboundsResolveInSingBox then "AsIs" else "IPOnDemand";
     domainMatcher = "hybrid";
-    rules = inboundRules.xrayInboundRules;
+    rules = [
+      {
+        ruleTag = "inbound-stats-api";
+        inboundTag = [ "api-in" ];
+        outboundTag = "api";
+      }
+    ]
+    ++ inboundRules.xrayInboundRules;
   };
 }

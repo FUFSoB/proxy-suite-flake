@@ -330,6 +330,7 @@ let
   );
 in
 {
+  _groups = { inherit coreProxyChecks localProxyAuthChecks sshProxyChecks warpChecks torChecks proxyInboundsChecks tgWsProxyChecks xrayBackendChecks outboundValidationChecks chainingDnsChecks amneziaWgChecks amneziaWgOutboundChecks zapretChecks zapret2Checks globalProxyModeChecks guiChecks subscriptionChecks routeModeChecks perAppRoutingChecks serverModuleChecks ; minimalOk = { assertions = [ (ok (minimal.config.services.proxy-suite.proxy.listener.address == "127.0.0.1")) ]; }; };
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
   amneziawg-secret-manifest = amneziaWgChecks.manifest;
   xray-jq-filter-runtime = xrayBackendChecks.runtime;

@@ -45,17 +45,6 @@ let
           )
         );
       lists = "--hostlist=${src}/etc/nfqws2/lists/user.list --hostlist-exclude=${src}/etc/nfqws2/lists/exclude.list";
-      # z2k's 16 KB cutoff name, as its generator places it: ahead of circular, with
-      # no strategy tag, so every strategy carries it.
-      withSniPick =
-        profile:
-        let
-          parts = splitString " --lua-desync=circular:" profile;
-        in
-        if builtins.length parts != 2 then
-          throw "proxy-suite: expected one circular in the nfqws2-keenetic TCP profile"
-        else
-          "${builtins.head parts} --lua-desync=z2k_sni_pick:payload=tls_client_hello:dir=out:blob=z2k_ch:nld=2 --lua-desync=fake:payload=tls_client_hello:dir=out:blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:${builtins.elemAt parts 1}";
     in
     {
       # Its init script's order. QUIC reads the learned list but never adds to it:
@@ -71,7 +60,9 @@ let
           (args "NFQWS_ARGS_UDP")
         )
         "${args "NFQWS_ARGS_QUIC"} <HOSTLIST_NOAUTO> ${lists}"
-        "${withSniPick (args "NFQWS_ARGS")} <HOSTLIST> ${lists}"
+        # No 16 KB cutoff name step: its fake ClientHello ahead of these strategies
+        # broke every host on a line where the strategies alone work.
+        "${args "NFQWS_ARGS"} <HOSTLIST> ${lists}"
       ];
       blobArgs = map (replaceStrings [ "@/opt/etc/nfqws2/" ] [ "@${src}/etc/nfqws2/" ]) (
         filter (hasPrefix "--blob=") (words (quoted "NFQWS_BASE_ARGS"))
@@ -91,10 +82,14 @@ let
       ports = name: between "config_official.sh" "\n${name}=\"" "\"" generator;
     in
     {
+      # Its S99zapret2 order. z2k-range-rand resolves the ranges its strategies
+      # write (repeats=6-10); without it nfqws2 sends each fake once.
       luaInit = map (name: "${src}/files/lua/${name}.lua") [
         "z2k-alert"
         "z2k-quic-silence"
+        "z2k-tcp16"
         "z2k-fooling-ext"
+        "z2k-range-rand"
         "z2k-modern-core"
       ];
       ports = {

@@ -43,6 +43,7 @@ let
   tunedRuntime = runtimeDir zapret2Tuned globalService;
   noAutoRuntime = runtimeDir zapret2NoAuto globalService;
   z2kRuntime = runtimeDir zapret2Z2k globalService;
+  daemonStart = zapret2Global.config.systemd.services.${globalService}.serviceConfig.ExecStart;
   cutoffProbe =
     zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
@@ -81,14 +82,32 @@ in
       true
     )
 
-    # The cutoff probe comes with zapret2, on a timer, and nfqws2 reads its maps.
+    # nfqws2 is the unit's supervised main process: if it dies, systemd sees it and
+    # restarts it, instead of a oneshot staying active while the queue bypasses it.
+    (
+      let
+        sc = zapret2PerApp.config.systemd.services.${perAppService}.serviceConfig;
+        gc = zapret2Global.config.systemd.services.${globalService}.serviceConfig;
+      in
+      assert gc.Type == "notify" && sc.Type == "notify";
+      assert gc.Restart == "on-failure" && sc.Restart == "on-failure";
+      assert lib.hasSuffix "stop_fw" gc.ExecStopPost;
+      assert builtins.length sc.ExecStopPost == 2;
+      true
+    )
+
+    # The cutoff probe comes with zapret2, on a timer; z2k's nfqws2 reads its maps.
     (
       assert zapret2Global.config.systemd.timers ? proxy-suite-zapret2-cutoff;
       assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-cutoff);
       assert (proxyCtlEnv zapret2Global).ZAPRET_CUTOFF_ENABLED == "1";
       assert
-        envValue zapret2Global globalService "Z2K_TCP16_ASN="
+        envValue zapret2Z2k globalService "Z2K_TCP16_ASN="
         == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
+      assert
+        !(builtins.any (lib.hasPrefix "Z2K_TCP16_ASN=")
+          zapret2Global.config.systemd.services.${globalService}.serviceConfig.Environment
+        );
       true
     )
 
@@ -175,11 +194,16 @@ in
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 1
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
 
+        # z2k's Lua in its own order: ranges (repeats=6-10) resolve before its strategies fire.
+        grep -qE -- 'z2k-fooling-ext\.lua --lua-init=@[^ ]+/z2k-range-rand\.lua --lua-init=@[^ ]+/z2k-modern-core\.lua' "${z2kRuntime}/config"
+
         # --- 16 KB cutoff ---------------------------------------------------
-        # The whitelisted-name step runs ahead of rotation, in both sources.
-        grep -qF -- '/files/lua/z2k-tcp16.lua' "${globalRuntime}/config"
-        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:fails=2:time=300' "${globalRuntime}/config"
+        # The whitelisted-name step runs ahead of rotation, in z2k only: ahead of the
+        # nfqws2-keenetic strategies it broke hosts they reach on their own.
+        grep -qF -- '/files/lua/z2k-tcp16.lua' "${z2kRuntime}/config"
         grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
+        if grep -qF -- 'z2k_sni_pick' "${globalRuntime}/config"; then exit 1; fi
+        if grep -qF -- 'z2k-tcp16.lua' "${globalRuntime}/config"; then exit 1; fi
         # zapret2 leaves the probe's own connections alone, in every chain.
         test "$(grep -c 'ct mark and 0x2000000 != 0 return' "${globalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh")" = 4
 
@@ -252,6 +276,13 @@ in
         grep -qx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" global.args
         grep -qx -- '--hostlist-auto-fail-threshold=3' global.args
         grep -qx -- '--hostlist-auto-fail-time=300' global.args
+
+        # The supervised launcher execs nfqws2 with the command line the init script builds.
+        printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' >fake-nfqws2
+        chmod +x fake-nfqws2
+        ZAPRET_RW=${globalRuntime} NFQWS2="$PWD/fake-nfqws2" ${daemonStart} >daemon.args
+        head -n1 daemon.args | grep -qx -- '--user=root'
+        tail -n +6 daemon.args | diff - global.args
 
         dry_run ${z2kRuntime} z2k.args
         test "$(grep -cx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" z2k.args)" = 1

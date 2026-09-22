@@ -26,6 +26,7 @@ let
     pureXrayEnabled
     globalTun
     globalTproxy
+    tproxyLanSysctl
     perAppRoutingTun
     perAppRoutingTproxy
     userControlCfg
@@ -98,10 +99,26 @@ lib.mkMerge [
       ) true;
 
       # Inbound listeners are reached from outside, so their ports have to be open.
-      firewall = lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
-        allowedTCPPorts = proxyInboundFirewallPorts;
-        allowedUDPPorts = proxyInboundFirewallUdpPorts;
-      };
+      firewall = lib.mkMerge [
+        (lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
+          allowedTCPPorts = proxyInboundFirewallPorts;
+          allowedUDPPorts = proxyInboundFirewallUdpPorts;
+        })
+        # Gateway clients' diverted packets reach input with their original destination, and
+        # carry a mark whose table has no route back. Only those: the LAN is not trusted.
+        (lib.mkIf (tproxyLanSysctl != { }) (
+          let
+            rules = lib.concatMapStrings (interface: ''
+              iifname "${interface}" meta mark ${toString globalTproxy.fwmark} accept
+            '') globalTproxy.lanInterfaces;
+          in
+          {
+            extraInputRules = rules;
+            extraReversePathFilterRules = rules;
+          }
+        ))
+      ];
+      sysctl = tproxyLanSysctl;
 
       groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) [
         userControlCfg.group

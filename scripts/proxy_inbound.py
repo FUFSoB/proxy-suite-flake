@@ -17,8 +17,7 @@ from awg_inbound import client_entries
 from proxy_parsing import build_outbound
 
 UUID_TYPES = ("vless", "vmess")
-PASSWORD_TYPES = ("trojan", "shadowsocks", "socks", "http")
-UDP_TYPES = ("shadowsocks", "socks")
+PASSWORD_TYPES = ("trojan", "hysteria2", "shadowsocks", "socks", "http")
 
 TRANSPORT_SETTINGS_KEY = {
     "ws": "wsSettings",
@@ -78,6 +77,8 @@ def _clients(listener: dict, tag: str) -> list[dict]:
             client = {"id": secret, "email": email}
             if listener["type"] == "vless" and listener.get("flow"):
                 client["flow"] = listener["flow"]
+        elif listener["type"] == "hysteria2":
+            client = {"auth": secret, "email": email}
         else:
             client = {"password": secret, "email": email}
         clients.append(client)
@@ -93,6 +94,19 @@ def _accounts(listener: dict, tag: str) -> list[dict]:
 
 
 def _xray_stream(listener: dict, tag: str) -> dict:
+    if listener["type"] == "hysteria2":
+        # QUIC: the transport is hysteria's own, always under TLS.
+        settings = {"version": 2}
+        masquerade = (listener.get("hysteria") or {}).get("masquerade")
+        if masquerade:
+            settings["masquerade"] = {"type": "proxy", "url": masquerade, "rewriteHost": True}
+        return {
+            "network": "hysteria",
+            "hysteriaSettings": settings,
+            "security": "tls",
+            "tlsSettings": _tls_settings(listener["tls"], ["h3"]),
+        }
+
     transport = listener["transport"]
     network = transport["type"]
     stream: dict = {"network": network}
@@ -131,20 +145,22 @@ def _xray_stream(listener: dict, tag: str) -> dict:
         }
     elif tls["enable"] or listener["type"] == "trojan":
         stream["security"] = "tls"
-        certificate = {
-            "certificateFile": tls["certificateFile"],
-            "keyFile": tls["keyFile"],
-        }
-        stream["tlsSettings"] = {"certificates": [certificate]}
-        if tls.get("serverName"):
-            stream["tlsSettings"]["serverName"] = tls["serverName"]
-        # ["h3"] alone is what makes an xhttp listener serve HTTP/3, on UDP.
-        if tls.get("alpn"):
-            stream["tlsSettings"]["alpn"] = tls["alpn"]
+        stream["tlsSettings"] = _tls_settings(tls)
     else:
         stream["security"] = "none"
 
     return stream
+
+
+def _tls_settings(tls: dict, default_alpn: list[str] | None = None) -> dict:
+    settings: dict = {"certificates": [{"certificateFile": tls["certificateFile"], "keyFile": tls["keyFile"]}]}
+    if tls.get("serverName"):
+        settings["serverName"] = tls["serverName"]
+    # ["h3"] alone is what makes an xhttp listener serve HTTP/3, on UDP.
+    alpn = tls.get("alpn") or default_alpn
+    if alpn:
+        settings["alpn"] = alpn
+    return settings
 
 
 def render_xray_inbound(listener: dict) -> dict:
@@ -158,6 +174,8 @@ def render_xray_inbound(listener: dict) -> dict:
             settings["decryption"] = "none"
     elif listener_type == "trojan":
         settings = {"clients": _clients(listener, tag)}
+    elif listener_type == "hysteria2":
+        settings = {"version": 2, "clients": _clients(listener, tag)}
     elif listener_type == "shadowsocks":
         settings = {"method": listener["method"], "network": "tcp,udp"}
         users = listener["users"]
@@ -179,7 +197,8 @@ def render_xray_inbound(listener: dict) -> dict:
         "tag": tag,
         "listen": listener["listen"],
         "port": listener["port"],
-        "protocol": listener_type,
+        # XRay names hysteria2 "hysteria", and takes the version in its settings.
+        "protocol": "hysteria" if listener_type == "hysteria2" else listener_type,
         "settings": settings,
         "streamSettings": _xray_stream(listener, tag),
         # routeOnly keeps the sniffed domain for routing decisions without
@@ -315,6 +334,12 @@ def build_share_link(
         credentials = urllib.parse.quote(user_name, safe="") + ":" + urllib.parse.quote(secret, safe="")
         scheme = "https" if listener["tls"]["enable"] else "http"
         return f"{scheme}://{credentials}@{endpoint}#{fragment}"
+
+    if listener_type == "hysteria2":
+        tls = listener["tls"]
+        params = {"sni": tls.get("serverName") or server_address, "alpn": ",".join(tls.get("alpn") or ["h3"])}
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        return f"hysteria2://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 
     params = _link_transport_params(listener)
     params.update(_link_security_params(listener, server_address))

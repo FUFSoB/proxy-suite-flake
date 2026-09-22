@@ -10,6 +10,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import tempfile
 import zlib
 from pathlib import Path
@@ -364,6 +365,29 @@ def as_outbound(config: str, fwmark: int) -> str:
     config = _remove_interface_key(config, "DNS")
     config = _set_interface_value(config, "Table", "off")
     return _set_interface_value(config, "FwMark", str(fwmark))
+
+
+ENDPOINT_LINE = re.compile(r"^(\s*Endpoint\s*=\s*)(\S+):(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def resolve_endpoints(config: str) -> str:
+    """Endpoint names looked up here, by this process, as awg would; one that does not resolve is left."""
+
+    def resolve(match: re.Match[str]) -> str:
+        prefix, host, port = match.groups()
+        try:
+            ipaddress.ip_address(host.strip("[]"))
+            return match.group(0)
+        except ValueError:
+            pass
+        try:
+            family, *_, address = socket.getaddrinfo(host, int(port), type=socket.SOCK_DGRAM, flags=socket.AI_ADDRCONFIG)[0]
+        except (OSError, UnicodeError):
+            return match.group(0)
+        ip = f"[{address[0]}]" if family == socket.AF_INET6 else address[0]
+        return f"{prefix}{ip}:{port}"
+
+    return ENDPOINT_LINE.sub(resolve, config)
 
 
 # Read once by wireproxy: repeated lines are joined into one list.
@@ -738,6 +762,17 @@ def main() -> int:
         help="render for wireproxy, as a SOCKS5 listener on ADDRESS (packets marked with --outbound-fwmark)",
     )
     parser.add_argument(
+        "--fwmark",
+        type=int,
+        metavar="MARK",
+        help="render a global profile whose own packets carry MARK (awg-quick routes it with table MARK)",
+    )
+    parser.add_argument(
+        "--resolve-endpoints",
+        action="store_true",
+        help="write Endpoint names as the addresses they resolve to here",
+    )
+    parser.add_argument(
         "--inspect",
         metavar="CONFIG",
         help="print the transport implementation, a probe address and the rekey interval",
@@ -765,6 +800,10 @@ def main() -> int:
             config = as_wireproxy(config, args.wireproxy, args.outbound_fwmark)
         elif args.outbound_fwmark is not None:
             config = as_outbound(config, args.outbound_fwmark)
+        elif args.fwmark is not None:
+            config = _set_interface_value(config, "FwMark", str(args.fwmark))
+        if args.resolve_endpoints:
+            config = resolve_endpoints(config)
         write_private(args.output, config)
     except (ConfigError, KeyError, OSError, json.JSONDecodeError) as exc:
         parser.exit(1, f"amneziawg-config: {exc}\n")

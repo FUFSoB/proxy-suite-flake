@@ -6,6 +6,7 @@
   mkTunConfig,
   mkTProxyConfig,
   mkTProxyNftRules,
+  mkNftRules,
 }:
 
 let
@@ -44,6 +45,55 @@ let
   tproxyManualStopScript = generated.readDerivation tproxyManualServiceConfig.ExecStop;
   tproxyManualConfig = mkTProxyConfig tproxyManualFixture;
   tproxyManualNftRules = mkTProxyNftRules tproxyManualFixture;
+
+  tproxyLanFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.proxy.tproxy = {
+        enable = true;
+        lanInterfaces = [ "br0" ];
+      };
+    }
+  ];
+  tproxyLanNftRules = mkTProxyNftRules tproxyLanFixture;
+  tproxyLanStartScript =
+    generated.readDerivation
+      tproxyLanFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig.ExecStart;
+
+  killSwitchFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.killSwitch.enable = true;
+      services.proxy-suite.proxy = {
+        tun.enable = true;
+        tproxy = {
+          enable = true;
+          lanInterfaces = [ "br0" ];
+        };
+      };
+    }
+  ];
+  killSwitchNftRules = mkNftRules killSwitchFixture "killSwitchRulesFile";
+
+  # A global AmneziaWG profile alone, no proxy.
+  awgKillSwitchFixture = evalProxySuite [
+    {
+      system.stateVersion = "26.05";
+      services.proxy-suite = {
+        enable = true;
+        killSwitch.enable = true;
+        amneziaWg = {
+          enable = true;
+          kernelModulePackage = null;
+          profiles.home.configFile = "/run/secrets/awg.conf";
+        };
+      };
+    }
+  ];
+  awgKillSwitchNftRules = mkNftRules awgKillSwitchFixture "killSwitchRulesFile";
+  awgKillSwitchPrepare = generated.readDerivation (
+    builtins.head awgKillSwitchFixture.config.systemd.services.proxy-suite-awg-home.serviceConfig.ExecStartPre
+  );
 
   tproxyIPv4OnlyFixture = evalProxySuite [
     baseModule
@@ -135,6 +185,9 @@ let
         };
       }
     ]
+    # The kill switch guards a global mode, and a gateway needs TProxy.
+    [ { services.proxy-suite.killSwitch.enable = true; } ]
+    [ { services.proxy-suite.proxy.tproxy.lanInterfaces = [ "br0" ]; } ]
   ];
 
   tunDefaultConfig = mkTunConfig tunManualFixture;
@@ -150,6 +203,14 @@ in
     tproxyManualStopScript
     tproxyManualConfig
     tproxyManualNftRules
+    tproxyLanFixture
+    tproxyLanNftRules
+    tproxyLanStartScript
+    killSwitchFixture
+    killSwitchNftRules
+    awgKillSwitchFixture
+    awgKillSwitchNftRules
+    awgKillSwitchPrepare
     tproxyIPv4OnlyStartScript
     tproxyIPv4OnlyConfig
     tproxyIPv4OnlyNftRules
