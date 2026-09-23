@@ -460,9 +460,9 @@ in
     # userControl's group can use the control socket: that is `proxy-ctl tor status|newnym`.
     (
       assert
-        hasInfix "proxy-suite-tor-control-dir" (
-          toString (services controlled).proxy-suite-tor.serviceConfig.ExecStartPre
-        )
+        (services controlled).proxy-suite-tor.serviceConfig.Group == "proxy-suite"
+        && hasInfix "mkdir -p -m 0750" (torStartOf controlled)
+        && singBoxTorUnit.serviceConfig.Group == "proxy-suite-daemon"
         && !(singBoxTorUnit.serviceConfig ? ExecStartPre)
         &&
           (mkProxyCtlDerived singBox).wrapperEnv.TOR_CONTROL_SOCKET == "/run/proxy-suite-tor/control/socket";

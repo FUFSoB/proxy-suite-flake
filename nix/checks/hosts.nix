@@ -176,10 +176,7 @@ in
       assert hmCfg.systemd.user.services ? proxy-suite-inbounds;
       assert hmCfg.systemd.user.services ? proxy-suite-tor;
       # Rootless, there is no userControl group to hand the control socket to.
-      assert
-        !(lib.hasInfix "proxy-suite-tor-control-dir" (
-          toString (hmCfg.systemd.user.services.proxy-suite-tor.Service.ExecStartPre or [ ])
-        ));
+      assert !(hmCfg.systemd.user.services.proxy-suite-tor.Service ? Group);
       assert forced hmCfg.systemd.user.services;
       # No setpriv on a user manager: nothing to drop to.
       assert

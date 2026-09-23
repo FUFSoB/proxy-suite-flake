@@ -27,8 +27,9 @@ let
   withProxyAuth = viaProxy && derived.localProxy.authEnabled;
   bridgesEnabled = t.bridges.lines != [ ] || t.bridges.file != null;
 
-  # The control socket's directory: members of userControl.group may use it for
-  # `proxy-ctl tor status|newnym`, so it takes that group (setgid) on a system install.
+  # Members of userControl.group may use the control socket for `proxy-ctl tor
+  # status|newnym`, so Tor runs with that group on a system install: Tor refuses a
+  # group-writable socket whose directory is owned by any group but its own.
   controlGroup = privileged && derived.userControlAllows "services";
 
   # An onion service port per listener: its share port, forwarded to where XRay listens.
@@ -81,14 +82,6 @@ let
     )
   );
 
-  # Group-owned and setgid, so the socket tor creates in it is the group's.
-  controlDirScript = pkgs.writeShellScript "proxy-suite-tor-control-dir" ''
-    set -euo pipefail
-    dir="$RUNTIME_DIRECTORY/control"
-    ${pkgs.coreutils}/bin/install -d -m 2750 -o ${derived.constants.serviceUser} \
-      -g ${lib.escapeShellArg cfg.userControl.group} "$dir"
-  '';
-
   # Before ExecStart, which is when proxy-suite-inbounds may start reading the hostname: a
   # stale one must be gone by then.
   onionKeyScript = pkgs.writeShellScript "proxy-suite-tor-onion-key" ''
@@ -110,7 +103,7 @@ let
     umask 0077
 
     torrc="$RUNTIME_DIRECTORY/torrc"
-    ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$RUNTIME_DIRECTORY/control"
+    ${pkgs.coreutils}/bin/mkdir -p -m ${if controlGroup then "0750" else "0700"} "$RUNTIME_DIRECTORY/control"
     {
       cat <<'TORRC'
     ${staticConfig}
@@ -166,10 +159,7 @@ in
         RestartSec = 5;
         LimitNOFILE = 65536;
       }
-      // lib.optionalAttrs (controlGroup || onionKeyEnabled) {
-        ExecStartPre =
-          lib.optional controlGroup "+${controlDirScript}"
-          ++ lib.optional onionKeyEnabled "${onionKeyScript}";
-      };
+      // lib.optionalAttrs controlGroup { Group = cfg.userControl.group; }
+      // lib.optionalAttrs onionKeyEnabled { ExecStartPre = onionKeyScript; };
   };
 }
