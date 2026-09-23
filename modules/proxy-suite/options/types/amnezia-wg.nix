@@ -3,6 +3,7 @@
 
 let
   inherit (lib) mkOption types;
+  inherit (import ../lib.nix { inherit lib; }) endpoint;
   optionalString = types.nullOr types.str;
   optionalUnsigned = types.nullOr types.ints.unsigned;
   rangeValue = types.oneOf [
@@ -206,6 +207,7 @@ let
             Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy.
           '';
         };
+        endpoint = endpoint "host:port (IPv6 in brackets) that replaces the first peer's Endpoint when the profile is prepared.";
         allowConfigHooks = mkOption {
           type = types.bool;
           default = false;

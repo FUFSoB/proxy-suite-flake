@@ -13,7 +13,7 @@ import tempfile
 import traceback
 
 from rich.text import Text
-from textual import events, work
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical

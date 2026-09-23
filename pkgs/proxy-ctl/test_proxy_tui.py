@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from textual import events
+
 import proxy_ctl as ctl
 import proxy_model as model
 import proxy_tui as tui
@@ -129,11 +131,11 @@ class TuiTest(unittest.TestCase):
                 await self.settle(app, pilot)
                 app.main.query_one("#tabs", tui.TabbedContent).active = "outbounds"
                 await self.settle(app, pilot)
-                app.post_message(tui.events.Paste("vless://u@de.test:443#DE"))
+                app.post_message(events.Paste("vless://u@de.test:443#DE"))
                 await pilot.pause()
                 self.assertEqual(self.ran.pop(), ["proxy", "outbounds", "add", "vless://u@de.test:443#DE"])
                 # Whatever else was in the clipboard runs nothing, and the bar says why.
-                app.post_message(tui.events.Paste("ftp://a.test/x"))
+                app.post_message(events.Paste("ftp://a.test/x"))
                 await pilot.pause()
                 self.assertEqual(self.ran, [])
                 self.assertIn("ftp:// link", str(app.main.query_one("#feedback").content))
@@ -162,7 +164,7 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(app.focused.id, "services-table")
 
             # The terminal losing focus leaves the TUI as it is.
-            app.post_message(tui.events.AppBlur())
+            app.post_message(events.AppBlur())
             await pilot.pause()
             self.assertEqual((app.app_focus, app.focused.id), (True, "services-table"))
 

@@ -390,6 +390,14 @@ def resolve_endpoints(config: str) -> str:
     return ENDPOINT_LINE.sub(resolve, config)
 
 
+def override_endpoint(config: str, endpoint: str) -> str:
+    """The first peer's Endpoint replaced by endpoint (host:port, IPv6 in brackets)."""
+    config, count = ENDPOINT_LINE.subn(lambda match: f"{match.group(1)}{endpoint}", config, count=1)
+    if not count:
+        raise ConfigError("configuration has no Endpoint to override")
+    return config
+
+
 # Read once by wireproxy: repeated lines are joined into one list.
 WIREPROXY_LIST_KEYS = {"address", "dns", "allowedips"}
 # wg-quick's, which wireproxy has no use for.
@@ -722,6 +730,8 @@ def prepare(manifest: dict[str, Any]) -> str:
     else:
         raise ConfigError(f"unsupported manifest kind '{kind}'")
     config = _apply_awg3_mtu_default(config)
+    if manifest.get("endpoint") is not None:
+        config = override_endpoint(config, str(manifest["endpoint"]))
     validate_config(config, bool(manifest.get("allowConfigHooks", False)))
     return config
 

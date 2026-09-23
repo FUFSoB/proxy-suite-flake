@@ -80,6 +80,7 @@ let
           allowConfigHooks = profile.allowConfigHooks;
           vpnContainer = profile.vpnContainer;
         }
+        // lib.optionalAttrs (profile.endpoint != null) { inherit (profile) endpoint; }
         // source profile
       )
     );
@@ -145,7 +146,9 @@ let
         if profile.asOutbound == "interface" then
           " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
         else
-          lib.optionalString (derived.killSwitchEnabled && profile.asOutbound == null) " --fwmark ${toString awgGlobalFwmark} --resolve-endpoints"
+          lib.optionalString (
+            derived.killSwitchEnabled && profile.asOutbound == null
+          ) " --fwmark ${toString awgGlobalFwmark} --resolve-endpoints"
       }
   '';
 
@@ -169,7 +172,11 @@ let
       configPath = runtimeConfig name profile;
       prepare = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
-        ${lib.optionalString (derived.killSwitchEnabled && !outbound) "${pkgs.util-linux}/bin/unshare --mount ${ownLookups} "}${prepareCommand profile (lib.escapeShellArg configPath)}
+        ${
+          lib.optionalString (
+            derived.killSwitchEnabled && !outbound
+          ) "${pkgs.util-linux}/bin/unshare --mount ${ownLookups} "
+        }${prepareCommand profile (lib.escapeShellArg configPath)}
       '';
       proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail

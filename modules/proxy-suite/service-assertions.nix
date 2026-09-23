@@ -948,8 +948,7 @@ let
           (proxyEnabled && proxyCfg.listener.port == torCfg.socksPort)
           || (proxyInboundsEnabled && builtins.elem torCfg.socksPort derived.proxyInboundPorts)
           || builtins.elem torCfg.socksPort (
-            builtins.attrValues constants.xrayDnsBridgePorts
-            ++ [ constants.outboundTestPort ]
+            builtins.attrValues constants.xrayDnsBridgePorts ++ [ constants.outboundTestPort ]
           )
         )
       )

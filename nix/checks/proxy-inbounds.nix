@@ -591,7 +591,12 @@ let
     (ok ((ruleByTag exitConfig "inbound-final").outboundTag == "direct"))
 
     # Safety rules come first.
-    (ok (lib.take 2 (ruleTags relayConfig) == [ "inbound-stats-api" "inbound-block-private" ]))
+    (ok (
+      lib.take 2 (ruleTags relayConfig) == [
+        "inbound-stats-api"
+        "inbound-block-private"
+      ]
+    ))
     (ok ((ruleByTag relayConfig "inbound-block-private").outboundTag == "block"))
     (ok ((ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]))
     (ok ((ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]))

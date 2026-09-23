@@ -35,9 +35,9 @@ def split_endpoint(endpoint: str) -> tuple[str, int]:
     return host.strip("[]"), int(port)
 
 
-def build(text: str, tag: str, routing_mark: int | None) -> dict[str, Any]:
+def build(text: str, tag: str, routing_mark: int | None, endpoint: str | None = None) -> dict[str, Any]:
     interface, peer = parse_conf(text)
-    host, port = split_endpoint(peer["endpoint"])
+    host, port = split_endpoint(endpoint or peer["endpoint"])
     sb_peer: dict[str, Any] = {
         "address": host,
         "port": port,
@@ -74,10 +74,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="warp")
     parser.add_argument("--routing-mark", type=int)
+    parser.add_argument("--endpoint", help="host:port in place of the profile's Endpoint")
     args = parser.parse_args()
     text = sys.stdin.read()
     try:
-        print(json.dumps(build(text, args.tag, args.routing_mark)))
+        print(json.dumps(build(text, args.tag, args.routing_mark, args.endpoint)))
     except ValueError as error:
         print(f"proxy-suite: {args.tag}: {error}", file=sys.stderr)
         return 1

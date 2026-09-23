@@ -189,10 +189,10 @@ in
         perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
       assert
         perAppRoutingZapretWithoutGlobalFixture.config.systemd.services
-          ? "proxy-suite-per-app-zapret-user@";
+        ? "proxy-suite-per-app-zapret-user@";
       assert
         perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services
-          ? "proxy-suite-per-app-zapret-anchor";
+        ? "proxy-suite-per-app-zapret-anchor";
       assert !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-zapret");
       assert builtins.length perAppRoutingZapretWithoutGlobalProfiles == 2;
       assert builtins.any (

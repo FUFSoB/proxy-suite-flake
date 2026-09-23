@@ -92,8 +92,6 @@ class FetchSubscriptionTests(unittest.TestCase):
         obs = run_fetcher(payload, tag_prefix="sub")
         tag = obs[0]["tag"]
         # Tag must contain only safe characters
-        import re
-
         self.assertRegex(tag, r"^[a-zA-Z0-9_/\-]+$")
 
     def test_non_latin_remark_kept_in_tag(self):

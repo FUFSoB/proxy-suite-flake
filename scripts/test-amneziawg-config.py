@@ -474,6 +474,26 @@ class AmneziaWgConfigTests(unittest.TestCase):
             "[Peer]\nEndpoint = [2001:db8::7]:51820\n[Peer]\nEndpoint = 192.0.2.1:1\nendpoint = [2001:db8::1]:2\n[Peer]\nEndpoint = gone.invalid:3\n",
         )
 
+    def test_endpoint_override(self):
+        # Only the first peer's Endpoint; a config without one cannot be overridden.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "warp.conf"
+            source.write_text(
+                BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+                + "\n[Peer]\nPublicKey = other\nAllowedIPs = 10.0.0.0/8\nEndpoint = second.example:1\n"
+            )
+            config = prepare({"kind": "configFile", "path": str(source), "endpoint": "[2001:db8::1]:500"})
+            self.assertEqual(
+                amneziawg_config.section_values(config, "peer", "endpoint"),
+                ["[2001:db8::1]:500", "second.example:1"],
+            )
+            rendered = amneziawg_config.as_wireproxy(config, "127.0.0.1:18700", 2)
+            self.assertIn("[2001:db8::1]:500", amneziawg_config.section_values(rendered, "peer", "endpoint"))
+            self.assertIn("Endpoint = [2001:db8::1]:500", amneziawg_config.as_outbound(config, 2))
+            source.write_text("[Interface]\nPrivateKey = private\nAddress = 10.8.0.2/32\n[Peer]\nPublicKey = public\nAllowedIPs = 0.0.0.0/0\n")
+            with self.assertRaises(ConfigError):
+                prepare({"kind": "configFile", "path": str(source), "endpoint": "192.0.2.1:500"})
+
     def test_global_render_pins_the_fwmark(self):
         # The kill switch knows the tunnel's own packets by it; one set in the file is replaced.
         with tempfile.TemporaryDirectory() as directory:

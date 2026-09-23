@@ -690,7 +690,7 @@ def _unit_states(units):
         return {}
     _, out = systemctl("show", "--property=Id,LoadState,ActiveState", "--", *units, capture=True, quiet=True)
     states = {}
-    for unit, block in zip(units, out.strip().split("\n\n")):
+    for unit, block in zip(units, out.strip().split("\n\n"), strict=False):
         props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
         if props.get("LoadState") not in (None, "not-found"):
             states[unit] = props.get("ActiveState", "unknown")
@@ -1605,7 +1605,6 @@ def cmd_outbound_disable(tag="", *_):
     if os.path.exists(marker) and tag in _outbound_disabled():
         print(f"Already disabled: {tag}")
         return
-    pinned = _s(inventory.get("pinned") or "")
     excluded = set(inventory.get("excluded") or [])
     # With none left to pick the proxy would not start, pinned or not: an unpin falls back to selection.
     if [t for t in _outbound_tags() if t not in excluded] == [tag]:
@@ -2104,7 +2103,7 @@ def cmd_proxy_probe(*args):
             "exit": w["exit"] or None,
             "direct": w["direct"],
             "proxy": w["via"],
-            "exits": [dict(zip(("tag", "path", "result", "judgement"), row), block=_probe_field(row[2], 5)) for row in w["rows"]],
+            "exits": [dict(zip(("tag", "path", "result", "judgement"), row, strict=False), block=_probe_field(row[2], 5)) for row in w["rows"]],
         }
         print(json.dumps(out, separators=(",", ":"), ensure_ascii=False))
         return

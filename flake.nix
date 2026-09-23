@@ -93,6 +93,9 @@
         mkProxySuiteTray = throw "mkProxySuiteTray was replaced by Proxy Suite GUI: set services.proxy-suite.gui.enable";
       };
 
+      # `nix fmt`; the nix-format check holds the tree to it.
+      formatter = forAll (system: (pkgsFor system).nixfmt-tree);
+
       packages = forAll (
         system:
         let

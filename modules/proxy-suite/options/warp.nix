@@ -2,6 +2,7 @@
 
 let
   inherit (lib) mkEnableOption mkOption types;
+  inherit (import ./lib.nix { inherit lib; }) endpoint;
 in
 {
   options.services.proxy-suite.warp = {
@@ -34,6 +35,13 @@ in
       '';
       example = "https://valokda-amnezia.vercel.app/api/warp?mode=awg2";
     };
+
+    endpoint = endpoint ''
+      host:port that replaces the profile's Endpoint (IPv6 in brackets), for when the default
+      engage.cloudflareclient.com:2408 is blocked: another Cloudflare address, another port WARP
+      answers on (500, 1701, 4500, ...), or a relay. Applied in every mode when the tunnel or
+      AmneziaWG profile starts; the profile file itself is left as is.
+    '';
 
     asOutbound = mkOption {
       type = types.nullOr (

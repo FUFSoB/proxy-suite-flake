@@ -9,6 +9,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [asAmneziaWg](#services-proxy-suite-warp-asamneziawg)
   - [asOutbound](#services-proxy-suite-warp-asoutbound)
   - [configFile](#services-proxy-suite-warp-configfile)
+  - [endpoint](#services-proxy-suite-warp-endpoint)
   - [generatorUrl](#services-proxy-suite-warp-generatorurl)
 
 <a id="services-proxy-suite-warp-enable"></a>
@@ -93,6 +94,29 @@ null
 
 ```nix
 "/run/secrets/wgcf-profile.conf"
+```
+
+<a id="services-proxy-suite-warp-endpoint"></a>
+## services\.proxy-suite\.warp\.endpoint
+
+host:port that replaces the profile’s Endpoint (IPv6 in brackets), for when the default
+engage\.cloudflareclient\.com:2408 is blocked: another Cloudflare address, another port WARP
+answers on (500, 1701, 4500, …), or a relay\. Applied in every mode when the tunnel or
+AmneziaWG profile starts; the profile file itself is left as is\.
+
+*Type:*
+null or string matching the pattern (\\\[\[0-9A-Fa-f:\.]+]|\[^]:\[]+):\[0-9]+
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"162.159.192.1:500"
 ```
 
 <a id="services-proxy-suite-warp-generatorurl"></a>

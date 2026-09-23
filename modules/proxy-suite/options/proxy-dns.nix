@@ -13,11 +13,21 @@ in
   options.services.proxy-suite.proxy.dns = {
     local = mkOption {
       type = t.dnsUpstreamType;
-      default = cloudflare;
-      description = "Resolver for direct traffic and the default domain resolver. Goes through the proxy in global TUN mode.";
-      example = {
+      # TCP: DPI boxes answer plain UDP queries to well-known resolvers themselves, with
+      # NXDOMAIN or a stub address for blocked names, so direct traffic (zapret's
+      # included) dials nothing. Not tls, which pure XRay lacks.
+      default = cloudflare // {
         type = "tcp";
-        address = "9.9.9.9";
+      };
+      description = ''
+        Resolver for direct traffic and the default domain resolver. Goes through the proxy in
+        global TUN mode. TCP by default: plain UDP queries to well-known resolvers are often
+        answered by the ISP's DPI instead, which breaks blocked names routed direct to zapret.
+      '';
+      example = {
+        type = "tls";
+        address = "1.1.1.1";
+        port = 853;
       };
     };
 

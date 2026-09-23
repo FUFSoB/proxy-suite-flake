@@ -67,6 +67,10 @@ let
     fixture:
     generated.readDerivation fixture.config.systemd.services."proxy-suite-warp".serviceConfig.ExecStart;
   autoRegister = registerOf auto;
+  endpointed = mkFixture "sing-box" {
+    asOutbound = "singBox";
+    endpoint = "[2606:4700:d0::a29f:c001]:500";
+  };
   generatorRegister = registerOf generator;
 
   amneziaWg = mkProxySuite {
@@ -79,7 +83,29 @@ let
     };
   };
 
+  amneziaWgEndpoint = mkProxySuite {
+    enable = true;
+    amneziaWg.enable = true;
+    warp = {
+      enable = true;
+      configFile = profile;
+      asAmneziaWg = true;
+      endpoint = "162.159.192.1:500";
+    };
+  };
+
   invalidAssertions = mkFailingAssertions mkBadProxySuiteFixture [
+    # An IPv6 endpoint without brackets.
+    {
+      enable = true;
+      warp = {
+        enable = true;
+        configFile = profile;
+        asOutbound = "singBox";
+        endpoint = "2606:4700:d0::a29f:c001:500";
+      };
+      proxy.enable = true;
+    }
     # Enabled but used for nothing.
     {
       enable = true;
@@ -182,7 +208,7 @@ in
     # The resolver comes from proxy.dns.local; sing-box's "local" server fails behind resolved.
     (
       assert
-        hasInfix ''{"server":"1.1.1.1","server_port":53,"tag":"local","type":"udp"}'' singBoxTunnel
+        hasInfix ''{"server":"1.1.1.1","server_port":53,"tag":"local","type":"tcp"}'' singBoxTunnel
         && !(hasInfix ''type: "local"'' singBoxTunnel);
       true
     )
@@ -240,6 +266,20 @@ in
     )
     (
       assert !(amneziaWg.config.systemd.services ? "proxy-suite-warp-tunnel");
+      true
+    )
+    # endpoint replaces the profile's Endpoint at conversion; the sing-box tunnel gets it quoted.
+    (
+      assert
+        hasInfix "--endpoint '[2606:4700:d0::a29f:c001]:500' < \"$profile\"" (tunnelOf endpointed)
+        && !(hasInfix "--endpoint" singBoxTunnel);
+      true
+    )
+    (
+      assert
+        amneziaWgEndpoint.config.services.proxy-suite.amneziaWg.profiles.warp.endpoint
+        == "162.159.192.1:500"
+        && amneziaWg.config.services.proxy-suite.amneziaWg.profiles.warp.endpoint == null;
       true
     )
   ]

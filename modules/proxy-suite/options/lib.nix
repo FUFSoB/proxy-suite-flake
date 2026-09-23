@@ -18,6 +18,15 @@ in
       default = null;
       inherit description example;
     };
+  # A WireGuard peer's host:port, IPv6 in brackets.
+  endpoint =
+    description:
+    mkOption {
+      type = types.nullOr (types.strMatching "(\\[[0-9A-Fa-f:.]+]|[^]:[]+):[0-9]+");
+      default = null;
+      example = "162.159.192.1:500";
+      inherit description;
+    };
   bool =
     default: description:
     mkOption {

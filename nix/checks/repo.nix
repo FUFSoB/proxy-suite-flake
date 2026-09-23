@@ -57,6 +57,37 @@ in
         touch "$out"
       '';
 
+  # The tree as `nix fmt` leaves it.
+  nix-format =
+    pkgs.runCommand "proxy-suite-nix-format-check" { nativeBuildInputs = [ pkgs.nixfmt ]; }
+      ''
+        cd ${
+          pkgs.lib.fileset.toSource {
+            root = ../..;
+            fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ../..;
+          }
+        }
+        find . -name '*.nix' -print0 | xargs -0 nixfmt --check
+        touch "$out"
+      '';
+
+  # Pyflakes and bugbear over every script and front end, as ruff.toml configures them.
+  python-lint =
+    pkgs.runCommand "proxy-suite-python-lint-check" { nativeBuildInputs = [ pkgs.ruff ]; }
+      ''
+        cd ${
+          pkgs.lib.fileset.toSource {
+            root = ../..;
+            fileset = pkgs.lib.fileset.unions [
+              ../../ruff.toml
+              (pkgs.lib.fileset.fileFilter (file: file.hasExt "py") ../..)
+            ];
+          }
+        }
+        ruff check --no-cache .
+        touch "$out"
+      '';
+
   proxy-ctl-subscription-list =
     pkgs.runCommand "proxy-suite-proxy-ctl-subscription-list-check"
       {

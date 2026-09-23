@@ -102,8 +102,7 @@ in
       assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-cutoff);
       assert (proxyCtlEnv zapret2Global).ZAPRET_CUTOFF_ENABLED == "1";
       assert
-        envValue zapret2Z2k globalService "Z2K_TCP16_ASN="
-        == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
+        envValue zapret2Z2k globalService "Z2K_TCP16_ASN=" == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
       assert
         !(builtins.any (lib.hasPrefix "Z2K_TCP16_ASN=")
           zapret2Global.config.systemd.services.${globalService}.serviceConfig.Environment
@@ -241,6 +240,15 @@ in
         hook="${perAppGlobalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh"
         test "$(grep -c 'mark and 0x10000000 != 0 return' "$hook")" = 4
         grep -q 'nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and 0x10000000 != 0 return' "$hook"
+
+        # --- store paths ------------------------------------------------------
+        # Every path a config names is a build input. One that lost its string context
+        # is missing from the closure, and from this sandbox under lazy trees.
+        for config in ${globalRuntime}/config ${perAppRuntime}/config ${z2kRuntime}/config; do
+          for path in $(grep -oE '/nix/store/[a-z0-9]{32}-[^ :"/]+' "$config" | sort -u); do
+            test -e "$path" || { echo "$config names $path, which is not in the sandbox" >&2; exit 1; }
+          done
+        done
 
         # --- the command line nfqws2 receives ---
         # Expand <HOSTLIST> with zapret2's list.sh and let nfqws2 validate the result,

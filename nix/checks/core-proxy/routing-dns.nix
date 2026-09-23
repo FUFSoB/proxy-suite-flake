@@ -32,7 +32,7 @@ in
         localDns = dnsServerByTag ruDefaultConfig "local";
         remoteDns = dnsServerByTag ruDefaultConfig "remote";
       in
-      assert localDns.type == "udp";
+      assert localDns.type == "tcp";
       assert localDns.server == "1.1.1.1";
       assert localDns.server_port == 53;
       assert !(localDns ? detour);

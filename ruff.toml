@@ -1,0 +1,3 @@
+# The python-lint check (nix/checks/repo.nix): real errors only, no style.
+[lint]
+select = ["F", "E9", "B"]

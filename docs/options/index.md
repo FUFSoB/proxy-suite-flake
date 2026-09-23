@@ -132,7 +132,7 @@ services.proxy-suite = {
       local = {
         address = "1.1.1.1";
         port = 53;
-        type = "udp";
+        type = "tcp";
       };
       remote = {
         address = "1.1.1.1";
@@ -301,6 +301,7 @@ services.proxy-suite = {
     asOutbound = null;
     configFile = null;
     enable = false;
+    endpoint = null;
     generatorUrl = null;
   };
   zapret = {

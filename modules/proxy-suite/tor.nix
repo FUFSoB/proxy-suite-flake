@@ -103,7 +103,9 @@ let
     umask 0077
 
     torrc="$RUNTIME_DIRECTORY/torrc"
-    ${pkgs.coreutils}/bin/mkdir -p -m ${if controlGroup then "0750" else "0700"} "$RUNTIME_DIRECTORY/control"
+    ${pkgs.coreutils}/bin/mkdir -p -m ${
+      if controlGroup then "0750" else "0700"
+    } "$RUNTIME_DIRECTORY/control"
     {
       cat <<'TORRC'
     ${staticConfig}

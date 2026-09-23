@@ -67,11 +67,13 @@ let
     zapret2Cfg.excludeDomains != [ ]
   ) "--hostlist-exclude-domains=${lib.concatStringsSep "," zapret2Cfg.excludeDomains}";
 
+  # lib.trim drops string context: without it the source's list paths are no build input,
+  # so lazy trees never materialize them and the closure omits them.
   renderProfile =
     profile:
     lib.replaceStrings hostlistMarkers (map (
       marker: marker + withSpaces staticListArgs
-    ) hostlistMarkers) (lib.trim profile);
+    ) hostlistMarkers) (lib.addContextFrom profile (lib.trim profile));
 
   z2kGenerated = sources.z2k.mkProfiles {
     hostlistSuffix = withSpaces staticListArgs;

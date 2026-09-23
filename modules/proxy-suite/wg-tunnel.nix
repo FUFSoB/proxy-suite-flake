@@ -86,10 +86,13 @@ let
       tag,
       tunnelPort,
       directPort,
+      endpoint,
     }:
     {
       convert = ''
-        endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag ${tag}${markArg "--routing-mark"} < "$profile")
+        endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag ${tag}${markArg "--routing-mark"}${
+          lib.optionalString (endpoint != null) " --endpoint ${lib.escapeShellArg endpoint}"
+        } < "$profile")
         (umask 027 && ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
           log: {level: "warn"},
           dns: {servers: [
@@ -130,7 +133,8 @@ let
     };
 
   # `profile` is a shell snippet, run as root on a privileged host, that sets $profile to
-  # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort.
+  # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort,
+  # and `endpoint`, a host:port in place of the profile's Endpoint.
   mkTunnel =
     {
       description,
@@ -139,11 +143,17 @@ let
       profile,
       tunnelPort,
       directPort ? null,
+      endpoint ? null,
       engine ? "singBox",
     }:
     let
       chosen = (if engine == "userspace" then wireproxyEngine else singBoxEngine) {
-        inherit tag tunnelPort directPort;
+        inherit
+          tag
+          tunnelPort
+          directPort
+          endpoint
+          ;
       };
       tunnelScript = pkgs.writeShellScript "proxy-suite-wg-tunnel" ''
         set -euo pipefail

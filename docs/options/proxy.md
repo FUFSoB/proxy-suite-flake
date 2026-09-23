@@ -389,7 +389,9 @@ string
 <a id="services-proxy-suite-proxy-dns-local"></a>
 ## services\.proxy-suite\.proxy\.dns\.local
 
-Resolver for direct traffic and the default domain resolver\. Goes through the proxy in global TUN mode\.
+Resolver for direct traffic and the default domain resolver\. Goes through the proxy in
+global TUN mode\. TCP by default: plain UDP queries to well-known resolvers are often
+answered by the ISP’s DPI instead, which breaks blocked names routed direct to zapret\.
 
 *Type:*
 submodule
@@ -400,7 +402,7 @@ submodule
 {
   address = "1.1.1.1";
   port = 53;
-  type = "udp";
+  type = "tcp";
 }
 ```
 
@@ -408,8 +410,9 @@ submodule
 
 ```nix
 {
-  address = "9.9.9.9";
-  type = "tcp";
+  address = "1.1.1.1";
+  port = 853;
+  type = "tls";
 }
 ```
 

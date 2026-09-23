@@ -13,6 +13,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [asOutbound](#services-proxy-suite-amneziawg-profiles-name-asoutbound)
       - [autostart](#services-proxy-suite-amneziawg-profiles-name-autostart)
       - [configFile](#services-proxy-suite-amneziawg-profiles-name-configfile)
+      - [endpoint](#services-proxy-suite-amneziawg-profiles-name-endpoint)
       - [interfaceName](#services-proxy-suite-amneziawg-profiles-name-interfacename)
       - [settings](#services-proxy-suite-amneziawg-profiles-name-settings)
         - [addresses](#services-proxy-suite-amneziawg-profiles-name-settings-addresses)
@@ -187,6 +188,26 @@ null or string
 
 ```nix
 null
+```
+
+<a id="services-proxy-suite-amneziawg-profiles-name-endpoint"></a>
+## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.endpoint
+
+host:port (IPv6 in brackets) that replaces the first peer’s Endpoint when the profile is prepared\.
+
+*Type:*
+null or string matching the pattern (\\\[\[0-9A-Fa-f:\.]+]|\[^]:\[]+):\[0-9]+
+
+*Default:*
+
+```nix
+null
+```
+
+*Example:*
+
+```nix
+"162.159.192.1:500"
 ```
 
 <a id="services-proxy-suite-amneziawg-profiles-name-interfacename"></a>
