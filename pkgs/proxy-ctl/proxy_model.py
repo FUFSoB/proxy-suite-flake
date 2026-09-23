@@ -153,11 +153,22 @@ def _awg_profile(row):
     return name if row["unit"].startswith(AWG_PREFIX) and name in ctl._awg_profiles() else ""
 
 
-def toggle_argv(row, *_):
-    verb = "off" if row["state"] == "active" else "on"
+def _unit_argv(row, verb):
     if profile := _awg_profile(row):
         return ["awg", verb, profile]
     return [*TOGGLES[row["unit"]], verb]
+
+
+def toggle_argv(row, *_):
+    return _unit_argv(row, "off" if row["state"] == "active" else "on")
+
+
+def restart_argv(row, *_):
+    return _unit_argv(row, "restart")
+
+
+def _controllable(row):
+    return row["unit"] in TOGGLES or bool(_awg_profile(row))
 
 
 def service_rows(states):
@@ -415,17 +426,13 @@ TABS = [
                 "space",
                 "start / stop",
                 toggle_argv,
-                when=lambda r: r["unit"] in TOGGLES or bool(_awg_profile(r)),
+                when=_controllable,
                 # proxy off takes tun and tproxy down with it.
                 confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] == "active",
             ),
             Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
-            Action(
-                "ctrl+r",
-                "restart it",
-                lambda r, *_: ["awg", "restart", _awg_profile(r)],
-                when=lambda r: bool(_awg_profile(r)) and r["state"] == "active",
-            ),
+            # A failed unit restarts too: that is how it gets another try.
+            Action("ctrl+r", "restart it", restart_argv, when=lambda r: _controllable(r) and r["state"] in ("active", "failed")),
             Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
         ],
     ),
@@ -554,6 +561,7 @@ TABS = [
             Action("C", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True),
             Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog"),
             Action("z", "start / stop zapret", _zapret_toggle),
+            Action("Z", "restart zapret", lambda *_: ["zapret", "restart"]),
         ],
     ),
     Tab(

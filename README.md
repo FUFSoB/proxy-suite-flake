@@ -128,6 +128,7 @@ See the [options reference](./docs/options/index.md), one page per option group.
 ```text
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
+Every group with on|off also takes toggle (on if stopped, off if running) and restart.
 Secrets and changes need root, or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated key=value lines)
@@ -182,7 +183,7 @@ Secrets and changes need root, or the userControl group.
   zapret cutoff probe                    probe this line again now
 
   awg [list]                             AmneziaWG profiles and their state
-  awg on <profile> | off [profile] | restart [profile]
+  awg on <profile> | off [profile] | toggle [profile] | restart [profile]
 
   killswitch [status|on|off]             reject traffic outside the global tunnel; up with
                                          TUN, TProxy or AWG, lifted only by off here or on them

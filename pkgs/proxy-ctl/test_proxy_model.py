@@ -74,10 +74,21 @@ class ModelTest(unittest.TestCase):
         row = model.service_rows({"proxy-suite-awg-warp": "inactive"})[0]
         keys = lambda: [a.key for a in model.applicable(tab, {**row, "state": "active"})]
         self.assertEqual(model.toggle_argv(row), ["warp", "on"])  # an outbound profile: `awg` does not know it
-        self.assertNotIn("ctrl+r", keys())
+        self.assertEqual(model.restart_argv(row), ["warp", "restart"])
+        self.assertIn("ctrl+r", keys())
+        self.assertNotIn("ctrl+r", [a.key for a in model.applicable(tab, row)])  # nothing to restart while stopped
         with mock.patch.object(ctl, "_awg_profiles", lambda: ["warp"]):
             self.assertEqual(model.toggle_argv(row), ["awg", "on", "warp"])  # a global profile named warp
-            self.assertIn("ctrl+r", keys())
+            self.assertEqual(model.restart_argv(row), ["awg", "restart", "warp"])
+
+    def test_every_toggle_restarts(self):
+        tab = model.TABS[0]
+        restart = next(a for a in tab.actions if a.key == "ctrl+r")
+        for unit, group in model.TOGGLES.items():
+            for state in ("active", "failed"):
+                row = {"key": unit, "unit": unit, "name": unit, "state": state}
+                self.assertIn(restart, model.applicable(tab, row))
+                self.assertEqual(restart.argv(row), [*group, "restart"])
 
     def test_inbound_amneziawg_actions(self):
         tab = next(t for t in model.TABS if t.id == "inbounds")

@@ -50,6 +50,7 @@ RESTART_SERVICES = [
 HELP = """\
 Usage: proxy-ctl <group> [verb] [args]
 A group without a verb shows its status or list.
+Every group with on|off also takes toggle (on if stopped, off if running) and restart.
 Secrets and changes need root, or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated key=value lines)
@@ -104,7 +105,7 @@ Secrets and changes need root, or the userControl group.
   zapret cutoff probe                    probe this line again now
 
   awg [list]                             AmneziaWG profiles and their state
-  awg on <profile> | off [profile] | restart [profile]
+  awg on <profile> | off [profile] | toggle [profile] | restart [profile]
 
   killswitch [status|on|off]             reject traffic outside the global tunnel; up with
                                          TUN, TProxy or AWG, lifted only by off here or on them
@@ -317,17 +318,27 @@ def _bool(value):
     return "true" if value else "false"
 
 
+def _flip(unit, verb="status"):
+    """toggle as on or off, for the state unit is in now; any other verb as it is."""
+    if verb == "toggle":
+        return "off" if svc_active(unit) else "on"
+    return verb
+
+
 def _toggle(unit, name, verb="status", *_):
     if not svc_exists(unit):
         die(f"{name} is not enabled in this configuration.")
+    verb = _flip(unit, verb)
     if verb == "status":
         systemctl("is-active", unit)
     elif verb == "on":
         must("start", unit)
     elif verb == "off":
         must("stop", unit)
+    elif verb == "restart":
+        must("restart", unit)
     else:
-        usage(f"{name} [status|on|off]")
+        usage(f"{name} [status|on|off|toggle|restart]")
 
 
 def _warp_unit():
@@ -396,8 +407,8 @@ def cmd_tor(verb="status", *args):
         _tor_control("SIGNAL NEWNYM")
         print("New connections take new circuits (Tor allows this once every 10 seconds).")
         return
-    if verb not in ("status", "on", "off"):
-        usage("tor [status|on|off|newnym]")
+    if verb not in ("status", "on", "off", "toggle", "restart"):
+        usage("tor [status|on|off|toggle|restart|newnym]")
     _toggle(unit, "tor", verb, *args)
     if verb == "status" and svc_active(unit):
         # Extra detail: the unit's state stands without it, for a user outside the group
@@ -437,7 +448,13 @@ def _awg_profiles():
 # its words and args until a positional is typed (always, when it repeats), and
 # its flags until each is typed.
 
-TOGGLE = {"status": "is it running", "on": "start it", "off": "stop it"}
+TOGGLE = {
+    "status": "is it running",
+    "on": "start it",
+    "off": "stop it",
+    "toggle": "start it if stopped, stop it if running",
+    "restart": "stop it and start it again",
+}
 
 
 def _outbound_choices():
@@ -588,11 +605,13 @@ COMPLETE = {
             "list": "profiles and their state",
             "on": "start a profile",
             "off": "stop a profile",
+            "toggle": "start a profile if stopped, stop it if running",
             "restart": "restart a profile",
         }
     },
     "awg on": {"args": lambda: _names(_awg_profiles())},
     "awg off": {"args": lambda: _names(_awg_profiles())},
+    "awg toggle": {"args": lambda: _names(_awg_profiles())},
     "awg restart": {"args": lambda: _names(_awg_profiles())},
     "ssh": {"words": TOGGLE},
     "warp": {"words": TOGGLE},
@@ -914,7 +933,8 @@ def cmd_restart(*_):
 
 
 def cmd_proxy(verb="status", *args):
-    if verb in ("status", "on"):
+    verb = _flip("proxy-suite-socks", verb)
+    if verb in ("status", "on", "restart"):
         _toggle("proxy-suite-socks", "proxy", verb)
     elif verb == "off":
         if not svc_exists("proxy-suite-socks"):
@@ -938,16 +958,17 @@ def cmd_proxy(verb="status", *args):
     elif verb == "rulesets":
         cmd_rulesets(*args)
     elif verb in ("tun", "tproxy"):
-        _toggle(f"proxy-suite-{verb}", f"proxy {verb}", *args)
+        action = _flip(f"proxy-suite-{verb}", *args[:1])
+        _toggle(f"proxy-suite-{verb}", f"proxy {verb}", action)
         # A mode stopped on purpose lifts the kill switch; one that fails leaves it up.
-        if args[:1] == ("off",) and svc_exists(KILL_SWITCH):
+        if action == "off" and svc_exists(KILL_SWITCH):
             systemctl("stop", KILL_SWITCH)
     elif verb == "auto":
         cmd_proxy_auto(*args)
     elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|outbounds|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
+        usage("proxy [status|on|off|toggle|restart|outbounds|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -2787,6 +2808,14 @@ def cmd_awg(verb="list", *args):
     profiles = _awg_profiles()
     if args and args[0] not in profiles:
         die(f"Unknown AmneziaWG profile: {args[0]}")
+    if verb == "toggle":
+        # Without a profile there is only something to stop: which one to start is not known.
+        if args:
+            verb = _flip(_awg_service(args[0]), verb)
+        elif _active_awg_profiles():
+            verb = "off"
+        else:
+            usage("awg toggle <profile>")
     if verb in ("list", "status"):
         if not profiles:
             print("No AmneziaWG profiles configured.")
@@ -2808,7 +2837,7 @@ def cmd_awg(verb="list", *args):
         if verb == "off" and svc_exists(KILL_SWITCH):
             systemctl("stop", KILL_SWITCH)
     else:
-        usage("awg [list] | on <profile> | off [profile] | restart [profile]")
+        usage("awg [list] | on <profile> | off [profile] | toggle [profile] | restart [profile]")
 
 
 # --- apps ---------------------------------------------------------------------

@@ -351,6 +351,47 @@ class ServiceManagerTest(EnvTest):
         ctl.COMMANDS["killswitch"]("off")
         self.assertEqual(stops(), [ctl.KILL_SWITCH])
 
+    def test_toggle_and_restart(self):
+        seen = self.calls()
+        active = set()
+        self.patch("svc_active", lambda unit: unit in active)
+        verbs = lambda: [argv[1:3] for argv in seen if argv[1] in ("start", "stop", "restart")]
+        ctl.COMMANDS["ssh"]("toggle")
+        active.add("proxy-suite-ssh-proxy")
+        ctl.COMMANDS["ssh"]("toggle")
+        ctl.COMMANDS["ssh"]("restart")
+        self.assertEqual(verbs(), [["start", "proxy-suite-ssh-proxy"], ["stop", "proxy-suite-ssh-proxy"], ["restart", "proxy-suite-ssh-proxy"]])
+        # Toggled off, a mode lifts the kill switch as off does; proxy toggled off takes the modes down.
+        seen.clear()
+        active.update(["proxy-suite-tun", "proxy-suite-socks"])
+        ctl.cmd_proxy("tun", "toggle")
+        ctl.cmd_proxy("toggle")
+        self.assertEqual(
+            verbs(),
+            [["stop", "proxy-suite-tun"], ["stop", ctl.KILL_SWITCH], ["stop", "proxy-suite-tproxy"], ["stop", "proxy-suite-tun"], ["stop", ctl.KILL_SWITCH], ["stop", "proxy-suite-socks"]],
+        )
+        seen.clear()
+        ctl.cmd_proxy("restart")
+        ctl.cmd_proxy("tproxy", "restart")
+        ctl.cmd_zapret("restart")
+        ctl.cmd_tor("restart")
+        self.assertEqual(verbs(), [["restart", u] for u in ("proxy-suite-socks", "proxy-suite-tproxy", "proxy-suite-zapret", "proxy-suite-tor")])
+        # awg toggle: a named profile flips; without one, only stopping is possible.
+        seen.clear()
+        self.patch("_awg_profiles", lambda: ["p", "q"])
+        ctl.cmd_awg("toggle", "p")
+        active.add(ctl._awg_service("q"))
+        ctl.cmd_awg("toggle")
+        self.assertEqual(verbs(), [["start", ctl._awg_service("p")], ["stop", ctl._awg_service("q")], ["stop", ctl.KILL_SWITCH]])
+        active.clear()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            ctl.cmd_awg("toggle")
+
+    def test_toggle_completes(self):
+        for path in ("ssh", "zapret", "proxy", "proxy tun", "tor"):
+            self.assertLessEqual({"toggle", "restart"}, set(ctl._complete_tree(*path.split())))
+        self.assertIn("toggle", ctl._complete_tree("awg"))
+
     def test_rulesets_list(self):
         self.calls()
         with tempfile.TemporaryDirectory() as tmp:
