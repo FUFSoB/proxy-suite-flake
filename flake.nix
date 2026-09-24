@@ -85,6 +85,7 @@
           mkProxyCtl
           mkTgWsProxy
           tg-ws-proxy
+          whitelist-bypass
           wireproxy-awg
           zapret2
           ;
@@ -136,6 +137,7 @@
             amneziawg-tools
             amneziawg-go
             tg-ws-proxy
+            whitelist-bypass
             wireproxy-awg
             zapret2
             ;

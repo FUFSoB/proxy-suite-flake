@@ -115,6 +115,9 @@ Secrets and changes need root, or the userControl group.
   tor [status|on|off]                    Tor, behind the tor outbound and the onion service
   tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram WebSocket proxy
+  wl [list]                              whitelist-bypass creators and joiners
+  wl link <creator> [--qr]               the call link its joiner takes
+  wl on|off|toggle|restart [name]        one creator or joiner, or all of them
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
@@ -491,6 +494,7 @@ COMPLETE = {
             "warp": "WARP tunnel behind the warp outbound",
             "tor": "Tor, behind the tor outbound and the onion service",
             "tg": "Telegram WebSocket proxy",
+            "wl": "whitelist-bypass creators and joiners",
             "apps": "per-app routing profiles",
             "inbounds": "server inbounds",
             "help": "usage",
@@ -618,6 +622,18 @@ COMPLETE = {
     "killswitch": {"words": TOGGLE},
     "tor": {"words": {**TOGGLE, "newnym": "new circuits for new connections"}},
     "tg": {"words": TOGGLE},
+    "wl": {
+        "words": {
+            "list": "creators and joiners and their state",
+            "link": "the call link a creator's joiner takes",
+            "on": "start one, or all",
+            "off": "stop one, or all",
+            "toggle": "start it if stopped, stop it if running",
+            "restart": "restart one, or all",
+        }
+    },
+    "wl link": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "creator"), "flags": {"--qr": "print a QR code"}},
+    **{f"wl {verb}": {"args": lambda: {w["name"]: w["role"] for w in _wl()}} for verb in ("on", "off", "toggle", "restart")},
     "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
     "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
     "inbounds": {
@@ -732,7 +748,7 @@ def _snapshot_units():
     profiles = _awg_profiles()
     # WARP as an AmneziaWG outbound has no profile to toggle, but it is a unit that can fail (_warp_unit).
     warp = [] if "warp" in profiles else [_awg_service("warp")]
-    return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, profiles), *warp]
+    return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, profiles), *warp, *map(_wl_unit, _wl())]
 
 
 def _status_snapshot(states=None):
@@ -2840,6 +2856,56 @@ def cmd_awg(verb="list", *args):
         usage("awg [list] | on <profile> | off [profile] | toggle [profile] | restart [profile]")
 
 
+# --- wl -----------------------------------------------------------------------
+
+
+def _wl():
+    """whitelist-bypass creators and joiners: [{name, role, platform}]."""
+    return read_json_or(env("WL_FILE"), [])
+
+
+def _wl_unit(w):
+    return f"proxy-suite-wb-{w['role']}-{w['name']}"
+
+
+def _wl_link(name):
+    """The call a creator made and keeps rejoining: the last line it wrote."""
+    path = os.path.join(state_dir(), "whitelist-bypass", f"{name}.link")
+    try:
+        links = [line.strip() for line in lines(read_text(path)) if line.strip()]
+    except FileNotFoundError:
+        links = []
+    except PermissionError:
+        die(f"Cannot read {path} - re-run with sudo.")
+    if not links:
+        die(f"{name} has no call yet: {journal_hint(_wl_unit({'role': 'creator', 'name': name}))}")
+    return links[-1]
+
+
+def cmd_wl(verb="list", *args):
+    entries = _wl()
+    named = [w for w in entries if w["name"] == args[0]] if args else entries
+    if args and not named:
+        die(f"Unknown whitelist-bypass creator or joiner: {args[0]}")
+    if verb in ("list", "status"):
+        if not entries:
+            print("No whitelist-bypass creators or joiners configured.")
+            return
+        print(f"  {'NAME':<16} {'ROLE':<8} {'PLATFORM':<10} STATUS")
+        for w in entries:
+            print(f"  {w['name']:<16} {w['role']:<8} {w['platform']:<10} {svc_state(_wl_unit(w)) or 'unknown'}")
+    elif verb == "link":
+        if not args or named[0]["role"] != "creator":
+            usage("wl link <creator> [--qr]")
+        _emit(_wl_link(args[0]), "--qr" in args)
+    elif verb in ("on", "off", "toggle", "restart"):
+        for w in named:
+            action = {"on": "start", "off": "stop", "restart": "restart"}[_flip(_wl_unit(w), verb)]
+            must(action, _wl_unit(w))
+    else:
+        usage("wl [list] | link <creator> [--qr] | on|off|toggle|restart [name]")
+
+
 # --- apps ---------------------------------------------------------------------
 
 SLICE_ROUTES = {
@@ -3288,6 +3354,7 @@ COMMANDS = {
     "warp": lambda *args: _toggle(_warp_unit(), "warp", *args),
     "tor": cmd_tor,
     "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
+    "wl": cmd_wl,
     "apps": cmd_apps,
     "inbounds": cmd_inbounds,
     "where": cmd_where,

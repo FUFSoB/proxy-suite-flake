@@ -125,6 +125,7 @@ let
       sshProxyCfg
       warpCfg
       torCfg
+      whitelistBypassJoiners
       awgOutbounds
       constants
       pureXrayEnabled

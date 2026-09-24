@@ -16,6 +16,7 @@ PINS=(
   "pkgs/tg-ws-proxy.nix|Flowseal|tg-ws-proxy|rev|tg-ws-proxy"
   "pkgs/zapret2.nix|bol-van|zapret2|version|zapret2"
   "pkgs/xray.nix|XTLS|Xray-core|version|xray"
+  "pkgs/whitelist-bypass.nix|kulikov0|whitelist-bypass|version|whitelist-bypass"
 )
 
 FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="

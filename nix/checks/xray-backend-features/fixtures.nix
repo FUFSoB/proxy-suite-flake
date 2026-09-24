@@ -20,6 +20,7 @@ let
       sshProxyCfg = null;
       warpCfg = null;
       torCfg = null;
+      whitelistBypassJoiners = [ ];
       awgOutbounds = null;
       constants = null;
       hybridEnabled = null;

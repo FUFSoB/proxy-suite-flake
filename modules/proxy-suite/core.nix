@@ -47,6 +47,7 @@ in
           xray = import ../../pkgs/xray.nix { pkgs = upstream; };
           # AWG 3.1 userspace; its kernel module has to match the system's kernel instead.
           amneziaWg = import ../../pkgs/amneziawg.nix { pkgs = upstream; };
+          whitelist-bypass = import ../../pkgs/whitelist-bypass.nix { pkgs = upstream; };
           inherit (upstream) sing-box;
         };
     }
@@ -129,6 +130,17 @@ in
 
         (lib.mkIf cfg.tor.enable (
           import ./tor.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
+        (lib.mkIf cfg.whitelistBypass.enable (
+          import ./whitelist-bypass.nix {
             inherit
               lib
               pkgs

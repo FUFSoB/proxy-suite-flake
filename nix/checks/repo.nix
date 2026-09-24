@@ -753,6 +753,7 @@ in
           sshProxyCfg = null;
           warpCfg = null;
           torCfg = null;
+          whitelistBypassJoiners = [ ];
           awgOutbounds = null;
           constants = null;
           pureXrayEnabled = null;

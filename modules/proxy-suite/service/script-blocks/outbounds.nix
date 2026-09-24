@@ -6,6 +6,7 @@
   sshProxyCfg,
   warpCfg,
   torCfg,
+  whitelistBypassJoiners,
   awgOutbounds,
   constants,
   pureXrayEnabled,
@@ -588,6 +589,9 @@ let
       torBlock = lib.optionalString torOutboundEnabled (
         mkTunnelOutboundBlock "proxy-suite-tor" "tor" "tor" torCfg.socksPort
       );
+      whitelistBypassBlocks = lib.concatMapStrings (
+        j: mkTunnelOutboundBlock "proxy-suite-wb-joiner-${j.tag}" "whitelist-bypass" j.tag j.port
+      ) whitelistBypassJoiners;
       awgBlocks = lib.concatMapStrings (mkAwgOutboundBlock routingMark) awgOutbounds;
 
       wrapperBlock =
@@ -666,6 +670,7 @@ let
     + sshProxyBlock
     + warpBlock
     + torBlock
+    + whitelistBypassBlocks
     + awgBlocks
     + detourBlock
     + requireOutboundsBlock

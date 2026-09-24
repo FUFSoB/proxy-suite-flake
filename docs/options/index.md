@@ -19,6 +19,7 @@ Update the module option docs there instead of editing these files by hand.
 - [tui](./tui.md)
 - [userControl](./userControl.md)
 - [warp](./warp.md)
+- [whitelistBypass](./whitelistBypass.md)
 - [zapret](./zapret.md)
 
 ## Complete default config
@@ -303,6 +304,12 @@ services.proxy-suite = {
     enable = false;
     endpoint = null;
     generatorUrl = null;
+  };
+  whitelistBypass = {
+    creators = { };
+    enable = false;
+    joiners = { };
+    package = pkgs.whitelist-bypass;
   };
   zapret = {
     cidrExemption = {

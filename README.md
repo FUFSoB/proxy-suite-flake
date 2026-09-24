@@ -8,7 +8,7 @@ Declarative proxy stack for NixOS, on either side of the connection: as a client
 > [!NOTE]
 > This project is developed with AI assistance: much of the code and documentation was written with AI tools, then reviewed and tested on real-world setups.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2) and [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy); see their repositories for their own licenses and documentation.
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2), [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) and [whitelist-bypass](https://github.com/kulikov0/whitelist-bypass); see their repositories for their own licenses and documentation.
 
 Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [3x-ui](https://github.com/MHSanaei/3x-ui) and other similar projects.
 
@@ -27,6 +27,7 @@ Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [
 - Telegram MTProto WebSocket proxy and SSH SOCKS5 tunnel
 - Cloudflare WARP from a `wgcf` profile, as an outbound or an AWG VPN profile
 - Tor as an outbound, with `.onion` names routed to it automatically, bridges (obfs4, webtunnel, meek, snowflake), and an onion service in front of the server inbounds
+- Mobile internet whitelists: a tunnel through the media servers of video calls (WB Stream, Telemost, DION, Bitrix), with the creator on a server and the joiner as an outbound, Nix-on-Droid included
 - Server inbounds (XRay protocols, hysteria2, and multi-user AmneziaWG) with share links, QR codes, per-user subscriptions and traffic stats
 - Proxy Suite GUI (a desktop app with a tray icon), the `proxy-ctl` CLI, and the `proxy-tui` terminal UI
 
@@ -112,6 +113,14 @@ services.proxy-suite = {
     secretFile = "/run/secrets/tg-ws-proxy-secret";
   };
 
+  # Through mobile internet whitelists: the call's media server relays, whatever the IP.
+  # The server runs a creator per device; its log prints the call link for the joiner.
+  whitelistBypass = {
+    enable = true;
+    joiners.wl = { platform = "wbstream"; linkFile = "/run/secrets/wb-link"; }; # an outbound
+    # creators.phone = { platform = "wbstream"; cookiesFile = "/run/secrets/wb-cookies.json"; upstream = "proxy"; };
+  };
+
   gui.enable = true;
 };
 ```
@@ -193,6 +202,9 @@ Secrets and changes need root, or the userControl group.
   tor [status|on|off]                    Tor, behind the tor outbound and the onion service
   tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram WebSocket proxy
+  wl [list]                              whitelist-bypass creators and joiners
+  wl link <creator> [--qr]               the call link its joiner takes
+  wl on|off|toggle|restart [name]        one creator or joiner, or all of them
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile

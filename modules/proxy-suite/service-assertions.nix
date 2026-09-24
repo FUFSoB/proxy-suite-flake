@@ -78,6 +78,7 @@ let
       ob.directPort
     ]) derived.awgTunnelOutbounds
     ++ lib.optional derived.torOutboundEnabled derived.torCfg.socksPort
+    ++ map (j: j.port) derived.whitelistBypassJoiners
     ++ lib.optionals derived.proxyInboundsEnabled (
       map (listener: listener.internalPort) derived.proxyInboundsAwg
     );
@@ -889,6 +890,21 @@ let
   torOnionVirtualPorts = map (
     ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port
   ) derived.torOnionInbounds;
+  whitelistBypassCfg = cfg.whitelistBypass;
+  whitelistBypassAssertions = [
+    (requireEnabled (
+      derived.whitelistBypassJoiners != [ ]
+    ) proxyEnabled "proxy-suite: whitelistBypass.joiners requires proxy.enable = true")
+    (requireEnabled
+      (
+        whitelistBypassCfg.enable
+        && lib.any (c: c.upstream == "proxy") (builtins.attrValues whitelistBypassCfg.creators)
+      )
+      proxyEnabled
+      ''proxy-suite: whitelistBypass.creators.<name>.upstream = "proxy" requires proxy.enable = true''
+    )
+  ];
+
   torSnowflake = lib.any (line: lib.hasPrefix "snowflake " line) torCfg.bridges.lines;
   torAssertions = [
     (mkAssertion (
@@ -959,6 +975,7 @@ in
 rootlessAssertions
 ++ featureAssertions
 ++ torAssertions
+++ whitelistBypassAssertions
 ++ perAppRoutingAssertions
 ++ localProxyAuthAssertions
 ++ secretAssertions

@@ -387,6 +387,25 @@ class ServiceManagerTest(EnvTest):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             ctl.cmd_awg("toggle")
 
+    def test_wl(self):
+        seen = self.calls()
+        active = {"proxy-suite-wb-joiner-wl"}
+        self.patch("svc_active", lambda unit: unit in active)
+        os.environ["WL_FILE"] = self.write("wl.json", [{"name": "phone", "role": "creator", "platform": "dion"}, {"name": "wl", "role": "joiner", "platform": "dion"}])
+        os.environ["STATE_DIR"] = self.dir
+        ctl.cmd_wl("toggle")
+        ctl.cmd_wl("restart", "wl")
+        # Toggle flips each one on its own.
+        self.assertEqual(
+            [argv[1:3] for argv in seen],
+            [["start", "proxy-suite-wb-creator-phone"], ["stop", "proxy-suite-wb-joiner-wl"], ["restart", "proxy-suite-wb-joiner-wl"]],
+        )
+        self.assertNotEqual(run(ctl.cmd_wl, "link", "phone")[0], 0)  # no call yet
+        self.write("whitelist-bypass/phone.link", "dion://old\ndion://new\n")
+        self.assertEqual(ok(ctl.cmd_wl, "link", "phone"), "dion://new\n")
+        self.assertNotEqual(run(ctl.cmd_wl, "link", "wl")[0], 0)  # a joiner has no link to give
+        self.assertEqual(set(ctl._complete_tree("wl", "link")), {"phone", "--qr"})
+
     def test_toggle_completes(self):
         for path in ("ssh", "zapret", "proxy", "proxy tun", "tor"):
             self.assertLessEqual({"toggle", "restart"}, set(ctl._complete_tree(*path.split())))

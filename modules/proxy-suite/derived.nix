@@ -117,6 +117,19 @@ let
   torOutboundEnabled = torCfg.enable && torCfg.asOutbound;
   torRouteOnion = torOutboundEnabled && torCfg.routeOnion && proxyEnabled;
 
+  # Joiners in name order, each an outbound on a loopback SOCKS listener of its own.
+  whitelistBypassCfg = cfg.whitelistBypass;
+  whitelistBypassJoiners = lib.optionals whitelistBypassCfg.enable (
+    lib.imap0 (
+      i: tag:
+      whitelistBypassCfg.joiners.${tag}
+      // {
+        inherit tag;
+        port = 18700 + i;
+      }
+    ) (builtins.attrNames whitelistBypassCfg.joiners)
+  );
+
   # Two ports per "singBox" or "userspace" AmneziaWG outbound, above the autoProxy prober's own
   # listeners (proxy.autoProxy.probeBasePort, 18540 by default, one per exit):
   # both bind loopback, so an overlap leaves whichever unit starts second dead.
@@ -290,6 +303,7 @@ let
     ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
     ++ lib.optional warpOutboundEnabled warpOutboundTag
     ++ lib.optional torOutboundEnabled torOutboundTag
+    ++ map (j: j.tag) whitelistBypassJoiners
     ++ map (ob: ob.tag) awgOutbounds;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
 
@@ -301,6 +315,7 @@ let
     || sshProxyOutboundEnabled
     || warpOutboundEnabled
     || torOutboundEnabled
+    || whitelistBypassJoiners != [ ]
     || awgOutbounds != [ ];
   collapseNamedOutbounds = selectionMode == "first";
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
@@ -509,6 +524,8 @@ in
     torOutboundTag
     torOutboundEnabled
     torRouteOnion
+    whitelistBypassCfg
+    whitelistBypassJoiners
     torOnionEnabled
     torOnionInbounds
     proxyInboundOnionCapable

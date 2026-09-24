@@ -130,6 +130,18 @@ let
           tls.keyFile = "/k";
         };
       };
+      whitelistBypass = {
+        enable = true;
+        joiners.wl = {
+          platform = "wbstream";
+          linkFile = "/run/secrets/wb-link";
+        };
+        creators.phone = {
+          platform = "dion";
+          cookiesFile = "/run/secrets/wb-cookies";
+          upstream = "proxy";
+        };
+      };
     };
   };
 
@@ -213,6 +225,8 @@ in
       assert lib.hasInfix "proxy-suitectl ensure" nodCfg.environment.etc.profile.text;
       assert forced nodCfg.build.activationAfter.proxySuite;
       assert nodCfg.services.proxy-suite.internal.services.proxy-suite-tor.enable;
+      assert nodCfg.services.proxy-suite.internal.services.proxy-suite-wb-joiner-wl.enable;
+      assert nodCfg.services.proxy-suite.internal.services.proxy-suite-wb-creator-phone.enable;
       # Android bans apps from netlink's route groups, which stock sing-box subscribes to.
       assert nodCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false;
       assert !(hmCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false);

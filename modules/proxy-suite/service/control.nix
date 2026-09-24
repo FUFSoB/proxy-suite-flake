@@ -72,6 +72,24 @@ in
       ROUTE_MODE_STATE_FILE = routeModeStateFile;
       DEFAULT_ROUTE_MODE = if proxyCfg.routing.default == "proxy" then "blacklist" else "whitelist";
       AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
+      WL_FILE = toString (
+        pkgs.writeText "proxy-suite-control" (
+          builtins.toJSON (
+            lib.optionals cfg.whitelistBypass.enable (
+              lib.mapAttrsToList (name: c: {
+                inherit name;
+                inherit (c) platform;
+                role = "creator";
+              }) cfg.whitelistBypass.creators
+              ++ lib.mapAttrsToList (name: j: {
+                inherit name;
+                inherit (j) platform;
+                role = "joiner";
+              }) cfg.whitelistBypass.joiners
+            )
+          )
+        )
+      );
       INBOUNDS_ENABLED = flag proxyInboundsEnabled;
       INBOUNDS_LINKS_FILE = proxyInboundsLinksFile;
       INBOUNDS_STATS_FILE = constants.inboundStatsFile;

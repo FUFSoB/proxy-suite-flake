@@ -17,6 +17,7 @@
     ./warp.nix
     ./tor.nix
     ./tg-ws-proxy.nix
+    ./whitelist-bypass.nix
     ./geodata.nix
     ./gui.nix
     ./tui.nix

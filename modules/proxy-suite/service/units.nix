@@ -20,6 +20,7 @@ let
     sshProxyUnitEnabled
     torOutboundEnabled
     torOnionEnabled
+    whitelistBypassJoiners
     proxyInboundsEnabled
     proxyInboundsNeedLocalProxy
     scripts
@@ -88,7 +89,8 @@ let
           "network-online.target"
         ]
         ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service"
-        ++ lib.optional torOutboundEnabled "proxy-suite-tor.service";
+        ++ lib.optional torOutboundEnabled "proxy-suite-tor.service"
+        ++ map (j: "proxy-suite-wb-joiner-${j.tag}.service") whitelistBypassJoiners;
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
