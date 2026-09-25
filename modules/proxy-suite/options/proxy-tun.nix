@@ -5,7 +5,7 @@ let
 in
 {
   options.services.proxy-suite.proxy.tun = {
-    enable = mkEnableOption "global TUN mode (proxy-suite-tun)";
+    enable = mkEnableOption "global TUN mode";
 
     interface = mkOption {
       type = types.str;

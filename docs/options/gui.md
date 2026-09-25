@@ -1,5 +1,7 @@
 # services.proxy-suite.gui
 
+The desktop app with a tray icon.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -12,48 +14,23 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-gui-enable"></a>
 ## services\.proxy-suite\.gui\.enable
 
-Whether to enable Proxy Suite GUI, a desktop app with a tray icon for everything proxy-ctl controls at runtime\.
+Whether to enable Proxy Suite GUI, a desktop app with a tray icon\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-gui-autostart"></a>
 ## services\.proxy-suite\.gui\.autostart
 
-Start the GUI hidden in the tray with graphical sessions, as the
-` proxy-suite-gui ` systemd user unit on ` graphical-session.target `\.
+Start the GUI in the tray on login to a graphical session\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-gui-refreshinterval"></a>
 ## services\.proxy-suite\.gui\.refreshInterval
 
-Status refresh interval, in seconds\.
+How often the status refreshes, in seconds\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-3
-```
+**Type:** positive integer, meaning >0\
+**Default:** `3`

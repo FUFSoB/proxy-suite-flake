@@ -1,6 +1,7 @@
 {
   pkgs,
   rg,
+  evalProxySuite,
   generatedOptionsDoc,
   generatedReadmeDoc,
   readmeDocSource,
@@ -56,6 +57,112 @@ in
         diff -u ${../../README.md} ${generatedReadmeDoc}
         touch "$out"
       '';
+
+  # The usage guides are hand-written; what can go stale in them is checked here. Every
+  # ```nix block that sets services.proxy-suite (in the guides and the README) must
+  # evaluate, with no proxy-suite assertion or warning; a block fenced ```nix no-check is
+  # skipped. Every relative link must reach a file, and its #anchor an <a id> there.
+  usage-docs =
+    let
+      inherit (pkgs) lib;
+      usageDir = ../../docs/usage;
+      guides = builtins.filter (lib.hasSuffix ".md") (builtins.attrNames (builtins.readDir usageDir));
+      readmeText = builtins.readFile ../../README.md;
+      guideText = name: builtins.readFile (usageDir + "/${name}");
+
+      snippets =
+        text:
+        builtins.filter (lib.hasInfix "services.proxy-suite") (
+          map (chunk: builtins.head (lib.splitString "\n```" chunk)) (
+            builtins.tail (lib.splitString "```nix\n" text)
+          )
+        );
+      # Every visible option's value, so a wrong type fails too. Packages are skipped:
+      # forcing one evaluates its whole build graph. Removed options throw when read.
+      plain =
+        value:
+        if lib.isDerivation value then
+          null
+        else if builtins.isAttrs value then
+          lib.mapAttrs (_: plain) value
+        else if builtins.isList value then
+          map plain value
+        else
+          value;
+      visibleValues =
+        opts: cfg:
+        lib.mapAttrs (
+          name: opt: if lib.isOption opt then plain cfg.${name} else visibleValues opt cfg.${name}
+        ) (lib.filterAttrs (name: opt: name != "_module" && (opt.visible or true) != false) opts);
+      snippetProblems =
+        where: snippet:
+        let
+          module = import (
+            builtins.toFile "snippet.nix" ''
+              { config, lib, pkgs, ... }:
+              {
+                system.stateVersion = "26.05";
+                ${snippet}
+              }
+            ''
+          );
+          eval = evalProxySuite [ module ];
+          inherit (eval) config;
+          failed = map (a: a.message) (builtins.filter (a: !a.assertion) config.assertions);
+          own = builtins.filter (lib.hasPrefix "proxy-suite:") (failed ++ config.warnings);
+        in
+        builtins.addErrorContext "while evaluating ${where}" (
+          builtins.deepSeq (visibleValues eval.options.services.proxy-suite config.services.proxy-suite) (
+            map (message: "${where}: ${message}") own
+          )
+        );
+      textProblems =
+        file: text:
+        lib.concatLists (
+          lib.imap1 (index: snippetProblems "${file}, nix block ${toString index}") (snippets text)
+        );
+
+      # [text](target) and [text](target#anchor), except absolute URLs.
+      links =
+        text:
+        builtins.filter (link: !lib.hasInfix "://" (builtins.head link)) (
+          builtins.filter builtins.isList (builtins.split "]\\(([^)#]*)(#[^)]*)?\\)" text)
+        );
+      linkProblems =
+        name:
+        lib.concatMap (
+          link:
+          let
+            target = builtins.head link;
+            anchor = builtins.elemAt link 1;
+            path = if target == "" then usageDir + "/${name}" else usageDir + "/${target}";
+            where = "docs/usage/${name}: ${target}${if anchor == null then "" else anchor}";
+          in
+          if !builtins.pathExists path then
+            [ "${where}: no such file" ]
+          else if
+            anchor != null && !lib.hasInfix "<a id=\"${lib.removePrefix "#" anchor}\">" (builtins.readFile path)
+          then
+            [ "${where}: no such anchor" ]
+          else
+            [ ]
+        ) (links (guideText name));
+
+      problems =
+        textProblems "README.md" readmeText
+        ++ lib.concatMap (
+          name: textProblems "docs/usage/${name}" (guideText name) ++ linkProblems name
+        ) guides;
+    in
+    pkgs.runCommand "proxy-suite-usage-docs-check" { } (
+      if problems == [ ] then
+        ''touch "$out"''
+      else
+        ''
+          printf '%s\n' ${lib.escapeShellArgs problems} >&2
+          exit 1
+        ''
+    );
 
   # The tree as `nix fmt` leaves it.
   nix-format =

@@ -5,12 +5,12 @@ let
 in
 {
   options.services.proxy-suite.userControl = {
-    enable = lib.mkEnableOption "passwordless `proxy-ctl` control for the members of userControl.group";
+    enable = lib.mkEnableOption "`proxy-ctl` without root for members of `userControl.group`";
 
     group = mkOption {
       type = types.strMatching "^[a-z_][a-z0-9_-]*$";
       default = "proxy-suite";
-      description = "Group whose members may run privileged `proxy-ctl` commands without a password.";
+      description = "Group whose members can run privileged `proxy-ctl` commands.";
     };
 
     scopes = mkOption {
@@ -29,16 +29,16 @@ in
       );
       default = [ ];
       description = ''
-        What userControl.group may do; empty allows every scope.
-        - "services": turn the proxy-suite units on and off (proxy, tun, tproxy, zapret, ssh, warp, tor, tg, awg, inbounds), `restart`, and `tor status|newnym` on Tor's control socket.
-        - "perApp": the per-app backend units used by `proxy-ctl apps run`.
+        What the group may do. Empty allows everything.
+        - "services": start, stop and restart services, and `tor newnym`.
+        - "perApp": `proxy-ctl apps run`.
         - "routing": `proxy pin`, `proxy unpin` and `proxy mode`.
-        - "outbounds": add and remove runtime outbounds and subscriptions, disable and enable outbounds, and update subscriptions.
-        - "secrets": read share links, subscription URLs and the running configs.
-        - "autoProxy": read what autoProxy learned, and `proxy auto learn|forget|relearn|clear`.
-        - "zapret": edit zapret2's learned hosts, and `zapret cutoff probe`.
+        - "outbounds": add, remove, enable and disable outbounds and subscriptions.
+        - "secrets": read share links, subscription URLs and running configs.
+        - "autoProxy": see and change what autoProxy learned.
+        - "zapret": change zapret2's learned sites, and `zapret cutoff probe`.
         - "stats": `inbounds stats`.
-        - "whitelistBypass": the whitelist-bypass creators and joiners: `wl on|off|toggle|restart`, their calls (`wl link`), and their logins and links (`wl auth|join|new`).
+        - "whitelistBypass": everything under `proxy-ctl wl`.
       '';
       example = [
         "services"

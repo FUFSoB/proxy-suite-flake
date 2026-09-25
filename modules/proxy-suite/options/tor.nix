@@ -18,21 +18,23 @@ let
 in
 {
   options.services.proxy-suite.tor = {
-    enable = mkEnableOption "the Tor daemon (proxy-suite-tor)";
+    enable = mkEnableOption "Tor" // {
+      description = "Run Tor. Also turn on `asOutbound`, `onionService.enable`, or both.";
+    };
 
     package = package "tor" "Tor package.";
 
-    lyrebirdPackage = package "lyrebird" "Pluggable transport for obfs4, webtunnel and meek_lite bridges.";
+    lyrebirdPackage = package "lyrebird" "Bridge transport for obfs4, webtunnel and meek_lite.";
 
-    snowflakePackage = package "snowflake" "Pluggable transport for snowflake bridges.";
+    snowflakePackage = package "snowflake" "Bridge transport for snowflake.";
 
     asOutbound = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Add Tor as an outbound tagged "tor": a SOCKS hop to proxy-suite-tor on 127.0.0.1:socksPort,
-        which receives names unresolved. proxy.selection and autoProxy leave it alone unless it is the
-        only outbound; route to it with proxy.routing.rules or name it as a detour. Requires proxy.enable.
+        Add Tor as an outbound tagged "tor". Selection and autoProxy skip it unless it is the only
+        outbound; send traffic to it with `proxy.routing.rules` or use it as a `detour`.
+        Needs `proxy.enable`.
       '';
     };
 
@@ -40,10 +42,8 @@ in
       type = types.bool;
       default = true;
       description = ''
-        Send .onion names to the "tor" outbound in every route mode, and keep them away from DNS:
-        in TUN and TProxy modes sing-box answers them with a fake address it maps back to the name,
-        and XRay drops the lookup. Inbound clients' .onion names go the same way, through the local
-        proxy, whatever their listener's via (except "block"). Applies with asOutbound.
+        Send .onion names to the "tor" outbound in every route mode, and never resolve them with
+        DNS. Inbound clients' .onion names go there too. Needs `asOutbound`.
       '';
     };
 
@@ -51,9 +51,8 @@ in
       type = types.bool;
       default = true;
       description = ''
-        Keep Tor a client (ClientOnly 1): never a relay, exit, bridge or directory server, even when
-        extraConfig sets an ORPort. The onion service works either way. Turn off only to run a relay
-        through extraConfig.
+        Keep Tor a client, never a relay, even if `extraConfig` sets an ORPort. The onion service
+        works either way. Turn off only to run a relay through `extraConfig`.
       '';
     };
 
@@ -64,17 +63,17 @@ in
       ];
       default = "direct";
       description = ''
-        How Tor reaches its relays or bridges.
-        - "direct": from the uplink, past TUN and TProxy (it runs as proxy-suite-daemon).
-        - "proxy": through the local proxy listener (proxy.listener, with its auth), for a network
-          that blocks Tor. obfs4, webtunnel and meek_lite bridges follow it; snowflake cannot.
+        How Tor reaches the network.
+        - "direct": straight from the uplink, bypassing TUN and TProxy.
+        - "proxy": through the local proxy, for networks that block Tor. Works with obfs4,
+          webtunnel and meek_lite bridges, but not snowflake.
       '';
     };
 
     socksPort = mkOption {
       type = types.port;
       default = 18530;
-      description = "Loopback SOCKS port of proxy-suite-tor, which the tor outbound dials.";
+      description = "Loopback SOCKS port of Tor.";
     };
 
     bridges = {
@@ -82,9 +81,8 @@ in
         type = types.listOf types.str;
         default = [ ];
         description = ''
-          Bridge lines, as https://bridges.torproject.org hands them out, without the leading
-          "Bridge". Any given turns on UseBridges; obfs4, webtunnel, meek_lite and snowflake
-          transports are run as needed.
+          Bridge lines from https://bridges.torproject.org, without the leading "Bridge". Setting
+          any turns bridges on.
         '';
         example = [
           "obfs4 192.0.2.1:443 0123456789ABCDEF0123456789ABCDEF01234567 cert=... iat-mode=0"
@@ -94,24 +92,23 @@ in
       file = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Runtime path to more bridge lines, one per line; blank lines and # comments are skipped.";
+        description = "File with more bridge lines, one per line. Blank lines and # comments are skipped.";
         example = "/run/secrets/tor-bridges";
       };
     };
 
     onionService = {
-      enable = mkEnableOption "an onion service in front of inbounds.listeners";
+      enable = mkEnableOption "an onion service for the server inbounds";
 
       listeners = mkOption {
         type = types.nullOr (types.listOf types.str);
         default = null;
         description = ''
-          inbounds.listeners served at the onion address, each on its share port. Null takes every
-          listener a TCP-only onion can carry: not amneziawg, h3-only xhttp or raw JSON.
+          Listeners reachable through the onion address. `null`: every TCP listener (not
+          amneziawg, h3-only xhttp or raw JSON).
 
-          Share links for them (`proxy-ctl inbounds link TAG --onion`, and subscriptions) dial the
-          .onion address and keep the listener's TLS and REALITY names. Clients reach XRay from
-          127.0.0.1, so `proxy-ctl inbounds online` does not list them.
+          Get their links with `proxy-ctl inbounds link TAG --onion`; subscriptions include them.
+          Onion clients do not show up in `proxy-ctl inbounds online`.
         '';
         example = [ "vless-reality" ];
       };
@@ -120,8 +117,7 @@ in
         type = types.nullOr types.str;
         default = null;
         description = ''
-          Runtime path to an hs_ed25519_secret_key, to keep an onion address. Null lets Tor create
-          one in /var/lib/proxy-suite/tor/onion.
+          File with an hs_ed25519_secret_key, to keep a fixed onion address. `null`: Tor creates one.
         '';
         example = "/run/secrets/tor-hs_ed25519_secret_key";
       };
@@ -130,7 +126,7 @@ in
     extraConfig = mkOption {
       type = types.lines;
       default = "";
-      description = "Lines appended to the generated torrc.";
+      description = "Extra torrc lines.";
       example = ''
         ExitNodes {de},{nl}
         StrictNodes 1

@@ -4,28 +4,32 @@ let
   inherit (lib) mkOption types;
   inherit (import ./lib.nix { inherit lib; }) list;
 
-  routingFields = {
-    domains = list "Domain suffixes to match." [ "youtube.com" ];
-    ips = list "IP CIDRs to match." [ "1.1.1.0/24" ];
-    geosites = list "Geosite names to match (see geodata)." [ "netflix" ];
-    geoips = list "Geoip names to match (see geodata; the defaults are country codes only)." [ "us" ];
+  # `what` ends each description, saying where the matches go.
+  routingFields = what: {
+    domains = list "Domains, with their subdomains, ${what}." [ "youtube.com" ];
+    ips = list "IP ranges (CIDR) ${what}." [ "1.1.1.0/24" ];
+    geosites = list "Geosite categories ${what} (see `geodata`)." [ "netflix" ];
+    geoips = list "Geoip codes ${what}; countries by default (see `geodata`)." [ "us" ];
   };
   # The client's routing also matches downloaded rule sets, which XRay cannot read.
-  clientRoutingFields = routingFields // {
-    ruleSets = list "Names from proxy.routing.ruleSets to match (sing-box and hybrid backends)." [
-      "antifilter"
-    ];
-  };
+  clientRoutingFields =
+    what:
+    routingFields what
+    // {
+      ruleSets = list "Rule sets from `proxy.routing.ruleSets` ${what} (sing-box and hybrid only)." [
+        "antifilter"
+      ];
+    };
 
   routingRuleType = types.submodule {
     options = {
       outbound = mkOption {
         type = types.str;
-        description = ''Outbound tag, or "proxy", "direct", "block".'';
+        description = ''Outbound tag, or "proxy", "direct" or "block".'';
         example = "vps-de";
       };
     }
-    // clientRoutingFields;
+    // clientRoutingFields "that this rule matches";
   };
 
   dnsUpstreamType = types.submodule {
@@ -58,7 +62,7 @@ let
     options = {
       name = mkOption {
         type = types.strMatching "^[a-z0-9][a-z0-9-]*$";
-        description = "Profile name, unique.";
+        description = "Unique profile name.";
         example = "steam-browser";
       };
 
@@ -72,8 +76,8 @@ let
         ];
         default = "proxychains";
         description = ''
-          Backend: "direct" (unchanged), "proxychains", or the per-app "tun", "tproxy" or "zapret"
-          backend of perAppRouting.
+          How the app is routed: "direct" (untouched), "proxychains", or the per-app "tun",
+          "tproxy" or "zapret".
         '';
       };
     };

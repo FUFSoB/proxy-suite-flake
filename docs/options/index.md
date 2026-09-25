@@ -6,23 +6,36 @@ Update the module option docs there instead of editing these files by hand.
 
 ## Option groups
 
-- [amneziaWg](./amneziaWg.md)
-- [geodata](./geodata.md)
-- [gui](./gui.md)
-- [inbounds](./inbounds.md)
-- [killSwitch](./killSwitch.md)
-- [perAppRouting](./perAppRouting.md)
-- [proxy](./proxy.md)
-- [sshProxy](./sshProxy.md)
-- [tgWsProxy](./tgWsProxy.md)
-- [tor](./tor.md)
-- [tui](./tui.md)
-- [userControl](./userControl.md)
-- [warp](./warp.md)
-- [whitelistBypass](./whitelistBypass.md)
-- [zapret](./zapret.md)
+| Group | What it covers |
+|---|---|
+| [proxy](./proxy.md) | The local proxy: outbounds, subscriptions, selection, routing, DNS, TUN and TProxy. |
+| [killSwitch](./killSwitch.md) | Block traffic outside the global tunnel. |
+| [perAppRouting](./perAppRouting.md) | Route single apps through proxychains, a per-app TUN or TProxy, or zapret. |
+| [zapret](./zapret.md) | DPI bypass without a proxy: zapret-discord-youtube or zapret2. |
+| [amneziaWg](./amneziaWg.md) | AmneziaWG client profiles, as a global VPN or as outbounds. |
+| [warp](./warp.md) | Cloudflare WARP, as an outbound or an AmneziaWG profile. |
+| [tor](./tor.md) | Tor as an outbound, with bridges, and an onion service for the inbounds. |
+| [sshProxy](./sshProxy.md) | An SSH SOCKS5 tunnel, optionally as an outbound. |
+| [tgWsProxy](./tgWsProxy.md) | A Telegram MTProto proxy over WebSocket. |
+| [whitelistBypass](./whitelistBypass.md) | Tunnels through video-call servers, past mobile internet whitelists. |
+| [inbounds](./inbounds.md) | Server side: listeners for remote clients, share links, subscriptions and stats. |
+| [geodata](./geodata.md) | Geosite and geoip databases used by routing. |
+| [userControl](./userControl.md) | Let a group use `proxy-ctl` without root. |
+| [gui](./gui.md) | The desktop app with a tray icon. |
+| [tui](./tui.md) | The `proxy-tui` terminal UI. |
+
+<a id="services-proxy-suite-enable"></a>
+## services\.proxy-suite\.enable
+
+Whether to enable proxy-suite\.
+
+**Type:** boolean\
+**Default:** `false`
 
 ## Complete default config
+
+<details>
+<summary>Every option at its default</summary>
 
 ```nix
 services.proxy-suite = {
@@ -365,22 +378,4 @@ services.proxy-suite = {
 };
 ```
 
-<a id="services-proxy-suite-enable"></a>
-## services\.proxy-suite\.enable
-
-Whether to enable proxy-suite\.
-
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+</details>

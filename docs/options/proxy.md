@@ -1,5 +1,7 @@
 # services.proxy-suite.proxy
 
+The local proxy: outbounds, subscriptions, selection, routing, DNS, TUN and TProxy.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -129,605 +131,291 @@ Part of the [proxy-suite options reference](./index.md).
 
 Whether to enable the local proxy\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-autoproxy-enable"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.enable
 
-Probe each exit for the destinations clients dial, and route each one through the first
-exit that reaches it for as long as it keeps working (` proxy-ctl proxy auto probe ` shows a
-verdict)\. Censor-side failures stay direct for zapret\. Needs the sing-box backend, and
-makes this host fetch every new destination itself\.
+Find out which destinations are blocked and route each one through the first exit that
+reaches it\. Blocks that zapret can fix stay direct\. Needs the sing-box backend\. This host
+fetches every new destination itself to test it; ` proxy-ctl proxy auto probe ` shows the result\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-autoproxy-exclude"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.exclude
 
-Domain suffixes never probed or auto-routed\.
+Domains (with subdomains) never probed or routed by autoProxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "internal.example"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "internal.example" ]`
 
 <a id="services-proxy-suite-proxy-autoproxy-interval"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.interval
 
-Time between probe runs\. ` proxy-ctl proxy auto learn ` does not wait for it\.
+Time between probe runs\. ` proxy-ctl proxy auto learn ` probes right away\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"10m"
-```
-
-*Example:*
-
-```nix
-"30m"
-```
+**Type:** string\
+**Default:** `"10m"`\
+**Example:** `"30m"`
 
 <a id="services-proxy-suite-proxy-autoproxy-maxexits"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.maxExits
 
-Most exits probed, direct included\. The first round tries one exit per network (AS), a
-second round the rest\.
+Maximum exits tried per destination, direct included\. One exit per network is tried
+first, then the rest\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-12
-```
+**Type:** positive integer, meaning >0\
+**Default:** `12`
 
 <a id="services-proxy-suite-proxy-autoproxy-probebaseport"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.probeBasePort
 
-First loopback port of the per-exit probe listeners (one per exit, maxExits in total)\.
-They are unauthenticated even when proxy\.listener\.auth is set\.
+First of ` maxExits ` loopback ports used for probing, one per exit\. They have no
+authentication, even with ` proxy.listener.auth ` set\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-18540
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `18540`
 
 <a id="services-proxy-suite-proxy-autoproxy-probesperrun"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.probesPerRun
 
-Most destinations probed per run; the rest wait in a backlog, most-dialled first\.
+Maximum destinations probed per run\. The rest wait for the next run, most-used first\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-200
-```
+**Type:** positive integer, meaning >0\
+**Default:** `200`
 
 <a id="services-proxy-suite-proxy-autoproxy-slowbelowkibps"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.slowBelowKiBps
 
-Also route destinations that work directly but crawl: at least 300 KiB in a 10 s sample,
-never faster than this\. 0 disables\. Needs ` selection ` other than “first”\.
+Also route destinations that work directly but stay slower than this, in KiB/s\. 0 disables\.
+Needs ` selection ` other than “first”\.
 
-*Type:*
-unsigned integer, meaning >=0
-
-*Default:*
-
-```nix
-150
-```
-
-*Example:*
-
-```nix
-0
-```
+**Type:** unsigned integer, meaning >=0\
+**Default:** `150`\
+**Example:** `0`
 
 <a id="services-proxy-suite-proxy-autoproxy-ttldays"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.ttlDays
 
-Days a verdict stands, routed destinations included: a route is re-probed once this long
-has passed\. Everything is relearned when this host’s public address changes, and
-` proxy-ctl proxy auto learn <domain> ` re-probes one destination right away\.
+Days before a result is probed again\. Everything is probed again when this host’s public
+address changes\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-30
-```
+**Type:** positive integer, meaning >0\
+**Default:** `30`
 
 <a id="services-proxy-suite-proxy-autostart"></a>
 ## services\.proxy-suite\.proxy\.autostart
 
-Transparent mode started at boot, or null for neither\. The mode named here must
-also be enabled (proxy\.tun\.enable or proxy\.tproxy\.enable)\.
+Transparent mode to start at boot, or ` null ` for none\. That mode must also be enabled
+(` proxy.tun.enable ` or ` proxy.tproxy.enable `)\.
 
-*Type:*
-null or one of “tun”, “tproxy”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"tun"
-```
+**Type:** null or one of “tun”, “tproxy”\
+**Default:** `null`\
+**Example:** `"tun"`
 
 <a id="services-proxy-suite-proxy-backend"></a>
 ## services\.proxy-suite\.proxy\.backend
 
-Proxy backend\. “hybrid” runs sing-box in front and hands XRay-only outbounds
-(XHTTP, ECH) to XRay\.
+Proxy engine\. “hybrid” runs sing-box and hands XRay-only outbounds (XHTTP, ECH) to XRay\.
 
-*Type:*
-one of “sing-box”, “xray”, “hybrid”
-
-*Default:*
-
-```nix
-"sing-box"
-```
-
-*Example:*
-
-```nix
-"hybrid"
-```
+**Type:** one of “sing-box”, “xray”, “hybrid”\
+**Default:** `"sing-box"`\
+**Example:** `"hybrid"`
 
 <a id="services-proxy-suite-proxy-dns-clientsubnet"></a>
 ## services\.proxy-suite\.proxy\.dns\.clientSubnet
 
-EDNS client subnet sent with every query, so a resolver reached through the proxy still
-answers with CDN nodes near this network\. sing-box and hybrid backends\.
+EDNS client subnet sent with every query, so CDNs pick servers near you even through the
+proxy\. sing-box and hybrid only\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"203.0.113.0/24"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"203.0.113.0/24"`
 
 <a id="services-proxy-suite-proxy-dns-fakeip-enable"></a>
 ## services\.proxy-suite\.proxy\.dns\.fakeIp\.enable
 
-In TUN mode (global and per-app), answer A queries from the TUN with a fake address and
-AAAA ones with nothing; sing-box maps the address back to the name when the connection
-comes\. Saves a lookup per new site and no real lookup leaves for proxied names\. Names that
-proxy\.dns\.singBox\.rules or the direct routing lists send elsewhere keep real answers\. The
-addresses handed out are kept in /var/lib/proxy-suite/fakeip, so they survive a restart\.
-sing-box and hybrid backends; XRay’s TUN already uses its own fake DNS\.
+Answer DNS in TUN mode with fake addresses that sing-box maps back to names\. Saves a
+lookup per new site, and proxied names are never resolved locally\. Direct names and those
+matched by ` proxy.dns.singBox.rules ` still get real answers\. sing-box and hybrid only;
+XRay’s TUN has its own fake DNS\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-dns-fakeip-inet4range"></a>
 ## services\.proxy-suite\.proxy\.dns\.fakeIp\.inet4Range
 
-Range the fake addresses come from\.
+Address range for fake IPs\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"198.18.0.0/15"
-```
+**Type:** string\
+**Default:** `"198.18.0.0/15"`
 
 <a id="services-proxy-suite-proxy-dns-local"></a>
 ## services\.proxy-suite\.proxy\.dns\.local
 
-Resolver for direct traffic and the default domain resolver\. Goes through the proxy in
-global TUN mode\. TCP by default: plain UDP queries to well-known resolvers are often
-answered by the ISP’s DPI instead, which breaks blocked names routed direct to zapret\.
+Resolver for direct traffic\. In global TUN mode it goes through the proxy\. TCP by default,
+because ISP DPI often fakes UDP answers from well-known resolvers, which breaks zapret\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{
-  address = "1.1.1.1";
-  port = 53;
-  type = "tcp";
-}
-```
-
-*Example:*
-
-```nix
-{
-  address = "1.1.1.1";
-  port = 853;
-  type = "tls";
-}
-```
+**Type:** submodule\
+**Default:** `{ address = "1.1.1.1"; port = 53; type = "tcp"; }`\
+**Example:** `{ address = "1.1.1.1"; port = 853; type = "tls"; }`
 
 <a id="services-proxy-suite-proxy-dns-local-address"></a>
 ## services\.proxy-suite\.proxy\.dns\.local\.address
 
 Resolver address\.
 
-*Type:*
-string matching the pattern \.+
-
-*Example:*
-
-```nix
-"1.1.1.1"
-```
+**Type:** string matching the pattern \.+\
+**Example:** `"1.1.1.1"`
 
 <a id="services-proxy-suite-proxy-dns-local-port"></a>
 ## services\.proxy-suite\.proxy\.dns\.local\.port
 
 Resolver port\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-53
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `53`
 
 <a id="services-proxy-suite-proxy-dns-local-type"></a>
 ## services\.proxy-suite\.proxy\.dns\.local\.type
 
 DNS transport\.
 
-*Type:*
-one of “udp”, “tcp”, “tls”
-
-*Default:*
-
-```nix
-"udp"
-```
+**Type:** one of “udp”, “tcp”, “tls”\
+**Default:** `"udp"`
 
 <a id="services-proxy-suite-proxy-dns-remote"></a>
 ## services\.proxy-suite\.proxy\.dns\.remote
 
-Resolver used through the proxy; the DNS default when proxy\.routing\.default is proxy\. On
-sing-box, names the routing sends through the proxy are always looked up here, so the ISP
-never sees them, and direct ones locally\.
+Resolver reached through the proxy\. On sing-box, proxied names are always resolved here,
+so the ISP never sees them\. Also the default resolver when ` proxy.routing.default ` is “proxy”\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{
-  address = "1.1.1.1";
-  port = 53;
-  type = "udp";
-}
-```
-
-*Example:*
-
-```nix
-{
-  address = "1.1.1.1";
-  port = 853;
-  type = "tls";
-}
-```
+**Type:** submodule\
+**Default:** `{ address = "1.1.1.1"; port = 53; type = "udp"; }`\
+**Example:** `{ address = "1.1.1.1"; port = 853; type = "tls"; }`
 
 <a id="services-proxy-suite-proxy-dns-remote-address"></a>
 ## services\.proxy-suite\.proxy\.dns\.remote\.address
 
 Resolver address\.
 
-*Type:*
-string matching the pattern \.+
-
-*Example:*
-
-```nix
-"1.1.1.1"
-```
+**Type:** string matching the pattern \.+\
+**Example:** `"1.1.1.1"`
 
 <a id="services-proxy-suite-proxy-dns-remote-port"></a>
 ## services\.proxy-suite\.proxy\.dns\.remote\.port
 
 Resolver port\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-53
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `53`
 
 <a id="services-proxy-suite-proxy-dns-remote-type"></a>
 ## services\.proxy-suite\.proxy\.dns\.remote\.type
 
 DNS transport\.
 
-*Type:*
-one of “udp”, “tcp”, “tls”
-
-*Default:*
-
-```nix
-"udp"
-```
+**Type:** one of “udp”, “tcp”, “tls”\
+**Default:** `"udp"`
 
 <a id="services-proxy-suite-proxy-dns-singbox-rules"></a>
 ## services\.proxy-suite\.proxy\.dns\.singBox\.rules
 
-sing-box DNS rules, as sing-box JSON, checked before the generated ones\. Kept when the
-route mode is all-proxy or all-bypass, which drop the generated ones\.
+DNS rules in sing-box JSON, checked before the generated ones\. Unlike those, they stay
+active in the all-proxy and all-bypass modes\.
 
-*Type:*
-list of (attribute set)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  {
-    domain_suffix = [
-      "corp.example"
-    ];
-    server = "corp";
-  }
-]
-```
+**Type:** list of (attribute set)\
+**Default:** `[ ]`\
+**Example:** `[ { domain_suffix = [ "corp.example" ]; server = "corp"; } ]`
 
 <a id="services-proxy-suite-proxy-dns-singbox-servers"></a>
 ## services\.proxy-suite\.proxy\.dns\.singBox\.servers
 
-Extra sing-box DNS servers, as sing-box JSON, for proxy\.dns\.singBox\.rules to name\. The
-built-in ones are ` local `, ` remote `, and ` fakeip ` when fakeIp is on\.
+Extra DNS servers in sing-box JSON, for use in ` proxy.dns.singBox.rules `\. Built-in
+servers: ` local `, ` remote `, and ` fakeip ` when fake IP is on\.
 
-*Type:*
-list of (attribute set)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  {
-    server = "10.0.0.53";
-    tag = "corp";
-    type = "udp";
-  }
-]
-```
+**Type:** list of (attribute set)\
+**Default:** `[ ]`\
+**Example:** `[ { server = "10.0.0.53"; tag = "corp"; type = "udp"; } ]`
 
 <a id="services-proxy-suite-proxy-dns-strategy"></a>
 ## services\.proxy-suite\.proxy\.dns\.strategy
 
-Which addresses sing-box asks for\. ` ipv4_only ` for an uplink without IPv6\. sing-box and hybrid backends\.
+Which IP versions to resolve\. Use ` ipv4_only ` if the uplink has no IPv6\. sing-box and hybrid only\.
 
-*Type:*
-null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"ipv4_only"
-```
+**Type:** null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”\
+**Default:** `null`\
+**Example:** `"ipv4_only"`
 
 <a id="services-proxy-suite-proxy-ipv6"></a>
 ## services\.proxy-suite\.proxy\.ipv6
 
-Carry IPv6 in the transparent modes: TProxy through a second listener on ::1, the TUNs
-(global and per-app) through an IPv6 address of their own\. Off, TProxy leaves IPv6
-alone and the TUNs block it, so apps fall back to IPv4\. On an uplink without IPv6,
-set proxy\.dns\.strategy = “ipv4_only” too: a direct IPv6 destination would otherwise
-fail after the connection seems open, instead of falling back to IPv4\.
+Route IPv6 through TUN and TProxy too\. When off, TProxy ignores IPv6 and the TUNs block
+it, so apps fall back to IPv4\. If the uplink has no IPv6, also set
+` proxy.dns.strategy = "ipv4_only" `, or direct IPv6 connections hang instead of falling back\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-config.networking.enableIPv6
-```
+**Type:** boolean\
+**Default:** `config.networking.enableIPv6`
 
 <a id="services-proxy-suite-proxy-listener-address"></a>
 ## services\.proxy-suite\.proxy\.listener\.address
 
-Bind address of the local SOCKS5/HTTP proxy\. Use “0\.0\.0\.0” only to expose it to the network\.
+Address of the local SOCKS5/HTTP proxy\. Use “0\.0\.0\.0” only to expose it to the network\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"127.0.0.1"
-```
+**Type:** string\
+**Default:** `"127.0.0.1"`
 
 <a id="services-proxy-suite-proxy-listener-auth-password"></a>
 ## services\.proxy-suite\.proxy\.listener\.auth\.password
 
-Inline local proxy password\. Ends up in the Nix store; prefer passwordFile\.
+Password for the local proxy\. Ends up in the Nix store; prefer ` passwordFile `\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"change-me"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `null`\
+**Example:** `"change-me"`
 
 <a id="services-proxy-suite-proxy-listener-auth-passwordfile"></a>
 ## services\.proxy-suite\.proxy\.listener\.auth\.passwordFile
 
-Runtime path to the local proxy password\. With perAppRouting\.proxychains it must be a
-single token, and it is readable by userControl\.group through the proxychains config\.
+File with the local proxy password\. With ` perAppRouting.proxychains ` it must be a single
+word, and ` userControl.group ` can read it through the proxychains config\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-suite-local-proxy-password"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-suite-local-proxy-password"`
 
 <a id="services-proxy-suite-proxy-listener-auth-username"></a>
 ## services\.proxy-suite\.proxy\.listener\.auth\.username
 
-Username the local proxy requires\. Set together with password or passwordFile\.
+Username for the local proxy\. Needs ` password ` or ` passwordFile `\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"proxy-user"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `null`\
+**Example:** `"proxy-user"`
 
 <a id="services-proxy-suite-proxy-listener-port"></a>
 ## services\.proxy-suite\.proxy\.listener\.port
 
 Port of the local SOCKS5/HTTP proxy\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-1080
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `1080`
 
 <a id="services-proxy-suite-proxy-outbounds"></a>
 ## services\.proxy-suite\.proxy\.outbounds
 
-Static proxy outbounds\. The proxy needs at least one outbound or subscription to start;
-` proxy-ctl proxy outbounds add ` supplies one at runtime if none is declared here\.
+Proxy servers to connect through\. Each sets exactly one of ` url `, ` urlFile `, ` singBoxJson `
+or ` xrayJson `\. The proxy needs at least one outbound or subscription to start;
+` proxy-ctl proxy outbounds add ` can add one at runtime\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
 
 ```nix
 [
@@ -745,728 +433,318 @@ list of (submodule)
 <a id="services-proxy-suite-proxy-outbounds-backend"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.backend
 
-Backend for this outbound when both run\. “auto” prefers sing-box and falls back to XRay
-for XRay-only transports (XHTTP, ECH)\.
+Which engine runs this outbound on the hybrid backend\. “auto” uses sing-box, or XRay for
+XRay-only transports (XHTTP, ECH)\.
 
-*Type:*
-one of “auto”, “sing-box”, “xray”
-
-*Default:*
-
-```nix
-"auto"
-```
-
-*Example:*
-
-```nix
-"xray"
-```
+**Type:** one of “auto”, “sing-box”, “xray”\
+**Default:** `"auto"`\
+**Example:** `"xray"`
 
 <a id="services-proxy-suite-proxy-outbounds-detour"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.detour
 
-Tag of the outbound this one connects through: a proxy chain\. Any outbound can be the hop,
-subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG ones included\. On hybrid, an
-outbound that runs on XRay can only chain through another XRay one\. ShadowTLS works this
-way too: a ` shadowtls ` outbound in singBoxJson, and the shadowsocks one with detour naming it\.
+Tag of an outbound that this outbound connects through (a proxy chain)\. Any outbound works,
+including subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG\. On hybrid, an XRay
+outbound can only chain through another XRay one\. For ShadowTLS, put a ` shadowtls `
+outbound in ` singBoxJson ` and point the shadowsocks outbound’s ` detour ` at it\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"ru-vps"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"ru-vps"`
 
 <a id="services-proxy-suite-proxy-outbounds-routing-domains"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.domains
 
-Domain suffixes to match\.
+Domains, with their subdomains, always sent to this outbound, whatever the selection\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "youtube.com" ]`
 
 <a id="services-proxy-suite-proxy-outbounds-routing-geoips"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.geoips
 
-Geoip names to match (see geodata; the defaults are country codes only)\.
+Geoip codes always sent to this outbound, whatever the selection; countries by default (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "us"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "us" ]`
 
 <a id="services-proxy-suite-proxy-outbounds-routing-geosites"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.geosites
 
-Geosite names to match (see geodata)\.
+Geosite categories always sent to this outbound, whatever the selection (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "netflix"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "netflix" ]`
 
 <a id="services-proxy-suite-proxy-outbounds-routing-ips"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.ips
 
-IP CIDRs to match\.
+IP ranges (CIDR) always sent to this outbound, whatever the selection\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "1.1.1.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "1.1.1.0/24" ]`
 
 <a id="services-proxy-suite-proxy-outbounds-routing-rulesets"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.ruleSets
 
-Names from proxy\.routing\.ruleSets to match (sing-box and hybrid backends)\.
+Rule sets from ` proxy.routing.ruleSets ` always sent to this outbound, whatever the selection (sing-box and hybrid only)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "antifilter"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "antifilter" ]`
 
 <a id="services-proxy-suite-proxy-outbounds-singboxjson"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.singBoxJson
 
-Raw sing-box outbound (sing-box backend); tag is overridden\.
+Raw sing-box outbound JSON, instead of ` url ` (sing-box backend)\. Its tag is replaced\.
 
-*Type:*
-null or (attribute set)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-{
-  server = "example.com";
-  server_port = 443;
-  type = "vless";
-}
-```
+**Type:** null or (attribute set)\
+**Default:** `null`\
+**Example:** `{ server = "example.com"; server_port = 443; type = "vless"; }`
 
 <a id="services-proxy-suite-proxy-outbounds-tag"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.tag
 
-Outbound tag, for routing rules and selection\.
+Unique name, used in routing rules, ` detour ` and ` proxy-ctl `\. Not “proxy”, “direct” or “block”\.
 
-*Type:*
-string
-
-*Example:*
-
-```nix
-"vps-de"
-```
+**Type:** string\
+**Example:** `"vps-de"`
 
 <a id="services-proxy-suite-proxy-outbounds-url"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.url
 
-Proxy URL\. Ends up in the Nix store; prefer urlFile\.
+Proxy link\. Ends up in the Nix store; prefer ` urlFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"hy2://password@example.com:443?sni=example.com"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"hy2://password@example.com:443?sni=example.com"`
 
 <a id="services-proxy-suite-proxy-outbounds-urlfile"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.urlFile
 
-Runtime path to the proxy URL\.
+File with the proxy link\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/my-proxy-url"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/my-proxy-url"`
 
 <a id="services-proxy-suite-proxy-outbounds-xrayjson"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.xrayJson
 
-Raw XRay outbound (XRay backend); tag is overridden\.
+Raw XRay outbound JSON, instead of ` url ` (XRay backend)\. Its tag is replaced\.
 
-*Type:*
-null or (attribute set)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-{
-  protocol = "vless";
-  settings = {
-    address = "example.com";
-  };
-}
-```
+**Type:** null or (attribute set)\
+**Default:** `null`\
+**Example:** `{ protocol = "vless"; settings = { address = "example.com"; }; }`
 
 <a id="services-proxy-suite-proxy-routing-block-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.domains
 
-Domain suffixes blocked\.
+Domains, with their subdomains, to block\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ads.example.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ads.example.com" ]`
 
 <a id="services-proxy-suite-proxy-routing-block-geoips"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.geoips
 
-Geoip names blocked\.
+Geoip codes to block\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "cn"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "cn" ]`
 
 <a id="services-proxy-suite-proxy-routing-block-geosites"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.geosites
 
-Geosite names blocked\.
+Geosite categories to block\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "category-ads-all"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "category-ads-all" ]`
 
 <a id="services-proxy-suite-proxy-routing-block-ips"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.ips
 
-IP CIDRs blocked\.
+IP ranges (CIDR) to block\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "203.0.113.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "203.0.113.0/24" ]`
 
 <a id="services-proxy-suite-proxy-routing-block-rulesets"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.ruleSets
 
-Names from ruleSets blocked\.
+Rule sets from ` ruleSets ` to block\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ads"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ads" ]`
 
 <a id="services-proxy-suite-proxy-routing-default"></a>
 ## services\.proxy-suite\.proxy\.routing\.default
 
-Where traffic no routing rule matches goes\.
+Where traffic goes when no rule matches\.
 
-*Type:*
-one of “proxy”, “direct”
-
-*Default:*
-
-```nix
-"proxy"
-```
-
-*Example:*
-
-```nix
-"direct"
-```
+**Type:** one of “proxy”, “direct”\
+**Default:** `"proxy"`\
+**Example:** `"direct"`
 
 <a id="services-proxy-suite-proxy-routing-direct-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.domains
 
-Domain suffixes sent direct\. zapret hostlists join them when zapret\.directSync\.enable is on\.
+Domains, with their subdomains, sent direct\. ` zapret.directSync ` adds zapret’s domains\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "internal.example"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "internal.example" ]`
 
 <a id="services-proxy-suite-proxy-routing-direct-geoips"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.geoips
 
-Geoip names sent direct\.
+Geoip codes sent direct\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ru"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ru" ]`
 
 <a id="services-proxy-suite-proxy-routing-direct-geosites"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.geosites
 
-Geosite names sent direct\.
+Geosite categories sent direct\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "category-ru"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "category-ru" ]`
 
 <a id="services-proxy-suite-proxy-routing-direct-ips"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.ips
 
-IP CIDRs sent direct\.
+IP ranges (CIDR) sent direct\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "10.10.0.0/16"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "10.10.0.0/16" ]`
 
 <a id="services-proxy-suite-proxy-routing-direct-rulesets"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.ruleSets
 
-Names from ruleSets sent direct\.
+Rule sets from ` ruleSets ` sent direct\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ru-services"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ru-services" ]`
 
 <a id="services-proxy-suite-proxy-routing-directru"></a>
 ## services\.proxy-suite\.proxy\.routing\.directRu
 
-Send geosite “category-ru” and geoip “ru” direct\.
+Send Russian sites and IPs (geosite “category-ru”, geoip “ru”) direct\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-proxy-routing-proxy-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.domains
 
-Domain suffixes sent through the proxy\.
+Domains, with their subdomains, sent through the proxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "youtube.com" ]`
 
 <a id="services-proxy-suite-proxy-routing-proxy-geoips"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.geoips
 
-Geoip names sent through the proxy\.
+Geoip codes sent through the proxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "us"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "us" ]`
 
 <a id="services-proxy-suite-proxy-routing-proxy-geosites"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.geosites
 
-Geosite names sent through the proxy\.
+Geosite categories sent through the proxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "netflix"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "netflix" ]`
 
 <a id="services-proxy-suite-proxy-routing-proxy-ips"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.ips
 
-IP CIDRs sent through the proxy\.
+IP ranges (CIDR) sent through the proxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "1.1.1.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "1.1.1.0/24" ]`
 
 <a id="services-proxy-suite-proxy-routing-proxy-rulesets"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.ruleSets
 
-Names from ruleSets sent through the proxy\.
+Rule sets from ` ruleSets ` sent through the proxy\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "antifilter"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "antifilter" ]`
 
 <a id="services-proxy-suite-proxy-routing-rulesetupdateinterval"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSetUpdateInterval
 
-How often ruleSets are downloaded again (systemd time span)\.
+How often rule sets are refreshed (systemd time span)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"1d"
-```
-
-*Example:*
-
-```nix
-"6h"
-```
+**Type:** string\
+**Default:** `"1d"`\
+**Example:** `"6h"`
 
 <a id="services-proxy-suite-proxy-routing-rulesets"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSets
 
-sing-box rule sets kept up to date at runtime, for the ruleSets of proxy, direct, block,
-rules and an outbound’s routing\. They are fetched every ruleSetUpdateInterval and on
-` proxy-ctl proxy rulesets update `, and sing-box picks up a new file without a restart;
-until the first fetch one matches nothing\. Not for backend = “xray”\.
+Named sing-box rule sets, usable in any ` ruleSets ` list\. They are downloaded every
+` ruleSetUpdateInterval ` or on ` proxy-ctl proxy rulesets update `, without a restart\. A rule
+set matches nothing until its first download\. Not available with the “xray” backend\.
 
-*Type:*
-attribute set of (submodule)
-
-*Default:*
-
-```nix
-{ }
-```
-
-*Example:*
-
-```nix
-{
-  antifilter = {
-    url = "https://example.com/antifilter.srs";
-  };
-}
-```
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:** `{ antifilter = { url = "https://example.com/antifilter.srs"; }; }`
 
 <a id="services-proxy-suite-proxy-routing-rulesets-name-detour"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.detour
 
-Downloaded through the local proxy, or directly\.
+Download through the proxy or directly\.
 
-*Type:*
-one of “proxy”, “direct”
-
-*Default:*
-
-```nix
-"proxy"
-```
+**Type:** one of “proxy”, “direct”\
+**Default:** `"proxy"`
 
 <a id="services-proxy-suite-proxy-routing-rulesets-name-format"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.format
 
-“binary” (\.srs) or “source” (JSON)\. Null goes by the URL: \.srs is binary\.
+“binary” (\.srs) or “source” (JSON)\. ` null `: guess from the URL\.
 
-*Type:*
-null or one of “binary”, “source”
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or one of “binary”, “source”\
+**Default:** `null`
 
 <a id="services-proxy-suite-proxy-routing-rulesets-name-url"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.url
 
-Where the sing-box rule set is downloaded from\.
+URL of the sing-box rule set\.
 
-*Type:*
-string matching the pattern https?://\.+
-
-*Example:*
-
-```nix
-"https://example.com/antifilter.srs"
-```
+**Type:** string matching the pattern https?://\.+\
+**Example:** `"https://example.com/antifilter.srs"`
 
 <a id="services-proxy-suite-proxy-routing-rules"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules
 
-Rules checked before the proxy/direct/block lists, in order; the first match wins\.
+Rules checked in order before the proxy, direct and block lists\. The first match wins\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
 
 ```nix
 [
@@ -1488,597 +766,281 @@ list of (submodule)
 <a id="services-proxy-suite-proxy-routing-rules-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.domains
 
-Domain suffixes to match\.
+Domains, with their subdomains, that this rule matches\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "youtube.com" ]`
 
 <a id="services-proxy-suite-proxy-routing-rules-geoips"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.geoips
 
-Geoip names to match (see geodata; the defaults are country codes only)\.
+Geoip codes that this rule matches; countries by default (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "us"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "us" ]`
 
 <a id="services-proxy-suite-proxy-routing-rules-geosites"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.geosites
 
-Geosite names to match (see geodata)\.
+Geosite categories that this rule matches (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "netflix"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "netflix" ]`
 
 <a id="services-proxy-suite-proxy-routing-rules-ips"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.ips
 
-IP CIDRs to match\.
+IP ranges (CIDR) that this rule matches\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "1.1.1.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "1.1.1.0/24" ]`
 
 <a id="services-proxy-suite-proxy-routing-rules-outbound"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.outbound
 
-Outbound tag, or “proxy”, “direct”, “block”\.
+Outbound tag, or “proxy”, “direct” or “block”\.
 
-*Type:*
-string
-
-*Example:*
-
-```nix
-"vps-de"
-```
+**Type:** string\
+**Example:** `"vps-de"`
 
 <a id="services-proxy-suite-proxy-routing-rules-rulesets"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.ruleSets
 
-Names from proxy\.routing\.ruleSets to match (sing-box and hybrid backends)\.
+Rule sets from ` proxy.routing.ruleSets ` that this rule matches (sing-box and hybrid only)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "antifilter"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "antifilter" ]`
 
 <a id="services-proxy-suite-proxy-selection"></a>
 ## services\.proxy-suite\.proxy\.selection
 
-How to pick among outbounds:
+How to pick an outbound:
 
- - “first”: one at a time - the pinned outbound, or the first available\.
- - “selector”: all of them, pick by hand\.
- - “urltest”: all of them, ranked by latency unless one is pinned\.
+ - “first”: the pinned one, or else the first available\.
+ - “selector”: pick by hand\.
+ - “urltest”: the fastest, unless one is pinned\.
 
-` proxy-ctl proxy pin ` pins an outbound in every mode, and the pin outlives a restart\.
-“selector” and “urltest” switch without restarting the backend (sing-box only); “first”
-and XRay restart it\.
+` proxy-ctl proxy pin ` works in every mode and survives restarts\. On sing-box, “selector”
+and “urltest” switch without restarting the backend\.
 
-*Type:*
-one of “first”, “selector”, “urltest”
-
-*Default:*
-
-```nix
-"first"
-```
-
-*Example:*
-
-```nix
-"urltest"
-```
+**Type:** one of “first”, “selector”, “urltest”\
+**Default:** `"first"`\
+**Example:** `"urltest"`
 
 <a id="services-proxy-suite-proxy-selectionexclude"></a>
 ## services\.proxy-suite\.proxy\.selectionExclude
 
-Outbound tags selection never picks on its own: hops other outbounds chain through
-(` detour `), or exits only routing rules name\. Subscription entries, ` warp `, ` ssh-proxy `
-and AmneziaWG tags work too\. A pin still reaches them, and so does a selector switched by
-hand\.
+Outbound tags that selection never picks on its own, such as chain hops (` detour `) or
+exits meant only for routing rules\. Any tag works, including subscription entries,
+` warp `, ` ssh-proxy ` and AmneziaWG\. You can still pin or select them by hand\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ru-vps"
-  "warp"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ru-vps" "warp" ]`
 
 <a id="services-proxy-suite-proxy-singbox-package"></a>
 ## services\.proxy-suite\.proxy\.singBox\.package
 
-sing-box package, used when backend is “sing-box” or “hybrid”\.
+sing-box package, for the “sing-box” and “hybrid” backends\.
 
-*Type:*
-package
-
-*Default:*
-` sing-box ` from proxy-suite’s own ` nixpkgs ` input
-
-*Example:*
-
-```nix
-pkgs.sing-box
-```
+**Type:** package\
+**Default:** ` sing-box ` from proxy-suite’s own ` nixpkgs ` input\
+**Example:** `pkgs.sing-box`
 
 <a id="services-proxy-suite-proxy-singbox-clashapiport"></a>
 ## services\.proxy-suite\.proxy\.singBox\.clashApiPort
 
-Loopback port of sing-box’s Clash API, which switches and tests outbounds\.
+Loopback port of the sing-box Clash API, used to switch and test outbounds\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-9090
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `9090`
 
 <a id="services-proxy-suite-proxy-subscriptionupdateinterval"></a>
 ## services\.proxy-suite\.proxy\.subscriptionUpdateInterval
 
 How often subscriptions are refreshed (systemd time span)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"1d"
-```
-
-*Example:*
-
-```nix
-"6h"
-```
+**Type:** string\
+**Default:** `"1d"`\
+**Example:** `"6h"`
 
 <a id="services-proxy-suite-proxy-subscriptions"></a>
 ## services\.proxy-suite\.proxy\.subscriptions
 
-Subscription URLs serving a base64 or plain list of proxy URIs\. Fetched on first start,
-cached under /var/lib/proxy-suite/subscriptions, refreshed by a timer\. Ones added with
-` proxy-ctl proxy subs add ` live in /var/lib/proxy-suite/subscriptions\.d and refresh alongside\.
+Subscription URLs that serve a list of proxy links (plain or base64)\. Fetched on first
+start, cached, and refreshed on a timer\. ` proxy-ctl proxy subs add ` adds more at runtime\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  {
-    tag = "private";
-    urlFile = "/run/secrets/private-sub-url";
-  }
-]
-```
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:** `[ { tag = "private"; urlFile = "/run/secrets/private-sub-url"; } ]`
 
 <a id="services-proxy-suite-proxy-subscriptions-detour"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.detour
 
-Tag of the outbound every entry of this subscription connects through: a proxy chain\. Any outbound can be the hop,
-subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG ones included\. On hybrid, an
-outbound that runs on XRay can only chain through another XRay one\. ShadowTLS works this
-way too: a ` shadowtls ` outbound in singBoxJson, and the shadowsocks one with detour naming it\.
+Tag of an outbound that every entry of this subscription connects through (a proxy chain)\. Any outbound works,
+including subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG\. On hybrid, an XRay
+outbound can only chain through another XRay one\. For ShadowTLS, put a ` shadowtls `
+outbound in ` singBoxJson ` and point the shadowsocks outbound’s ` detour ` at it\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"ru-vps"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"ru-vps"`
 
 <a id="services-proxy-suite-proxy-subscriptions-tag"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.tag
 
-Unique name; prefixes the tags of its outbounds and names its cache file\.
+Unique name, used as a prefix for the tags of its outbounds\.
 
-*Type:*
-string matching the pattern ^\[A-Za-z0-9]\[A-Za-z0-9\._-]\*$
-
-*Example:*
-
-```nix
-"community-list"
-```
+**Type:** string matching the pattern ^\[A-Za-z0-9]\[A-Za-z0-9\._-]\*$\
+**Example:** `"community-list"`
 
 <a id="services-proxy-suite-proxy-subscriptions-url"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.url
 
-Subscription URL\. Ends up in the Nix store; prefer urlFile\.
+Subscription URL\. Ends up in the Nix store; prefer ` urlFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"https://example.com/sub/token123"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"https://example.com/sub/token123"`
 
 <a id="services-proxy-suite-proxy-subscriptions-urlfile"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.urlFile
 
-Runtime path to the subscription URL\.
+File with the subscription URL\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-subscription-url"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-subscription-url"`
 
 <a id="services-proxy-suite-proxy-tproxy-enable"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.enable
 
-Whether to enable global TProxy mode (proxy-suite-tproxy)\.
+Whether to enable global TProxy mode\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-tproxy-fwmark"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.fwmark
 
-Mark of intercepted packets, routed through routeTable\.
+Firewall mark for intercepted packets\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-1
-```
+**Type:** signed integer\
+**Default:** `1`
 
 <a id="services-proxy-suite-proxy-tproxy-laninterfaces"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.lanInterfaces
 
-Interfaces whose forwarded TCP and UDP is taken through the proxy too: devices on them
-that use this host as their gateway\. Turns on IP forwarding for the rest (ping, the LAN
-itself), which is routed as it is\. Needs the nftables firewall on NixOS\.
+LAN interfaces whose devices use this host as their gateway\. Their TCP and UDP goes through the
+proxy; everything else is forwarded as usual\. Turns on IP forwarding\. Needs the nftables
+firewall on NixOS\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "br0"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "br0" ]`
 
 <a id="services-proxy-suite-proxy-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.localSubnets
 
-Subnets that bypass interception (DNS excepted): your LAN, VM bridges\. IPv6 CIDRs work too\.
+Subnets that skip the proxy, such as your LAN and VM bridges (DNS still goes through it)\. IPv6 works too\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  "192.168.0.0/16"
-]
-```
-
-*Example:*
-
-```nix
-[
-  "192.168.0.0/16"
-  "10.0.0.0/8"
-  "fd00::/8"
-]
-```
+**Type:** list of string\
+**Default:** `[ "192.168.0.0/16" ]`\
+**Example:** `[ "192.168.0.0/16" "10.0.0.0/8" "fd00::/8" ]`
 
 <a id="services-proxy-suite-proxy-tproxy-port"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.port
 
-Port of the TProxy inbound\.
+Local port that intercepted traffic is redirected to\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-1085
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `1085`
 
 <a id="services-proxy-suite-proxy-tproxy-proxymark"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.proxyMark
 
-Mark of the backend’s own traffic, so it is not intercepted again\.
+Firewall mark for the proxy’s own traffic, so it is not intercepted again\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-2
-```
+**Type:** signed integer\
+**Default:** `2`
 
 <a id="services-proxy-suite-proxy-tproxy-routetable"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.routeTable
 
-Policy-routing table for intercepted traffic\.
+Routing table for intercepted traffic\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-100
-```
+**Type:** signed integer\
+**Default:** `100`
 
 <a id="services-proxy-suite-proxy-tun-enable"></a>
 ## services\.proxy-suite\.proxy\.tun\.enable
 
-Whether to enable global TUN mode (proxy-suite-tun)\.
+Whether to enable global TUN mode\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-tun-address"></a>
 ## services\.proxy-suite\.proxy\.tun\.address
 
 TUN interface address (CIDR)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"172.19.0.1/30"
-```
+**Type:** string\
+**Default:** `"172.19.0.1/30"`
 
 <a id="services-proxy-suite-proxy-tun-interface"></a>
 ## services\.proxy-suite\.proxy\.tun\.interface
 
 TUN interface name\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"singtun0"
-```
+**Type:** string\
+**Default:** `"singtun0"`
 
 <a id="services-proxy-suite-proxy-tun-mtu"></a>
 ## services\.proxy-suite\.proxy\.tun\.mtu
 
 TUN interface MTU\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-1400
-```
+**Type:** signed integer\
+**Default:** `1400`
 
 <a id="services-proxy-suite-proxy-urltest-interval"></a>
 ## services\.proxy-suite\.proxy\.urlTest\.interval
 
-How often outbounds are re-tested (Go duration)\.
+How often outbounds are tested (Go duration)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"3m"
-```
-
-*Example:*
-
-```nix
-"1m"
-```
+**Type:** string\
+**Default:** `"3m"`\
+**Example:** `"1m"`
 
 <a id="services-proxy-suite-proxy-urltest-tolerance"></a>
 ## services\.proxy-suite\.proxy\.urlTest\.tolerance
 
-Milliseconds a faster outbound must win by to replace the current one (sing-box only)\.
+How many milliseconds faster an outbound must be to replace the current one (sing-box only)\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-50
-```
-
-*Example:*
-
-```nix
-100
-```
+**Type:** signed integer\
+**Default:** `50`\
+**Example:** `100`
 
 <a id="services-proxy-suite-proxy-urltest-url"></a>
 ## services\.proxy-suite\.proxy\.urlTest\.url
 
-URL fetched through each outbound to rank them\. Pick one blocked in your region\.
+URL used to test outbounds\. Pick one that is blocked in your region\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"https://www.gstatic.com/generate_204"
-```
-
-*Example:*
-
-```nix
-"https://telegram.org"
-```
+**Type:** string\
+**Default:** `"https://www.gstatic.com/generate_204"`\
+**Example:** `"https://telegram.org"`
 
 <a id="services-proxy-suite-proxy-xray-package"></a>
 ## services\.proxy-suite\.proxy\.xray\.package
 
-XRay package, used when backend is “xray” or “hybrid”\.
+XRay package, for the “xray” and “hybrid” backends\.
 
-*Type:*
-package
-
-*Default:*
-proxy-suite’s ` xray ` (` pkgs/xray.nix `)
-
-*Example:*
-
-```nix
-pkgs.xray
-```
+**Type:** package\
+**Default:** proxy-suite’s ` xray ` (` pkgs/xray.nix `)\
+**Example:** `pkgs.xray`

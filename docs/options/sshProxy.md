@@ -1,5 +1,7 @@
 # services.proxy-suite.sshProxy
 
+An SSH SOCKS5 tunnel, optionally as an outbound.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -26,282 +28,132 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-sshproxy-enable"></a>
 ## services\.proxy-suite\.sshProxy\.enable
 
-Whether to enable an SSH dynamic SOCKS5 tunnel\.
+Whether to enable an SSH SOCKS5 tunnel\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-sshproxy-asoutbound"></a>
 ## services\.proxy-suite\.sshProxy\.asOutbound
 
-Add the tunnel as an outbound tagged “ssh-proxy”\. sing-box dials SSH itself; XRay goes
-through the OpenSSH unit’s SOCKS listener\.
+Add the tunnel as an outbound tagged “ssh-proxy”\. On sing-box and hybrid, sing-box connects
+over SSH itself and needs ` hostKey ` or ` hostKeyFile `\. Otherwise OpenSSH runs a SOCKS listener, set up
+by ` listener `, ` knownHostsFile `, ` strictHostKeyChecking `, ` serviceUser ` and ` extraArgs `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-sshproxy-domainstrategy"></a>
 ## services\.proxy-suite\.sshProxy\.domainStrategy
 
-Resolve destinations locally before the tunnel (XRay only)\. Can break geo-steered CDNs\.
+Resolve names locally instead of on the server (XRay only)\. Can make CDNs pick distant servers\.
 
-*Type:*
-null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"prefer_ipv4"
-```
+**Type:** null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”\
+**Default:** `null`\
+**Example:** `"prefer_ipv4"`
 
 <a id="services-proxy-suite-sshproxy-extraargs"></a>
 ## services\.proxy-suite\.sshProxy\.extraArgs
 
 Extra OpenSSH arguments\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "-J"
-  "jump.example.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "-J" "jump.example.com" ]`
 
 <a id="services-proxy-suite-sshproxy-hostkey"></a>
 ## services\.proxy-suite\.sshProxy\.hostKey
 
-Accepted host keys (sing-box)\. List every key ` ssh-keyscan ` prints: the algorithm is
-negotiated\. Empty accepts any key\.
+Accepted host keys, for sing-box\. List every key ` ssh-keyscan ` prints, since the key type
+is negotiated\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." ]`
 
 <a id="services-proxy-suite-sshproxy-hostkeyfile"></a>
 ## services\.proxy-suite\.sshProxy\.hostKeyFile
 
-Known-hosts file to read hostKey from at runtime (sing-box)\. Wins over hostKey\.
+Known-hosts file to read host keys from (sing-box)\. Takes priority over ` hostKey `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/root/.ssh/known_hosts"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/root/.ssh/known_hosts"`
 
 <a id="services-proxy-suite-sshproxy-identityfile"></a>
 ## services\.proxy-suite\.sshProxy\.identityFile
 
-Runtime path to the private key; it may stay root-only, as the daemons get a copy they can read\. Null uses the agent or OpenSSH defaults\.
+File with the SSH private key\. It can stay root-only\. ` null `: the agent or OpenSSH defaults\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-suite-ssh-key"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-suite-ssh-key"`
 
 <a id="services-proxy-suite-sshproxy-knownhostsfile"></a>
 ## services\.proxy-suite\.sshProxy\.knownHostsFile
 
 Known-hosts file for OpenSSH\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-suite-ssh-known-hosts"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-suite-ssh-known-hosts"`
 
 <a id="services-proxy-suite-sshproxy-listener-address"></a>
 ## services\.proxy-suite\.sshProxy\.listener\.address
 
 Address of the OpenSSH SOCKS5 listener\.
 
-*Type:*
-string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-"127.0.0.1"
-```
+**Type:** string matching the pattern \[^\[:space:]]+\
+**Default:** `"127.0.0.1"`
 
 <a id="services-proxy-suite-sshproxy-listener-port"></a>
 ## services\.proxy-suite\.sshProxy\.listener\.port
 
 Port of the OpenSSH SOCKS5 listener\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-1091
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `1091`
 
 <a id="services-proxy-suite-sshproxy-server-host"></a>
 ## services\.proxy-suite\.sshProxy\.server\.host
 
 SSH server\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"ssh.example.com"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `null`\
+**Example:** `"ssh.example.com"`
 
 <a id="services-proxy-suite-sshproxy-server-port"></a>
 ## services\.proxy-suite\.sshProxy\.server\.port
 
 SSH server port\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-22
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `22`
 
 <a id="services-proxy-suite-sshproxy-server-user"></a>
 ## services\.proxy-suite\.sshProxy\.server\.user
 
 SSH login user\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"root"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `null`\
+**Example:** `"root"`
 
 <a id="services-proxy-suite-sshproxy-serviceuser"></a>
 ## services\.proxy-suite\.sshProxy\.serviceUser
 
-Unix user running the OpenSSH unit\. The default, proxy-suite-daemon, runs sandboxed and keeps accepted host keys in /var/lib/proxy-suite/ssh; null runs it as root\.
+User that runs OpenSSH\. The default is sandboxed; ` null ` runs it as root\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-"proxy-suite-daemon"
-```
-
-*Example:*
-
-```nix
-"proxy"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `"proxy-suite-daemon"`\
+**Example:** `"proxy"`
 
 <a id="services-proxy-suite-sshproxy-stricthostkeychecking"></a>
 ## services\.proxy-suite\.sshProxy\.strictHostKeyChecking
 
 OpenSSH host key policy\.
 
-*Type:*
-one of “yes”, “accept-new”, “no”
-
-*Default:*
-
-```nix
-"accept-new"
-```
-
-*Example:*
-
-```nix
-"yes"
-```
+**Type:** one of “yes”, “accept-new”, “no”\
+**Default:** `"accept-new"`\
+**Example:** `"yes"`

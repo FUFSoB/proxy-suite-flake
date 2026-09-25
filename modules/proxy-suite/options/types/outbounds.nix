@@ -17,10 +17,10 @@ let
       type = types.nullOr types.str;
       default = null;
       description = ''
-        Tag of the outbound ${what} connects through: a proxy chain. Any outbound can be the hop,
-        subscription entries, `warp`, `ssh-proxy` and AmneziaWG ones included. On hybrid, an
-        outbound that runs on XRay can only chain through another XRay one. ShadowTLS works this
-        way too: a `shadowtls` outbound in singBoxJson, and the shadowsocks one with detour naming it.
+        Tag of an outbound that ${what} connects through (a proxy chain). Any outbound works,
+        including subscription entries, `warp`, `ssh-proxy` and AmneziaWG. On hybrid, an XRay
+        outbound can only chain through another XRay one. For ShadowTLS, put a `shadowtls`
+        outbound in `singBoxJson` and point the shadowsocks outbound's `detour` at it.
       '';
       example = "ru-vps";
     };
@@ -29,11 +29,11 @@ let
     options = {
       tag = mkOption {
         type = types.strMatching "^[A-Za-z0-9][A-Za-z0-9._-]*$";
-        description = "Unique name; prefixes the tags of its outbounds and names its cache file.";
+        description = "Unique name, used as a prefix for the tags of its outbounds.";
         example = "community-list";
       };
-      url = nullStr "Subscription URL. Ends up in the Nix store; prefer urlFile." "https://example.com/sub/token123";
-      urlFile = nullStr "Runtime path to the subscription URL." "/run/secrets/proxy-subscription-url";
+      url = nullStr "Subscription URL. Ends up in the Nix store; prefer `urlFile`." "https://example.com/sub/token123";
+      urlFile = nullStr "File with the subscription URL." "/run/secrets/proxy-subscription-url";
       detour = detourOption "every entry of this subscription";
     };
   };
@@ -42,24 +42,28 @@ let
     options = {
       tag = mkOption {
         type = types.str;
-        description = "Outbound tag, for routing rules and selection.";
+        description = "Unique name, used in routing rules, `detour` and `proxy-ctl`. Not \"proxy\", \"direct\" or \"block\".";
         example = "vps-de";
       };
 
-      url = nullStr "Proxy URL. Ends up in the Nix store; prefer urlFile." "hy2://password@example.com:443?sni=example.com";
-      urlFile = nullStr "Runtime path to the proxy URL." "/run/secrets/my-proxy-url";
-      detour = detourOption "this one";
+      url = nullStr "Proxy link. Ends up in the Nix store; prefer `urlFile`." "hy2://password@example.com:443?sni=example.com";
+      urlFile = nullStr "File with the proxy link." "/run/secrets/my-proxy-url";
+      detour = detourOption "this outbound";
 
-      singBoxJson = nullAttrs "Raw sing-box outbound (sing-box backend); tag is overridden." {
-        type = "vless";
-        server = "example.com";
-        server_port = 443;
-      };
+      singBoxJson =
+        nullAttrs "Raw sing-box outbound JSON, instead of `url` (sing-box backend). Its tag is replaced."
+          {
+            type = "vless";
+            server = "example.com";
+            server_port = 443;
+          };
 
-      xrayJson = nullAttrs "Raw XRay outbound (XRay backend); tag is overridden." {
-        protocol = "vless";
-        settings.address = "example.com";
-      };
+      xrayJson =
+        nullAttrs "Raw XRay outbound JSON, instead of `url` (XRay backend). Its tag is replaced."
+          {
+            protocol = "vless";
+            settings.address = "example.com";
+          };
 
       backend = mkOption {
         type = types.enum [
@@ -69,14 +73,13 @@ let
         ];
         default = "auto";
         description = ''
-          Backend for this outbound when both run. "auto" prefers sing-box and falls back to XRay
-          for XRay-only transports (XHTTP, ECH).
+          Which engine runs this outbound on the hybrid backend. "auto" uses sing-box, or XRay for
+          XRay-only transports (XHTTP, ECH).
         '';
         example = "xray";
       };
 
-      # Destinations sent to this outbound, whatever the selection.
-      routing = routingFields;
+      routing = routingFields "always sent to this outbound, whatever the selection";
     };
   };
 in

@@ -24,8 +24,8 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Add a profile named after each enabled backend (proxychains, tun, tproxy, zapret) unless
-        one with that name already exists.
+        Add a profile for each enabled method (proxychains, tun, tproxy, zapret), named after it,
+        unless one already exists.
       '';
     };
 
@@ -42,53 +42,53 @@ in
     };
 
     proxychains = {
-      enable = mkEnableOption "the proxychains backend (TCP apps, through LD_PRELOAD)";
+      enable = mkEnableOption "proxychains (TCP only, does not work with static binaries)";
 
       quiet = mkOption {
         type = types.bool;
         default = true;
-        description = "Silence proxychains (quiet_mode).";
+        description = "Hide proxychains output.";
       };
 
       proxyDns = mkOption {
         type = types.bool;
         default = true;
-        description = "Resolve DNS through the proxy (proxy_dns).";
+        description = "Resolve DNS through the proxy.";
       };
     };
 
     tun = {
-      enable = mkEnableOption "the per-app TUN backend";
-      fwmark = int 16 "Mark that steers wrapped apps into routeTable.";
-      routeTable = int 101 "Policy-routing table of the per-app TUN.";
-      localSubnets = localSubnets "Subnets wrapped apps reach directly (DNS excepted).";
+      enable = mkEnableOption "per-app TUN";
+      fwmark = int 16 "Firewall mark for wrapped apps' traffic.";
+      routeTable = int 101 "Routing table for the per-app TUN.";
+      localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
 
       interface = mkOption {
         type = types.str;
         default = "psperapptun0";
-        description = "Per-app TUN interface name.";
+        description = "Interface name.";
       };
 
       address = mkOption {
         type = types.str;
         default = "172.20.0.1/30";
-        description = "Per-app TUN interface address (CIDR).";
+        description = "Interface address (CIDR).";
       };
 
-      mtu = int 1400 "Per-app TUN interface MTU.";
+      mtu = int 1400 "Interface MTU.";
     };
 
     tproxy = {
-      enable = mkEnableOption "the per-app TProxy backend";
-      fwmark = int 17 "Mark that steers wrapped apps into routeTable.";
-      routeTable = int 102 "Policy-routing table of the per-app TProxy.";
-      localSubnets = localSubnets "Subnets that bypass interception (DNS excepted).";
+      enable = mkEnableOption "per-app TProxy";
+      fwmark = int 17 "Firewall mark for wrapped apps' traffic.";
+      routeTable = int 102 "Routing table for the per-app TProxy.";
+      localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
     };
 
     zapret = {
-      enable = mkEnableOption "the per-app zapret backend: a second zapret instance for wrapped apps only";
-      filterMark = int 268435456 "Mark bit that selects wrapped app traffic.";
-      qnum = int 201 "NFQUEUE number. Must differ from the global instance's.";
+      enable = mkEnableOption "per-app zapret, a separate zapret for wrapped apps only";
+      filterMark = int 268435456 "Firewall mark bit for wrapped apps' traffic.";
+      qnum = int 201 "NFQUEUE number. Must differ from the global zapret's.";
     };
   };
 }

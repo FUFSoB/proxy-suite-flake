@@ -1,5 +1,7 @@
 # services.proxy-suite.zapret
 
+DPI bypass without a proxy: zapret-discord-youtube or zapret2.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -63,248 +65,116 @@ Part of the [proxy-suite options reference](./index.md).
 
 Whether to enable zapret DPI bypass\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-cidrexemption-enable"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.enable
 
-Whether to enable exempting subnets from zapret, e\.g\. NATed VMs whose traffic it would break\.
+Whether to enable skipping zapret for some subnets, such as NATed VMs it would break\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-cidrexemption-cidrs"></a>
 ## services\.proxy-suite\.zapret\.cidrExemption\.cidrs
 
-Exempted subnets\.
+Subnets zapret skips\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "192.168.123.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "192.168.123.0/24" ]`
 
 <a id="services-proxy-suite-zapret-directsync-enable"></a>
 ## services\.proxy-suite\.zapret\.directSync\.enable
 
-Add zapret’s domain hostlists to proxy\.routing\.direct\.
+Send zapret’s domains direct in the proxy routing, so zapret handles them\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-directsync-upstreamips"></a>
 ## services\.proxy-suite\.zapret\.directSync\.upstreamIps
 
-Add zapret’s upstream ipsets to proxy\.routing\.direct\.
+Also send zapret’s upstream IP lists direct\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-directsync-userips"></a>
 ## services\.proxy-suite\.zapret\.directSync\.userIps
 
-Add zapret-discord-youtube\.ips, minus zapret-discord-youtube\.excludeIps, to proxy\.routing\.direct\.
+Also send ` zapret-discord-youtube.ips ` (minus ` excludeIps `) direct\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-engine"></a>
 ## services\.proxy-suite\.zapret\.engine
 
-“zapret-discord-youtube”: nfqws with curated presets and static hostlists (zapret\.zapret-discord-youtube)\.
-“zapret2”: nfqws2, which learns blocked hosts at runtime (zapret\.zapret2)\.
+Which zapret to run:
 
-*Type:*
-one of “zapret-discord-youtube”, “zapret2”
+ - “zapret-discord-youtube”: ready-made presets and fixed site lists\.
+ - “zapret2”: learns blocked sites at runtime\.
 
-*Default:*
-
-```nix
-"zapret-discord-youtube"
-```
-
-*Example:*
-
-```nix
-"zapret2"
-```
+**Type:** one of “zapret-discord-youtube”, “zapret2”\
+**Default:** `"zapret-discord-youtube"`\
+**Example:** `"zapret2"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-configname"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.configName
 
-Upstream strategy preset\. Names that differ only in whitespace match\.
+Strategy preset name (spaces are ignored)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"general(ALT)"
-```
-
-*Example:*
-
-```nix
-"general (ALT9)"
-```
+**Type:** string\
+**Default:** `"general(ALT)"`\
+**Example:** `"general (ALT9)"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-domains"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.domains
 
-Extra domains to bypass\.
+Extra domains to unblock\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "youtube.com" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-excludedomains"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.excludeDomains
 
-Domains never bypassed\.
+Domains zapret never touches\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "music.youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "music.youtube.com" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-excludeips"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.excludeIps
 
-IPs/CIDRs never bypassed\.
+IPs or CIDRs zapret never touches\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "203.0.113.10/32"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "203.0.113.10/32" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-gamefilter"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.gameFilter
 
-Game traffic filter, or “null” for off\.
+Which game traffic to handle, or “null” for none\.
 
-*Type:*
-one of “all”, “tcp”, “udp”, “null”
-
-*Default:*
-
-```nix
-"null"
-```
-
-*Example:*
-
-```nix
-"all"
-```
+**Type:** one of “all”, “tcp”, “udp”, “null”\
+**Default:** `"null"`\
+**Example:** `"all"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules
 
-Extra named hostlists, each with its own strategy: cloned from a preset or configName,
-or given as nfqwsArgs\.
+Extra site lists, each with its own strategy: copied from a ` preset ` or ` configName `,
+or given as raw ` nfqwsArgs `\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
 
 ```nix
 [
@@ -328,548 +198,265 @@ list of (submodule)
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-enabledirectsync"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.enableDirectSync
 
-Include these domains in zapret\.directSync\.
+Include these domains in ` zapret.directSync `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-configname"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.configName
 
-Config to clone strategies from\. Exclusive with nfqwsArgs\.
+Config to copy the strategy from\. Cannot be used with ` nfqwsArgs `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"general(ALT9)"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"general(ALT9)"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-defaultdomains"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.defaultDomains
 
-Upstream lists to include (“discord” = “general”, “youtube” = “google”)\. Without preset,
-use one per rule so the strategy family can be inferred\.
+Upstream lists to include (“discord” is “general”, “youtube” is “google”)\. Without
+` preset `, use only one, so the strategy can be inferred from it\.
 
-*Type:*
-list of (one of “general”, “google”, “discord”, “youtube”, “instagram”, “soundcloud”, “twitter”)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "google"
-]
-```
+**Type:** list of (one of “general”, “google”, “discord”, “youtube”, “instagram”, “soundcloud”, “twitter”)\
+**Default:** `[ ]`\
+**Example:** `[ "google" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-defaultips"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.defaultIps
 
-Upstream ipsets to include (“all” is ipset-all\.txt)\.
+Upstream IP lists to include\.
 
-*Type:*
-list of value “all” (singular enum)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "all"
-]
-```
+**Type:** list of value “all” (singular enum)\
+**Default:** `[ ]`\
+**Example:** `[ "all" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-domains"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.domains
 
-Domains in this hostlist\.
+Domains in this list\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "example.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "example.com" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-ips"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.ips
 
-IPs/CIDRs in this rule’s ipset\.
+IPs or CIDRs in this list\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "203.0.113.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "203.0.113.0/24" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-name"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.name
 
-Hostlist name (hostlists/list-\<name>\.txt)\.
+List name\.
 
-*Type:*
-string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
-
-*Example:*
-
-```nix
-"cloudflare"
-```
+**Type:** string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$\
+**Example:** `"cloudflare"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-nfqwsargs"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.nfqwsArgs
 
-Raw NFQWS arguments; --hostlist and --new are added\. Exclusive with configName\.
+Raw nfqws arguments; ` --hostlist ` and ` --new ` are added\. Cannot be used with ` configName `\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "--filter-tcp=443 --dpi-desync=fake,multisplit"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "--filter-tcp=443 --dpi-desync=fake,multisplit" ]`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-hostlistrules-preset"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.hostlistRules\.\*\.preset
 
-Strategy family to clone, from configName or the active config\.
+Strategy to copy, from ` configName ` or the active config\.
 
-*Type:*
-null or one of “general”, “google”, “instagram”, “soundcloud”, “twitter”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"google"
-```
+**Type:** null or one of “general”, “google”, “instagram”, “soundcloud”, “twitter”\
+**Default:** `null`\
+**Example:** `"google"`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-includeextraupstreamlists"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.includeExtraUpstreamLists
 
 Also use the upstream instagram, soundcloud and twitter lists\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-ips"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.ips
 
-Extra IPs/CIDRs to bypass\.
+Extra IPs or CIDRs to unblock\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "203.0.113.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "203.0.113.0/24" ]`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-enable"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.enable
 
-Learn blocked hosts: after failThreshold failures (retransmissions, early RST, DPI
-redirect, one-sided UDP) a host joins /var/lib/proxy-suite/zapret2/zapret-hosts-auto\.txt\.
-Off, only zapret2\.domains and ` proxy-ctl zapret auto add ` are acted on\.
-The thresholds below also fill whichever of them a profile’s strategy rotation
-(circular) leaves unset; its own fails and time are kept\.
+Learn blocked sites: after ` failThreshold ` failed connections, a site is treated as
+blocked\. When off, only ` zapret2.domains ` and ` proxy-ctl zapret auto add ` are used\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-debuglog"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.debugLog
 
-Log why hosts are or are not learned to zapret-hosts-auto-debug\.log\.
+Log why sites are or are not learned\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-failthreshold"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.failThreshold
 
-Failures before a host is learned\.
+Failures before a site is learned\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-3
-```
+**Type:** positive integer, meaning >0\
+**Default:** `3`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-failtime"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.failTime
 
-Seconds allowed between two failures before the count resets\.
+Seconds without a failure before the count resets\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-300
-```
+**Type:** positive integer, meaning >0\
+**Default:** `300`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-incomingmaxseq"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.incomingMaxseq
 
-Incoming sequence number past which an RST or redirect is not a failure\.
+After this many bytes received, a reset or redirect is not a failure\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-4096
-```
+**Type:** positive integer, meaning >0\
+**Default:** `4096`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-retransmaxseq"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.retransMaxseq
 
-Outgoing sequence number past which failure detection stops\.
+Stop watching a connection for failures after this many bytes sent\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-32768
-```
+**Type:** positive integer, meaning >0\
+**Default:** `32768`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-retransreset"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.retransReset
 
-RST a stalled client once retransThreshold is hit, so failures are counted fast\.
+Reset a stalled connection at ` retransThreshold `, so failures are counted faster\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-retransthreshold"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.retransThreshold
 
-Retransmissions of the first request that count as one failure\.
+Retransmissions of the first request that count as a failure\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-3
-```
+**Type:** positive integer, meaning >0\
+**Default:** `3`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-udpin"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.udpIn
 
-Incoming UDP packets at or below which an exchange is one-sided\.
+Most UDP replies that still count as no answer (see ` udpOut `)\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-1
-```
+**Type:** positive integer, meaning >0\
+**Default:** `1`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-udpout"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.udpOut
 
-Outgoing UDP packets before a one-sided exchange counts as a failure\.
+UDP packets sent, with at most ` udpIn ` replies, that count as a failure\.
 
-*Type:*
-positive integer, meaning >0
-
-*Default:*
-
-```nix
-4
-```
+**Type:** positive integer, meaning >0\
+**Default:** `4`
 
 <a id="services-proxy-suite-zapret-zapret2-blobs"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.blobs
 
-Fake payloads by name (blob=\<name>) on top of those of strategySource: a file in zapret2’s files/fake, or an absolute path\.
+Extra fake payloads by name (blob=\<name>): a file in zapret2’s files/fake, or an absolute path\.
 
-*Type:*
-attribute set of string
-
-*Default:*
-
-```nix
-{ }
-```
-
-*Example:*
-
-```nix
-{
-  tls_clienthello = "/etc/proxy-suite/my_clienthello.bin";
-}
-```
+**Type:** attribute set of string\
+**Default:** `{ }`\
+**Example:** `{ tls_clienthello = "/etc/proxy-suite/my_clienthello.bin"; }`
 
 <a id="services-proxy-suite-zapret-zapret2-cutoff-enable"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.cutoff\.enable
 
-Some lines let TLS to certain hosting networks handshake and then cut it at 12-34 KB,
-which no strategy fixes\. z2k’s probe checks this line against ~110 known targets when
-its network changes and once a day, and for each cut-off network searches a whitelisted
-name that nfqws2 then puts into a fake ClientHello (strategySource “z2k” only; ahead of
-the nfqws2-keenetic strategies it breaks them): thousands of short TLS connections to
-foreign hosting IPs per full run, sent directly and never touched by zapret2\. State and
-maps live in /var/lib/proxy-suite/zapret2/cutoff; ` proxy-ctl zapret cutoff ` shows them\.
+Work around ISPs that cut TLS to some hosting networks after about 16 KB, which no
+strategy fixes\. A daily probe finds the affected networks and a whitelisted name that
+gets through for each\. Only with ` strategySource = "z2k" `\. Each run makes thousands of
+short direct connections\. ` proxy-ctl zapret cutoff ` shows the results\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-cutoff-proxyfallback"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.cutoff\.proxyFallback
 
-Route the cut-off networks no name fixes through the proxy outbound\. Needs the sing-box
-backend with an outbound and a route mode other than all-bypass, and only applies to
-traffic the backend sees by address (TUN, TProxy, per-app routing, clients that dial IPs);
-explicit direct rules still win\.
+Send cut-off networks that no name fixes through the proxy\. Needs the sing-box backend,
+an outbound, and a route mode other than all-bypass\. Only works for traffic the proxy
+sees by IP (TUN, TProxy, per-app routing)\. Explicit direct rules still win\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-domains"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.domains
 
 Domains always treated as blocked\. At runtime: ` proxy-ctl zapret auto add `\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "rutracker.org"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "rutracker.org" ]`
 
 <a id="services-proxy-suite-zapret-zapret2-excludedomains"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.excludeDomains
 
 Domains never touched or learned\. At runtime: ` proxy-ctl zapret auto exclude `\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "bank.example.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "bank.example.com" ]`
 
 <a id="services-proxy-suite-zapret-zapret2-ipv6"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ipv6
 
-Intercept IPv6 as well as IPv4\.
+Handle IPv6 too\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-zapret-zapret2-ports-tcp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.tcp
 
-TCP ports sent to NFQUEUE\. Must cover every port a profile filters on\. null uses the ports of strategySource\.
+TCP ports zapret2 handles\. Must include every port a profile uses\. ` null `: use the ports from ` strategySource `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"80,443"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"80,443"`
 
 <a id="services-proxy-suite-zapret-zapret2-ports-udp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.udp
 
-UDP ports sent to NFQUEUE\. Must cover every port a profile filters on\. null uses the ports of strategySource\.
+UDP ports zapret2 handles\. Must include every port a profile uses\. ` null `: use the ports from ` strategySource `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"443"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"443"`
 
 <a id="services-proxy-suite-zapret-zapret2-profiles"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.profiles
 
-nfqws2 profiles replacing those of strategySource, joined with --new; first match wins\.
-\<HOSTLIST> expands to the hostlist arguments, \<HOSTLIST_NOAUTO> to the same without
-learning\. --qnum, --fwmark and --lua-init are added automatically\. null uses the profiles of strategySource\.
+Your own nfqws2 profiles, instead of those from ` strategySource `\. The first match wins\.
+` <HOSTLIST> ` expands to the site list arguments, ` <HOSTLIST_NOAUTO> ` to the same without
+learning\. ` --qnum `, ` --fwmark ` and ` --lua-init ` are added for you\. ` null `: use the profiles from ` strategySource `\.
 
-*Type:*
-null or (list of string)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
+**Type:** null or (list of string)\
+**Default:** `null`\
+**Example:**
 
 ```nix
 [
@@ -880,26 +467,13 @@ null
 <a id="services-proxy-suite-zapret-zapret2-strategysource"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.strategySource
 
-Where profiles, blobs and ports come from; both are pinned flake inputs\.
-“nfqws2-keenetic”: its nfqws2\.conf strategies with its user and exclude lists\.
-“z2k”: z2k’s own config generator, run at build time: per-category rotation pools
-(general, YouTube, googlevideo, QUIC, Discord), its failure detectors and fake-TTL
-hook, its blobs, whitelist and hostlists, including the ~125k-domain RKN list
-(about 15 MB more RSS per nfqws2 process)\.
-Either way each host’s working strategy is remembered across restarts in
-/var/lib/proxy-suite/zapret2/circular/state\.tsv\.
+Where the strategies, blobs and ports come from\.
 
-*Type:*
-one of “nfqws2-keenetic”, “z2k”
+ - “nfqws2-keenetic”: its strategies and site lists\.
+ - “z2k”: z2k’s strategies, which rotate per category (YouTube, Discord, QUIC, …), with
+   its site lists, including the full RKN list (more memory)\.
+   Either way, each site’s working strategy is remembered across restarts\.
 
-*Default:*
-
-```nix
-"nfqws2-keenetic"
-```
-
-*Example:*
-
-```nix
-"z2k"
-```
+**Type:** one of “nfqws2-keenetic”, “z2k”\
+**Default:** `"nfqws2-keenetic"`\
+**Example:** `"z2k"`

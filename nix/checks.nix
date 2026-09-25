@@ -36,7 +36,7 @@ let
       generatedOptionsDoc
       generatedReadmeDoc
       ;
-    inherit (checkLib) rg;
+    inherit (checkLib) rg evalProxySuite;
     readmeDocSource = builtins.readFile ../nix/readme-doc.nix;
     tgWsProxyModuleSource = builtins.readFile ../modules/proxy-suite/tg-ws-proxy.nix;
     controlModuleSource = builtins.readFile ../modules/proxy-suite/service/control.nix;

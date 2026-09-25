@@ -50,93 +50,89 @@ RESTART_SERVICES = [
 
 HELP = """\
 Usage: proxy-ctl <group> [verb] [args]
-A group without a verb shows its status or list.
-Every group with on|off also takes toggle (on if stopped, off if running) and restart.
-Secrets and changes need root, or the userControl group.
+A group alone shows its status or list.
+Groups with on|off also take toggle and restart.
+Changes and secrets need root or the userControl group.
 
-  status [--json]                        services and routing mode (--tray: deprecated key=value lines)
-  restart                                restart active services
-  logs [unit]                            follow logs (default: every proxy-suite unit)
-  where <domain>                         how this host is routed right now
+  status [--json]                        services and routing mode (--tray: deprecated)
+  restart                                restart running services
+  logs [unit]                            follow logs (default: all proxy-suite units)
+  where <domain>                         how a domain is routed right now
 
-  proxy [status|on|off]                  local proxy backend
-  proxy outbounds [list]                 outbounds, where each came from, and the pick
+  proxy [status|on|off]                  local proxy
+  proxy outbounds [list]                 outbounds, their source, and the current pick
   proxy outbounds add [tag] <url|json|-> [--detour <tag>]
-                                         add an outbound at runtime: a URL, or sing-box/XRay JSON (-: stdin),
-                                         chained through another outbound with --detour; the tag first,
-                                         or left out to name it after the link
+                                         add an outbound from a link or JSON (-: stdin);
+                                         --detour: connect through another outbound
   proxy outbounds chain <tag> <through-tag> [new tag]
-                                         add a copy of an existing outbound that dials through
-                                         another one; the original keeps dialing the way it did
+                                         add a copy of an outbound that connects through another
   proxy outbounds rm <tag>               remove a runtime outbound
-  proxy outbounds disable|enable <tag>   keep an outbound out of automatic use (selection, autoProxy, pins),
-                                         or let it back in; declared ones too
+  proxy outbounds disable|enable <tag>   exclude from automatic use (selection, autoProxy), or undo
   proxy outbounds test [tag...] [--ping] [--delay] [--download]
-                                         TCP ping, real delay, download speed (default: ping, delay)
+                                         test ping, delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
-                                         its URL, QR code, backend JSON, or a client config for it
+                                         its link, QR code, JSON, or client config
   proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
-  proxy unpin                            let the configured selection pick again
+  proxy unpin                            go back to automatic selection
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
-  proxy subs [list|update]               subscription caches; update refetches them
-  proxy subs add [tag] <url>             add a subscription at runtime; no tag: named after its host
+  proxy subs [list|update]               subscriptions; update refetches them
+  proxy subs add [tag] <url>             add a subscription (no tag: named after its host)
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
-  proxy rulesets [list|update]           routing rule sets: when each was fetched; update fetches them now
-  proxy config [--raw]                   client config to import elsewhere; --raw: as running
+  proxy rulesets [list|update]           rule sets and when they were fetched; update refetches
+  proxy config [--raw]                   client config to use elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
-  proxy auto [list]                      what autoProxy routed, and via which exit
+  proxy auto [list]                      what autoProxy routed, and through which exit
   proxy auto probe <domain>[/path] [--json] [--keep-going] [--exits a,b | --via tag]
                                          find an exit that reaches a domain
-  proxy auto learn <domain>              probe now and route it if an exit works
-  proxy auto forget <domain>             drop what was learned about it: direct until learned again
-  proxy auto relearn <domain>            forget it, then probe the host it was learned from now
-  proxy auto clear                       forget every learned route and verdict
+  proxy auto learn <domain>              probe now, and route it if an exit works
+  proxy auto forget <domain>             forget it (direct until learned again)
+  proxy auto relearn <domain>            forget it and probe again now
+  proxy auto clear                       forget everything learned
   proxy auto queue [count]               destinations waiting to be probed
 
   zapret [status|on|off]                 DPI bypass
-  zapret auto [list]                     hosts zapret2 learned as blocked
+  zapret auto [list]                     sites zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
-                                         pin, forget, or never learn a host
-  zapret auto unpin|include <domain>     undo add, or undo exclude
-  zapret auto clear                      forget learned hosts and strategies
-  zapret cutoff [status]                 networks this line cuts at 16 KB, and their names
-  zapret cutoff probe                    probe this line again now
+                                         pin, forget, or never learn a site
+  zapret auto unpin|include <domain>     undo add or exclude
+  zapret auto clear                      forget learned sites and strategies
+  zapret cutoff [status]                 networks cut off at 16 KB, and names that pass
+  zapret cutoff probe                    probe again now
 
-  awg [list]                             AmneziaWG profiles and their state
+  awg [list]                             AmneziaWG profiles
   awg on <profile> | off [profile] | toggle [profile] | restart [profile]
 
-  killswitch [status|on|off]             reject traffic outside the global tunnel; up with
-                                         TUN, TProxy or AWG, lifted only by off here or on them
+  killswitch [status|on|off]             block traffic outside the global tunnel;
+                                         stays on until turned off here or with the tunnel
 
-  ssh [status|on|off]                    SSH SOCKS5 tunnel
-  warp [status|on|off]                   WARP tunnel behind the warp outbound
-  tor [status|on|off]                    Tor, behind the tor outbound and the onion service
+  ssh [status|on|off]                    SSH tunnel
+  warp [status|on|off]                   WARP tunnel
+  tor [status|on|off]                    Tor
   tor newnym                             new circuits for new connections
-  tg [status|on|off]                     Telegram WebSocket proxy
+  tg [status|on|off]                     Telegram proxy
   wl [list]                              whitelist-bypass creators and joiners
-  wl link <creator> [--qr]               the call link its joiner takes
-  wl auth <creator> [file|-]             replace its login: cookies, or asked (DION, Bitrix)
-  wl join <joiner> <link|->              the call it joins, over its linkFile
-  wl new <creator>                       drop its call for a new one
-  wl on|off|toggle|restart [name]        one creator or joiner, or all of them
+  wl link <creator> [--qr]               the call link for its joiner
+  wl auth <creator> [file|-]             replace its login: cookies, or prompt (DION, Bitrix)
+  wl join <joiner> <link|->              set the call to join
+  wl new <creator>                       start a new call
+  wl on|off|toggle|restart [name]        one creator or joiner, or all
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--onion] [--qr|--json]
-                                         client share link, or the client's outbound JSON;
-                                         --onion: the one through the onion service
+                                         share link or client JSON; --onion: via the onion service
   inbounds link <tag> [user] --config [--qr]
-                                         an AmneziaWG client's .conf, or its QR code
+                                         AmneziaWG client .conf or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
-                                         traffic per user, listener or exit
-  inbounds online                        who is connected now, and when the rest were last seen
+                                         traffic by user, listener or exit
+  inbounds online                        who is online, and when others were last seen
 """
 
 ROUTE_MODES = ["whitelist", "blacklist", "all-proxy", "all-bypass"]

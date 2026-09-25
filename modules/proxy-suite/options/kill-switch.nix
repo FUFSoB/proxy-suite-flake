@@ -1,11 +1,11 @@
 { lib, ... }:
 {
-  options.services.proxy-suite.killSwitch.enable = lib.mkEnableOption ''
-    a kill switch for the global tunnels (proxy.tun, proxy.tproxy and global AmneziaWG profiles):
-    once one starts, outgoing traffic that would leave outside it is rejected, also while it
-    restarts, after it crashes or after its handshake gives up. LAN destinations, DHCP and NTP
-    stay open; tproxy.lanInterfaces clients keep the LAN but lose the internet. Only
-    `proxy-ctl killswitch off`, `proxy off`, `proxy tun off`, `proxy tproxy off` or `awg off`
-    lift it (proxy-suite-killswitch)
-  '';
+  options.services.proxy-suite.killSwitch.enable = lib.mkEnableOption "the kill switch" // {
+    description = ''
+      Block outgoing traffic that bypasses the active global tunnel (TUN, TProxy or a global
+      AmneziaWG profile), including while it restarts or after it fails. LAN, DHCP and NTP stay
+      open; `proxy.tproxy.lanInterfaces` devices keep the LAN but lose the internet. Only turning
+      the tunnel off, or `proxy-ctl killswitch off`, lifts it.
+    '';
+  };
 }

@@ -16,21 +16,21 @@ let
     options = {
       publicKey = mkOption {
         type = types.strMatching "[^[:space:]]+";
-        description = "AmneziaWG peer public key.";
+        description = "Peer public key.";
       };
       presharedKey = mkOption {
         type = optionalString;
         default = null;
-        description = "Inline peer preshared key. Prefer presharedKeyFile for secrets.";
+        description = "Peer preshared key. Ends up in the Nix store; prefer `presharedKeyFile`.";
       };
       presharedKeyFile = mkOption {
         type = optionalString;
         default = null;
-        description = "Runtime path containing the peer preshared key.";
+        description = "File with the peer preshared key.";
       };
       allowedIPs = mkOption {
         type = types.listOf types.str;
-        description = "IP prefixes routed to and accepted from this peer.";
+        description = "IP ranges routed to and accepted from this peer.";
         example = [
           "0.0.0.0/0"
           "::/0"
@@ -40,17 +40,17 @@ let
         type = optionalString;
         default = null;
         example = "vpn.example.com:51820";
-        description = "Optional peer endpoint in host:port form.";
+        description = "Peer address, as host:port.";
       };
       persistentKeepalive = mkOption {
         type = optionalRange;
         default = null;
-        description = "Persistent keepalive seconds, optionally expressed as an AWG 3 range.";
+        description = "Keepalive interval in seconds, or an AWG 3 range.";
       };
       advancedSecurity = mkOption {
         type = types.nullOr types.bool;
         default = null;
-        description = "Optional AWG peer AdvancedSecurity setting.";
+        description = "AWG AdvancedSecurity setting.";
       };
     };
   };
@@ -92,8 +92,8 @@ let
         i3 = "Third custom signature packet (I3).";
         i4 = "Fourth custom signature packet (I4).";
         i5 = "Fifth custom signature packet (I5).";
-        headerProtectionKey = "Inline AWG 3 header-protection key. Prefer headerProtectionKeyFile.";
-        headerProtectionKeyFile = "Runtime path containing the AWG 3 header-protection key.";
+        headerProtectionKey = "AWG 3 header-protection key. Ends up in the Nix store; prefer `headerProtectionKeyFile`.";
+        headerProtectionKeyFile = "File with the AWG 3 header-protection key.";
       }
       // lib.mapAttrs (_: optional (types.nullOr types.bool)) {
         randomTrailers = "AWG 3 random transport trailers (RandomTrailers).";
@@ -106,38 +106,38 @@ let
       addresses = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "IP prefixes assigned to the AWG interface.";
+        description = "Interface addresses.";
         example = [ "10.8.0.2/32" ];
       };
       dns = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "DNS servers installed while this profile is active.";
+        description = "DNS servers used while this profile is active.";
       };
       privateKey = mkOption {
         type = optionalString;
         default = null;
-        description = "Inline client private key. Prefer privateKeyFile.";
+        description = "Client private key. Ends up in the Nix store; prefer `privateKeyFile`.";
       };
       privateKeyFile = mkOption {
         type = optionalString;
         default = null;
-        description = "Runtime path containing the client private key.";
+        description = "File with the client private key.";
       };
       listenPort = mkOption {
         type = types.nullOr types.port;
         default = null;
-        description = "Optional local UDP listen port.";
+        description = "Local UDP port.";
       };
       mtu = mkOption {
         type = optionalUnsigned;
         default = null;
-        description = "Optional interface MTU.";
+        description = "Interface MTU.";
       };
       table = mkOption {
         type = optionalString;
         default = null;
-        description = "wg-quick routing table name/number, auto, or off.";
+        description = "Routing table: a name or number, \"auto\" or \"off\".";
       };
       obfuscation = mkOption {
         type = obfuscationType;
@@ -149,14 +149,10 @@ let
         default = null;
         example = "/run/secrets/awg-obfuscation.json";
         description = ''
-          Runtime path to a partial JSON object using the same field names and
-          value types as obfuscation, excluding headerProtectionKeyFile.
-          Values are combined with public obfuscation settings at service startup
-          without putting the file contents in the Nix store. Omitted or null
-          fields are unset; duplicate JSON keys and fields set in both sources
-          are rejected. A file-provided headerProtectionKey also conflicts with
-          obfuscation.headerProtectionKeyFile. Private and preshared keys use
-          their existing file options. Restart the profile after secret rotation.
+          File with secret obfuscation settings as JSON, using the same fields as `obfuscation`
+          (except `headerProtectionKeyFile`). It is merged with `obfuscation` at startup and never
+          enters the Nix store. A field set in both places is an error. Restart the profile after
+          changing the file.
         '';
       };
       peers = mkOption {
@@ -174,12 +170,12 @@ let
         interfaceName = mkOption {
           type = types.strMatching "^[A-Za-z0-9_.-]{1,15}$";
           default = "awg-${name}";
-          description = "Linux interface name. It must fit Linux's 15-character limit.";
+          description = "Interface name, at most 15 characters.";
         };
         autostart = mkOption {
           type = types.bool;
           default = false;
-          description = "Whether to start this profile at boot. At most one profile may autostart.";
+          description = "Start this profile at boot. Only one profile can autostart.";
         };
         asOutbound = mkOption {
           type = types.nullOr (
@@ -191,52 +187,46 @@ let
           );
           default = null;
           description = ''
-            Make the profile a proxy outbound tagged with its name instead of a global profile. It then
-            always runs, leaves the host's routes and resolver alone, and is not listed by
-            `proxy-ctl awg`. Requires proxy.enable.
-            - "singBox": a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
-              hop. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning.
-            - "userspace": the same hop served by wireproxy on AmneziaWG's userspace implementation, so
-              obfuscation works. It needs no interface or root: the only AmneziaWG mode on
-              home-manager and nix-on-droid. A declared or profile ListenPort is used as is. An
-              Endpoint hostname resolves through the system resolver: give an address where that
-              resolver cannot reach the name.
-            - "interface": the AmneziaWG interface comes up without routes (Table = off), and the
-              outbound binds to it, so obfuscation works. With the sing-box backend its DNS goes
-              through the interface too (proxy.dns.remote); XRay resolves as usual.
-            Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy.
+            Use the profile as a proxy outbound, tagged with its name, instead of a global VPN. It
+            then always runs and leaves the host's routes and DNS alone. Needs `proxy.enable`.
+            - "singBox": plain WireGuard in sing-box. AmneziaWG obfuscation is dropped, with a warning.
+            - "userspace": wireproxy with AmneziaWG obfuscation. Needs no root, so it is the only
+              mode on home-manager and Nix-on-Droid. Its endpoint is resolved by the system
+              resolver, so use an IP if that resolver cannot reach the name.
+            - "interface": a real AmneziaWG interface without routes, which the outbound binds to.
+              On sing-box, its DNS also goes through the tunnel.
           '';
         };
-        endpoint = endpoint "host:port (IPv6 in brackets) that replaces the first peer's Endpoint when the profile is prepared.";
+        endpoint = endpoint "host:port (IPv6 in brackets) that replaces the first peer's endpoint.";
         allowConfigHooks = mkOption {
           type = types.bool;
           default = false;
-          description = "Allow trusted imported configs to execute wg-quick hooks or use SaveConfig.";
+          description = "Let imported configs run wg-quick hooks (PostUp etc.) or use SaveConfig. Only for trusted configs.";
         };
         vpnContainer = mkOption {
           type = optionalString;
           default = null;
-          description = "AWG container/protocol identifier to select when a vpn:// bundle is ambiguous.";
+          description = "Which container to take from a vpn:// export that holds several.";
         };
         configFile = mkOption {
           type = optionalString;
           default = null;
-          description = "Runtime path to an AmneziaWG .conf file.";
+          description = "File with an AmneziaWG .conf.";
         };
         vpnFile = mkOption {
           type = optionalString;
           default = null;
-          description = "Runtime path containing a self-contained vpn:// export.";
+          description = "File with a vpn:// export.";
         };
         vpn = mkOption {
           type = optionalString;
           default = null;
-          description = "Inline self-contained vpn:// export. This value is stored in the Nix store.";
+          description = "A vpn:// export. Ends up in the Nix store; prefer `vpnFile`.";
         };
         settings = mkOption {
           type = types.nullOr settingsType;
           default = null;
-          description = "Typed declarative AmneziaWG client configuration.";
+          description = "The client config written in Nix, instead of a file.";
         };
       };
     }

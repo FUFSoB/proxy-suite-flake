@@ -3,7 +3,7 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   int = (import ./lib.nix { inherit lib; }).positiveInt;
-  fromSource = what: "null uses the ${what} of strategySource.";
+  fromSource = what: "`null`: use the ${what} from `strategySource`.";
 in
 {
   options.services.proxy-suite.zapret.zapret2 = {
@@ -14,14 +14,11 @@ in
       ];
       default = "nfqws2-keenetic";
       description = ''
-        Where profiles, blobs and ports come from; both are pinned flake inputs.
-        "nfqws2-keenetic": its nfqws2.conf strategies with its user and exclude lists.
-        "z2k": z2k's own config generator, run at build time: per-category rotation pools
-        (general, YouTube, googlevideo, QUIC, Discord), its failure detectors and fake-TTL
-        hook, its blobs, whitelist and hostlists, including the ~125k-domain RKN list
-        (about 15 MB more RSS per nfqws2 process).
-        Either way each host's working strategy is remembered across restarts in
-        /var/lib/proxy-suite/zapret2/circular/state.tsv.
+        Where the strategies, blobs and ports come from.
+        - "nfqws2-keenetic": its strategies and site lists.
+        - "z2k": z2k's strategies, which rotate per category (YouTube, Discord, QUIC, …), with
+          its site lists, including the full RKN list (more memory).
+        Either way, each site's working strategy is remembered across restarts.
       '';
       example = "z2k";
     };
@@ -30,9 +27,9 @@ in
       type = types.nullOr (types.listOf types.str);
       default = null;
       description = ''
-        nfqws2 profiles replacing those of strategySource, joined with --new; first match wins.
-        <HOSTLIST> expands to the hostlist arguments, <HOSTLIST_NOAUTO> to the same without
-        learning. --qnum, --fwmark and --lua-init are added automatically. ${fromSource "profiles"}
+        Your own nfqws2 profiles, instead of those from `strategySource`. The first match wins.
+        `<HOSTLIST>` expands to the site list arguments, `<HOSTLIST_NOAUTO>` to the same without
+        learning. `--qnum`, `--fwmark` and `--lua-init` are added for you. ${fromSource "profiles"}
       '';
       example = [
         "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
@@ -42,7 +39,7 @@ in
     blobs = mkOption {
       type = types.attrsOf types.str;
       default = { };
-      description = "Fake payloads by name (blob=<name>) on top of those of strategySource: a file in zapret2's files/fake, or an absolute path.";
+      description = "Extra fake payloads by name (blob=<name>): a file in zapret2's files/fake, or an absolute path.";
       example = {
         tls_clienthello = "/etc/proxy-suite/my_clienthello.bin";
       };
@@ -66,14 +63,14 @@ in
       tcp = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "TCP ports sent to NFQUEUE. Must cover every port a profile filters on. ${fromSource "ports"}";
+        description = "TCP ports zapret2 handles. Must include every port a profile uses. ${fromSource "ports"}";
         example = "80,443";
       };
 
       udp = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "UDP ports sent to NFQUEUE. Must cover every port a profile filters on. ${fromSource "ports"}";
+        description = "UDP ports zapret2 handles. Must include every port a profile uses. ${fromSource "ports"}";
         example = "443";
       };
     };
@@ -81,40 +78,37 @@ in
     ipv6 = mkOption {
       type = types.bool;
       default = false;
-      description = "Intercept IPv6 as well as IPv4.";
+      description = "Handle IPv6 too.";
     };
 
     autoHostlist = {
       enable = mkEnableOption "learning blocked hosts at runtime" // {
         default = true;
         description = ''
-          Learn blocked hosts: after failThreshold failures (retransmissions, early RST, DPI
-          redirect, one-sided UDP) a host joins /var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt.
-          Off, only zapret2.domains and `proxy-ctl zapret auto add` are acted on.
-          The thresholds below also fill whichever of them a profile's strategy rotation
-          (circular) leaves unset; its own fails and time are kept.
+          Learn blocked sites: after `failThreshold` failed connections, a site is treated as
+          blocked. When off, only `zapret2.domains` and `proxy-ctl zapret auto add` are used.
         '';
       };
 
-      failThreshold = int 3 "Failures before a host is learned.";
-      failTime = int 300 "Seconds allowed between two failures before the count resets.";
-      retransThreshold = int 3 "Retransmissions of the first request that count as one failure.";
+      failThreshold = int 3 "Failures before a site is learned.";
+      failTime = int 300 "Seconds without a failure before the count resets.";
+      retransThreshold = int 3 "Retransmissions of the first request that count as a failure.";
 
       retransReset = mkOption {
         type = types.bool;
         default = true;
-        description = "RST a stalled client once retransThreshold is hit, so failures are counted fast.";
+        description = "Reset a stalled connection at `retransThreshold`, so failures are counted faster.";
       };
 
-      retransMaxseq = int 32768 "Outgoing sequence number past which failure detection stops.";
-      incomingMaxseq = int 4096 "Incoming sequence number past which an RST or redirect is not a failure.";
-      udpOut = int 4 "Outgoing UDP packets before a one-sided exchange counts as a failure.";
-      udpIn = int 1 "Incoming UDP packets at or below which an exchange is one-sided.";
+      retransMaxseq = int 32768 "Stop watching a connection for failures after this many bytes sent.";
+      incomingMaxseq = int 4096 "After this many bytes received, a reset or redirect is not a failure.";
+      udpOut = int 4 "UDP packets sent, with at most `udpIn` replies, that count as a failure.";
+      udpIn = int 1 "Most UDP replies that still count as no answer (see `udpOut`).";
 
       debugLog = mkOption {
         type = types.bool;
         default = false;
-        description = "Log why hosts are or are not learned to zapret-hosts-auto-debug.log.";
+        description = "Log why sites are or are not learned.";
       };
     };
 
@@ -122,13 +116,10 @@ in
       enable = mkEnableOption "the 16 KB cutoff probe" // {
         default = true;
         description = ''
-          Some lines let TLS to certain hosting networks handshake and then cut it at 12-34 KB,
-          which no strategy fixes. z2k's probe checks this line against ~110 known targets when
-          its network changes and once a day, and for each cut-off network searches a whitelisted
-          name that nfqws2 then puts into a fake ClientHello (strategySource "z2k" only; ahead of
-          the nfqws2-keenetic strategies it breaks them): thousands of short TLS connections to
-          foreign hosting IPs per full run, sent directly and never touched by zapret2. State and
-          maps live in /var/lib/proxy-suite/zapret2/cutoff; `proxy-ctl zapret cutoff` shows them.
+          Work around ISPs that cut TLS to some hosting networks after about 16 KB, which no
+          strategy fixes. A daily probe finds the affected networks and a whitelisted name that
+          gets through for each. Only with `strategySource = "z2k"`. Each run makes thousands of
+          short direct connections. `proxy-ctl zapret cutoff` shows the results.
         '';
       };
 
@@ -136,10 +127,9 @@ in
         type = types.bool;
         default = true;
         description = ''
-          Route the cut-off networks no name fixes through the proxy outbound. Needs the sing-box
-          backend with an outbound and a route mode other than all-bypass, and only applies to
-          traffic the backend sees by address (TUN, TProxy, per-app routing, clients that dial IPs);
-          explicit direct rules still win.
+          Send cut-off networks that no name fixes through the proxy. Needs the sing-box backend,
+          an outbound, and a route mode other than all-bypass. Only works for traffic the proxy
+          sees by IP (TUN, TProxy, per-app routing). Explicit direct rules still win.
         '';
       };
     };

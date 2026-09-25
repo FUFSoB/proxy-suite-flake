@@ -1,5 +1,7 @@
 # services.proxy-suite.amneziaWg
 
+AmneziaWG client profiles, as a global VPN or as outbounds.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -70,886 +72,490 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-amneziawg-enable"></a>
 ## services\.proxy-suite\.amneziaWg\.enable
 
-Whether to enable native AmneziaWG client profiles\.
+Whether to enable AmneziaWG client profiles\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-amneziawg-kernelmodulepackage"></a>
 ## services\.proxy-suite\.amneziaWg\.kernelModulePackage
 
-AWG 3\.1 kernel module package\. Set null to use userspace-only fallback\.
+AWG 3\.1 kernel module package\. ` null `: userspace only\.
 
-*Type:*
-null or package
-
-*Default:*
-
-```nix
-<derivation amneziawg-3.1.20260828>
-```
+**Type:** null or package\
+**Default:** `<derivation amneziawg-3.1.20260828>`
 
 <a id="services-proxy-suite-amneziawg-profiles"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles
 
-Named AmneziaWG client profiles\. Only one global profile can be active\.
+AmneziaWG client profiles, by name\. Each sets exactly one of ` configFile `, ` vpnFile `, ` vpn `
+or ` settings `\. Only one global profile can run at a time\.
 
-A profile moves to a new source port, keeping its routes, when a handshake goes
-unanswered: every 5 seconds while it starts (it gives up after 20), and when
-proxy-suite-awg-NAME-watchdog sees a rekey not getting through\. settings\.listenPort
-pins the port and turns that off\.
+When handshakes go unanswered, a profile switches to a new source port on its own\.
+Setting ` settings.listenPort ` pins the port and turns this off\.
 
-*Type:*
-attribute set of (submodule)
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-allowconfighooks"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.allowConfigHooks
 
-Allow trusted imported configs to execute wg-quick hooks or use SaveConfig\.
+Let imported configs run wg-quick hooks (PostUp etc\.) or use SaveConfig\. Only for trusted configs\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-asoutbound"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.asOutbound
 
-Make the profile a proxy outbound tagged with its name instead of a global profile\. It then
-always runs, leaves the host’s routes and resolver alone, and is not listed by
-` proxy-ctl awg `\. Requires proxy\.enable\.
+Use the profile as a proxy outbound, tagged with its name, instead of a global VPN\. It
+then always runs and leaves the host’s routes and DNS alone\. Needs ` proxy.enable `\.
 
- - “singBox”: a WireGuard endpoint in its own sing-box process, reached as a loopback SOCKS
-   hop\. sing-box speaks plain WireGuard: AmneziaWG obfuscation is dropped with a warning\.
- - “userspace”: the same hop served by wireproxy on AmneziaWG’s userspace implementation, so
-   obfuscation works\. It needs no interface or root: the only AmneziaWG mode on
-   home-manager and nix-on-droid\. A declared or profile ListenPort is used as is\. An
-   Endpoint hostname resolves through the system resolver: give an address where that
-   resolver cannot reach the name\.
- - “interface”: the AmneziaWG interface comes up without routes (Table = off), and the
-   outbound binds to it, so obfuscation works\. With the sing-box backend its DNS goes
-   through the interface too (proxy\.dns\.remote); XRay resolves as usual\.
-   Either way the tunnel itself reaches the peer over the uplink, past TUN and TProxy\.
+ - “singBox”: plain WireGuard in sing-box\. AmneziaWG obfuscation is dropped, with a warning\.
+ - “userspace”: wireproxy with AmneziaWG obfuscation\. Needs no root, so it is the only
+   mode on home-manager and Nix-on-Droid\. Its endpoint is resolved by the system
+   resolver, so use an IP if that resolver cannot reach the name\.
+ - “interface”: a real AmneziaWG interface without routes, which the outbound binds to\.
+   On sing-box, its DNS also goes through the tunnel\.
 
-*Type:*
-null or one of “singBox”, “userspace”, “interface”
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or one of “singBox”, “userspace”, “interface”\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-autostart"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.autostart
 
-Whether to start this profile at boot\. At most one profile may autostart\.
+Start this profile at boot\. Only one profile can autostart\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-configfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.configFile
 
-Runtime path to an AmneziaWG \.conf file\.
+File with an AmneziaWG \.conf\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-endpoint"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.endpoint
 
-host:port (IPv6 in brackets) that replaces the first peer’s Endpoint when the profile is prepared\.
+host:port (IPv6 in brackets) that replaces the first peer’s endpoint\.
 
-*Type:*
-null or string matching the pattern (\\\[\[0-9A-Fa-f:\.]+]|\[^]:\[]+):\[0-9]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"162.159.192.1:500"
-```
+**Type:** null or string matching the pattern (\\\[\[0-9A-Fa-f:\.]+]|\[^]:\[]+):\[0-9]+\
+**Default:** `null`\
+**Example:** `"162.159.192.1:500"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-interfacename"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.interfaceName
 
-Linux interface name\. It must fit Linux’s 15-character limit\.
+Interface name, at most 15 characters\.
 
-*Type:*
-string matching the pattern ^\[A-Za-z0-9_\.-]{1,15}$
-
-*Default:*
-
-```nix
-"awg-‹name›"
-```
+**Type:** string matching the pattern ^\[A-Za-z0-9_\.-]{1,15}$\
+**Default:** `"awg-‹name›"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings
 
-Typed declarative AmneziaWG client configuration\.
+The client config written in Nix, instead of a file\.
 
-*Type:*
-null or (submodule)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (submodule)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-addresses"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.addresses
 
-IP prefixes assigned to the AWG interface\.
+Interface addresses\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "10.8.0.2/32"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "10.8.0.2/32" ]`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-dns"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.dns
 
-DNS servers installed while this profile is active\.
+DNS servers used while this profile is active\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
+**Type:** list of string\
+**Default:** `[ ]`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-listenport"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.listenPort
 
-Optional local UDP listen port\.
+Local UDP port\.
 
-*Type:*
-null or 16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-mtu"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.mtu
 
-Optional interface MTU\.
+Interface MTU\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation
 
 AmneziaWG 1\.x through 3\.x obfuscation parameters\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-contentpaddingaddition"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.contentPaddingAddition
 
 AWG 3 content-padding addition or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-disablecookies"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.disableCookies
 
 AWG 3 cookie suppression (DisableCookies)\.
 
-*Type:*
-null or boolean
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or boolean\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-h1"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.h1
 
 Handshake-init header or range (H1)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-h2"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.h2
 
 Handshake-response header or range (H2)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-h3"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.h3
 
 Cookie-reply header or range (H3)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-h4"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.h4
 
 Transport-message header or range (H4)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-headerprotectionkey"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.headerProtectionKey
 
-Inline AWG 3 header-protection key\. Prefer headerProtectionKeyFile\.
+AWG 3 header-protection key\. Ends up in the Nix store; prefer ` headerProtectionKeyFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-headerprotectionkeyfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.headerProtectionKeyFile
 
-Runtime path containing the AWG 3 header-protection key\.
+File with the AWG 3 header-protection key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-i1"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.i1
 
 First custom signature packet (I1)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-i2"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.i2
 
 Second custom signature packet (I2)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-i3"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.i3
 
 Third custom signature packet (I3)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-i4"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.i4
 
 Fourth custom signature packet (I4)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-i5"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.i5
 
 Fifth custom signature packet (I5)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-jc"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.jc
 
 Junk packet count (Jc)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-jmax"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.jmax
 
 Maximum junk packet size (Jmax)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-jmin"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.jmin
 
 Minimum junk packet size (Jmin)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-keepalivetimeout"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.keepaliveTimeout
 
 AWG 3 keepalive timeout or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-maxhandshakeattempts"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.maxHandshakeAttempts
 
 AWG 3 maximum handshake attempts or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-randomtrailers"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.randomTrailers
 
 AWG 3 random transport trailers (RandomTrailers)\.
 
-*Type:*
-null or boolean
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or boolean\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-rejectaftertime"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.rejectAfterTime
 
 AWG 3 reject-after interval or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-rekeyaftertime"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.rekeyAfterTime
 
 AWG 3 rekey interval or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-rekeytimeout"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.rekeyTimeout
 
 AWG 3 rekey timeout or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s1"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.s1
 
 Handshake-init padding (S1)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s2"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.s2
 
 Handshake-response padding (S2)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s3"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.s3
 
 Cookie-reply padding (S3)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscation-s4"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscation\.s4
 
 Transport-message padding (S4)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-obfuscationfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.obfuscationFile
 
-Runtime path to a partial JSON object using the same field names and
-value types as obfuscation, excluding headerProtectionKeyFile\.
-Values are combined with public obfuscation settings at service startup
-without putting the file contents in the Nix store\. Omitted or null
-fields are unset; duplicate JSON keys and fields set in both sources
-are rejected\. A file-provided headerProtectionKey also conflicts with
-obfuscation\.headerProtectionKeyFile\. Private and preshared keys use
-their existing file options\. Restart the profile after secret rotation\.
+File with secret obfuscation settings as JSON, using the same fields as ` obfuscation `
+(except ` headerProtectionKeyFile `)\. It is merged with ` obfuscation ` at startup and never
+enters the Nix store\. A field set in both places is an error\. Restart the profile after
+changing the file\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/awg-obfuscation.json"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-obfuscation.json"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers
 
 AmneziaWG peers\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
+**Type:** list of (submodule)\
+**Default:** `[ ]`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-advancedsecurity"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.advancedSecurity
 
-Optional AWG peer AdvancedSecurity setting\.
+AWG AdvancedSecurity setting\.
 
-*Type:*
-null or boolean
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or boolean\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-allowedips"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.allowedIPs
 
-IP prefixes routed to and accepted from this peer\.
+IP ranges routed to and accepted from this peer\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "0.0.0.0/0"
-  "::/0"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "0.0.0.0/0" "::/0" ]`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-endpoint"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.endpoint
 
-Optional peer endpoint in host:port form\.
+Peer address, as host:port\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"vpn.example.com:51820"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"vpn.example.com:51820"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-persistentkeepalive"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.persistentKeepalive
 
-Persistent keepalive seconds, optionally expressed as an AWG 3 range\.
+Keepalive interval in seconds, or an AWG 3 range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-presharedkey"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.presharedKey
 
-Inline peer preshared key\. Prefer presharedKeyFile for secrets\.
+Peer preshared key\. Ends up in the Nix store; prefer ` presharedKeyFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-presharedkeyfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.presharedKeyFile
 
-Runtime path containing the peer preshared key\.
+File with the peer preshared key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-peers-publickey"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.peers\.\*\.publicKey
 
-AmneziaWG peer public key\.
+Peer public key\.
 
-*Type:*
-string matching the pattern \[^\[:space:]]+
+**Type:** string matching the pattern \[^\[:space:]]+
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-privatekey"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.privateKey
 
-Inline client private key\. Prefer privateKeyFile\.
+Client private key\. Ends up in the Nix store; prefer ` privateKeyFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-privatekeyfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.privateKeyFile
 
-Runtime path containing the client private key\.
+File with the client private key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings-table"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings\.table
 
-wg-quick routing table name/number, auto, or off\.
+Routing table: a name or number, “auto” or “off”\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-vpn"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.vpn
 
-Inline self-contained vpn:// export\. This value is stored in the Nix store\.
+A vpn:// export\. Ends up in the Nix store; prefer ` vpnFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-vpncontainer"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.vpnContainer
 
-AWG container/protocol identifier to select when a vpn:// bundle is ambiguous\.
+Which container to take from a vpn:// export that holds several\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-vpnfile"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.vpnFile
 
-Runtime path containing a self-contained vpn:// export\.
+File with a vpn:// export\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-amneziawg-toolspackage"></a>
 ## services\.proxy-suite\.amneziaWg\.toolsPackage
 
-AWG 3\.1 package providing awg and awg-quick\.
+AWG 3\.1 package with ` awg ` and ` awg-quick `\.
 
-*Type:*
-package
-
-*Default:*
-
-```nix
-<derivation amneziawg-tools-3.1.20260812>
-```
+**Type:** package\
+**Default:** `<derivation amneziawg-tools-3.1.20260812>`
 
 <a id="services-proxy-suite-amneziawg-userspacepackage"></a>
 ## services\.proxy-suite\.amneziaWg\.userspacePackage
 
-AWG 3\.1 userspace implementation used when the kernel interface is unavailable\.
+AWG 3\.1 userspace implementation, used when the kernel module is unavailable\.
 
-*Type:*
-package
-
-*Default:*
-
-```nix
-<derivation amneziawg-go-3.1.20260828>
-```
+**Type:** package\
+**Default:** `<derivation amneziawg-go-3.1.20260828>`
 
 <a id="services-proxy-suite-amneziawg-wireproxypackage"></a>
 ## services\.proxy-suite\.amneziaWg\.wireproxyPackage
 
-wireproxy build with AWG 3\.1 and FwMark, which runs profiles with asOutbound = “userspace”\.
+wireproxy build with AWG 3\.1, used by profiles with ` asOutbound = "userspace" `\.
 
-*Type:*
-package
-
-*Default:*
-
-```nix
-<derivation wireproxy-awg-1.0.18>
-```
+**Type:** package\
+**Default:** `<derivation wireproxy-awg-1.0.18>`

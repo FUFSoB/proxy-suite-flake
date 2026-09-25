@@ -26,8 +26,7 @@ in
       ];
       default = "sing-box";
       description = ''
-        Proxy backend. "hybrid" runs sing-box in front and hands XRay-only outbounds
-        (XHTTP, ECH) to XRay.
+        Proxy engine. "hybrid" runs sing-box and hands XRay-only outbounds (XHTTP, ECH) to XRay.
       '';
       example = "hybrid";
     };
@@ -41,8 +40,8 @@ in
       );
       default = null;
       description = ''
-        Transparent mode started at boot, or null for neither. The mode named here must
-        also be enabled (proxy.tun.enable or proxy.tproxy.enable).
+        Transparent mode to start at boot, or `null` for none. That mode must also be enabled
+        (`proxy.tun.enable` or `proxy.tproxy.enable`).
       '';
       example = "tun";
     };
@@ -52,11 +51,9 @@ in
       default = config.services.proxy-suite.host.enableIPv6;
       defaultText = literalExpression "config.networking.enableIPv6";
       description = ''
-        Carry IPv6 in the transparent modes: TProxy through a second listener on ::1, the TUNs
-        (global and per-app) through an IPv6 address of their own. Off, TProxy leaves IPv6
-        alone and the TUNs block it, so apps fall back to IPv4. On an uplink without IPv6,
-        set proxy.dns.strategy = "ipv4_only" too: a direct IPv6 destination would otherwise
-        fail after the connection seems open, instead of falling back to IPv4.
+        Route IPv6 through TUN and TProxy too. When off, TProxy ignores IPv6 and the TUNs block
+        it, so apps fall back to IPv4. If the uplink has no IPv6, also set
+        `proxy.dns.strategy = "ipv4_only"`, or direct IPv6 connections hang instead of falling back.
       '';
     };
 
@@ -64,7 +61,7 @@ in
       address = mkOption {
         type = types.str;
         default = "127.0.0.1";
-        description = ''Bind address of the local SOCKS5/HTTP proxy. Use "0.0.0.0" only to expose it to the network.'';
+        description = ''Address of the local SOCKS5/HTTP proxy. Use "0.0.0.0" only to expose it to the network.'';
       };
 
       port = mkOption {
@@ -77,14 +74,14 @@ in
         username = mkOption {
           type = types.nullOr (types.strMatching "[^[:space:]]+");
           default = null;
-          description = "Username the local proxy requires. Set together with password or passwordFile.";
+          description = "Username for the local proxy. Needs `password` or `passwordFile`.";
           example = "proxy-user";
         };
 
         password = mkOption {
           type = types.nullOr (types.strMatching "[^[:space:]]+");
           default = null;
-          description = "Inline local proxy password. Ends up in the Nix store; prefer passwordFile.";
+          description = "Password for the local proxy. Ends up in the Nix store; prefer `passwordFile`.";
           example = "change-me";
         };
 
@@ -92,8 +89,8 @@ in
           type = types.nullOr types.str;
           default = null;
           description = ''
-            Runtime path to the local proxy password. With perAppRouting.proxychains it must be a
-            single token, and it is readable by userControl.group through the proxychains config.
+            File with the local proxy password. With `perAppRouting.proxychains` it must be a single
+            word, and `userControl.group` can read it through the proxychains config.
           '';
           example = "/run/secrets/proxy-suite-local-proxy-password";
         };
@@ -103,32 +100,31 @@ in
     autoProxy = {
       enable = mkEnableOption "autoProxy" // {
         description = ''
-          Probe each exit for the destinations clients dial, and route each one through the first
-          exit that reaches it for as long as it keeps working (`proxy-ctl proxy auto probe` shows a
-          verdict). Censor-side failures stay direct for zapret. Needs the sing-box backend, and
-          makes this host fetch every new destination itself.
+          Find out which destinations are blocked and route each one through the first exit that
+          reaches it. Blocks that zapret can fix stay direct. Needs the sing-box backend. This host
+          fetches every new destination itself to test it; `proxy-ctl proxy auto probe` shows the result.
         '';
       };
 
       interval = mkOption {
         type = types.str;
         default = "10m";
-        description = "Time between probe runs. `proxy-ctl proxy auto learn` does not wait for it.";
+        description = "Time between probe runs. `proxy-ctl proxy auto learn` probes right away.";
         example = "30m";
       };
 
       probesPerRun = mkOption {
         type = types.ints.positive;
         default = 200;
-        description = "Most destinations probed per run; the rest wait in a backlog, most-dialled first.";
+        description = "Maximum destinations probed per run. The rest wait for the next run, most-used first.";
       };
 
       maxExits = mkOption {
         type = types.ints.positive;
         default = 12;
         description = ''
-          Most exits probed, direct included. The first round tries one exit per network (AS), a
-          second round the rest.
+          Maximum exits tried per destination, direct included. One exit per network is tried
+          first, then the rest.
         '';
       };
 
@@ -136,9 +132,8 @@ in
         type = types.ints.positive;
         default = 30;
         description = ''
-          Days a verdict stands, routed destinations included: a route is re-probed once this long
-          has passed. Everything is relearned when this host's public address changes, and
-          `proxy-ctl proxy auto learn <domain>` re-probes one destination right away.
+          Days before a result is probed again. Everything is probed again when this host's public
+          address changes.
         '';
       };
 
@@ -146,8 +141,8 @@ in
         type = types.ints.unsigned;
         default = 150;
         description = ''
-          Also route destinations that work directly but crawl: at least 300 KiB in a 10 s sample,
-          never faster than this. 0 disables. Needs `selection` other than "first".
+          Also route destinations that work directly but stay slower than this, in KiB/s. 0 disables.
+          Needs `selection` other than "first".
         '';
         example = 0;
       };
@@ -155,7 +150,7 @@ in
       exclude = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        description = "Domain suffixes never probed or auto-routed.";
+        description = "Domains (with subdomains) never probed or routed by autoProxy.";
         example = [ "internal.example" ];
       };
 
@@ -163,8 +158,8 @@ in
         type = types.port;
         default = 18540;
         description = ''
-          First loopback port of the per-exit probe listeners (one per exit, maxExits in total).
-          They are unauthenticated even when proxy.listener.auth is set.
+          First of `maxExits` loopback ports used for probing, one per exit. They have no
+          authentication, even with `proxy.listener.auth` set.
         '';
       };
     };
@@ -175,13 +170,13 @@ in
         default = proxySuiteUpstream.sing-box;
         defaultText = literalMD "`sing-box` from proxy-suite's own `nixpkgs` input";
         example = literalExpression "pkgs.sing-box";
-        description = ''sing-box package, used when backend is "sing-box" or "hybrid".'';
+        description = ''sing-box package, for the "sing-box" and "hybrid" backends.'';
       };
 
       clashApiPort = mkOption {
         type = types.port;
         default = 9090;
-        description = "Loopback port of sing-box's Clash API, which switches and tests outbounds.";
+        description = "Loopback port of the sing-box Clash API, used to switch and test outbounds.";
       };
     };
 
@@ -191,7 +186,7 @@ in
         default = proxySuiteUpstream.xray;
         defaultText = literalMD "proxy-suite's `xray` (`pkgs/xray.nix`)";
         example = literalExpression "pkgs.xray";
-        description = ''XRay package, used when backend is "xray" or "hybrid".'';
+        description = ''XRay package, for the "xray" and "hybrid" backends.'';
       };
     };
   };

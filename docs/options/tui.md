@@ -1,5 +1,7 @@
 # services.proxy-suite.tui
 
+The `proxy-tui` terminal UI.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -10,19 +12,7 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-tui-enable"></a>
 ## services\.proxy-suite\.tui\.enable
 
-Whether to enable proxy-tui, an interactive terminal UI for everything proxy-ctl controls at runtime\.
+Whether to enable proxy-tui, a terminal UI\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`

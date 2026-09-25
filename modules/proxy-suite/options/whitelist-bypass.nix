@@ -12,7 +12,7 @@ let
           "dion"
           "bitrix"
         ];
-        description = "Call platform the creator on the other end uses. VK has no Linux joiner.";
+        description = "Call platform the creator uses. VK has no joiner here.";
         example = "wbstream";
       };
 
@@ -20,10 +20,8 @@ let
         type = types.nullOr types.str;
         default = null;
         description = ''
-          Runtime path to the call link the creator printed (or wrote to its state directory):
-          a WB Stream room id, a Telemost link, a DION event slug or a Bitrix conference link.
-          `proxy-ctl wl join <name> <link>` sets one at runtime, which wins over this. Null
-          leaves the joiner off until then.
+          File with the call link from the creator's log. `proxy-ctl wl join <name> <link>` sets
+          one at runtime and takes priority. `null`: the joiner waits for that.
         '';
         example = "/run/secrets/whitelist-bypass-link";
       };
@@ -41,8 +39,7 @@ let
           "vk"
         ];
         description = ''
-          Call platform. Every one needs an account: "vk" only serves the upstream Android app,
-          the rest a joiner of this module too.
+          Call platform. Each needs an account. "vk" only serves the upstream Android joiner app.
         '';
         example = "wbstream";
       };
@@ -51,11 +48,10 @@ let
         type = types.nullOr types.str;
         default = null;
         description = ''
-          Runtime path to the platform's cookies, as the upstream desktop Creator exports them.
-          Copied into the state directory on first start only: DION and Bitrix rotate their
-          refresh token into that copy, and a stale one would kill the session.
-          `proxy-ctl wl auth <name>` replaces that copy at runtime, with a new export or, for
-          DION and Bitrix, an email and password. Null leaves the creator off until then.
+          File with the platform's cookies, as exported by the upstream desktop Creator. Read on
+          first start only, since the login refreshes itself afterwards. `proxy-ctl wl auth
+          <name>` replaces it at runtime (or asks for email and password on DION and Bitrix).
+          `null`: the creator waits for that.
         '';
         example = "/run/secrets/whitelist-bypass-cookies-wbstream.json";
       };
@@ -64,10 +60,9 @@ let
         type = types.nullOr types.str;
         default = null;
         description = ''
-          Runtime path to the call to rejoin. Null rejoins the last call written to
-          `<stateDir>/whitelist-bypass/<name>.link`, and creates one on first start: the link
-          stays the same across restarts, so the joiner needs it only once. `proxy-ctl wl new
-          <name>` drops it for a new call, when the platform has closed the old one.
+          File with a call link to rejoin. `null`: create a call once and keep reusing it, so
+          the joiner needs the link only once. `proxy-ctl wl new <name>` starts a new call if the
+          platform closed the old one.
         '';
         example = "/run/secrets/whitelist-bypass-link";
       };
@@ -79,10 +74,9 @@ let
         ];
         default = "direct";
         description = ''
-          Where the joiner's traffic leaves.
-          - "direct": from this host, past TUN and TProxy (it runs as proxy-suite-daemon).
-          - "proxy": through the local proxy listener (proxy.listener, with its auth), and so
-            its outbounds and routing.
+          Where the traffic from this creator's joiner exits.
+          - "direct": straight from this host, bypassing TUN and TProxy.
+          - "proxy": through the local proxy and its routing.
         '';
       };
 
@@ -93,31 +87,34 @@ let
           "unlimited"
         ];
         default = "moderate";
-        description = "Buffer sizes and Go memory limit: 64, 128 or 256 MB.";
+        description = "Memory budget: 64, 128 or 256 MB.";
       };
     };
   };
 in
 {
   options.services.proxy-suite.whitelistBypass = {
-    enable = mkEnableOption ''
-      tunnels through the media servers of video calls, which mobile internet whitelists let
-      through ([whitelist-bypass](https://github.com/kulikov0/whitelist-bypass)). A creator on a
-      free host serves exactly one joiner on a censored one'';
+    enable = mkEnableOption "whitelist-bypass" // {
+      description = ''
+        Tunnel through video-call servers, which mobile internet whitelists let through
+        ([whitelist-bypass](https://github.com/kulikov0/whitelist-bypass)). A creator on a free
+        host serves one joiner on a censored one.
+      '';
+    };
 
     package = mkOption {
       type = types.package;
       default = proxySuiteUpstream.whitelist-bypass;
       defaultText = lib.literalMD "proxy-suite's `whitelist-bypass` (`pkgs/whitelist-bypass.nix`)";
-      description = "whitelist-bypass package with the headless creators and joiners.";
+      description = "whitelist-bypass package.";
     };
 
     joiners = mkOption {
       type = types.attrsOf joinerType;
       default = { };
       description = ''
-        Joiners, each an outbound tagged with its name: a loopback SOCKS5 listener that tunnels
-        through the call. Needs proxy.enable.
+        Joiners, each an outbound tagged with its name that tunnels through the call. Needs
+        `proxy.enable`.
       '';
       example = {
         wl = {
@@ -130,7 +127,7 @@ in
     creators = mkOption {
       type = types.attrsOf creatorType;
       default = { };
-      description = "Creators, one per joiner device. The link each uses is in its log.";
+      description = "Creators, one per joiner device. Each logs the call link its joiner needs (also `proxy-ctl wl link`).";
       example = {
         phone = {
           platform = "wbstream";

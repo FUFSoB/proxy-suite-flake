@@ -10,8 +10,9 @@ in
       type = types.listOf t.outboundType;
       default = [ ];
       description = ''
-        Static proxy outbounds. The proxy needs at least one outbound or subscription to start;
-        `proxy-ctl proxy outbounds add` supplies one at runtime if none is declared here.
+        Proxy servers to connect through. Each sets exactly one of `url`, `urlFile`, `singBoxJson`
+        or `xrayJson`. The proxy needs at least one outbound or subscription to start;
+        `proxy-ctl proxy outbounds add` can add one at runtime.
       '';
       example = [
         {
@@ -29,9 +30,8 @@ in
       type = types.listOf t.subscriptionType;
       default = [ ];
       description = ''
-        Subscription URLs serving a base64 or plain list of proxy URIs. Fetched on first start,
-        cached under /var/lib/proxy-suite/subscriptions, refreshed by a timer. Ones added with
-        `proxy-ctl proxy subs add` live in /var/lib/proxy-suite/subscriptions.d and refresh alongside.
+        Subscription URLs that serve a list of proxy links (plain or base64). Fetched on first
+        start, cached, and refreshed on a timer. `proxy-ctl proxy subs add` adds more at runtime.
       '';
       example = [
         {
@@ -56,14 +56,13 @@ in
       ];
       default = "first";
       description = ''
-        How to pick among outbounds:
-        - "first": one at a time - the pinned outbound, or the first available.
-        - "selector": all of them, pick by hand.
-        - "urltest": all of them, ranked by latency unless one is pinned.
+        How to pick an outbound:
+        - "first": the pinned one, or else the first available.
+        - "selector": pick by hand.
+        - "urltest": the fastest, unless one is pinned.
 
-        `proxy-ctl proxy pin` pins an outbound in every mode, and the pin outlives a restart.
-        "selector" and "urltest" switch without restarting the backend (sing-box only); "first"
-        and XRay restart it.
+        `proxy-ctl proxy pin` works in every mode and survives restarts. On sing-box, "selector"
+        and "urltest" switch without restarting the backend.
       '';
       example = "urltest";
     };
@@ -72,10 +71,9 @@ in
       type = types.listOf types.str;
       default = [ ];
       description = ''
-        Outbound tags selection never picks on its own: hops other outbounds chain through
-        (`detour`), or exits only routing rules name. Subscription entries, `warp`, `ssh-proxy`
-        and AmneziaWG tags work too. A pin still reaches them, and so does a selector switched by
-        hand.
+        Outbound tags that selection never picks on its own, such as chain hops (`detour`) or
+        exits meant only for routing rules. Any tag works, including subscription entries,
+        `warp`, `ssh-proxy` and AmneziaWG. You can still pin or select them by hand.
       '';
       example = [
         "ru-vps"
@@ -87,21 +85,21 @@ in
       url = mkOption {
         type = types.str;
         default = "https://www.gstatic.com/generate_204";
-        description = "URL fetched through each outbound to rank them. Pick one blocked in your region.";
+        description = "URL used to test outbounds. Pick one that is blocked in your region.";
         example = "https://telegram.org";
       };
 
       interval = mkOption {
         type = types.str;
         default = "3m";
-        description = "How often outbounds are re-tested (Go duration).";
+        description = "How often outbounds are tested (Go duration).";
         example = "1m";
       };
 
       tolerance = mkOption {
         type = types.int;
         default = 50;
-        description = "Milliseconds a faster outbound must win by to replace the current one (sing-box only).";
+        description = "How many milliseconds faster an outbound must be to replace the current one (sing-box only).";
         example = 100;
       };
     };

@@ -7,7 +7,7 @@ let
 in
 {
   options.services.proxy-suite.sshProxy = {
-    enable = mkEnableOption "an SSH dynamic SOCKS5 tunnel";
+    enable = mkEnableOption "an SSH SOCKS5 tunnel";
 
     # Where the tunnel goes.
     server = {
@@ -36,24 +36,25 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Add the tunnel as an outbound tagged "ssh-proxy". sing-box dials SSH itself; XRay goes
-        through the OpenSSH unit's SOCKS listener.
+        Add the tunnel as an outbound tagged "ssh-proxy". On sing-box and hybrid, sing-box connects
+        over SSH itself and needs `hostKey` or `hostKeyFile`. Otherwise OpenSSH runs a SOCKS listener, set up
+        by `listener`, `knownHostsFile`, `strictHostKeyChecking`, `serviceUser` and `extraArgs`.
       '';
     };
 
-    identityFile = path "Runtime path to the private key; it may stay root-only, as the daemons get a copy they can read. Null uses the agent or OpenSSH defaults." "/run/secrets/proxy-suite-ssh-key";
+    identityFile = path "File with the SSH private key. It can stay root-only. `null`: the agent or OpenSSH defaults." "/run/secrets/proxy-suite-ssh-key";
 
     hostKey = mkOption {
       type = types.listOf types.str;
       default = [ ];
       description = ''
-        Accepted host keys (sing-box). List every key `ssh-keyscan` prints: the algorithm is
-        negotiated. Empty accepts any key.
+        Accepted host keys, for sing-box. List every key `ssh-keyscan` prints, since the key type
+        is negotiated.
       '';
       example = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." ];
     };
 
-    hostKeyFile = path "Known-hosts file to read hostKey from at runtime (sing-box). Wins over hostKey." "/root/.ssh/known_hosts";
+    hostKeyFile = path "Known-hosts file to read host keys from (sing-box). Takes priority over `hostKey`." "/root/.ssh/known_hosts";
 
     # The rest only apply to the OpenSSH unit (XRay, or asOutbound = false).
     knownHostsFile = path "Known-hosts file for OpenSSH." "/run/secrets/proxy-suite-ssh-known-hosts";
@@ -87,7 +88,7 @@ in
     serviceUser = mkOption {
       type = token;
       default = "proxy-suite-daemon";
-      description = "Unix user running the OpenSSH unit. The default, proxy-suite-daemon, runs sandboxed and keeps accepted host keys in /var/lib/proxy-suite/ssh; null runs it as root.";
+      description = "User that runs OpenSSH. The default is sandboxed; `null` runs it as root.";
       example = "proxy";
     };
 
@@ -111,7 +112,7 @@ in
         ]
       );
       default = null;
-      description = "Resolve destinations locally before the tunnel (XRay only). Can break geo-steered CDNs.";
+      description = "Resolve names locally instead of on the server (XRay only). Can make CDNs pick distant servers.";
       example = "prefer_ipv4";
     };
   };

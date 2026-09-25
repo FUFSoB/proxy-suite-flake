@@ -5,21 +5,20 @@ let
 in
 {
   options.services.proxy-suite.gui = {
-    enable = mkEnableOption "Proxy Suite GUI, a desktop app with a tray icon for everything proxy-ctl controls at runtime";
+    enable = mkEnableOption "Proxy Suite GUI, a desktop app with a tray icon";
 
     autostart = mkOption {
       type = types.bool;
       default = true;
       description = ''
-        Start the GUI hidden in the tray with graphical sessions, as the
-        `proxy-suite-gui` systemd user unit on `graphical-session.target`.
+        Start the GUI in the tray on login to a graphical session.
       '';
     };
 
     refreshInterval = mkOption {
       type = types.ints.positive;
       default = 3;
-      description = "Status refresh interval, in seconds.";
+      description = "How often the status refreshes, in seconds.";
     };
   };
 }

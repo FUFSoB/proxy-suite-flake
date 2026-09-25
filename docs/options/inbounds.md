@@ -1,5 +1,7 @@
 # services.proxy-suite.inbounds
 
+Server side: listeners for remote clients, share links, subscriptions and stats.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -120,55 +122,28 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-inbounds-enable"></a>
 ## services\.proxy-suite\.inbounds\.enable
 
-Whether to enable server inbounds that accept proxy connections from outside\.
+Whether to enable server inbounds, which accept proxy clients from outside\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-package"></a>
 ## services\.proxy-suite\.inbounds\.package
 
-XRay package serving the inbounds, whatever the client-side backend\.
+XRay package that runs the inbounds, whichever client backend is used\.
 
-*Type:*
-package
-
-*Default:*
-proxy-suite’s ` xray ` (` pkgs/xray.nix `)
-
-*Example:*
-
-```nix
-pkgs.xray
-```
+**Type:** package\
+**Default:** proxy-suite’s ` xray ` (` pkgs/xray.nix `)\
+**Example:** `pkgs.xray`
 
 <a id="services-proxy-suite-inbounds-listeners"></a>
 ## services\.proxy-suite\.inbounds\.listeners
 
-Listeners by tag\.
+Server listeners, by tag\.
 
-*Type:*
-attribute set of (submodule)
-
-*Default:*
-
-```nix
-{ }
-```
-
-*Example:*
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:**
 
 ````nix
 {
@@ -199,586 +174,328 @@ attribute set of (submodule)
 <a id="services-proxy-suite-inbounds-listeners-name-address"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.address
 
-Bound address\. A loopback address keeps the port closed in the firewall\.
+Listening address\. A loopback address keeps the port closed in the firewall\.
 
-*Type:*
-string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-"::"
-```
-
-*Example:*
-
-```nix
-"127.0.0.1"
-```
+**Type:** string matching the pattern \[^\[:space:]]+\
+**Default:** `"::"`\
+**Example:** `"127.0.0.1"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg
 
-The AmneziaWG server of a type = “amneziawg” listener\.
+AmneziaWG server settings, for ` type = "amneziawg" `\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-clientallowedips"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.clientAllowedIPs
 
 AllowedIPs in client configs: what clients send through the tunnel\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  "0.0.0.0/0"
-  "::/0"
-]
-```
+**Type:** list of string\
+**Default:** `[ "0.0.0.0/0" "::/0" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-dns"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.dns
 
-DNS servers in client configs\. Queries leave like any other traffic\.
+DNS servers in client configs\. Queries exit like any other traffic\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  "1.1.1.1"
-  "1.0.0.1"
-]
-```
+**Type:** list of string\
+**Default:** `[ "1.1.1.1" "1.0.0.1" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-interfacename"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.interfaceName
 
-Linux interface name\. It must fit Linux’s 15-character limit\.
+Interface name, at most 15 characters\.
 
-*Type:*
-string matching the pattern ^\[A-Za-z0-9_\.-]+$
-
-*Default:*
-
-```nix
-"awgi-<tag>"
-```
+**Type:** string matching the pattern ^\[A-Za-z0-9_\.-]+$\
+**Default:** `"awgi-<tag>"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-mode"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.mode
 
-What clients reach besides the internet, which they reach the listener’s ` via ` way either way:
+What clients can reach besides the internet, which always goes through the listener’s ` via `:
 
- - “proxy”: nothing else\. This host, its private networks and the other peers are cut off\.
- - “lan”: also this host, its private networks and the other peers, directly (masqueraded
-   behind this host), not through ` via `\. It turns on IP forwarding\.
-   Only TCP and UDP can follow ` via `: anything else to the internet (ping) is dropped\.
+ - “proxy”: nothing else\. This host, its LAN and other peers are cut off\.
+ - “lan”: also this host, its LAN and other peers, directly\. Turns on IP forwarding\.
+   Only TCP and UDP reach the internet; ping and other protocols are dropped\.
 
-*Type:*
-one of “proxy”, “lan”
-
-*Default:*
-
-```nix
-"proxy"
-```
+**Type:** one of “proxy”, “lan”\
+**Default:** `"proxy"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-mtu"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.mtu
 
-Interface MTU, on both ends\. Null leaves awg-quick’s (1280 with AWG 3 fields)\.
+Interface MTU on both ends\. ` null `: awg-quick’s default (1280 with AWG 3 fields)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation
 
-Obfuscation parameters, shared with every client\. Jc, Jmin, Jmax, S1, S2 and H1-H4 left
-null are generated once and kept in the state directory; the rest stay unset\.
+Obfuscation parameters, shared with every client\. Jc, Jmin, Jmax, S1, S2 and H1-H4 are
+generated once if left ` null `; the rest stay unset\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-contentpaddingaddition"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.contentPaddingAddition
 
 AWG 3 content-padding addition or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-disablecookies"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.disableCookies
 
 AWG 3 cookie suppression (DisableCookies)\.
 
-*Type:*
-null or boolean
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or boolean\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h1"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h1
 
 Handshake-init header or range (H1)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h2"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h2
 
 Handshake-response header or range (H2)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h3"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h3
 
 Cookie-reply header or range (H3)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-h4"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.h4
 
 Transport-message header or range (H4)\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkey"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.headerProtectionKey
 
-Inline AWG 3 header-protection key\. Prefer headerProtectionKeyFile\.
+AWG 3 header-protection key\. Ends up in the Nix store; prefer ` headerProtectionKeyFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-headerprotectionkeyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.headerProtectionKeyFile
 
-Runtime path containing the AWG 3 header-protection key\.
+File with the AWG 3 header-protection key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i1"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i1
 
 First custom signature packet (I1)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i2"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i2
 
 Second custom signature packet (I2)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i3"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i3
 
 Third custom signature packet (I3)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i4"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i4
 
 Fourth custom signature packet (I4)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-i5"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.i5
 
 Fifth custom signature packet (I5)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or string\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jc"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jc
 
 Junk packet count (Jc)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmax"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jmax
 
 Maximum junk packet size (Jmax)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-jmin"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.jmin
 
 Minimum junk packet size (Jmin)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-keepalivetimeout"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.keepaliveTimeout
 
 AWG 3 keepalive timeout or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-maxhandshakeattempts"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.maxHandshakeAttempts
 
 AWG 3 maximum handshake attempts or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-randomtrailers"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.randomTrailers
 
 AWG 3 random transport trailers (RandomTrailers)\.
 
-*Type:*
-null or boolean
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or boolean\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rejectaftertime"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rejectAfterTime
 
 AWG 3 reject-after interval or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeyaftertime"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rekeyAfterTime
 
 AWG 3 rekey interval or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-rekeytimeout"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.rekeyTimeout
 
 AWG 3 rekey timeout or range\.
 
-*Type:*
-null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern ^(\[0-9]+|\[0-9]±\[0-9]+|\\(off\\))$\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s1"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s1
 
 Handshake-init padding (S1)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s2"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s2
 
 Handshake-response padding (S2)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s3"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s3
 
 Cookie-reply padding (S3)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-obfuscation-s4"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.obfuscation\.s4
 
 Transport-message padding (S4)\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-null
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-persistentkeepalive"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.persistentKeepalive
 
-PersistentKeepalive in client configs, which keeps NAT mappings open\.
+PersistentKeepalive in client configs, which keeps NAT open\.
 
-*Type:*
-null or (unsigned integer, meaning >=0)
-
-*Default:*
-
-```nix
-25
-```
+**Type:** null or (unsigned integer, meaning >=0)\
+**Default:** `25`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-privatekeyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.privateKeyFile
 
-Runtime path to the server private key, instead of a generated one\.
+File with the server private key, instead of a generated one\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/awg-server-key"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-server-key"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-subnet"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.subnet
 
-Tunnel IPv4 subnet, private and unused elsewhere\. This host takes the first address, clients
-the rest\.
+Tunnel IPv4 subnet, private and unused elsewhere\. This host takes the first address,
+clients the rest\.
 
-*Type:*
-string matching the pattern \[0-9\.]+/\[0-9]+
-
-*Default:*
-
-```nix
-"10.66.0.0/24"
-```
+**Type:** string matching the pattern \[0-9\.]+/\[0-9]+\
+**Default:** `"10.66.0.0/24"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-amneziawg-subnet6"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.amneziaWg\.subnet6
 
-Tunnel IPv6 subnet (ULA), laid out as subnet\. Null keeps the tunnel IPv4-only\. With mode = “lan”
-it turns on IPv6 forwarding, which stops this host configuring itself from router advertisements\.
+Tunnel IPv6 subnet (ULA)\. ` null `: IPv4 only\. With ` mode = "lan" ` it turns on IPv6
+forwarding, which stops this host from configuring itself from router advertisements\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"fd66:66::/64"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"fd66:66::/64"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks
 
-Where XRay sends connections that are not this listener’s protocol, so several share
-one port (vless or trojan on the raw transport)\. Matched in order on SNI, ALPN and path;
-the first entry without any is the catch-all, such as a decoy web server\. Browsers
-negotiate h2 unless tls\.alpn says otherwise, so a dest that speaks only HTTP/1\.1 needs
-tls\.alpn = \[ “http/1\.1” ], or an alpn = “h2” entry to one that speaks h2c\.
+Where to send connections that are not this listener’s protocol, so several services
+share one port (vless or trojan on raw transport)\. Entries match in order by SNI, ALPN
+and path; one with none of these is the catch-all, such as a decoy site\. Browsers use h2
+by default, so an HTTP/1\.1-only ` dest ` needs ` tls.alpn = [ "http/1.1" ] `\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
 
 ```nix
 [
@@ -791,1216 +508,568 @@ list of (submodule)
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-alpn"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.alpn
 
-Negotiated ALPN to match\. Null matches any\.
+ALPN to match\. ` null `: any\.
 
-*Type:*
-null or one of “h2”, “http/1\.1”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"h2"
-```
+**Type:** null or one of “h2”, “http/1\.1”\
+**Default:** `null`\
+**Example:** `"h2"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-dest"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.dest
 
-Where matching connections go: a port, host:port, or a unix socket path\. Exclusive with listener\.
+Where matching connections go: a port, host:port or unix socket path\. Cannot be used with ` listener `\.
 
-*Type:*
-null or 16 bit unsigned integer; between 0 and 65535 (both inclusive) or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"127.0.0.1:8080"
-```
+**Type:** null or 16 bit unsigned integer; between 0 and 65535 (both inclusive) or string\
+**Default:** `null`\
+**Example:** `"127.0.0.1:8080"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-listener"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.listener
 
-Tag of another listener that matching connections go to, instead of dest\. It must be a
-vless listener without tls or reality, on a loopback address: it gets the connection
-decrypted, with the client address in PROXY protocol, and its share links advertise this
-listener’s port and TLS or REALITY\. Behind REALITY it must be xhttp or grpc, the only
-transports REALITY clients run besides raw\.
+Another listener to hand matching connections to, instead of ` dest `\. It must be a vless
+listener on loopback, without tls or reality\. It gets decrypted traffic, and its share
+links use this listener’s port and TLS or REALITY\. Behind REALITY it must use xhttp or grpc\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"ws-in"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"ws-in"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-name"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.name
 
-SNI to match\. Null matches any\.
+SNI to match\. ` null `: any\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"www.example.com"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"www.example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-path"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.path
 
-Request path to match\. Null matches any\. XRay reads it from HTTP/1\.1 only, so a ` listener `
-must be on ws or httpupgrade, with this as its transport\.path; xhttp and grpc clients speak h2
-and go by alpn = “h2” or a catch-all instead\.
+Request path to match\. ` null `: any\. Works for HTTP/1\.1 only, so the target ` listener ` must
+use ws or httpupgrade with this as its ` transport.path `\. For xhttp and grpc (h2), match
+` alpn = "h2" ` or use a catch-all\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/ws"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/ws"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks-xver"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks\.\*\.xver
 
-PROXY protocol version sent to dest; 0 sends none\. A listener always gets 2\.
+PROXY protocol version sent to ` dest `, or 0 for none\. A ` listener ` always gets 2\.
 
-*Type:*
-one of 0, 1, 2
-
-*Default:*
-
-```nix
-0
-```
+**Type:** one of 0, 1, 2\
+**Default:** `0`
 
 <a id="services-proxy-suite-inbounds-listeners-name-flow"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.flow
 
-VLESS flow; raw transport only\.
+VLESS flow\. Raw transport only\.
 
-*Type:*
-null or value “xtls-rprx-vision” (singular enum)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"xtls-rprx-vision"
-```
+**Type:** null or value “xtls-rprx-vision” (singular enum)\
+**Default:** `null`\
+**Example:** `"xtls-rprx-vision"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-hysteria-masquerade"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.masquerade
 
-Site that a hysteria2 listener serves, reverse-proxied, to anything that is not a client
-(a browser, a prober)\. Null answers them with 404\.
+Site shown to anything that is not a hysteria2 client, such as browsers and probes\.
+` null `: answer 404\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"https://www.example.com"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"https://www.example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-jsonfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.jsonFile
 
-Runtime path to a raw XRay inbound (no share link); tag is overridden and port, if left out, filled in\.
+File with a raw XRay inbound JSON (no share link)\. Its tag is replaced; a missing port is filled in\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-inbound-vless.json"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-vless.json"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-method"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.method
 
-Shadowsocks cipher\. 2022 ciphers take a base64 key of matching length as password; more than one user needs a 2022-blake3-aes cipher and serverPassword\.
+Shadowsocks cipher\. 2022 ciphers take a base64 key of matching length as the password\. Multiple users need a 2022-blake3-aes cipher and ` serverPassword `\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"2022-blake3-aes-128-gcm"
-```
-
-*Example:*
-
-```nix
-"aes-128-gcm"
-```
+**Type:** string\
+**Default:** `"2022-blake3-aes-128-gcm"`\
+**Example:** `"aes-128-gcm"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-port"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.port
 
-Bound port\. A raw-JSON listener’s port must match it: the firewall and the port checks go by this one\.
+Listening port\. For raw JSON listeners it must match the JSON; the firewall uses this one\.
 
-*Type:*
-16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-443
-```
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `443`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality
 
-REALITY\.
+REALITY settings\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-enable"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.enable
 
-Enable REALITY\. Exclusive with tls\.
+Enable REALITY\. Cannot be used with ` tls `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-dest"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.dest
 
-TLS 1\.3 + HTTP/2 server that unauthenticated probes are forwarded to\.
+Real TLS 1\.3 + HTTP/2 site that non-client connections are forwarded to\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"www.microsoft.com:443"
-```
+**Type:** string\
+**Default:** `"www.microsoft.com:443"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-privatekey"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.privateKey
 
-x25519 private key\. Ends up in the Nix store; prefer privateKeyFile\.
+x25519 private key\. Ends up in the Nix store; prefer ` privateKeyFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"gG1Yz..."
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"gG1Yz..."`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-privatekeyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.privateKeyFile
 
-Runtime path to the x25519 private key (` xray x25519 `)\.
+File with the x25519 private key (from ` xray x25519 `)\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-inbound-reality-key"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-reality-key"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-publickey"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.publicKey
 
-x25519 public key, required for share links\.
+x25519 public key, needed for share links\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"jNXH..."
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"jNXH..."`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-servernames"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.serverNames
 
-Accepted SNIs, served by dest\. The first goes into share links\.
+Accepted SNIs, served by ` dest `\. The first goes into share links\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "www.microsoft.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "www.microsoft.com" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-reality-shortids"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.shortIds
 
 Accepted short IDs (hex)\. The first goes into share links\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  ""
-]
-```
-
-*Example:*
-
-```nix
-[
-  "0123abcd"
-]
-```
+**Type:** list of string\
+**Default:** `[ "" ]`\
+**Example:** `[ "0123abcd" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-serverpassword"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.serverPassword
 
-Server key of a multi-user shadowsocks 2022 listener, shared by its users\. Ends up in the Nix store; prefer serverPasswordFile\.
+Shared server key of a multi-user shadowsocks 2022 listener\. Ends up in the Nix store; prefer ` serverPasswordFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"c2VydmVyLWtleS0xNmJ5dGU="
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"c2VydmVyLWtleS0xNmJ5dGU="`
 
 <a id="services-proxy-suite-inbounds-listeners-name-serverpasswordfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.serverPasswordFile
 
-Runtime path to the server key\.
+File with the server key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-inbound-ss-server-key"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-ss-server-key"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-shareport"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.sharePort
 
-Port share links advertise, when something in front owns the public port\. Null uses port\.
+Port in share links, if something in front owns the public port\. ` null `: ` port `\.
 
-*Type:*
-null or 16 bit unsigned integer; between 0 and 65535 (both inclusive)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-443
-```
+**Type:** null or 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `null`\
+**Example:** `443`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls
 
-TLS termination\.
+TLS settings\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls-enable"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.enable
 
-Terminate TLS (always on for trojan)\. Exclusive with reality\.
+Terminate TLS (always on for trojan)\. Cannot be used with ` reality `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls-alpn"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.alpn
 
-ALPN offered and put in share links\. \[ “h3” ] alone makes an xhttp listener UDP-only, so
-a web server can keep the TCP port\.
+ALPN offered and put in share links\. ` [ "h3" ] ` alone makes an xhttp listener UDP-only,
+leaving the TCP port to a web server\.
 
-*Type:*
-null or (list of (one of “h3”, “h2”, “http/1\.1”))
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-[
-  "h3"
-]
-```
+**Type:** null or (list of (one of “h3”, “h2”, “http/1\.1”))\
+**Default:** `null`\
+**Example:** `[ "h3" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls-certificatefile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.certificateFile
 
-Runtime path to the PEM certificate chain\.
+File with the PEM certificate chain\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/var/lib/acme/example.com/fullchain.pem"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/var/lib/acme/example.com/fullchain.pem"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls-keyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.keyFile
 
-Runtime path to the PEM private key\.
+File with the PEM private key\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/var/lib/acme/example.com/key.pem"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/var/lib/acme/example.com/key.pem"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls-servername"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.serverName
 
-SNI in share links\. Defaults to inbounds\.serverAddress\.
+SNI in share links\. Defaults to ` inbounds.serverAddress `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"example.com"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport
 
-Stream transport\.
+Transport settings\.
 
-*Type:*
-submodule
-
-*Default:*
-
-```nix
-{ }
-```
+**Type:** submodule\
+**Default:** `{ }`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-host"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.host
 
-Expected Host header (ws, httpupgrade, xhttp)\. Null accepts any\.
+Expected Host header (ws, httpupgrade, xhttp)\. ` null `: any\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"cdn.example.com"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"cdn.example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-mode"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.mode
 
-xhttp mode\. Null lets the client choose; behind an HTTP/1\.1 proxy use “packet-up”\.
+xhttp mode\. ` null `: the client chooses\. Behind an HTTP/1\.1 proxy, use “packet-up”\.
 
-*Type:*
-null or one of “auto”, “packet-up”, “stream-up”, “stream-one”
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"packet-up"
-```
+**Type:** null or one of “auto”, “packet-up”, “stream-up”, “stream-one”\
+**Default:** `null`\
+**Example:** `"packet-up"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-path"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.path
 
 Request path (ws, httpupgrade, xhttp)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"/"
-```
-
-*Example:*
-
-```nix
-"/download"
-```
+**Type:** string\
+**Default:** `"/"`\
+**Example:** `"/download"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-servicename"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.serviceName
 
 gRPC service name\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-""
-```
-
-*Example:*
-
-```nix
-"GunService"
-```
+**Type:** string\
+**Default:** `""`\
+**Example:** `"GunService"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-trustedxforwardedfor"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.trustedXForwardedFor
 
-Header names that mark a request as coming from the web server in front (ws, httpupgrade,
-xhttp, grpc)\. When one of them is present, XRay takes the client address from
-“X-Forwarded-For” instead of the socket\. Needed for a listener on a loopback ` address `:
-XRay otherwise sees 127\.0\.0\.1, which it refuses to record, so ` proxy-ctl inbounds online `
-shows every user as never seen and the stats keep no last-seen time\.
+Headers that mark a request as coming from your web server (ws, httpupgrade, xhttp,
+grpc)\. If one is present, XRay takes the client address from “X-Forwarded-For”\. Needed
+behind a web server on loopback, or ` proxy-ctl inbounds online ` and the stats show no
+client addresses\.
 
-Set it only when the web server in front sets both the named header and “X-Forwarded-For”
-on every request it forwards, overwriting whatever the client sent: any client that can
-reach the listener directly could otherwise claim any address\.
+Only set it if the web server overwrites both headers on every request\. Otherwise any
+client that reaches the listener directly can fake its address\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "X-Real-IP"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "X-Real-IP" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-transport-type"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.transport\.type
 
-Stream transport\. “raw” is plain TCP, the usual choice for REALITY\.
+Stream transport\. “raw” is plain TCP, the usual pick for REALITY\.
 
-*Type:*
-one of “raw”, “ws”, “grpc”, “httpupgrade”, “xhttp”
-
-*Default:*
-
-```nix
-"raw"
-```
-
-*Example:*
-
-```nix
-"ws"
-```
+**Type:** one of “raw”, “ws”, “grpc”, “httpupgrade”, “xhttp”\
+**Default:** `"raw"`\
+**Example:** `"ws"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-type"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.type
 
-Protocol\. Set exactly one of type, xrayJson, or jsonFile\. “amneziawg” is an AmneziaWG
-server on UDP port, with its own interface (see amneziaWg); its traffic is handed to XRay
-and leaves like any other listener’s\. “hysteria2” is QUIC on UDP port: it needs tls (a
-certificate) and takes passwords, and no transport, reality or flow\.
+Protocol\. Set exactly one of ` type `, ` xrayJson ` or ` jsonFile `\.
 
-*Type:*
-null or one of “vless”, “vmess”, “trojan”, “hysteria2”, “shadowsocks”, “socks”, “http”, “amneziawg”
+ - “amneziawg”: an AmneziaWG server on a UDP port (see ` amneziaWg `)\. Its traffic exits
+   like any other listener’s\.
+ - “hysteria2”: QUIC on a UDP port\. Needs ` tls ` and passwords; no transport, reality or flow\.
 
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"vless"
-```
+**Type:** null or one of “vless”, “vmess”, “trojan”, “hysteria2”, “shadowsocks”, “socks”, “http”, “amneziawg”\
+**Default:** `null`\
+**Example:** `"vless"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users
 
-Accepted accounts\.
+Accepted users\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  {
-    uuidFile = "/run/secrets/proxy-inbound-uuid";
-  }
-]
-```
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:** `[ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-address"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.address
 
-AmneziaWG tunnel IPv4 address, inside amneziaWg\.subnet\. Null takes the lowest free one, which
-the user keeps for as long as it exists\.
+AmneziaWG tunnel IPv4 address, inside ` amneziaWg.subnet `\. ` null `: the lowest free one,
+kept for as long as the user exists\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"10.66.0.10"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"10.66.0.10"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-name"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.name
 
-Account label: the share link’s name, and what subscriptions and stats group by\.
+User name, shown in share links, subscriptions and stats\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-""
-```
-
-*Example:*
-
-```nix
-"phone"
-```
+**Type:** string\
+**Default:** `""`\
+**Example:** `"phone"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-password"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.password
 
-Password (trojan, shadowsocks, socks, http)\. Ends up in the Nix store; prefer passwordFile\.
+Password (trojan, shadowsocks, socks, http)\. Ends up in the Nix store; prefer ` passwordFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"hunter2"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"hunter2"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-passwordfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.passwordFile
 
-Runtime path to the password\.
+File with the password\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-inbound-password"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-password"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-presharedkeyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.presharedKeyFile
 
-Runtime path to the AmneziaWG preshared key, instead of a generated one\.
+File with the AmneziaWG preshared key, instead of a generated one\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/awg-phone-psk"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-phone-psk"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-privatekeyfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.privateKeyFile
 
-Runtime path to the AmneziaWG client private key, instead of a generated one\.
+File with the AmneziaWG client private key, instead of a generated one\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/awg-phone-key"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-phone-key"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-publickey"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.publicKey
 
-AmneziaWG public key of a peer that keeps its private key to itself\. It gets no client
-config or link\. Null generates a key pair, kept in the state directory\.
+AmneziaWG public key, for a client that keeps its own private key (no config or link is
+generated for it)\. ` null `: generate a key pair\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"jNXH..."
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"jNXH..."`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-uuid"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.uuid
 
-UUID (vless, vmess)\. Ends up in the Nix store; prefer uuidFile\.
+UUID (vless, vmess)\. Ends up in the Nix store; prefer ` uuidFile `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"b831381d-6324-4d53-ad4f-8cda48b30811"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"b831381d-6324-4d53-ad4f-8cda48b30811"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-users-uuidfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.uuidFile
 
-Runtime path to the UUID\.
+File with the UUID\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"/run/secrets/proxy-inbound-uuid"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-uuid"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-via"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.via
 
-Egress, as in inbounds\.routing\.via\. Null inherits it\.
+Where this listener’s traffic exits, as in ` inbounds.routing.via `\. ` null `: use that default\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"nl-vps"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"nl-vps"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-xrayjson"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.xrayJson
 
-Raw XRay inbound, built into the store; tag is overridden and port, if left out, filled in\.
+Raw XRay inbound JSON (ends up in the Nix store)\. Its tag is replaced; a missing port is filled in\.
 
-*Type:*
-null or (attribute set)
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-{
-  protocol = "dokodemo-door";
-  settings = {
-    port = 8080;
-  };
-}
-```
+**Type:** null or (attribute set)\
+**Default:** `null`\
+**Example:** `{ protocol = "dokodemo-door"; settings = { port = 8080; }; }`
 
 <a id="services-proxy-suite-inbounds-openfirewall"></a>
 ## services\.proxy-suite\.inbounds\.openFirewall
 
-Open every non-loopback listener port\.
+Open the firewall for every listener not on loopback\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-routing-blockprivate"></a>
 ## services\.proxy-suite\.inbounds\.routing\.blockPrivate
 
-Block private and loopback destinations, so clients cannot reach this host’s LAN or local services\.
+Block private and loopback addresses, so clients cannot reach this host’s LAN or local services\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-routing-blockru"></a>
 ## services\.proxy-suite\.inbounds\.routing\.blockRu
 
 Block Russian destinations (geosite “category-ru”, geoip “ru”)\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-routing-proxy-domains"></a>
 ## services\.proxy-suite\.inbounds\.routing\.proxy\.domains
 
-Domain suffixes to match\.
+Domains, with their subdomains, that clients always reach through the local proxy, whatever the listener’s ` via `\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "youtube.com"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "youtube.com" ]`
 
 <a id="services-proxy-suite-inbounds-routing-proxy-geoips"></a>
 ## services\.proxy-suite\.inbounds\.routing\.proxy\.geoips
 
-Geoip names to match (see geodata; the defaults are country codes only)\.
+Geoip codes that clients always reach through the local proxy, whatever the listener’s ` via `; countries by default (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "us"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "us" ]`
 
 <a id="services-proxy-suite-inbounds-routing-proxy-geosites"></a>
 ## services\.proxy-suite\.inbounds\.routing\.proxy\.geosites
 
-Geosite names to match (see geodata)\.
+Geosite categories that clients always reach through the local proxy, whatever the listener’s ` via ` (see ` geodata `)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "netflix"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "netflix" ]`
 
 <a id="services-proxy-suite-inbounds-routing-proxy-ips"></a>
 ## services\.proxy-suite\.inbounds\.routing\.proxy\.ips
 
-IP CIDRs to match\.
+IP ranges (CIDR) that clients always reach through the local proxy, whatever the listener’s ` via `\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  "1.1.1.0/24"
-]
-```
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "1.1.1.0/24" ]`
 
 <a id="services-proxy-suite-inbounds-routing-via"></a>
 ## services\.proxy-suite\.inbounds\.routing\.via
 
-Default egress of inbound traffic; listeners can override it:
+Where client traffic exits by default\. Each listener can override it\.
 
- - “proxy”: through the local proxy and its current selection (needs proxy\.enable)\.
- - a proxy\.outbounds tag: pinned to that server (url, urlFile or xrayJson outbounds only)\.
- - “direct”: out from this machine\.
+ - “proxy”: through the local proxy and its current pick (needs ` proxy.enable `)\.
+ - an outbound tag from ` proxy.outbounds `: always that one (` url `, ` urlFile ` or ` xrayJson ` only)\.
+ - “direct”: straight from this host\.
  - “block”: dropped\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"proxy"
-```
-
-*Example:*
-
-```nix
-"direct"
-```
+**Type:** string\
+**Default:** `"proxy"`\
+**Example:** `"direct"`
 
 <a id="services-proxy-suite-inbounds-routing-zapretdirect"></a>
 ## services\.proxy-suite\.inbounds\.routing\.zapretDirect
 
-Send zapret’s hostlist destinations direct, so this host’s zapret unblocks them (default via only)\.
+Send zapret hostlist sites direct, so this host’s zapret unblocks them\. Only for the default ` via `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-serveraddress"></a>
 ## services\.proxy-suite\.inbounds\.serverAddress
 
-Public address clients connect to, used in share links\. Null detects the uplink IPv4\.
+Public address for share links\. ` null `: detect the uplink IPv4\.
 
-*Type:*
-null or string matching the pattern \[^\[:space:]]+
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"vpn.example.com"
-```
+**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Default:** `null`\
+**Example:** `"vpn.example.com"`
 
 <a id="services-proxy-suite-inbounds-sharelinks"></a>
 ## services\.proxy-suite\.inbounds\.shareLinks
 
-Write client share links for ` proxy-ctl inbounds link ` (root, and userControl\.group with the secrets scope)\.
+Generate client share links for ` proxy-ctl inbounds link `\. Readable by root, and by ` userControl.group ` with the secrets scope\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-subscriptions-enable"></a>
 ## services\.proxy-suite\.inbounds\.subscriptions\.enable
 
-Write one subscription file per user (their links from every listener, base64) to
-/run/proxy-suite-inbounds/subscriptions/\<token>\. Serve that directory with a web server;
-see the README\.
+Generate a subscription per user, with their links from every listener, in
+/run/proxy-suite-inbounds/subscriptions/\<token>\. Serve that directory with a web server\.
+Needs ` shareLinks `\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-subscriptions-baseurl"></a>
 ## services\.proxy-suite\.inbounds\.subscriptions\.baseUrl
 
-URL the subscription directory is served at, for ` proxy-ctl inbounds sub `\.
+Public URL of the subscription directory, used by ` proxy-ctl inbounds sub `\.
 
-*Type:*
-null or string
-
-*Default:*
-
-```nix
-null
-```
-
-*Example:*
-
-```nix
-"https://vpn.example.com/sub"
-```
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"https://vpn.example.com/sub"`
 
 <a id="services-proxy-suite-inbounds-subscriptions-group"></a>
 ## services\.proxy-suite\.inbounds\.subscriptions\.group
 
-Group allowed to read the subscription files: the web server serving them\.
+Group of the web server that serves the subscription files\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"nginx"
-```
-
-*Example:*
-
-```nix
-"caddy"
-```
+**Type:** string\
+**Default:** `"nginx"`\
+**Example:** `"caddy"`

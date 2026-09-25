@@ -20,9 +20,8 @@ in
         type = "tcp";
       };
       description = ''
-        Resolver for direct traffic and the default domain resolver. Goes through the proxy in
-        global TUN mode. TCP by default: plain UDP queries to well-known resolvers are often
-        answered by the ISP's DPI instead, which breaks blocked names routed direct to zapret.
+        Resolver for direct traffic. In global TUN mode it goes through the proxy. TCP by default,
+        because ISP DPI often fakes UDP answers from well-known resolvers, which breaks zapret.
       '';
       example = {
         type = "tls";
@@ -35,9 +34,8 @@ in
       type = t.dnsUpstreamType;
       default = cloudflare;
       description = ''
-        Resolver used through the proxy; the DNS default when proxy.routing.default is proxy. On
-        sing-box, names the routing sends through the proxy are always looked up here, so the ISP
-        never sees them, and direct ones locally.
+        Resolver reached through the proxy. On sing-box, proxied names are always resolved here,
+        so the ISP never sees them. Also the default resolver when `proxy.routing.default` is "proxy".
       '';
       example = {
         type = "tls";
@@ -56,7 +54,7 @@ in
         ]
       );
       default = null;
-      description = "Which addresses sing-box asks for. `ipv4_only` for an uplink without IPv6. sing-box and hybrid backends.";
+      description = "Which IP versions to resolve. Use `ipv4_only` if the uplink has no IPv6. sing-box and hybrid only.";
       example = "ipv4_only";
     };
 
@@ -64,8 +62,8 @@ in
       type = types.nullOr types.str;
       default = null;
       description = ''
-        EDNS client subnet sent with every query, so a resolver reached through the proxy still
-        answers with CDN nodes near this network. sing-box and hybrid backends.
+        EDNS client subnet sent with every query, so CDNs pick servers near you even through the
+        proxy. sing-box and hybrid only.
       '';
       example = "203.0.113.0/24";
     };
@@ -75,19 +73,17 @@ in
         type = types.bool;
         default = false;
         description = ''
-          In TUN mode (global and per-app), answer A queries from the TUN with a fake address and
-          AAAA ones with nothing; sing-box maps the address back to the name when the connection
-          comes. Saves a lookup per new site and no real lookup leaves for proxied names. Names that
-          proxy.dns.singBox.rules or the direct routing lists send elsewhere keep real answers. The
-          addresses handed out are kept in /var/lib/proxy-suite/fakeip, so they survive a restart.
-          sing-box and hybrid backends; XRay's TUN already uses its own fake DNS.
+          Answer DNS in TUN mode with fake addresses that sing-box maps back to names. Saves a
+          lookup per new site, and proxied names are never resolved locally. Direct names and those
+          matched by `proxy.dns.singBox.rules` still get real answers. sing-box and hybrid only;
+          XRay's TUN has its own fake DNS.
         '';
       };
 
       inet4Range = mkOption {
         type = types.str;
         default = "198.18.0.0/15";
-        description = "Range the fake addresses come from.";
+        description = "Address range for fake IPs.";
       };
     };
 
@@ -96,8 +92,8 @@ in
         type = types.listOf types.attrs;
         default = [ ];
         description = ''
-          Extra sing-box DNS servers, as sing-box JSON, for proxy.dns.singBox.rules to name. The
-          built-in ones are `local`, `remote`, and `fakeip` when fakeIp is on.
+          Extra DNS servers in sing-box JSON, for use in `proxy.dns.singBox.rules`. Built-in
+          servers: `local`, `remote`, and `fakeip` when fake IP is on.
         '';
         example = [
           {
@@ -112,8 +108,8 @@ in
         type = types.listOf types.attrs;
         default = [ ];
         description = ''
-          sing-box DNS rules, as sing-box JSON, checked before the generated ones. Kept when the
-          route mode is all-proxy or all-bypass, which drop the generated ones.
+          DNS rules in sing-box JSON, checked before the generated ones. Unlike those, they stay
+          active in the all-proxy and all-bypass modes.
         '';
         example = [
           {

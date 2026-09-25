@@ -1,5 +1,7 @@
 # services.proxy-suite.perAppRouting
 
+Route single apps through proxychains, a per-app TUN or TProxy, or zapret.
+
 Part of the [proxy-suite options reference](./index.md).
 
 ## Options
@@ -38,370 +40,178 @@ Part of the [proxy-suite options reference](./index.md).
 
 Whether to enable per-app routing (` proxy-ctl apps run `)\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-createdefaultprofiles"></a>
 ## services\.proxy-suite\.perAppRouting\.createDefaultProfiles
 
-Add a profile named after each enabled backend (proxychains, tun, tproxy, zapret) unless
-one with that name already exists\.
+Add a profile for each enabled method (proxychains, tun, tproxy, zapret), named after it,
+unless one already exists\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-profiles"></a>
 ## services\.proxy-suite\.perAppRouting\.profiles
 
 Profiles for ` proxy-ctl apps run <name> -- <command> `\.
 
-*Type:*
-list of (submodule)
-
-*Default:*
-
-```nix
-[ ]
-```
-
-*Example:*
-
-```nix
-[
-  {
-    name = "steam-browser";
-    route = "proxychains";
-  }
-]
-```
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:** `[ { name = "steam-browser"; route = "proxychains"; } ]`
 
 <a id="services-proxy-suite-perapprouting-profiles-name"></a>
 ## services\.proxy-suite\.perAppRouting\.profiles\.\*\.name
 
-Profile name, unique\.
+Unique profile name\.
 
-*Type:*
-string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$
-
-*Example:*
-
-```nix
-"steam-browser"
-```
+**Type:** string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$\
+**Example:** `"steam-browser"`
 
 <a id="services-proxy-suite-perapprouting-profiles-route"></a>
 ## services\.proxy-suite\.perAppRouting\.profiles\.\*\.route
 
-Backend: “direct” (unchanged), “proxychains”, or the per-app “tun”, “tproxy” or “zapret”
-backend of perAppRouting\.
+How the app is routed: “direct” (untouched), “proxychains”, or the per-app “tun”,
+“tproxy” or “zapret”\.
 
-*Type:*
-one of “direct”, “proxychains”, “tun”, “tproxy”, “zapret”
-
-*Default:*
-
-```nix
-"proxychains"
-```
+**Type:** one of “direct”, “proxychains”, “tun”, “tproxy”, “zapret”\
+**Default:** `"proxychains"`
 
 <a id="services-proxy-suite-perapprouting-proxychains-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.proxychains\.enable
 
-Whether to enable the proxychains backend (TCP apps, through LD_PRELOAD)\.
+Whether to enable proxychains (TCP only, does not work with static binaries)\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-proxychains-proxydns"></a>
 ## services\.proxy-suite\.perAppRouting\.proxychains\.proxyDns
 
-Resolve DNS through the proxy (proxy_dns)\.
+Resolve DNS through the proxy\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-perapprouting-proxychains-quiet"></a>
 ## services\.proxy-suite\.perAppRouting\.proxychains\.quiet
 
-Silence proxychains (quiet_mode)\.
+Hide proxychains output\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-perapprouting-tproxy-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.tproxy\.enable
 
-Whether to enable the per-app TProxy backend\.
+Whether to enable per-app TProxy\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-tproxy-fwmark"></a>
 ## services\.proxy-suite\.perAppRouting\.tproxy\.fwmark
 
-Mark that steers wrapped apps into routeTable\.
+Firewall mark for wrapped apps’ traffic\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-17
-```
+**Type:** signed integer\
+**Default:** `17`
 
 <a id="services-proxy-suite-perapprouting-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.perAppRouting\.tproxy\.localSubnets
 
-Subnets that bypass interception (DNS excepted)\.
+Subnets that skip the proxy (DNS still goes through it)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  "192.168.0.0/16"
-]
-```
-
-*Example:*
-
-```nix
-[
-  "192.168.0.0/16"
-  "10.0.0.0/8"
-]
-```
+**Type:** list of string\
+**Default:** `[ "192.168.0.0/16" ]`\
+**Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
 
 <a id="services-proxy-suite-perapprouting-tproxy-routetable"></a>
 ## services\.proxy-suite\.perAppRouting\.tproxy\.routeTable
 
-Policy-routing table of the per-app TProxy\.
+Routing table for the per-app TProxy\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-102
-```
+**Type:** signed integer\
+**Default:** `102`
 
 <a id="services-proxy-suite-perapprouting-tun-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.enable
 
-Whether to enable the per-app TUN backend\.
+Whether to enable per-app TUN\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-tun-address"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.address
 
-Per-app TUN interface address (CIDR)\.
+Interface address (CIDR)\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"172.20.0.1/30"
-```
+**Type:** string\
+**Default:** `"172.20.0.1/30"`
 
 <a id="services-proxy-suite-perapprouting-tun-fwmark"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.fwmark
 
-Mark that steers wrapped apps into routeTable\.
+Firewall mark for wrapped apps’ traffic\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-16
-```
+**Type:** signed integer\
+**Default:** `16`
 
 <a id="services-proxy-suite-perapprouting-tun-interface"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.interface
 
-Per-app TUN interface name\.
+Interface name\.
 
-*Type:*
-string
-
-*Default:*
-
-```nix
-"psperapptun0"
-```
+**Type:** string\
+**Default:** `"psperapptun0"`
 
 <a id="services-proxy-suite-perapprouting-tun-localsubnets"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.localSubnets
 
-Subnets wrapped apps reach directly (DNS excepted)\.
+Subnets that skip the proxy (DNS still goes through it)\.
 
-*Type:*
-list of string
-
-*Default:*
-
-```nix
-[
-  "192.168.0.0/16"
-]
-```
-
-*Example:*
-
-```nix
-[
-  "192.168.0.0/16"
-  "10.0.0.0/8"
-]
-```
+**Type:** list of string\
+**Default:** `[ "192.168.0.0/16" ]`\
+**Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
 
 <a id="services-proxy-suite-perapprouting-tun-mtu"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.mtu
 
-Per-app TUN interface MTU\.
+Interface MTU\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-1400
-```
+**Type:** signed integer\
+**Default:** `1400`
 
 <a id="services-proxy-suite-perapprouting-tun-routetable"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.routeTable
 
-Policy-routing table of the per-app TUN\.
+Routing table for the per-app TUN\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-101
-```
+**Type:** signed integer\
+**Default:** `101`
 
 <a id="services-proxy-suite-perapprouting-zapret-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.enable
 
-Whether to enable the per-app zapret backend: a second zapret instance for wrapped apps only\.
+Whether to enable per-app zapret, a separate zapret for wrapped apps only\.
 
-*Type:*
-boolean
-
-*Default:*
-
-```nix
-false
-```
-
-*Example:*
-
-```nix
-true
-```
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-zapret-filtermark"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.filterMark
 
-Mark bit that selects wrapped app traffic\.
+Firewall mark bit for wrapped apps’ traffic\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-268435456
-```
+**Type:** signed integer\
+**Default:** `268435456`
 
 <a id="services-proxy-suite-perapprouting-zapret-qnum"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.qnum
 
-NFQUEUE number\. Must differ from the global instance’s\.
+NFQUEUE number\. Must differ from the global zapret’s\.
 
-*Type:*
-signed integer
-
-*Default:*
-
-```nix
-201
-```
+**Type:** signed integer\
+**Default:** `201`
