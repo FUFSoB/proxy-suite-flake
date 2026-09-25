@@ -204,6 +204,9 @@ Secrets and changes need root, or the userControl group.
   tg [status|on|off]                     Telegram WebSocket proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link its joiner takes
+  wl auth <creator> [file|-]             replace its login: cookies, or asked (DION, Bitrix)
+  wl join <joiner> <link|->              the call it joins, over its linkFile
+  wl new <creator>                       drop its call for a new one
   wl on|off|toggle|restart [name]        one creator or joiner, or all of them
 
   apps [list]                            per-app routing profiles

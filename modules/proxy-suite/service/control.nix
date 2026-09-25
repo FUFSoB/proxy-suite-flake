@@ -80,6 +80,8 @@ in
                 inherit name;
                 inherit (c) platform;
                 role = "creator";
+                # Set in the configuration: `wl new` cannot drop it.
+                fixedLink = c.linkFile != null;
               }) cfg.whitelistBypass.creators
               ++ lib.mapAttrsToList (name: j: {
                 inherit name;

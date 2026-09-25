@@ -405,6 +405,32 @@ class ServiceManagerTest(EnvTest):
         self.assertEqual(ok(ctl.cmd_wl, "link", "phone"), "dion://new\n")
         self.assertNotEqual(run(ctl.cmd_wl, "link", "wl")[0], 0)  # a joiner has no link to give
         self.assertEqual(set(ctl._complete_tree("wl", "link")), {"phone", "--qr"})
+        # auth: a cookies export, or DION's email and password; either restarts the creator.
+        # The directory's group bits carry over: the whitelistBypass scope's group shares it.
+        seen.clear()
+        os.chmod(os.path.join(self.dir, "whitelist-bypass"), 0o770)
+        cookies = os.path.join(self.dir, "whitelist-bypass", "phone.cookies.json")
+        ok(ctl.cmd_wl, "auth", "phone", self.write("export.json", [{"name": "a", "value": "b"}]))
+        self.assertEqual(json.loads(ctl.read_text(cookies)), [{"name": "a", "value": "b"}])
+        self.assertEqual(os.stat(cookies).st_mode & 0o777, 0o660)
+        self.enterContext(mock.patch("builtins.input", lambda prompt: " me@x "))
+        self.enterContext(mock.patch("getpass.getpass", lambda prompt: "pw"))
+        ok(ctl.cmd_wl, "auth", "phone")
+        self.assertEqual(json.loads(ctl.read_text(cookies)), {"email": "me@x", "password": "pw"})
+        self.assertEqual([argv[1:3] for argv in seen], [["restart", "proxy-suite-wb-creator-phone"]] * 2)
+        self.assertNotEqual(run(ctl.cmd_wl, "auth", "phone", self.write("bad.json", "{"))[0], 0)
+        self.assertNotEqual(run(ctl.cmd_wl, "auth", "wl")[0], 0)  # a joiner has no login
+        # join: the call a joiner takes; new: a creator drops its call, unless configured.
+        seen.clear()
+        ok(ctl.cmd_wl, "join", "wl", " dion://new ")
+        self.assertEqual(ctl.read_text(os.path.join(self.dir, "whitelist-bypass", "wl.join")), "dion://new\n")
+        self.assertNotEqual(run(ctl.cmd_wl, "join", "wl", "a b")[0], 0)
+        self.assertNotEqual(run(ctl.cmd_wl, "join", "phone", "x")[0], 0)  # a creator makes its call
+        ok(ctl.cmd_wl, "new", "phone")
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "whitelist-bypass", "phone.link")))
+        self.assertEqual([argv[1:3] for argv in seen], [["restart", "proxy-suite-wb-joiner-wl"], ["restart", "proxy-suite-wb-creator-phone"]])
+        os.environ["WL_FILE"] = self.write("wl.json", [{"name": "phone", "role": "creator", "platform": "dion", "fixedLink": True}])
+        self.assertNotEqual(run(ctl.cmd_wl, "new", "phone")[0], 0)
 
     def test_toggle_completes(self):
         for path in ("ssh", "zapret", "proxy", "proxy tun", "tor"):

@@ -56,9 +56,10 @@ What userControl\.group may do; empty allows every scope\.
  - “autoProxy”: read what autoProxy learned, and ` proxy auto learn|forget|relearn|clear `\.
  - “zapret”: edit zapret2’s learned hosts, and ` zapret cutoff probe `\.
  - “stats”: ` inbounds stats `\.
+ - “whitelistBypass”: the whitelist-bypass creators and joiners: ` wl on|off|toggle|restart `, their calls (` wl link `), and their logins and links (` wl auth|join|new `)\.
 
 *Type:*
-list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”)
+list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “whitelistBypass”)
 
 *Default:*
 

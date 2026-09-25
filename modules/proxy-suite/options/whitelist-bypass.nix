@@ -17,10 +17,13 @@ let
       };
 
       linkFile = mkOption {
-        type = types.str;
+        type = types.nullOr types.str;
+        default = null;
         description = ''
           Runtime path to the call link the creator printed (or wrote to its state directory):
           a WB Stream room id, a Telemost link, a DION event slug or a Bitrix conference link.
+          `proxy-ctl wl join <name> <link>` sets one at runtime, which wins over this. Null
+          leaves the joiner off until then.
         '';
         example = "/run/secrets/whitelist-bypass-link";
       };
@@ -45,12 +48,14 @@ let
       };
 
       cookiesFile = mkOption {
-        type = types.str;
+        type = types.nullOr types.str;
+        default = null;
         description = ''
           Runtime path to the platform's cookies, as the upstream desktop Creator exports them.
           Copied into the state directory on first start only: DION and Bitrix rotate their
-          refresh token into that copy, and a stale one would kill the session. Delete
-          `<stateDir>/whitelist-bypass/<name>.cookies.json` to take a new export.
+          refresh token into that copy, and a stale one would kill the session.
+          `proxy-ctl wl auth <name>` replaces that copy at runtime, with a new export or, for
+          DION and Bitrix, an email and password. Null leaves the creator off until then.
         '';
         example = "/run/secrets/whitelist-bypass-cookies-wbstream.json";
       };
@@ -61,7 +66,8 @@ let
         description = ''
           Runtime path to the call to rejoin. Null rejoins the last call written to
           `<stateDir>/whitelist-bypass/<name>.link`, and creates one on first start: the link
-          stays the same across restarts, so the joiner needs it only once.
+          stays the same across restarts, so the joiner needs it only once. `proxy-ctl wl new
+          <name>` drops it for a new call, when the platform has closed the old one.
         '';
         example = "/run/secrets/whitelist-bypass-link";
       };

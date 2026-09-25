@@ -5,6 +5,7 @@ Configuration arrives through the environment the Nix wrapper sets.
 
 import base64
 import datetime
+import getpass
 import http.client
 import importlib
 import json
@@ -117,6 +118,9 @@ Secrets and changes need root, or the userControl group.
   tg [status|on|off]                     Telegram WebSocket proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link its joiner takes
+  wl auth <creator> [file|-]             replace its login: cookies, or asked (DION, Bitrix)
+  wl join <joiner> <link|->              the call it joins, over its linkFile
+  wl new <creator>                       drop its call for a new one
   wl on|off|toggle|restart [name]        one creator or joiner, or all of them
 
   apps [list]                            per-app routing profiles
@@ -626,6 +630,9 @@ COMPLETE = {
         "words": {
             "list": "creators and joiners and their state",
             "link": "the call link a creator's joiner takes",
+            "auth": "replace a creator's login",
+            "join": "set the call a joiner joins",
+            "new": "drop a creator's call for a new one",
             "on": "start one, or all",
             "off": "stop one, or all",
             "toggle": "start it if stopped, stop it if running",
@@ -633,6 +640,9 @@ COMPLETE = {
         }
     },
     "wl link": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "creator"), "flags": {"--qr": "print a QR code"}},
+    "wl auth": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "creator")},
+    "wl join": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "joiner")},
+    "wl new": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "creator" and not w.get("fixedLink"))},
     **{f"wl {verb}": {"args": lambda: {w["name"]: w["role"] for w in _wl()}} for verb in ("on", "off", "toggle", "restart")},
     "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
     "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
@@ -2868,23 +2878,114 @@ def _wl_unit(w):
     return f"proxy-suite-wb-{w['role']}-{w['name']}"
 
 
+def _wl_path(name, suffix):
+    return os.path.join(state_dir(), "whitelist-bypass", name + suffix)
+
+
 def _wl_link(name):
     """The call a creator made and keeps rejoining: the last line it wrote."""
-    path = os.path.join(state_dir(), "whitelist-bypass", f"{name}.link")
+    path = _wl_path(name, ".link")
     try:
         links = [line.strip() for line in lines(read_text(path)) if line.strip()]
     except FileNotFoundError:
         links = []
     except PermissionError:
-        die(f"Cannot read {path} - re-run with sudo.")
+        denied(path)
     if not links:
         die(f"{name} has no call yet: {journal_hint(_wl_unit({'role': 'creator', 'name': name}))}")
     return links[-1]
 
 
+def _wl_input(source, what):
+    """The text of source: a file, or - for stdin."""
+    try:
+        return sys.stdin.read() if source == "-" else read_text(source)
+    except OSError as e:
+        die(f"Cannot read the {what} from {source}: {e.strerror}")
+
+
+# DION and Bitrix creators log in on their own from these, and save the session back.
+WL_PASSWORD_LOGIN = {"dion": ("email", "password"), "bitrix": ("email", "password", "portal")}
+
+
+def _wl_login(w, source):
+    """The creator's login: a cookies export from source (a file or -), or asked for."""
+    if source:
+        text = _wl_input(source, "cookies")
+        try:
+            json.loads(text)
+        except ValueError as e:
+            die(f"Not a cookies export, not valid JSON: {e}")
+        return text
+    fields = WL_PASSWORD_LOGIN.get(w["platform"])
+    if not fields:
+        die(f"{w['platform']} logs in only in a browser: export its cookies from the desktop Creator, then: proxy-ctl wl auth {w['name']} <file>")
+    login = {k: getpass.getpass("Password: ") if k == "password" else input(f"{k.capitalize()}: ").strip() for k in fields}
+    if "portal" in login:
+        portal = login["portal"].rstrip("/")
+        login["portal"] = portal if "://" in portal else f"https://{portal}"
+    return json.dumps(login)
+
+
+def _wl_write(w, suffix, text):
+    """Replaces a file the unit reads from its state directory, and restarts it on it.
+
+    The file takes the directory's group, and its owner too when root writes it: the
+    daemon reads it, and DION and Bitrix creators rotate their tokens into it.
+    """
+    path = _wl_path(w["name"], suffix)
+    tmp = ""
+    try:
+        os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
+        st = os.stat(os.path.dirname(path))
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chown(tmp, st.st_uid if os.geteuid() == 0 else -1, st.st_gid)
+        os.chmod(tmp, 0o600 | (st.st_mode & 0o060))
+        os.replace(tmp, path)
+    except OSError:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        denied(path, "write")
+    must("restart", _wl_unit(w))
+
+
+def _wl_join(w, source):
+    link = (_wl_input(source, "link") if source == "-" else source).strip()
+    if not link or re.search(r"\s", link):
+        die("A call link is one word: a room id, a slug or a URL.")
+    _wl_write(w, ".join", f"{link}\n")
+
+
+def _wl_new(w):
+    """Drops the call a creator rejoins: it makes a new one when it starts."""
+    if w.get("fixedLink"):
+        die(f"{w['name']} rejoins the call its linkFile sets: change that instead.")
+    path = _wl_path(w["name"], ".link")
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        denied(path, "remove")
+    must("restart", _wl_unit(w))
+    print(f"Its joiner needs the new call: proxy-ctl wl link {w['name']}")
+
+
+def _wl_one(named, role, shape):
+    """The one creator or joiner a verb takes."""
+    if not named or len(named) > 1 or named[0]["role"] != role:
+        usage(f"wl {shape}")
+    return named[0]
+
+
 def cmd_wl(verb="list", *args):
     entries = _wl()
-    named = [w for w in entries if w["name"] == args[0]] if args else entries
+    named = [w for w in entries if w["name"] == args[0]] if args else []
     if args and not named:
         die(f"Unknown whitelist-bypass creator or joiner: {args[0]}")
     if verb in ("list", "status"):
@@ -2895,15 +2996,20 @@ def cmd_wl(verb="list", *args):
         for w in entries:
             print(f"  {w['name']:<16} {w['role']:<8} {w['platform']:<10} {svc_state(_wl_unit(w)) or 'unknown'}")
     elif verb == "link":
-        if not args or named[0]["role"] != "creator":
-            usage("wl link <creator> [--qr]")
-        _emit(_wl_link(args[0]), "--qr" in args)
+        _emit(_wl_link(_wl_one(named, "creator", "link <creator> [--qr]")["name"]), "--qr" in args)
+    elif verb == "auth" and len(args) <= 2:
+        w = _wl_one(named, "creator", "auth <creator> [file|-]")
+        _wl_write(w, ".cookies.json", _wl_login(w, args[1] if len(args) > 1 else ""))
+    elif verb == "join" and len(args) == 2:
+        _wl_join(_wl_one(named, "joiner", "join <joiner> <link|->"), args[1])
+    elif verb == "new" and len(args) == 1:
+        _wl_new(_wl_one(named, "creator", "new <creator>"))
     elif verb in ("on", "off", "toggle", "restart"):
-        for w in named:
+        for w in named or entries:
             action = {"on": "start", "off": "stop", "restart": "restart"}[_flip(_wl_unit(w), verb)]
             must(action, _wl_unit(w))
     else:
-        usage("wl [list] | link <creator> [--qr] | on|off|toggle|restart [name]")
+        usage("wl [list] | link <creator> [--qr] | auth <creator> [file|-] | join <joiner> <link|-> | new <creator> | on|off|toggle|restart [name]")
 
 
 # --- apps ---------------------------------------------------------------------

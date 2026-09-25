@@ -14,6 +14,7 @@ let
     "proxy-suite-autoproxy-learn." = "autoProxy";
     "proxy-suite-zapret2-cutoff." = "zapret";
     "proxy-suite-inbound-stats." = "stats";
+    "proxy-suite-wb-" = "whitelistBypass";
   };
 in
 {
