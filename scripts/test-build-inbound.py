@@ -163,6 +163,26 @@ class RenderInboundTests(unittest.TestCase):
             {"trustedXForwardedFor": ["X-Real-IP"]},
         )
 
+    def test_fallbacks_reach_settings_without_nulls(self):
+        self.assertNotIn("fallbacks", render_xray_inbound(listener())["settings"])
+        fallbacks = [
+            {"name": None, "alpn": None, "path": "/ws", "dest": "127.0.0.1:10002", "xver": 2},
+            {"name": None, "alpn": None, "path": None, "dest": 8080, "xver": 0},
+        ]
+        self.assertEqual(
+            render_xray_inbound(listener(fallbacks=fallbacks))["settings"]["fallbacks"],
+            [{"path": "/ws", "dest": "127.0.0.1:10002", "xver": 2}, {"dest": 8080, "xver": 0}],
+        )
+
+    def test_fallback_target_accepts_proxy_protocol(self):
+        """The front sends the client address in PROXY protocol; loopback alone records nobody online."""
+        transport = {"type": "ws", "path": "/ws", "host": None, "serviceName": "", "trustedXForwardedFor": ["X-Real-IP"]}
+        front = {"tag": "front-in", "type": "vless", "port": 443, "sharePort": None}
+        self.assertEqual(
+            render_xray_inbound(listener(transport=transport, front=front))["streamSettings"]["sockopt"],
+            {"trustedXForwardedFor": ["X-Real-IP"], "acceptProxyProtocol": True},
+        )
+
     def test_grpc_transport(self):
         ib = render_xray_inbound(
             listener(transport={"type": "grpc", "path": "/", "host": None, "serviceName": "GunService"})
@@ -230,6 +250,32 @@ class ShareLinkTests(unittest.TestCase):
         self.assertEqual(params["sni"], "www.microsoft.com")
         self.assertEqual(params["flow"], "xtls-rprx-vision")
         self.assertEqual(params["type"], "tcp")
+
+    def test_fallback_target_link_carries_the_front(self):
+        """Clients dial the front, under its TLS or REALITY, with the target's own transport."""
+        transport = {"type": "ws", "path": "/ws", "host": "cdn.example.com", "serviceName": "", "trustedXForwardedFor": []}
+        target = listener(port=10002, listen="127.0.0.1", transport=transport)
+        tls_front = {
+            "tag": "front-in",
+            "type": "trojan",
+            "port": 8443,
+            "sharePort": 443,
+            "tls": {"enable": False, "certificateFile": "/c", "keyFile": "/k", "serverName": "vpn.example.com"},
+            "reality": listener()["reality"],
+        }
+        link = build_share_link(dict(target, front=tls_front), "1.2.3.4")
+        self.assertTrue(link.startswith("vless://uuid-1@1.2.3.4:443?"))
+        params = link_params(link)
+        self.assertEqual(params["security"], "tls")
+        self.assertEqual(params["sni"], "vpn.example.com")
+        self.assertEqual((params["type"], params["path"], params["host"]), ("ws", "/ws", "cdn.example.com"))
+
+        reality_front = dict(tls_front, type="vless", port=443, sharePort=None, reality=reality())
+        params = link_params(build_share_link(dict(target, front=reality_front), "1.2.3.4"))
+        self.assertEqual(
+            (params["security"], params["pbk"], params["sni"], params["sid"]),
+            ("reality", "public-key", "www.microsoft.com", "0123abcd"),
+        )
 
     def test_reality_link_without_public_key_fails(self):
         with self.assertRaisesRegex(ValueError, "reality.publicKey is required"):

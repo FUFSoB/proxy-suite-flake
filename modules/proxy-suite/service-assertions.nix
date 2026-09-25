@@ -609,8 +609,86 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.hysteria.masquerade == null || l.type == "hysteria2"
       ) "${prefix}: hysteria.masquerade is for hysteria2 listeners only")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.fallbacks == [ ]
+        || (
+          builtins.elem l.type [
+            "vless"
+            "trojan"
+          ]
+          && l.transport.type == "raw"
+        )
+      ) "${prefix}: fallbacks run only on a vless or trojan listener with transport.type = \"raw\"")
     ]
-  ) proxyInbounds;
+    ++ map (
+      fb:
+      exactlyOneOf proxyInboundsEnabled [
+        fb.dest
+        fb.listener
+      ] "${prefix}: fallbacks each need exactly one of dest or listener"
+    ) l.fallbacks
+    # The target gets the connection decrypted and in PROXY protocol, which only
+    # the front may send it, and its share links take the front's security.
+    ++ lib.concatMap (
+      fb:
+      let
+        target = lib.findFirst (other: other.tag == fb.listener) null proxyInbounds;
+        t = target.listener;
+      in
+      [
+        (mkAssertion
+          (
+            !proxyInboundsEnabled
+            || (
+              target != null
+              && target.tag != ib.tag
+              && t.type == "vless"
+              && !t.tls.enable
+              && !t.reality.enable
+              && (lib.hasPrefix "127." t.address || t.address == "::1")
+            )
+          )
+          "${prefix}: fallback listener '${fb.listener}' must be another vless listener, without tls or reality, on a loopback address"
+        )
+        # XRay matches path on HTTP/1.1 only; xhttp and grpc clients speak h2 under TLS.
+        (mkAssertion
+          (
+            !proxyInboundsEnabled
+            || fb.path == null
+            || target == null
+            || (
+              builtins.elem t.transport.type [
+                "ws"
+                "httpupgrade"
+              ]
+              && fb.path == t.transport.path
+            )
+          )
+          "${prefix}: fallback path matches only a ws or httpupgrade listener '${fb.listener}', and must be its transport.path"
+        )
+        # REALITY clients run raw, xhttp and grpc only, and raw would be the front's own protocol.
+        (mkAssertion
+          (
+            !proxyInboundsEnabled
+            || !l.reality.enable
+            || target == null
+            || builtins.elem t.transport.type [
+              "xhttp"
+              "grpc"
+            ]
+          )
+          "${prefix}: a REALITY listener's fallback listener '${fb.listener}' must use the xhttp or grpc transport"
+        )
+      ]
+    ) (builtins.filter (fb: fb.listener != null) l.fallbacks)
+  ) proxyInbounds
+  # Its share links can carry only one front's port and security.
+  ++ [
+    (uniqueValues proxyInboundsEnabled (lib.concatMap (
+      ib: builtins.filter (tag: tag != null) (map (fb: fb.listener) ib.listener.fallbacks)
+    ) proxyInbounds) "proxy-suite: a listener can be the fallback listener of only one other")
+  ];
 
   # AmneziaWG listeners run an interface each and give their clients addresses in a subnet.
   awgListeners = builtins.filter (ib: ib.listener.type == "amneziawg") proxyInbounds;

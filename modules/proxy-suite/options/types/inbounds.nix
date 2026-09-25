@@ -244,6 +244,55 @@ let
     };
   };
 
+  fallbackType = types.submodule {
+    options = {
+      name = nullStr "SNI to match. Null matches any." "www.example.com";
+
+      alpn = mkOption {
+        type = types.nullOr (
+          types.enum [
+            "h2"
+            "http/1.1"
+          ]
+        );
+        default = null;
+        description = "Negotiated ALPN to match. Null matches any.";
+        example = "h2";
+      };
+
+      path = nullStr ''
+        Request path to match. Null matches any. XRay reads it from HTTP/1.1 only, so a `listener`
+        must be on ws or httpupgrade, with this as its transport.path; xhttp and grpc clients speak h2
+        and go by alpn = "h2" or a catch-all instead.
+      '' "/ws";
+
+      dest = mkOption {
+        type = types.nullOr (types.either types.port types.str);
+        default = null;
+        description = "Where matching connections go: a port, host:port, or a unix socket path. Exclusive with listener.";
+        example = "127.0.0.1:8080";
+      };
+
+      listener = nullStr ''
+        Tag of another listener that matching connections go to, instead of dest. It must be a
+        vless listener without tls or reality, on a loopback address: it gets the connection
+        decrypted, with the client address in PROXY protocol, and its share links advertise this
+        listener's port and TLS or REALITY. Behind REALITY it must be xhttp or grpc, the only
+        transports REALITY clients run besides raw.
+      '' "ws-in";
+
+      xver = mkOption {
+        type = types.enum [
+          0
+          1
+          2
+        ];
+        default = 0;
+        description = "PROXY protocol version sent to dest; 0 sends none. A listener always gets 2.";
+      };
+    };
+  };
+
   inboundType = types.submodule (
     { name, ... }:
     {
@@ -333,6 +382,24 @@ let
           type = realityType;
           default = { };
           description = "REALITY.";
+        };
+
+        fallbacks = mkOption {
+          type = types.listOf fallbackType;
+          default = [ ];
+          description = ''
+            Where XRay sends connections that are not this listener's protocol, so several share
+            one port (vless or trojan on the raw transport). Matched in order on SNI, ALPN and path;
+            the first entry without any is the catch-all, such as a decoy web server. Browsers
+            negotiate h2 unless tls.alpn says otherwise, so a dest that speaks only HTTP/1.1 needs
+            tls.alpn = [ "http/1.1" ], or an alpn = "h2" entry to one that speaks h2c.
+          '';
+          example = lib.literalExpression ''
+            [
+              { path = "/ws"; listener = "ws-in"; }  # ws-in: vless, ws, address = "127.0.0.1"
+              { dest = 8080; }
+            ]
+          '';
         };
 
         xrayJson = mkOption {

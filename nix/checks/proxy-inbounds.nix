@@ -186,6 +186,52 @@ let
   firewallSpec = mkInboundsSpec firewallFixture;
   wsListener = lib.head (builtins.filter (l: l.tag == "ws-in") firewallSpec.listeners);
 
+  # A ws listener behind a TLS front's fallback, and a decoy web server.
+  fallbackTarget = {
+    type = "vless";
+    port = 10002;
+    address = "127.0.0.1";
+    users = [ { uuidFile = "/run/secrets/ws"; } ];
+    transport = {
+      type = "ws";
+      path = "/ws";
+    };
+  };
+  fallbackListeners = {
+    front-in = {
+      type = "vless";
+      port = 443;
+      users = [ { uuidFile = "/run/secrets/uuid"; } ];
+      tls = {
+        enable = true;
+        certificateFile = "/run/acme/fullchain.pem";
+        keyFile = "/run/acme/key.pem";
+      };
+      fallbacks = [
+        {
+          path = "/ws";
+          listener = "ws-in";
+        }
+        { dest = 8080; }
+      ];
+    };
+    ws-in = fallbackTarget;
+  };
+  fallbackFixture = mkInbounds { listeners = fallbackListeners; };
+  fallbackSpec = mkInboundsSpec fallbackFixture;
+  fallbackSpecListener = tag: lib.head (builtins.filter (l: l.tag == tag) fallbackSpec.listeners);
+  mkRejectsFallback =
+    listeners:
+    mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          inherit listeners;
+        };
+      }
+    );
+
   noFirewallFixture = mkInbounds {
     openFirewall = false;
     listeners.vless-in = realityListener;
@@ -324,6 +370,74 @@ let
   ];
 
   failing = [
+    (mkRejectsListener (
+      realityListener
+      // {
+        transport.type = "xhttp";
+        fallbacks = [ { dest = 8080; } ];
+      }
+    ) "fallbacks run only on a vless or trojan listener")
+    (mkRejectsListener (
+      realityListener // { fallbacks = [ { } ]; }
+    ) "fallbacks each need exactly one of dest or listener")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        ws-in = fallbackTarget // {
+          address = "::";
+        };
+      }
+    ) "fallback listener 'ws-in' must be another vless listener")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        ws-in = fallbackTarget // {
+          tls.enable = true;
+        };
+      }
+    ) "fallback listener 'ws-in' must be another vless listener")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        front-in = fallbackListeners.front-in // {
+          fallbacks = [ { listener = "missing"; } ];
+        };
+      }
+    ) "fallback listener 'missing' must be another vless listener")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        front-in = fallbackListeners.front-in // {
+          fallbacks = [
+            {
+              path = "/other";
+              listener = "ws-in";
+            }
+          ];
+        };
+      }
+    ) "fallback path matches only a ws or httpupgrade listener 'ws-in'")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        front-in = fallbackListeners.front-in // {
+          fallbacks = [ { listener = "ws-in"; } ];
+          reality.enable = true;
+        };
+        ws-in = fallbackTarget // {
+          transport.type = "ws";
+        };
+      }
+    ) "a REALITY listener's fallback listener 'ws-in' must use the xhttp or grpc transport")
+    (mkRejectsFallback (
+      fallbackListeners
+      // {
+        second-in = realityListener // {
+          port = 8443;
+          fallbacks = [ { listener = "ws-in"; } ];
+        };
+      }
+    ) "can be the fallback listener of only one other")
     (mkRejectsListener (
       realityListener // { port = 18533; }
     ) "collides with a port proxy-suite uses internally")
@@ -697,6 +811,31 @@ let
       true
     )
     (ok (wsListener.port == 10002 && wsListener.sharePort == 443))
+    # A fallback to a listener is resolved to its address, in PROXY protocol; a dest is kept as is.
+    (ok (
+      (fallbackSpecListener "front-in").fallbacks == [
+        {
+          name = null;
+          alpn = null;
+          path = "/ws";
+          dest = "127.0.0.1:10002";
+          xver = 2;
+        }
+        {
+          name = null;
+          alpn = null;
+          path = null;
+          dest = 8080;
+          xver = 0;
+        }
+      ]
+    ))
+    (ok ((fallbackSpecListener "ws-in").front.tag == "front-in"))
+    (ok ((fallbackSpecListener "ws-in").front.tls.enable))
+    (ok ((fallbackSpecListener "front-in").front == null))
+    (ok (
+      !lib.any (a: !a.assertion && lib.hasInfix "fallback" a.message) fallbackFixture.config.assertions
+    ))
     (ok (
       (lib.head (builtins.filter (l: l.tag == "hy2-in") firewallSpec.listeners)).hysteria.masquerade
       == "https://www.example.com"

@@ -125,7 +125,10 @@ def _xray_stream(listener: dict, tag: str) -> dict:
     # Behind a web server the socket address is loopback, which XRay will not record as
     # online; the forwarded address is only trusted when one of these headers is present.
     if transport.get("trustedXForwardedFor"):
-        stream["sockopt"] = {"trustedXForwardedFor": transport["trustedXForwardedFor"]}
+        stream.setdefault("sockopt", {})["trustedXForwardedFor"] = transport["trustedXForwardedFor"]
+    # Behind another listener's fallback, the client address arrives in PROXY protocol.
+    if listener.get("front"):
+        stream.setdefault("sockopt", {})["acceptProxyProtocol"] = True
 
     reality = listener["reality"]
     tls = listener["tls"]
@@ -192,6 +195,12 @@ def render_xray_inbound(listener: dict) -> dict:
             settings["udp"] = True
     else:
         raise ValueError(f"listener '{tag}': unsupported type '{listener_type}'")
+
+    if listener.get("fallbacks"):
+        settings["fallbacks"] = [
+            {key: value for key, value in fallback.items() if value is not None}
+            for fallback in listener["fallbacks"]
+        ]
 
     return {
         "tag": tag,
@@ -310,7 +319,9 @@ def build_share_link(
     fragment = urllib.parse.quote(label, safe="")
     endpoint_address = onion_address or server_address
     host = f"[{endpoint_address}]" if ":" in endpoint_address else endpoint_address
-    endpoint = f"{host}:{_share_port(listener)}"
+    # Behind another listener's fallback, clients dial that one, under its TLS or REALITY.
+    front = listener.get("front") or listener
+    endpoint = f"{host}:{_share_port(front)}"
 
     if listener_type == "vmess":
         return _vmess_link(listener, secret, server_address, label, endpoint_address)
@@ -342,7 +353,7 @@ def build_share_link(
         return f"hysteria2://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 
     params = _link_transport_params(listener)
-    params.update(_link_security_params(listener, server_address))
+    params.update(_link_security_params(front, server_address))
     if listener_type == "vless" and listener.get("flow"):
         params["flow"] = listener["flow"]
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
@@ -419,7 +430,7 @@ def build_listener(
     return {
         "tag": tag,
         "type": listener["type"],
-        "port": _share_port(listener),
+        "port": _share_port(listener.get("front") or listener),
         "inbound": inbound,
         "links": links,
         "onionLinks": onion_links,

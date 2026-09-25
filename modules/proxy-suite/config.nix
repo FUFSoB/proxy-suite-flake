@@ -35,6 +35,32 @@ let
     inherit (xrayTemplates) mkDnsServer;
   };
 
+  # Fallbacks to another listener are resolved here, where every listener is known.
+  inboundByTag = tag: lib.findFirst (ib: ib.tag == tag) null derived.proxyInbounds;
+  fallbackFront =
+    tag:
+    lib.findFirst (
+      ib: lib.any (fb: fb.listener == tag) ib.listener.fallbacks
+    ) null derived.proxyInbounds;
+  renderFallback =
+    fb:
+    {
+      inherit (fb) name alpn path;
+    }
+    // (
+      if fb.listener == null then
+        { inherit (fb) dest xver; }
+      else
+        let
+          target = (inboundByTag fb.listener).listener;
+          host = if lib.hasInfix ":" target.address then "[${target.address}]" else target.address;
+        in
+        {
+          dest = "${host}:${toString target.port}";
+          xver = 2;
+        }
+    );
+
   # Listener specification handed to build-inbound.py at service start. Secrets
   # appear here only as paths; the script reads them at runtime.
   proxyInboundsSpec = {
@@ -63,6 +89,25 @@ let
           jsonFile
           ;
         listen = ib.listener.address;
+        fallbacks = map renderFallback ib.listener.fallbacks;
+        # The listener in front, whose port and TLS or REALITY the share links carry.
+        front =
+          let
+            f = fallbackFront ib.tag;
+          in
+          if f == null then
+            null
+          else
+            {
+              inherit (f) tag;
+              inherit (f.listener)
+                type
+                port
+                sharePort
+                tls
+                reality
+                ;
+            };
       }
       # Only on AmneziaWG listeners: the defaults of the others need not type-check.
       // lib.optionalAttrs (ib.listener.type == "amneziawg") {
