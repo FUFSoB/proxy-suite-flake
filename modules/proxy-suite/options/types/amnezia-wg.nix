@@ -170,6 +170,7 @@ let
         interfaceName = mkOption {
           type = types.strMatching "^[A-Za-z0-9_.-]{1,15}$";
           default = "awg-${name}";
+          defaultText = lib.literalExpression ''"awg-<name>"'';
           description = "Interface name, at most 15 characters.";
         };
         autostart = mkOption {

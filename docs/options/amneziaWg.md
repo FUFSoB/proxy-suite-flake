@@ -83,7 +83,7 @@ Whether to enable AmneziaWG client profiles\.
 AWG 3\.1 kernel module package\. ` null `: userspace only\.
 
 **Type:** null or package\
-**Default:** `<derivation amneziawg-3.1.20260828>`
+**Default:** ` amneziawg ` from ` boot.kernelPackages ` on NixOS, ` null ` elsewhere
 
 <a id="services-proxy-suite-amneziawg-profiles"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles
@@ -152,7 +152,7 @@ host:port (IPv6 in brackets) that replaces the first peer’s endpoint\.
 Interface name, at most 15 characters\.
 
 **Type:** string matching the pattern ^\[A-Za-z0-9_\.-]{1,15}$\
-**Default:** `"awg-‹name›"`
+**Default:** `"awg-<name>"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-settings"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.settings
@@ -542,7 +542,7 @@ File with a vpn:// export\.
 AWG 3\.1 package with ` awg ` and ` awg-quick `\.
 
 **Type:** package\
-**Default:** `<derivation amneziawg-tools-3.1.20260812>`
+**Default:** proxy-suite’s patched ` amneziawg-tools ` (` pkgs/amneziawg.nix `)
 
 <a id="services-proxy-suite-amneziawg-userspacepackage"></a>
 ## services\.proxy-suite\.amneziaWg\.userspacePackage
@@ -550,7 +550,7 @@ AWG 3\.1 package with ` awg ` and ` awg-quick `\.
 AWG 3\.1 userspace implementation, used when the kernel module is unavailable\.
 
 **Type:** package\
-**Default:** `<derivation amneziawg-go-3.1.20260828>`
+**Default:** proxy-suite’s patched ` amneziawg-go ` (` pkgs/amneziawg.nix `)
 
 <a id="services-proxy-suite-amneziawg-wireproxypackage"></a>
 ## services\.proxy-suite\.amneziaWg\.wireproxyPackage
@@ -558,4 +558,4 @@ AWG 3\.1 userspace implementation, used when the kernel module is unavailable\.
 wireproxy build with AWG 3\.1, used by profiles with ` asOutbound = "userspace" `\.
 
 **Type:** package\
-**Default:** `<derivation wireproxy-awg-1.0.18>`
+**Default:** proxy-suite’s ` wireproxy-awg ` (` pkgs/wireproxy-awg.nix `)

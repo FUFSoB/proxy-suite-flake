@@ -48,6 +48,11 @@ in
     pkgs.runCommand "proxy-suite-options-doc-check" { nativeBuildInputs = [ pkgs.diffutils ]; }
       ''
         diff -ru ${../../docs/options} ${generatedOptionsDoc}
+        # A package default without defaultText renders as a store derivation.
+        if grep -rn '<derivation ' ${generatedOptionsDoc}; then
+          echo "package option without defaultText" >&2
+          exit 1
+        fi
         touch "$out"
       '';
 
@@ -60,30 +65,23 @@ in
 
   # The usage guides are hand-written; what can go stale in them is checked here. Every
   # ```nix block that sets services.proxy-suite (in the guides, their examples/ and the
-  # README) must evaluate, with no proxy-suite assertion or warning; a block fenced
-  # ```nix no-check is skipped. A block is either module attributes or, when it starts
-  # with "{", a whole module. Every relative link must reach a file, and its #anchor an
-  # <a id> there.
+  # README) must evaluate, with no proxy-suite assertion or warning, from its copy in
+  # docs/usage/.snippets (nix/usage-snippets.nix), which must match it. Every relative link
+  # must reach a file, and its #anchor an <a id> there.
   usage-docs =
     let
       inherit (pkgs) lib;
       usageDir = ../../docs/usage;
-      markdownIn =
-        dir:
-        map (name: lib.removePrefix "./" "${dir}/${name}") (
-          builtins.filter (lib.hasSuffix ".md") (builtins.attrNames (builtins.readDir (usageDir + "/${dir}")))
-        );
-      guides = markdownIn "." ++ markdownIn "examples";
-      readmeText = builtins.readFile ../../README.md;
+      usageSnippets = import ../usage-snippets.nix { inherit lib; };
+      inherit (usageSnippets) guides snippets;
       guideText = name: builtins.readFile (usageDir + "/${name}");
 
-      snippets =
-        text:
-        builtins.filter (lib.hasInfix "services.proxy-suite") (
-          map (chunk: builtins.head (lib.splitString "\n```" chunk)) (
-            builtins.tail (lib.splitString "```nix\n" text)
-          )
-        );
+      snippetDir = ../.. + "/${usageSnippets.dir}";
+      committed = lib.optionals (builtins.pathExists snippetDir) (
+        builtins.attrNames (builtins.readDir snippetDir)
+      );
+      outdated = "is out of date, run `nix run .#update-docs`";
+
       # Every visible option's value, so a wrong type fails too. Packages are skipped:
       # forcing one evaluates its whole build graph. Removed options throw when read.
       plain =
@@ -102,39 +100,28 @@ in
           name: opt: if lib.isOption opt then plain cfg.${name} else visibleValues opt cfg.${name}
         ) (lib.filterAttrs (name: opt: name != "_module" && (opt.visible or true) != false) opts);
       snippetProblems =
-        where: snippet:
+        snippet:
         let
-          module = import (
-            builtins.toFile "snippet.nix" (
-              if lib.hasPrefix "{" snippet then
-                snippet
-              else
-                ''
-                  { config, lib, pkgs, ... }:
-                  {
-                    ${snippet}
-                  }
-                ''
-            )
-          );
+          path = snippetDir + "/${snippet.file}";
           eval = evalProxySuite [
-            module
+            (import path)
             { system.stateVersion = "26.05"; }
           ];
           inherit (eval) config;
           failed = map (a: a.message) (builtins.filter (a: !a.assertion) config.assertions);
           own = builtins.filter (lib.hasPrefix "proxy-suite:") (failed ++ config.warnings);
         in
-        builtins.addErrorContext "while evaluating ${where}" (
-          builtins.deepSeq (visibleValues eval.options.services.proxy-suite config.services.proxy-suite) (
-            map (message: "${where}: ${message}") own
-          )
-        );
-      textProblems =
-        file: text:
-        lib.concatLists (
-          lib.imap1 (index: snippetProblems "${file}, nix block ${toString index}") (snippets text)
-        );
+        if !builtins.elem snippet.file committed || builtins.readFile path != snippet.text then
+          [ "${snippet.where}: ${usageSnippets.dir}/${snippet.file} ${outdated}" ]
+        else
+          builtins.addErrorContext "while evaluating ${snippet.where}" (
+            builtins.deepSeq (visibleValues eval.options.services.proxy-suite config.services.proxy-suite) (
+              map (message: "${snippet.where}: ${message}") own
+            )
+          );
+      leftover = map (file: "${usageSnippets.dir}/${file}: no nix block for it, ${outdated}") (
+        lib.subtractLists (map (snippet: snippet.file) snippets) committed
+      );
 
       # [text](target) and [text](target#anchor), except absolute URLs.
       links =
@@ -162,11 +149,7 @@ in
             [ ]
         ) (links (guideText name));
 
-      problems =
-        textProblems "README.md" readmeText
-        ++ lib.concatMap (
-          name: textProblems "docs/usage/${name}" (guideText name) ++ linkProblems name
-        ) guides;
+      problems = leftover ++ lib.concatMap snippetProblems snippets ++ lib.concatMap linkProblems guides;
     in
     pkgs.runCommand "proxy-suite-usage-docs-check" { } (
       if problems == [ ] then
@@ -178,14 +161,16 @@ in
         ''
     );
 
-  # The tree as `nix fmt` leaves it.
+  # The tree as `nix fmt` leaves it; the generated usage snippets are left as written.
   nix-format =
     pkgs.runCommand "proxy-suite-nix-format-check" { nativeBuildInputs = [ pkgs.nixfmt ]; }
       ''
         cd ${
           pkgs.lib.fileset.toSource {
             root = ../..;
-            fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ../..;
+            fileset = pkgs.lib.fileset.difference (pkgs.lib.fileset.fileFilter (
+              file: file.hasExt "nix"
+            ) ../..) (pkgs.lib.fileset.maybeMissing ../../docs/usage/.snippets);
           }
         }
         find . -name '*.nix' -print0 | xargs -0 nixfmt --check

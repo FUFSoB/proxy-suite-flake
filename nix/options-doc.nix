@@ -17,8 +17,14 @@ let
     ];
   };
 
+  pretty = text: {
+    __pretty = _: text;
+    val = null;
+  };
+
   # Visible options only (renamed aliases are hidden, and so are groups left
-  # with nothing but aliases), packages shown by name.
+  # with nothing but aliases). A defaultText is shown as written, Markdown ones
+  # as a ‹placeholder›; other packages by name.
   visibleConfig =
     opts: cfg:
     lib.filterAttrs (name: value: lib.isOption opts.${name} || value != { }) (
@@ -26,11 +32,12 @@ let
         name: opt:
         if !lib.isOption opt then
           visibleConfig opt cfg.${name}
+        else if (opt.defaultText._type or null) == "literalExpression" then
+          pretty opt.defaultText.text
+        else if (opt.defaultText._type or null) == "literalMD" then
+          pretty "‹${lib.replaceStrings [ "`" ] [ "" ] opt.defaultText.text}›"
         else if lib.isDerivation cfg.${name} then
-          {
-            __pretty = _: "pkgs.${lib.getName cfg.${name}}";
-            val = null;
-          }
+          pretty "pkgs.${lib.getName cfg.${name}}"
         else
           cfg.${name}
       ) (lib.filterAttrs (name: opt: name != "_module" && (opt.visible or true) != false) opts)

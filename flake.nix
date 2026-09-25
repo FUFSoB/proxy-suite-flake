@@ -107,8 +107,14 @@
         mkProxySuiteTray = throw "mkProxySuiteTray was replaced by Proxy Suite GUI: set services.proxy-suite.gui.enable";
       };
 
-      # `nix fmt`; the nix-format check holds the tree to it.
-      formatter = forAll (system: (pkgsFor system).nixfmt-tree);
+      # `nix fmt`; the nix-format check holds the tree to it. The usage snippets are
+      # generated, and the usage-docs check wants them as their Markdown has them.
+      formatter = forAll (
+        system:
+        (pkgsFor system).nixfmt-tree.override {
+          settings.global.excludes = [ "docs/usage/.snippets/*" ];
+        }
+      );
 
       packages = forAll (
         system:
@@ -140,8 +146,14 @@
               cp -r --no-preserve=mode,ownership "''${options_output_path}" "''${repo_root}/docs/options"
               install -Dm644 "''${readme_output_path}" "''${repo_root}/README.md"
 
+              # After the README, whose blocks are among them.
+              snippets_output_path="$(nix build --no-link --print-out-paths "''${repo_root}#usageSnippets")"
+              rm -rf "''${repo_root}/docs/usage/.snippets"
+              cp -r --no-preserve=mode,ownership "''${snippets_output_path}" "''${repo_root}/docs/usage/.snippets"
+
               echo "updated ''${repo_root}/docs/options/"
               echo "updated ''${repo_root}/README.md"
+              echo "updated ''${repo_root}/docs/usage/.snippets/"
             '';
           };
         in
@@ -167,6 +179,14 @@
               ];
             }).config.system.build.isoImage;
           optionsDoc = mkOptionsDoc system;
+          usageSnippets = pkgs.runCommand "proxy-suite-usage-snippets" { } (
+            ''
+              mkdir "$out"
+            ''
+            + pkgs.lib.concatMapStrings (snippet: ''
+              cp ${pkgs.writeText snippet.file snippet.text} "$out"/${snippet.file}
+            '') (import ./nix/usage-snippets.nix { inherit (pkgs) lib; }).snippets
+          );
           readmeDoc = mkReadmeDoc system;
           update-docs = updateDocs;
           update-options-doc = pkgs.writeShellApplication {

@@ -41,11 +41,11 @@ Whether to enable proxy-suite\.
 services.proxy-suite = {
   amneziaWg = {
     enable = false;
-    kernelModulePackage = pkgs.amneziawg;
+    kernelModulePackage = ‹amneziawg from boot.kernelPackages on NixOS, null elsewhere›;
     profiles = { };
-    toolsPackage = pkgs.amneziawg-tools;
-    userspacePackage = pkgs.amneziawg-go;
-    wireproxyPackage = pkgs.wireproxy-awg;
+    toolsPackage = ‹proxy-suite's patched amneziawg-tools (pkgs/amneziawg.nix)›;
+    userspacePackage = ‹proxy-suite's patched amneziawg-go (pkgs/amneziawg.nix)›;
+    wireproxyPackage = ‹proxy-suite's wireproxy-awg (pkgs/wireproxy-awg.nix)›;
   };
   enable = false;
   geodata = {
@@ -66,7 +66,7 @@ services.proxy-suite = {
     enable = false;
     listeners = { };
     openFirewall = true;
-    package = pkgs.xray;
+    package = ‹proxy-suite's xray (pkgs/xray.nix)›;
     routing = {
       blockPrivate = true;
       blockRu = true;
@@ -160,7 +160,7 @@ services.proxy-suite = {
       strategy = null;
     };
     enable = false;
-    ipv6 = true;
+    ipv6 = config.networking.enableIPv6;
     listener = {
       address = "127.0.0.1";
       auth = {
@@ -203,7 +203,7 @@ services.proxy-suite = {
     selectionExclude = [ ];
     singBox = {
       clashApiPort = 9090;
-      package = pkgs.sing-box;
+      package = ‹sing-box from proxy-suite's own nixpkgs input›;
     };
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
@@ -230,7 +230,7 @@ services.proxy-suite = {
       url = "https://www.gstatic.com/generate_204";
     };
     xray = {
-      package = pkgs.xray;
+      package = ‹proxy-suite's xray (pkgs/xray.nix)›;
     };
   };
   sshProxy = {
@@ -322,7 +322,7 @@ services.proxy-suite = {
     creators = { };
     enable = false;
     joiners = { };
-    package = pkgs.whitelist-bypass;
+    package = ‹proxy-suite's whitelist-bypass (pkgs/whitelist-bypass.nix)›;
   };
   zapret = {
     cidrExemption = {

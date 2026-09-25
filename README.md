@@ -37,16 +37,6 @@ inputs.proxy-suite.url = "github:FUFSoB/proxy-suite-flake";
 modules = [ inputs.proxy-suite.nixosModules.default ];
 ```
 
-Other hosts take the same options through their own module:
-
-| Module | For |
-|---|---|
-| `nixosModules.default` | NixOS |
-| `nixosModules.server` | a single-user VPS: VLESS REALITY, TLS and WS inbounds, ACME and SSH |
-| `systemManagerModules.default` | other distributions, via [system-manager](https://github.com/numtide/system-manager); firewall and kernel modules are left to the host |
-| `homeManagerModules.default` | home-manager, without root: the local proxy, inbounds on ports from 1024, and anything else that needs no root |
-| `nixOnDroidModules.default` | Android, via Nix-on-Droid: what home-manager gets, without the GUI |
-
 A starter config:
 
 ```nix
@@ -99,7 +89,6 @@ services.proxy-suite = {
     };
   };
 
-  # Registers a WARP device on first start.
   warp = {
     enable = true;
     asOutbound = "singBox"; # outbound tagged "warp"
@@ -123,8 +112,8 @@ services.proxy-suite = {
   # the joiner here is an outbound tagged "wl".
   whitelistBypass = {
     enable = true;
-    joiners.wl = { platform = "wbstream"; linkFile = "/run/secrets/wb-link"; };
-    # creators.phone = { platform = "wbstream"; cookiesFile = "/run/secrets/wb-cookies.json"; };
+    creators.phone = { platform = "wbstream"; cookiesFile = "/run/secrets/wb-cookies.json"; };
+    # joiners.wl = { platform = "wbstream"; linkFile = "/run/secrets/wb-link"; };
   };
 
   gui.enable = true;
