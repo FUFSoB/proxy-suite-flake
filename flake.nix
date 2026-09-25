@@ -72,6 +72,19 @@
       # without the GUI.
       nixOnDroidModules.default = proxySuiteModules.nixOnDroid;
 
+      # Proxy variables and wrapEnv from an address alone: for a proxy this config does not
+      # run, or on system-manager and nix-on-droid, which have no config.lib.
+      # `proxy-suite.lib.proxyHelpers { inherit pkgs; port = 1080; }`. On NixOS and
+      # home-manager the module has the full set as config.lib.proxy-suite.
+      lib.proxyHelpers =
+        args:
+        import ./modules/proxy-suite/helpers.nix (
+          {
+            inherit (args.pkgs) lib;
+          }
+          // args
+        );
+
       # Re-export zapret standalone for users who want just that.
       nixosModules.zapret = zapret.nixosModules.default;
 

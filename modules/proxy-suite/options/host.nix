@@ -64,6 +64,9 @@ in
       rules = internalOption types.lines "";
     };
     nftables = internalOption types.bool false;
+    # ../helpers.nix, which the NixOS and home-manager adapters publish as
+    # config.lib.proxy-suite; the other hosts have no config.lib.
+    helpers = internalOption types.raw { };
     firewall = {
       allowedTCPPorts = internalOption (types.listOf types.port) [ ];
       allowedUDPPorts = internalOption (types.listOf types.port) [ ];

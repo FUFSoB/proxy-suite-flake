@@ -61,6 +61,10 @@ moduleSuiteChecks
   proxy-suite-hosts = builtins.seq (builtins.deepSeq hostChecks.assertions true) (
     pkgs.writeText "proxy-suite-hosts-check" "ok"
   );
+  proxy-helpers = import ./checks/proxy-helpers.nix {
+    inherit pkgs;
+    inherit (checkLib) evalProxySuite;
+  };
 }
 // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   amneziawg-runtime = amneziaWgRuntime;

@@ -32,6 +32,9 @@ in
         firewallPackage = config.networking.firewall.package;
         resolvconfPackage = config.networking.resolvconf.package;
       };
+      # NixOS's place for helper functions; set even while disabled, so a config can
+      # refer to it unconditionally.
+      lib.proxy-suite = cfg.internal.helpers;
     }
 
     (lib.mkIf cfg.enable (

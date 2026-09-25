@@ -35,6 +35,8 @@ in
         # have it cleared on reboot.
         runtimeDir = lib.mkDefault "${config.xdg.cacheHome}/proxy-suite/run";
       };
+      # home-manager's place for helper functions, as on NixOS.
+      lib.proxy-suite = cfg.internal.helpers;
     }
 
     (lib.mkIf cfg.enable (

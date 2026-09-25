@@ -36,6 +36,41 @@ in
 
   config = lib.mkMerge [
     {
+      services.proxy-suite.internal.helpers =
+        let
+          inherit (cfg.proxy.listener) address port auth;
+          perAppRouting = assembly.context.perAppRouting;
+          perAppOn = cfg.enable && cfg.perAppRouting.enable;
+        in
+        import ./helpers.nix {
+          inherit
+            lib
+            pkgs
+            address
+            port
+            ;
+          inherit (auth) username password;
+          envUnavailable =
+            if !(cfg.enable && cfg.proxy.enable) then
+              "the proxy variables need services.proxy-suite.proxy.enable"
+            else if auth.passwordFile != null then
+              "the proxy variables cannot carry proxy.listener.auth.passwordFile; use wrapProxychains"
+            else
+              null;
+          proxychains =
+            if perAppOn && cfg.perAppRouting.proxychains.enable then
+              { args = "${perAppRouting.proxychainsQuietArg}-f ${toString perAppRouting.proxychainsConfigFile}"; }
+            else
+              "wrapProxychains needs perAppRouting.proxychains.enable";
+          perApp =
+            if perAppOn then
+              {
+                inherit (assembly.context.control) proxyCtl;
+                profiles = perAppRouting.effectivePerAppRoutingProfileNames;
+              }
+            else
+              "wrapPerApp needs perAppRouting.enable";
+        };
       # xray and sing-box default to this flake's own nixpkgs (redirect it
       # with inputs.nixpkgs.follows), not the system's: a stable release lags
       # both by months, and current xray needs a newer Go than stable ships.

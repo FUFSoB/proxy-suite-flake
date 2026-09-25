@@ -59,14 +59,21 @@ in
       '';
 
   # The usage guides are hand-written; what can go stale in them is checked here. Every
-  # ```nix block that sets services.proxy-suite (in the guides and the README) must
-  # evaluate, with no proxy-suite assertion or warning; a block fenced ```nix no-check is
-  # skipped. Every relative link must reach a file, and its #anchor an <a id> there.
+  # ```nix block that sets services.proxy-suite (in the guides, their examples/ and the
+  # README) must evaluate, with no proxy-suite assertion or warning; a block fenced
+  # ```nix no-check is skipped. A block is either module attributes or, when it starts
+  # with "{", a whole module. Every relative link must reach a file, and its #anchor an
+  # <a id> there.
   usage-docs =
     let
       inherit (pkgs) lib;
       usageDir = ../../docs/usage;
-      guides = builtins.filter (lib.hasSuffix ".md") (builtins.attrNames (builtins.readDir usageDir));
+      markdownIn =
+        dir:
+        map (name: lib.removePrefix "./" "${dir}/${name}") (
+          builtins.filter (lib.hasSuffix ".md") (builtins.attrNames (builtins.readDir (usageDir + "/${dir}")))
+        );
+      guides = markdownIn "." ++ markdownIn "examples";
       readmeText = builtins.readFile ../../README.md;
       guideText = name: builtins.readFile (usageDir + "/${name}");
 
@@ -98,15 +105,22 @@ in
         where: snippet:
         let
           module = import (
-            builtins.toFile "snippet.nix" ''
-              { config, lib, pkgs, ... }:
-              {
-                system.stateVersion = "26.05";
-                ${snippet}
-              }
-            ''
+            builtins.toFile "snippet.nix" (
+              if lib.hasPrefix "{" snippet then
+                snippet
+              else
+                ''
+                  { config, lib, pkgs, ... }:
+                  {
+                    ${snippet}
+                  }
+                ''
+            )
           );
-          eval = evalProxySuite [ module ];
+          eval = evalProxySuite [
+            module
+            { system.stateVersion = "26.05"; }
+          ];
           inherit (eval) config;
           failed = map (a: a.message) (builtins.filter (a: !a.assertion) config.assertions);
           own = builtins.filter (lib.hasPrefix "proxy-suite:") (failed ++ config.warnings);
@@ -135,7 +149,7 @@ in
           let
             target = builtins.head link;
             anchor = builtins.elemAt link 1;
-            path = if target == "" then usageDir + "/${name}" else usageDir + "/${target}";
+            path = if target == "" then usageDir + "/${name}" else usageDir + "/${dirOf name}/${target}";
             where = "docs/usage/${name}: ${target}${if anchor == null then "" else anchor}";
           in
           if !builtins.pathExists path then

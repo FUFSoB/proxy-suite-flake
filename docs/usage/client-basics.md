@@ -37,8 +37,8 @@ export all_proxy=socks5h://127.0.0.1:1080
 export https_proxy=http://127.0.0.1:1080
 ```
 
-To route apps without setting them up, see [Route the whole machine](./system-wide.md) or
-[Route a single app](./per-app.md).
+To route apps without setting them up, see [Route the whole machine](./system-wide.md),
+[Route a single app](./per-app.md) or [Wrap programs with the proxy](./wrap-apps.md).
 
 ## Commands
 

@@ -15,7 +15,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - Local SOCKS5/HTTP proxy on `127.0.0.1:1080`, on sing-box, XRay, or both
 - System-wide TUN or TProxy mode, on demand or at boot
 - Kill switch: nothing leaks while a global tunnel restarts or after it fails
-- Per-app routing: `proxy-ctl apps run <profile> -- <cmd>`
+- Per-app routing: `proxy-ctl apps run <profile> -- <cmd>`, or packages wrapped to always use the proxy
 - Outbounds from links, raw JSON or subscriptions, picked by hand or by latency
 - vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC, AnyTLS and NaïveProxy on sing-box; XHTTP and ECH on XRay
 - Proxy chains: any outbound can connect through another
@@ -135,7 +135,7 @@ services.proxy-suite = {
 
 ## Docs
 
-- [Usage guides](./docs/usage/index.md): common setups, step by step.
+- [Usage guides](./docs/usage/index.md): common setups, step by step, and complete examples.
 - [Options reference](./docs/options/index.md): every option. Regenerate it and the help below with `nix run .#update-docs`.
 
 ## `proxy-ctl help`

@@ -75,5 +75,6 @@ Then run `proxy-ctl apps run browser -- chromium`.
 
 ## See also
 
+- [Wrap programs with the proxy](./wrap-apps.md): a package that always starts through a profile
 - [`perAppRouting.profiles`](../options/perAppRouting.md#services-proxy-suite-perapprouting-profiles)
 - [`perAppRouting.createDefaultProfiles`](../options/perAppRouting.md#services-proxy-suite-perapprouting-createdefaultprofiles)

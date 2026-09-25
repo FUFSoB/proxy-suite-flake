@@ -33,6 +33,7 @@ let
 
   hostStubs = {
     homeManager.options = {
+      lib = stub (types.attrsOf types.attrs) { };
       home.packages = packages;
       xdg.stateHome = stub types.str "/home/u/.local/state";
       xdg.cacheHome = stub types.str "/home/u/.cache";
@@ -185,6 +186,8 @@ in
       assert hmCfg.services.proxy-suite.host.serviceManager == "systemd-user";
       assert lib.hasPrefix "/home/u/.local/state/" hmCfg.services.proxy-suite.host.stateDir;
       assert hmCfg.systemd.user.services ? proxy-suite-socks;
+      # The helpers are published where home-manager keeps its own.
+      assert hmCfg.lib.proxy-suite.urls.http == "http://127.0.0.1:1080";
       assert hmCfg.systemd.user.services ? proxy-suite-inbounds;
       assert hmCfg.systemd.user.services ? proxy-suite-tor;
       # Rootless, there is no userControl group to hand the control socket to.
