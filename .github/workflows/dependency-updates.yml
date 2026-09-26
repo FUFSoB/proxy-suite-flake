@@ -52,6 +52,11 @@ jobs:
           scripts/update-pins.sh --self-test
           scripts/update-pins.sh | tee "$RUNNER_TEMP/pin-updates.txt"
 
+      # A nixpkgs bump can bring a nixfmt whose style differs; restyle the tree with
+      # it so the nix-format check passes and the restyle rides along in the PR.
+      - name: Reformat Nix files
+        run: nix fmt
+
       - name: Detect dependency file changes
         id: changes
         run: |
@@ -95,7 +100,7 @@ jobs:
             echo "- zapret: refreshed every run"
             echo
             echo '```'
-            git diff --stat -- flake.lock pkgs
+            git diff --stat
             echo '```'
           } > "$RUNNER_TEMP/pr-body.md"
           cat "$RUNNER_TEMP/pr-body.md" >> "$GITHUB_STEP_SUMMARY"
@@ -109,6 +114,7 @@ jobs:
           add-paths: |
             flake.lock
             pkgs
+            *.nix
           commit-message: "chore(deps): refresh flake inputs and pinned sources"
           title: "chore(deps): refresh flake inputs and pinned sources"
           body-path: ${{ runner.temp }}/pr-body.md

@@ -188,15 +188,13 @@ in
 
     # -- perAppRouting: app zapret can run without the global zapret service --
     (
-      assert
-        perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-per-app-zapret";
-      assert
-        perAppRoutingZapretWithoutGlobalFixture.config.systemd.services
-        ? "proxy-suite-per-app-zapret-user@";
-      assert
-        perAppRoutingZapretWithoutGlobalFixture.config.systemd.user.services
-        ? "proxy-suite-per-app-zapret-anchor";
-      assert !(perAppRoutingZapretWithoutGlobalFixture.config.systemd.services ? "proxy-suite-zapret");
+      let
+        inherit (perAppRoutingZapretWithoutGlobalFixture.config) systemd;
+      in
+      assert systemd.services ? "proxy-suite-per-app-zapret";
+      assert systemd.services ? "proxy-suite-per-app-zapret-user@";
+      assert systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
+      assert !(systemd.services ? "proxy-suite-zapret");
       assert builtins.length perAppRoutingZapretWithoutGlobalProfiles == 2;
       assert builtins.any (
         profile: profile.name == "zapret" && profile.route == "zapret"
