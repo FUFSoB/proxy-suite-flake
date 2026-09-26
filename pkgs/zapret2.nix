@@ -6,7 +6,7 @@
 { pkgs }:
 
 let
-  version = "1.0.5.1";
+  version = "1.0.5.2";
 in
 pkgs.stdenv.mkDerivation {
   pname = "zapret2";
@@ -16,7 +16,7 @@ pkgs.stdenv.mkDerivation {
     owner = "bol-van";
     repo = "zapret2";
     tag = "v${version}";
-    hash = "sha256-cb83DXeHExdLPjB283i1sU+GtqrwVtUXBbTloXsnvlA=";
+    hash = "sha256-iS7j5Z31rGnuKEDEKfkPJqdIRVS9Psf0+zDtQ7YdoxI=";
   };
 
   nativeBuildInputs = [ pkgs.pkg-config ];
