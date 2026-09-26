@@ -28,7 +28,7 @@ def _die(message, status=1):
 
 
 # Clash API calls and systemctl spawns that several readers repeat within one load.
-MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_timer_next_run", "svc_state")
+MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_timer_next_run", "svc_state", "_wl")
 # proxy_ctl as the CLI has it, before the patching below: its own tests put these back.
 CLI_FUNCTIONS = {name: getattr(ctl, name) for name in ("die", *MEMOIZED)}
 
@@ -64,6 +64,8 @@ class Action:
     prompt: str = ""  # ask for text first
     confirm: bool | Callable = False  # or row -> ask first
     mode: str = "run"  # run: result in the feedback line; dialog: output streamed into a dialog; suspend: hand over the terminal; pause: suspend, then wait for enter; copy: last line to the clipboard
+    offered: Callable = None  # () -> this configuration has it; None: every one does
+    tty: bool = False  # it asks on the terminal: only a front end that hands the terminal over offers it
 
 
 @dataclass
@@ -79,6 +81,14 @@ class Tab:
 
 def ROW(_):
     return True
+
+
+# Whether the front end can hand a command the terminal to ask on. The GUI cannot: it clears this.
+TTY = True
+
+
+def offered(action):
+    return (TTY or not action.tty) and (action.offered is None or bool(_safe(action.offered, fallback=False)))
 
 
 def needs_confirm(action, row):
@@ -147,6 +157,30 @@ ZAPRET_LISTS = (
 )
 
 
+def _wl_entry(row):
+    """The whitelist-bypass creator or joiner behind a row, or None."""
+    return next((w for w in ctl._wl() if ctl._wl_unit(w) == row["unit"]), None)
+
+
+def _wl_role(*roles, platforms=None, fixed=None):
+    def check(row):
+        w = _wl_entry(row)
+        return bool(w) and w["role"] in roles and (platforms is None or w.get("platform") in platforms) and (fixed is None or bool(w.get("fixedLink")) == fixed)
+
+    return check
+
+
+def _path(text):
+    """A typed path, whole: proxy-ctl may run elsewhere (pkexec starts it in /root)."""
+    if not text.strip():
+        raise ValueError("no path given")
+    return os.path.abspath(os.path.expanduser(text.strip()))
+
+
+def _wl_argv(verb, *extra):
+    return lambda r, *_: ["wl", verb, _wl_entry(r)["name"], *extra]
+
+
 def _awg_profile(row):
     """The global AmneziaWG profile behind a row, or empty."""
     name = row["unit"].removeprefix(AWG_PREFIX)
@@ -156,6 +190,8 @@ def _awg_profile(row):
 def _unit_argv(row, verb):
     if profile := _awg_profile(row):
         return ["awg", verb, profile]
+    if w := _wl_entry(row):
+        return ["wl", verb, w["name"]]
     return [*TOGGLES[row["unit"]], verb]
 
 
@@ -168,7 +204,7 @@ def restart_argv(row, *_):
 
 
 def _controllable(row):
-    return row["unit"] in TOGGLES or bool(_awg_profile(row))
+    return row["unit"] in TOGGLES or bool(_awg_profile(row)) or bool(_wl_entry(row))
 
 
 def service_rows(states):
@@ -410,6 +446,14 @@ def _add_args(text):
     return [text] if text.startswith("{") else text.split(None, 1)
 
 
+def _zapret_auto():
+    return ctl.env("ZAPRET_AUTO_ENABLED") == "1"
+
+
+def _rule_sets():
+    return bool(ctl.read_json_or(ctl.env("RULE_SETS_FILE"), []))
+
+
 def _zapret_toggle(row, _, states):
     return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
 
@@ -434,6 +478,45 @@ TABS = [
             # A failed unit restarts too: that is how it gets another try.
             Action("ctrl+r", "restart it", restart_argv, when=lambda r: _controllable(r) and r["state"] in ("active", "failed")),
             Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
+            Action(
+                "n",
+                "new Tor circuits for new connections",
+                lambda r, *_: ["tor", "newnym"],
+                when=lambda r: r["unit"] == "proxy-suite-tor" and r["state"] == "active",
+            ),
+            # whitelist-bypass: a creator makes the call its joiner joins.
+            Action("k", "its call link", _wl_argv("link"), when=_wl_role("creator"), mode="dialog"),
+            Action("c", "copy its call link", _wl_argv("link"), when=_wl_role("creator"), mode="copy"),
+            Action("Q", "its call link as QR", _wl_argv("link", "--qr"), when=_wl_role("creator"), mode="dialog"),
+            Action(
+                "N",
+                "drop its call for a new one",
+                _wl_argv("new"),
+                when=_wl_role("creator", fixed=False),
+                confirm=True,
+            ),
+            Action(
+                "j",
+                "set the call it joins…",
+                lambda r, t, _: ["wl", "join", _wl_entry(r)["name"], t.strip()],
+                when=_wl_role("joiner"),
+                prompt="<call link> - a room id, a slug or a URL",
+            ),
+            Action(
+                "a",
+                "replace its login with a cookies file…",
+                lambda r, t, _: ["wl", "auth", _wl_entry(r)["name"], _path(t)],
+                when=_wl_role("creator"),
+                prompt="<path> - cookies exported from the desktop Creator",
+            ),
+            Action(
+                "A",
+                "replace its login with an email and password",
+                _wl_argv("auth"),
+                when=_wl_role("creator", platforms=ctl.WL_PASSWORD_LOGIN),
+                mode="pause",
+                tty=True,
+            ),
         ],
     ),
     Tab(
@@ -443,7 +526,11 @@ TABS = [
         [("active", ""), ("key", "Mode"), ("mode", "Meaning")],
         route_rows,
         summary=lambda: f"Configured default: {ctl._route_mode_default()}. An override lasts until you switch back to default.",
-        actions=[Action("s", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"])],
+        actions=[
+            Action("s", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"]),
+            Action("i", "rule sets and when each was fetched", lambda r, *_: ["proxy", "rulesets", "list"], mode="dialog", offered=_rule_sets),
+            Action("u", "fetch the rule sets now", lambda r, *_: ["proxy", "rulesets", "update"], mode="dialog", offered=_rule_sets),
+        ],
     ),
     Tab(
         "outbounds",
@@ -502,6 +589,7 @@ TABS = [
             Action("J", "its JSON", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--json"], when=ROW, mode="dialog"),
             Action("F", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=ROW, mode="dialog"),
             Action("X", "client config with every outbound and rule", lambda r, *_: ["proxy", "config"], mode="dialog"),
+            Action("C", "the config as it runs here", lambda r, *_: ["proxy", "config", "--raw"], mode="dialog"),
         ],
     ),
     Tab(
@@ -554,12 +642,13 @@ TABS = [
         summary=zapret_summary,
         actions=[
             Action("f", "forget it (may be learned again)", lambda r, *_: ["zapret", "auto", "forget", r["host"]], when=_kind("learned")),
-            Action("x", "exclude it (never learn)", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
+            Action("x", "exclude it (never touch or learn it)", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
             Action("u", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),
-            Action("i", "include it (may be learned again)", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
-            Action("a", "pin a host (always bypass)…", lambda r, t, _: ["zapret", "auto", "add", t], prompt="<domain>"),
-            Action("C", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True),
-            Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog"),
+            Action("i", "include it (zapret may touch or learn it again)", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
+            Action("a", "pin a host (treat it as blocked)…", lambda r, t, _: ["zapret", "auto", "add", t.strip()], prompt="<domain>", offered=_zapret_auto),
+            Action("X", "exclude a host (never touch or learn it)…", lambda r, t, _: ["zapret", "auto", "exclude", t.strip()], prompt="<domain>", offered=_zapret_auto),
+            Action("C", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True, offered=_zapret_auto),
+            Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog", offered=lambda: ctl.env("ZAPRET_CUTOFF_ENABLED") == "1"),
             Action("z", "start / stop zapret", _zapret_toggle),
             Action("Z", "restart zapret", lambda *_: ["zapret", "restart"]),
         ],
@@ -644,7 +733,7 @@ def available_tabs(states):
 
 
 def applicable(tab, row):
-    return [a for a in tab.actions if a.when is None or (row is not None and a.when(row))]
+    return [a for a in tab.actions if offered(a) and (a.when is None or (row is not None and a.when(row)))]
 
 
 def load_tab(tab, states):
@@ -655,7 +744,7 @@ def load_tab(tab, states):
     except (Exception, SystemExit) as e:
         return [], f"✗ {str(e) or type(e).__name__}" + (f"\n{summary}" if summary else "")
     if not rows:
-        hints = "   ".join(f"{a.key}: {short(a.label)}" for a in tab.actions if a.prompt)
+        hints = "   ".join(f"{a.key}: {short(a.label)}" for a in tab.actions if a.prompt and a.when is None and offered(a))
         summary = "Nothing here yet." + (f"   {hints}" if hints else "") + (f"\n{summary}" if summary else "")
     return rows, summary
 

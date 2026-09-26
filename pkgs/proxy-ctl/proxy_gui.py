@@ -503,9 +503,8 @@ class Page(Gtk.Box):
 
     def tab_actions_box(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, halign=Gtk.Align.CENTER, css_classes=["empty-actions"])
-        tab_actions = [(i, a) for i, a in enumerate(self.tab.actions) if a.when is None]
-        for n, (i, action) in enumerate(tab_actions):
-            box.append(self.action_button(i, action, suggested=n == 0))
+        for n, action in enumerate(model.applicable(self.tab, None)):
+            box.append(self.action_button(self.tab.actions.index(action), action, suggested=n == 0))
         return box
 
     def action_button(self, i, action, suggested=False):
@@ -1039,9 +1038,9 @@ class Window(Adw.ApplicationWindow):
     def show_shortcuts(self):
         dialog = Adw.ShortcutsDialog()
         page = self.page()
-        if page and page.tab.actions:
+        if page and (actions := [a for a in page.tab.actions if model.offered(a)]):
             section = Adw.ShortcutsSection(title=page.tab.title)
-            for action in page.tab.actions:
+            for action in actions:
                 section.add(Adw.ShortcutsItem(title=cap(action.label), accelerator=accelerator(action.key)))
             dialog.add(section)
         section = Adw.ShortcutsSection(title="Everywhere")
@@ -1351,6 +1350,8 @@ class ProxySuiteGui(Adw.Application):
 
 
 def main(argv=None):
+    # Commands run with no terminal here: what asks on one is left out.
+    model.TTY = False
     return ProxySuiteGui().run(argv if argv is not None else sys.argv)
 
 

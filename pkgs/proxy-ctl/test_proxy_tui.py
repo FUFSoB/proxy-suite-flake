@@ -287,7 +287,7 @@ class TuiTest(unittest.TestCase):
             await pilot.press("down", "enter")
             await pilot.pause()
             labels = self.menu_labels(app)
-            self.assertIn("include it (may be learned again)", labels)
+            self.assertIn("include it (zapret may touch or learn it again)", labels)
             self.assertNotIn("forget it (may be learned again)", labels)
             await pilot.press("escape", "i")
             self.assertEqual(self.ran.pop(), ["zapret", "auto", "include", "kept.example"])

@@ -178,7 +178,7 @@ Changes and secrets need root or the userControl group.
   zapret [status|on|off]                 DPI bypass
   zapret auto [list]                     sites zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
-                                         pin, forget, or never learn a site
+                                         treat a site as blocked, forget it, or never touch it
   zapret auto unpin|include <domain>     undo add or exclude
   zapret auto clear                      forget learned sites and strategies
   zapret cutoff [status]                 networks cut off at 16 KB, and names that pass

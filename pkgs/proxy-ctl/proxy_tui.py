@@ -692,7 +692,7 @@ class ProxyTui(App):
     def action_help(self):
         tab = self.tabs[self.active_tab()]
         text = Text()
-        for heading, keys in ((tab.title, [(a.key, a.label) for a in tab.actions]), ("Everywhere", GLOBAL_KEYS)):
+        for heading, keys in ((tab.title, [(a.key, a.label) for a in tab.actions if model.offered(a)]), ("Everywhere", GLOBAL_KEYS)):
             text.append(f"{heading}\n", style="bold")
             for key, label in keys:
                 text.append(f"  {key:<9}", style=ACCENT)

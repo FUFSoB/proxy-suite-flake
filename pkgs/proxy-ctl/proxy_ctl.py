@@ -96,7 +96,7 @@ Changes and secrets need root or the userControl group.
   zapret [status|on|off]                 DPI bypass
   zapret auto [list]                     sites zapret2 learned as blocked
   zapret auto add|forget|exclude <domain>
-                                         pin, forget, or never learn a site
+                                         treat a site as blocked, forget it, or never touch it
   zapret auto unpin|include <domain>     undo add or exclude
   zapret auto clear                      forget learned sites and strategies
   zapret cutoff [status]                 networks cut off at 16 KB, and names that pass
@@ -591,9 +591,9 @@ COMPLETE = {
     "zapret auto": {
         "words": {
             "list": "hosts zapret2 learned as blocked",
-            "add": "pin a host",
+            "add": "pin a host: treat it as blocked",
             "forget": "forget a learned host",
-            "exclude": "never learn a host",
+            "exclude": "never touch or learn a host",
             "unpin": "undo add",
             "include": "undo exclude",
             "clear": "forget learned hosts and strategies",
@@ -2533,7 +2533,7 @@ def cmd_zapret_auto(verb="list", domain="", *_):
             print("No hostnames learned yet.")
     elif verb == "add":
         _zapret_auto_edit(user, domain, "add")
-        print(f"Pinned {domain} (always bypassed).")
+        print(f"Pinned {domain}: zapret treats it as blocked.")
     elif verb == "forget":
         _zapret_auto_edit(auto, domain, "drop")
         _zapret_strategy_drop(domain)
@@ -2797,12 +2797,12 @@ def cmd_where(domain="", *_):
         pinned = _where_in_list(_zapret_auto_file("zapret-hosts-user.txt"), domain)
         learned = _where_in_list(_zapret_auto_file("zapret-hosts-auto.txt"), domain)
         if excluded:
-            _where_row("zapret", f"excluded ({excluded}) - never bypassed, never learned")
+            _where_row("zapret", f"excluded ({excluded}) - never touched, never learned")
         elif pinned:
-            _where_row("zapret", f"pinned ({pinned}) - always bypassed")
+            _where_row("zapret", f"pinned ({pinned}) - treated as blocked")
             verdict = verdict or "direct, with the zapret bypass"
         elif learned:
-            _where_row("zapret", f"learned ({learned}) - bypassed")
+            _where_row("zapret", f"learned ({learned}) - treated as blocked")
             verdict = verdict or "direct, with the zapret bypass"
         else:
             _where_row("zapret", "not learned, not pinned, not excluded")

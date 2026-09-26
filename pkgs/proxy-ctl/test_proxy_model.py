@@ -132,6 +132,60 @@ class ModelTest(unittest.TestCase):
         self.assertFalse(model._amneziawg(onion))
         self.assertEqual(model.TOGGLES["proxy-suite-tor"], ["tor"])
 
+    def test_whitelist_bypass_rows(self):
+        """A creator or joiner is a unit on the services tab: toggled, restarted, and its call handled there."""
+        tab = model.TABS[0]
+        wl = [
+            {"name": "vk", "role": "creator", "platform": "vk"},
+            {"name": "dion", "role": "creator", "platform": "dion", "fixedLink": True},
+            {"name": "home", "role": "joiner", "platform": "vk"},
+        ]
+        with mock.patch.object(ctl, "_wl", lambda: wl):
+            vk, dion, home = (
+                {"key": u, "unit": u, "name": u, "state": "active"} for u in ("proxy-suite-wb-creator-vk", "proxy-suite-wb-creator-dion", "proxy-suite-wb-joiner-home")
+            )
+            keys = lambda row: {a.key: a for a in model.applicable(tab, row)}
+            self.assertEqual(model.toggle_argv(vk), ["wl", "off", "vk"])
+            self.assertEqual(model.restart_argv(home), ["wl", "restart", "home"])
+            self.assertEqual(keys(vk)["k"].argv(vk), ["wl", "link", "vk"])
+            self.assertEqual(keys(vk)["Q"].argv(vk), ["wl", "link", "vk", "--qr"])
+            self.assertEqual(keys(vk)["N"].argv(vk), ["wl", "new", "vk"])
+            self.assertEqual(keys(vk)["a"].argv(vk, "/tmp/c.json", {}), ["wl", "auth", "vk", "/tmp/c.json"])
+            self.assertEqual(keys(home)["j"].argv(home, " abc-def ", {}), ["wl", "join", "home", "abc-def"])
+            self.assertNotIn("N", keys(dion))  # a fixed link: its linkFile sets the call
+            self.assertNotIn("A", keys(vk))  # VK logs in only in a browser
+            self.assertEqual(keys(dion)["A"].argv(dion), ["wl", "auth", "dion"])
+            self.assertFalse({"k", "N", "a", "A"} & set(keys(home)))
+            self.assertNotIn("j", keys(vk))
+            with mock.patch.object(model, "TTY", False):
+                self.assertNotIn("A", keys(dion))  # it asks on a terminal the GUI does not have
+
+    def test_tor_newnym(self):
+        tab = model.TABS[0]
+        tor = {"key": "proxy-suite-tor", "unit": "proxy-suite-tor", "name": "tor", "state": "active"}
+        newnym = next(a for a in tab.actions if a.key == "n")
+        self.assertIn(newnym, model.applicable(tab, tor))
+        self.assertEqual(newnym.argv(tor), ["tor", "newnym"])
+        self.assertNotIn(newnym, model.applicable(tab, {**tor, "state": "inactive"}))
+
+    def test_actions_this_configuration_has(self):
+        """A tab-wide action for a feature the configuration leaves out is not offered."""
+        routing = next(t for t in model.TABS if t.id == "routing")
+        zapret = next(t for t in model.TABS if t.id == "zapret")
+        env = {}
+        with mock.patch.object(ctl, "env", lambda name, default="": env.get(name, default)):
+            self.assertEqual([a.key for a in model.applicable(routing, None)], [])
+            self.assertEqual([a.key for a in model.applicable(zapret, None)], ["z", "Z"])
+            with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+                json.dump([{"name": "ru", "path": "/nonexistent"}], f)
+                f.flush()
+                env.update(RULE_SETS_FILE=f.name, ZAPRET_AUTO_ENABLED="1", ZAPRET_CUTOFF_ENABLED="1")
+                self.assertEqual([a.argv(None, "", {}) for a in model.applicable(routing, None)], [["proxy", "rulesets", "list"], ["proxy", "rulesets", "update"]])
+            self.assertEqual([a.key for a in model.applicable(zapret, None)], ["a", "X", "C", "P", "z", "Z"])
+        actions = {a.key: a for a in zapret.actions}
+        self.assertEqual(actions["a"].argv(None, "example.com", {}), ["zapret", "auto", "add", "example.com"])
+        self.assertEqual(actions["X"].argv(None, "example.com", {}), ["zapret", "auto", "exclude", "example.com"])
+
     def test_tray_menu(self):
         states = {
             "proxy-suite-socks": "active",
@@ -202,7 +256,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual([(r["tag"], r["mark"], r["notes"]) for r in rows], [("a", "▸", "via b"), ("b", "★", "never picked")])
         self.assertIn("Pinned: b", summary)
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
-            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "H", "x", "l", "c", "Q", "J", "F", "X"])
+            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["u", "t", "D", "T", "n", "h", "H", "x", "l", "c", "Q", "J", "F", "X", "C"])
         chain = next(a for a in tab.actions if a.key == "h")
         self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
         # Probe exits go by the backend's tag.
