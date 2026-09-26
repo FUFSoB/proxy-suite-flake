@@ -25,9 +25,11 @@ let
 
   subtractItems = items: exclusions: builtins.filter (item: !(builtins.elem item exclusions)) items;
 
-  syncZapretDirectDomains = zapretCfg.enable && zapretCfg.directSync.enable;
-  syncZapretDirectUpstreamIps = zapretCfg.enable && zapretCfg.directSync.upstreamIps;
-  syncZapretDirectUserIps = zapretCfg.enable && zapretCfg.directSync.userIps;
+  # Only the system-wide instance handles traffic the proxy would send direct.
+  globalEnabled = zapretCfg.enable && zapretCfg.global.enable;
+  syncZapretDirectDomains = globalEnabled && zapretCfg.directSync.enable;
+  syncZapretDirectUpstreamIps = globalEnabled && zapretCfg.directSync.upstreamIps;
+  syncZapretDirectUserIps = globalEnabled && zapretCfg.directSync.userIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
   zapretDefaultDomainFiles = [

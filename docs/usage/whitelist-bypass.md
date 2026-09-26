@@ -31,7 +31,7 @@ services.proxy-suite = {
 };
 ```
 
-The cookies come from the upstream desktop Creator app. They are read on first start, and
+The cookies come from the upstream desktop Creator app or a browser. They are read on first start, and
 the login refreshes itself after that. `proxy-ctl wl auth laptop` replaces them at runtime,
 and asks for an email and password instead on DION and Bitrix.
 

@@ -38,16 +38,6 @@
       { services.proxy-suite.perAppRouting.profiles = [ { name = "oops"; } ]; }
     ]
 
-    # default proxychains profile still requires proxychains.enable.
-    [
-      {
-        services.proxy-suite.perAppRouting = {
-          enable = true;
-          createDefaultProfiles = true;
-        };
-      }
-    ]
-
     # route=tun requires perAppRouting.tun.enable.
     [
       {
@@ -149,6 +139,19 @@
                 route = "zapret";
               }
             ];
+          };
+        };
+      }
+    ]
+
+    # perAppRouting.zapret requires zapret.enable (global.enable = false keeps it per-app).
+    [
+      {
+        services.proxy-suite = {
+          zapret.enable = false;
+          perAppRouting = {
+            enable = true;
+            zapret.enable = true;
           };
         };
       }

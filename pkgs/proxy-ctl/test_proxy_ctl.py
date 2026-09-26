@@ -376,6 +376,10 @@ class ServiceManagerTest(EnvTest):
         ctl.cmd_zapret("restart")
         ctl.cmd_tor("restart")
         self.assertEqual(verbs(), [["restart", u] for u in ("proxy-suite-socks", "proxy-suite-tproxy", "proxy-suite-zapret", "proxy-suite-tor")])
+        # Per-app zapret only: no system-wide unit to toggle, so point at the profile instead.
+        os.environ["PER_APP_ROUTING_ZAPRET_ENABLED"] = "1"
+        with mock.patch.object(ctl, "svc_exists", lambda unit: unit != "proxy-suite-zapret"):
+            self.assertIn("zapret.global.enable = false", run(ctl.cmd_zapret, "on")[2])
         # awg toggle: a named profile flips; without one, only stopping is possible.
         seen.clear()
         self.patch("_awg_profiles", lambda: ["p", "q"])
@@ -920,11 +924,13 @@ class AppsRunTest(EnvTest):
         self.assertEqual(status, 3)
         self.assertIn(("stop", "proxy-suite-per-app-tun.service"), self.calls)
 
-    def test_global_proxy_refused(self):
+    def test_global_proxy_runs_plain(self):
+        # A wrapPerApp launcher must still start the app; the global mode carries it.
         self.active = {"proxy-suite-tun.service"}
-        status, _, err = run(ctl.cmd_apps, "run", "tproxy", "--", "curl")
-        self.assertNotEqual(status, 0)
-        self.assertIn("Global proxy-suite-tun.service is active", err)
+        status, _, err = run(ctl.cmd_apps, "run", "tproxy", "--", "curl", "x")
+        self.assertEqual(status, 0)
+        self.assertEqual(self.execed, ["curl", "x"])
+        self.assertIn("proxy-suite-tun.service is active", err)
         self.assertFalse(any(c[0] == "systemd-run" for c in self.calls))
 
     def test_disabled_route(self):

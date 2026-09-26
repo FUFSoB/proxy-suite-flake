@@ -16,6 +16,8 @@ in
 
     proxy = {
       enable = true;
+      # Support all available protocols by enabling hybrid backend.
+      backend = "hybrid";
       # The server's subscription: every listener, each a separate outbound.
       subscriptions = [ { tag = "home"; urlFile = "/run/secrets/proxy-home-sub"; } ];
       # The fastest listener that gets through the current network.
@@ -24,7 +26,7 @@ in
 
       routing.default = "direct";
       autoProxy.enable = true;
-      tun.enable = true; # when everything should go through: proxy-ctl proxy tun on
+      tun.enable = true; # when everything should go through: `proxy-ctl proxy tun on`
     };
 
     zapret = {
@@ -84,7 +86,7 @@ The tray app shows the same, and switches with a click.
   do not know.
 - The kill switch guards whichever global tunnel is on (TUN or the VPN), and does nothing
   while both are off.
-- Per-app `tun` profiles refuse to start while global TUN is on. Everything already goes
+- While global TUN is on, per-app `tun` profiles run the app as it is. Everything already goes
   through the proxy then.
 - See [Wrap programs with the proxy](../wrap-apps.md) for the helpers, and
   [Keep secrets out of the Nix store](../secrets.md) for the files under `/run/secrets`.

@@ -45,7 +45,8 @@ in
   assertions = [
     # -- perAppRouting: createDefaultProfiles injects curated tproxy profile when backend is enabled --
     (
-      assert builtins.length perAppRoutingTproxyProfiles == 2;
+      # proxychains is off, so no proxychains profile.
+      assert builtins.length perAppRoutingTproxyProfiles == 1;
       assert builtins.any (
         profile: profile.name == "tproxy" && profile.route == "tproxy"
       ) perAppRoutingTproxyProfiles;

@@ -15,7 +15,7 @@ let
   inherit (constants) runtimeDir;
   perAppRoutingProfileNames = map (profile: profile.name) perAppRoutingCfg.profiles;
   defaultPerAppRoutingProfiles = lib.optionals perAppRoutingCfg.createDefaultProfiles (
-    [
+    lib.optionals perAppRoutingCfg.proxychains.enable [
       {
         name = "proxychains";
         route = "proxychains";

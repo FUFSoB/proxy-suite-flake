@@ -69,6 +69,7 @@ let
   reservedLoopbackPorts =
     builtins.attrValues constants.xrayDnsBridgePorts
     ++ [ constants.outboundTestPort ]
+    ++ lib.optionals hybridEnabled (builtins.attrValues constants.xraySidecarPorts)
     ++ lib.optionals derived.warpOutboundEnabled [
       derived.warpCfg.tunnelPort
       derived.warpCfg.directPort
@@ -334,6 +335,9 @@ let
     (requires perAppZapretCfg.enable perAppRoutingCfg.enable "perAppRouting.zapret.enable"
       "perAppRouting.enable"
     )
+    (mkAssertion (!perAppZapretCfg.enable || zapretCfg.enable) ''
+      proxy-suite: perAppRouting.zapret.enable requires zapret.enable = true. For per-app zapret
+      alone, also set zapret.global.enable = false.'')
     (requires hasZapretProfiles perAppZapretCfg.enable "route=zapret in perAppRouting.profiles"
       "perAppRouting.zapret.enable"
     )
@@ -455,9 +459,10 @@ let
         || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
           map (listener: listener.internalPort) derived.proxyInboundsAwg
           ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
+          ++ lib.optionals hybridEnabled (builtins.attrValues derived.constants.xraySidecarPorts)
         )
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, or 18533-18535)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -858,7 +863,8 @@ let
       (distinct perAppTunWithTproxy perAppRoutingTun.routeTable globalTproxy.routeTable
         "perAppRouting.tun.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled"
       )
-      (distinct (perAppZapretCfg.enable && zapretCfg.enable) perAppZapretCfg.qnum globalZapretQnum
+      (distinct (perAppZapretCfg.enable && derived.zapretGlobalEnabled) perAppZapretCfg.qnum
+        globalZapretQnum
         "perAppRouting.zapret.qnum must differ from the global zapret instance's NFQUEUE ${toString globalZapretQnum}"
       )
       (distinct perAppRoutingTproxy.enable perAppRoutingTproxy.fwmark globalTproxy.fwmark

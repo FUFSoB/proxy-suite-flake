@@ -76,6 +76,24 @@ let
   zapretHostlistRules = mkRoutingRules zapretHostlistRulesFixture;
   zapretHostlistBase = mkZapretBase zapretHostlistRulesFixture;
 
+  # directSync belongs to the system-wide instance: per-app zapret alone leaves routing alone.
+  zapretPerAppOnlyRules = mkRoutingRules (evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        zapret = {
+          enable = true;
+          global.enable = false;
+          zapret-discord-youtube.domains = [ "example.com" ];
+        };
+        perAppRouting = {
+          enable = true;
+          zapret.enable = true;
+        };
+      };
+    }
+  ]);
+
   invalidHostlistAssertions = mkFailingAssertions mkBadFixture [
     [
       {
@@ -158,6 +176,7 @@ in
   inherit
     zapretHostlistRules
     zapretHostlistBase
+    zapretPerAppOnlyRules
     invalidHostlistAssertions
     ;
 }

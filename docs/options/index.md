@@ -336,6 +336,9 @@ services.proxy-suite = {
     };
     enable = false;
     engine = "zapret-discord-youtube";
+    global = {
+      enable = true;
+    };
     zapret-discord-youtube = {
       configName = "general(ALT)";
       domains = [ ];

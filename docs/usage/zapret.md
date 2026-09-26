@@ -41,8 +41,8 @@ services.proxy-suite = {
 };
 ```
 
-`zapret2.strategySource = "z2k"` switches to z2k's strategies and site lists, which include
-the full RKN list and use more memory. It also turns on a workaround for ISPs that cut
+`zapret2.strategySource = "z2k"` switches to z2k's strategies and site lists, which includes
+the full RKN list and uses more memory. It also turns on a workaround for ISPs that cut
 TLS to some hosting networks after about 16 KB.
 
 ## Commands
@@ -63,7 +63,30 @@ zapret and the proxy work side by side. By default (`zapret.directSync`), the si
 handles are sent direct, so they skip the proxy and reach zapret. Everything else follows
 your [routing rules](./routing.md).
 
-To use zapret for a single app only, see [Route a single app](./per-app.md).
+## Only for some apps
+
+To leave the rest of the system alone, turn the system-wide zapret off and run apps through
+it one by one:
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  zapret = {
+    enable = true;
+    global.enable = false; # no system-wide zapret
+  };
+  perAppRouting = {
+    enable = true;
+    createDefaultProfiles = true; # adds a profile named "zapret"
+    zapret.enable = true;
+  };
+};
+```
+
+Then run `proxy-ctl apps run zapret -- firefox`. The app gets zapret's strategy for every
+site, not only the listed ones. `directSync`, `cidrExemption` and the sites zapret2 learns
+belong to the system-wide zapret, so they do nothing here. See
+[Route a single app](./per-app.md) for more.
 
 ## Good to know
 
@@ -74,6 +97,7 @@ To use zapret for a single app only, see [Route a single app](./per-app.md).
 ## See also
 
 - [`zapret.engine`](../options/zapret.md#services-proxy-suite-zapret-engine)
+- [`zapret.global.enable`](../options/zapret.md#services-proxy-suite-zapret-global-enable)
 - [`zapret-discord-youtube.configName`](../options/zapret.md#services-proxy-suite-zapret-zapret-discord-youtube-configname)
 - [`zapret2.strategySource`](../options/zapret.md#services-proxy-suite-zapret-zapret2-strategysource)
 - [`zapret.directSync`](../options/zapret.md#services-proxy-suite-zapret-directsync-enable)

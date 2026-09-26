@@ -16,7 +16,11 @@ let
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
   cutoffCfg = zapretCfg.zapret2.cutoff;
-  inherit (import ./derived.nix { inherit lib cfg; }) constants userControlAllows;
+  inherit (import ./derived.nix { inherit lib cfg; })
+    constants
+    userControlAllows
+    zapretGlobalEnabled
+    ;
   inherit
     (import ./zapret/common.nix {
       inherit
@@ -117,7 +121,7 @@ in
     lib.mkIf cutoffCfg.enable cutoff.timer;
 
   services.proxy-suite.internal.services.proxy-suite-zapret =
-    lib.mkIf zapretCfg.enable
+    lib.mkIf zapretGlobalEnabled
       (mkRestartingService {
         description = "zapret2 DPI bypass";
         after = [ "network-online.target" ];

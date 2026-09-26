@@ -19,7 +19,7 @@ in
 
   environment.systemPackages = [
     (proxySuite.wrapEnv { } pkgs.yt-dlp)
-    (proxySuite.wrapProxychains { } pkgs.telegram-desktop)
+    (proxySuite.wrapProxychains { } pkgs.curl)
     (proxySuite.wrapPerApp { profile = "tun"; } pkgs.firefox)
   ];
 

@@ -29,8 +29,8 @@ in
       listeners.vpn = {
         type = "amneziawg";
         port = 51820;
-        # Fixed addresses, so firewall rules and DNS can name each device. Keys are
-        # generated on first start.
+        # Fixed addresses, so firewall rules and DNS can name each device.
+        # Keys are generated on first start.
         users = [
           { name = "laptop"; address = "10.77.77.2"; }
           { name = "phone"; address = "10.77.77.3"; }
@@ -84,8 +84,6 @@ On a laptop that also runs proxy-suite, the `.conf` becomes a profile: see
 
 ## Notes
 
-- `mode = "lan"` turns on IP forwarding. The default, `"proxy"`, gives devices the
-  internet only, like the other listeners.
+- `mode = "lan"` turns on IP forwarding. The default, `"proxy"`, gives devices the internet only, like the other listeners.
 - Only TCP and UDP reach the internet; ping and other protocols stop at the server.
-- A device that keeps its own private key can be added with `users.*.publicKey` instead;
-  it gets no generated config.
+- A device that keeps its own private key can be added with `users.*.publicKey` instead; it gets no generated config.

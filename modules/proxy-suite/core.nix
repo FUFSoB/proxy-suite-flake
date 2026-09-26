@@ -94,38 +94,30 @@ in
           inherit (assembly) context;
         })
 
-        (lib.mkIf
-          (
-            cfg.zapret.engine == "zapret-discord-youtube"
-            && (cfg.zapret.enable || cfg.perAppRouting.zapret.enable)
-          )
-          (
-            import ./zapret.nix {
-              inherit
-                lib
-                pkgs
-                cfg
-                zapret
-                ;
-              inherit (nftr) perAppZapretRulesFile nft;
-            }
-          )
-        )
+        (lib.mkIf (cfg.zapret.engine == "zapret-discord-youtube" && cfg.zapret.enable) (
+          import ./zapret.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              zapret
+              ;
+            inherit (nftr) perAppZapretRulesFile nft;
+          }
+        ))
 
-        (lib.mkIf (cfg.zapret.engine == "zapret2" && (cfg.zapret.enable || cfg.perAppRouting.zapret.enable))
-          (
-            import ./zapret2.nix {
-              inherit
-                lib
-                pkgs
-                cfg
-                packages
-                ;
-              inherit (nftr) perAppZapretRulesFile nft;
-              zapret2Sources = { inherit nfqws2-keenetic z2k; };
-            }
-          )
-        )
+        (lib.mkIf (cfg.zapret.engine == "zapret2" && cfg.zapret.enable) (
+          import ./zapret2.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              packages
+              ;
+            inherit (nftr) perAppZapretRulesFile nft;
+            zapret2Sources = { inherit nfqws2-keenetic z2k; };
+          }
+        ))
 
         (lib.mkIf cfg.tgWsProxy.enable (
           (import ./tg-ws-proxy.nix {

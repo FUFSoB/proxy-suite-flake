@@ -1,8 +1,18 @@
 # Example: several exits, picked per site
 
-One host with four ways out: direct (with zapret2 for DPI), a VPS, WARP and an SSH server.
-Each site goes to whichever works best for it, and autoProxy covers the sites nobody
-listed. Everything runs in global TUN mode, so every app on the host follows these rules.
+A host in Russia with five ways out: direct (with zapret2 for DPI), a VPS, WARP, an SSH
+server and Tor. Each site goes to whichever works best for it, and autoProxy covers the
+sites nobody listed. On a [relay server](./relay-server.md), its clients get the same
+choice, with a few differences shown below.
+
+| Exit | Tag | Gets |
+|---|---|---|
+| This host, with zapret2 | `direct` | Everything not listed below |
+| The VPS | `primary`, as the selected `proxy` | AI services, Telegram, Netflix, WARP's registration |
+| The SSH server | `ssh-proxy` | pixiv, Twitter |
+| WARP | `warp` | YouTube, Russian sites |
+| Tor | `tor` | `.onion` names |
+| Whichever reaches it first | set by autoProxy | Blocked sites no list names |
 
 ```nix
 { ... }:
@@ -37,10 +47,10 @@ in
       routing = {
         # Unlisted sites leave directly, where zapret2 unblocks what DPI blocks.
         default = "direct";
-        # Russian sites are routed by the last rule below instead.
+        # Russian sites go to WARP by the last rule below instead.
         directRu = false;
 
-        # Checked in order; the first match wins.
+        # Checked in order, before the lists; the first match wins.
         rules = [
           {
             outbound = "ssh-proxy";
@@ -50,7 +60,7 @@ in
             outbound = "warp";
             geosites = [ "youtube" ];
           }
-          # To mask your IP from Russian services
+          # Russian services see WARP's address instead of this host's.
           {
             outbound = "warp";
             geosites = [ "category-ru" ];
@@ -67,7 +77,8 @@ in
         };
       };
 
-      # For blocked sites no list names yet. YouTube is pinned to WARP above, so it is kept out of the probes.
+      # For blocked sites no list names yet. YouTube already has its rule, so its video
+      # hosts are not worth probing.
       autoProxy = {
         enable = true;
         exclude = [ "googlevideo.com" "gvt1.com" ];
@@ -91,6 +102,14 @@ in
       hostKeyFile = "/run/secrets/proxy-ssh-known-hosts";
     };
 
+    # .onion names go to Tor without a rule. Tor is blocked here, so it connects
+    # through the proxy.
+    tor = {
+      enable = true;
+      asOutbound = true;
+      upstream = "proxy";
+    };
+
     zapret = {
       enable = true;
       engine = "zapret2";
@@ -103,6 +122,7 @@ in
 
 ```sh
 proxy-ctl where youtube.com     # -> warp, by the rule for youtube
+proxy-ctl where pixiv.net       # -> ssh-proxy, by the first rule
 proxy-ctl where chatgpt.com     # -> proxy -> primary, by geosite openai
 proxy-ctl proxy auto            # what autoProxy routed, and through which exit
 proxy-ctl zapret auto           # what zapret2 learned
@@ -110,24 +130,25 @@ proxy-ctl zapret auto           # what zapret2 learned
 
 ## With relay clients
 
-On a [relay server](./relay-server.md) with `inbounds.routing.via = "proxy"`, clients follow
-these rules too, with two exceptions. Russian sites are blocked for them (`blockRu`), and
-sites on zapret's list go straight out, so this host's zapret handles them (`zapretDirect`).
-Sites listed in `inbounds.routing.proxy` skip both exceptions and go to the rules above:
+With `inbounds.routing.via = "proxy"`, relay clients go through the routing above. Two
+checks come first by default: Russian sites are blocked for them (`blockRu`), and sites on
+zapret's list leave directly, so this host's zapret handles them (`zapretDirect`). Sites in
+`inbounds.routing.proxy` skip both and reach the rules above:
 
 ```nix no-check
 services.proxy-suite.inbounds.routing = {
   via = "proxy";
-  blockRu = false; # clients may reach Russian sites, through WARP by the rule above
+  blockRu = false; # clients reach Russian sites too, through WARP by the rule above
   proxy = {
-    domains = youtubeDomains; # on zapret's list, but WARP works better here
+    # YouTube is on zapret's list, but WARP works better for it.
     geosites = [ "youtube" "category-ru" ];
     geoips = [ "ru" ];
   };
 };
 ```
 
-The same list applies to listeners with their own `via`, including `"direct"` ones.
+`inbounds.routing.proxy` covers listeners with their own `via` too, `"direct"` ones
+included, so their YouTube and Russian sites also go through WARP.
 
 ## Notes
 
@@ -135,4 +156,5 @@ The same list applies to listeners with their own `via`, including `"direct"` on
   country).
 - Rules can name any outbound tag: yours, `warp`, `ssh-proxy`, `tor`, or an AmneziaWG
   outbound.
-- `.onion` names go to Tor without a rule.
+- Selection and autoProxy skip `tor`; it gets only `.onion` names and what rules send to it.
+- See [Chain proxies and add exits](../chains.md) for each kind of exit on its own.

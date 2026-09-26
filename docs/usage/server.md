@@ -41,7 +41,7 @@ services.proxy-suite = {
           enable = true;
           serverNames = [ "www.microsoft.com" ];
           privateKeyFile = "/run/secrets/reality-private-key";
-          publicKey = "jNXH…"; # from the same `xray x25519` run
+          publicKey = "jNXH…"; # both keys from `xray x25519`
           shortIds = [ "0123abcd" ];
         };
       };

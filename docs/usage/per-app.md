@@ -38,7 +38,7 @@ Run it as yourself, not with sudo.
 | `proxychains` | TCP | Preloads a library into the app. Needs no privileges, but does not work with statically linked programs or most Go programs. |
 | `tun` | TCP and UDP | Puts the app in its own cgroup and routes it into a separate TUN. Works with any program. |
 | `tproxy` | TCP and UDP | Like `tun`, but intercepts with nftables. |
-| `zapret` | What zapret handles | No proxy: runs a separate zapret for the app, to get past DPI. |
+| `zapret` | What zapret handles | No proxy: runs a separate zapret for the app, to get past DPI. Needs `zapret.enable`; see [Unblock sites without a server](./zapret.md). |
 
 `tun` works with any program. `proxychains` is handy for a quick command.
 
@@ -68,7 +68,8 @@ Then run `proxy-ctl apps run browser -- chromium`.
 - `tun`, `tproxy` and `zapret` profiles start a system service, so they ask for an admin
   password unless `userControl` grants the `perApp` scope (see
   [Control it day to day](./control.md)).
-- These three refuse to start while a global TUN or TProxy is running.
+- While a global TUN or TProxy is running, these three run the app without their route:
+  the global mode already carries its traffic. `proxy-ctl` prints a note when it does.
 - If `/etc/resolv.conf` points only at a local resolver (such as systemd-resolved on
   127.0.0.53), the app's DNS queries skip its route. `proxy-ctl` warns about this.
 - The app follows your [routing rules](./routing.md) like any other proxied traffic.

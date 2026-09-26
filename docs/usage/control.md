@@ -64,7 +64,6 @@ proxy-ctl status          # everything at a glance
 proxy-ctl status --json   # the same, for scripts
 proxy-ctl logs            # follow the logs of every proxy-suite service
 proxy-ctl restart         # restart what is running
-proxy-ctl where example.com
 ```
 
 ## See also

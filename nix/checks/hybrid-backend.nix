@@ -74,18 +74,15 @@ in
       assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
-      assert pkgs.lib.hasInfix
-        "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.socks}"
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_PORT=${toString checkConstants.xraySidecarPorts.socks}"
         hybridStartScript;
       assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.socks}"
         hybridStartScript;
-      assert pkgs.lib.hasInfix
-        "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.tun}"
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_PORT=${toString checkConstants.xraySidecarPorts.tun}"
         hybridTunStartScript;
       assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.tun}"
         hybridTunStartScript;
-      assert pkgs.lib.hasInfix
-        "XRAY_SIDECAR_NEXT_PORT=${toString checkConstants.xraySidecarBasePorts.perAppTun}"
+      assert pkgs.lib.hasInfix "XRAY_SIDECAR_PORT=${toString checkConstants.xraySidecarPorts.perAppTun}"
         hybridPerAppTunStartScript;
       assert pkgs.lib.hasInfix
         "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.perAppTun}"
@@ -94,9 +91,10 @@ in
       assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
       assert pkgs.lib.hasInfix "hybrid XRay json sidecar" hybridXrayRawStartScript;
-      assert pkgs.lib.hasInfix ''{type: "socks", tag: $tag, server: "127.0.0.1"''
+      assert pkgs.lib.hasInfix ''{type: "vless", tag: $tag, server: "127.0.0.1"''
         hybridXrayRawStartScript;
-      assert pkgs.lib.hasInfix "udp: true" hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix ''packet_encoding: "xudp"'' hybridXrayRawStartScript;
+      assert pkgs.lib.hasInfix "user: [$tag]" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix "{routing_mark: 2}" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix "sing_box_preserved_rules" hybridBackendJqFilter;
       assert pkgs.lib.hasInfix "xray-dns-in" hybridBackendJqFilter;

@@ -44,7 +44,10 @@ let
     baseModule
     {
       services.proxy-suite = {
-        zapret.enable = false;
+        zapret = {
+          enable = true;
+          global.enable = false;
+        };
         perAppRouting = {
           enable = true;
           createDefaultProfiles = true;

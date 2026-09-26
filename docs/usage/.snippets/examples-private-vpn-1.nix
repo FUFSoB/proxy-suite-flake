@@ -18,8 +18,8 @@ in
       listeners.vpn = {
         type = "amneziawg";
         port = 51820;
-        # Fixed addresses, so firewall rules and DNS can name each device. Keys are
-        # generated on first start.
+        # Fixed addresses, so firewall rules and DNS can name each device.
+        # Keys are generated on first start.
         users = [
           { name = "laptop"; address = "10.77.77.2"; }
           { name = "phone"; address = "10.77.77.3"; }

@@ -8,6 +8,8 @@ in
 
     proxy = {
       enable = true;
+      # Support all available protocols by enabling hybrid backend.
+      backend = "hybrid";
       # The server's subscription: every listener, each a separate outbound.
       subscriptions = [ { tag = "home"; urlFile = "/run/secrets/proxy-home-sub"; } ];
       # The fastest listener that gets through the current network.
@@ -16,7 +18,7 @@ in
 
       routing.default = "direct";
       autoProxy.enable = true;
-      tun.enable = true; # when everything should go through: proxy-ctl proxy tun on
+      tun.enable = true; # when everything should go through: `proxy-ctl proxy tun on`
     };
 
     zapret = {

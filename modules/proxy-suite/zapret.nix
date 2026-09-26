@@ -14,6 +14,7 @@ let
 
   zapretCfg = cfg.zapret;
   perAppZapretCfg = cfg.perAppRouting.zapret;
+  inherit (import ./derived.nix { inherit lib cfg; }) zapretGlobalEnabled;
   inherit
     (import ./zapret/common.nix {
       inherit
@@ -80,12 +81,12 @@ in
   assertions = zapretPackages.assertions;
 
   services.proxy-suite.internal.earlyPackages = (
-    lib.optionals zapretCfg.enable [ globalZapretPackage ]
+    lib.optionals zapretGlobalEnabled [ globalZapretPackage ]
     ++ lib.optionals perAppZapretCfg.enable [ perAppZapretPackage ]
   );
 
   services.proxy-suite.internal.services.proxy-suite-zapret =
-    lib.mkIf zapretCfg.enable
+    lib.mkIf zapretGlobalEnabled
       (mkOneshotService {
         description = "zapret DPI bypass";
         after = [ "network-online.target" ];
@@ -119,7 +120,7 @@ in
       });
 
   services.proxy-suite.internal.services.proxy-suite-zapret-vm-exempt =
-    lib.mkIf (zapretCfg.enable && zapretCfg.cidrExemption.enable)
+    lib.mkIf (zapretGlobalEnabled && zapretCfg.cidrExemption.enable)
       (
         mkOneshotService {
           description = "Exempt CIDRs from zapret NFQUEUE";

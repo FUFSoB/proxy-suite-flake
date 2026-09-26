@@ -45,8 +45,7 @@ let
     sharePort = 443; # share links name nginx's port, not the listener's
     transport = extra // {
       inherit path;
-      # nginx sets this header, so XRay sees each client's real address (for
-      # `proxy-ctl inbounds online`). A client cannot forge it: nginx overwrites it.
+      # nginx sets this header, so XRay sees each client's real address (for `proxy-ctl inbounds online`). A client cannot forge it: nginx overwrites it.
       trustedXForwardedFor = [ "X-Real-IP" ];
     };
     inherit tls;

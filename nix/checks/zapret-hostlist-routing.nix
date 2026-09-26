@@ -30,6 +30,7 @@ let
   inherit (fixtures)
     zapretHostlistRules
     zapretHostlistBase
+    zapretPerAppOnlyRules
     invalidHostlistAssertions
     ;
 
@@ -64,6 +65,11 @@ in
     (
       assert hasDirectIP zapretHostlistRules "203.0.113.0/24";
       assert !(hasDirectIP zapretHostlistRules "1.1.1.0/24");
+      true
+    )
+    (
+      assert !(hasDirectDomain zapretPerAppOnlyRules "youtube.com");
+      assert !(hasDirectDomain zapretPerAppOnlyRules "example.com");
       true
     )
   ]

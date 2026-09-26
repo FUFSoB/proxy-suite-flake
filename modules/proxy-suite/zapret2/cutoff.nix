@@ -12,7 +12,11 @@
 }:
 
 let
-  inherit (import ../derived.nix { inherit lib cfg; }) constants userControlAllows;
+  inherit (import ../derived.nix { inherit lib cfg; })
+    constants
+    userControlAllows
+    zapretGlobalEnabled
+    ;
   z2k = zapret2Sources.z2k;
   lists = "${z2k}/files/lists";
   dir = constants.zapret2CutoffDir;
@@ -20,7 +24,7 @@ let
   table = "proxy_suite_cutoff_probe";
   # try-restart fails on a unit that is not installed, so only name the ones built.
   restartUnits =
-    lib.optional cfg.zapret.enable "proxy-suite-zapret.service"
+    lib.optional zapretGlobalEnabled "proxy-suite-zapret.service"
     ++ lib.optional cfg.perAppRouting.zapret.enable "proxy-suite-per-app-zapret.service";
 
   z2kDetect = pkgs.buildGoModule {

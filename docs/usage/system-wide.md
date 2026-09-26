@@ -50,7 +50,8 @@ proxy-ctl killswitch off      # lift the kill switch without stopping the tunnel
   direct IPv6 connections hang instead of falling back to IPv4.
 - `proxy.tproxy.localSubnets` lists networks that skip TProxy. Add your LAN and VM bridges if
   they are not in `192.168.0.0/16`.
-- Per-app `tun`, `tproxy` and `zapret` profiles refuse to start while a global mode is on.
+- While a global mode is on, per-app `tun`, `tproxy` and `zapret` profiles run the app
+  without their route, so wrapped programs still start.
 
 ## See also
 

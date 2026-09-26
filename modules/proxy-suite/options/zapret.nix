@@ -7,7 +7,13 @@ let
 in
 {
   options.services.proxy-suite.zapret = {
-    enable = mkEnableOption "zapret DPI bypass";
+    enable = mkEnableOption "zapret DPI bypass. Needed by `perAppRouting.zapret` too";
+
+    global.enable = bool true ''
+      Run zapret system-wide. Turn off to keep zapret to apps started with
+      `proxy-ctl apps run zapret` (`perAppRouting.zapret`); `directSync`, `cidrExemption` and
+      zapret2's learned sites then do nothing.
+    '';
 
     engine = mkOption {
       type = types.enum [

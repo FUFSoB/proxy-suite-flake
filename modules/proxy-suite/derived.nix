@@ -321,10 +321,10 @@ let
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
   clashApiEnabled = singBoxEnabled;
   perAppZapretEnabled = perAppZapretCfg.enable;
+  # The system-wide instance; per-app zapret runs its own.
+  zapretGlobalEnabled = zapretCfg.enable && zapretCfg.global.enable;
   zapretCutoffEnabled =
-    zapretEngine == "zapret2"
-    && (zapretCfg.enable || perAppZapretEnabled)
-    && zapretCfg.zapret2.cutoff.enable;
+    zapretEngine == "zapret2" && zapretCfg.enable && zapretCfg.zapret2.cutoff.enable;
   # The cut-off networks no whitelisted name fixes go through the proxy outbound.
   zapretCutoffProxyFallback =
     zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
@@ -464,7 +464,8 @@ let
       perAppTun = 18535;
     };
 
-    xraySidecarBasePorts = {
+    # One loopback VLESS inbound per stack's XRay sidecar, however many outbounds it carries.
+    xraySidecarPorts = {
       socks = 33080;
       tun = 33180;
       perAppTun = 33280;
@@ -509,6 +510,7 @@ in
     zapretEngine
     perAppZapretCfg
     perAppZapretEnabled
+    zapretGlobalEnabled
     zapretCutoffEnabled
     zapretCutoffProxyFallback
     userControlCfg

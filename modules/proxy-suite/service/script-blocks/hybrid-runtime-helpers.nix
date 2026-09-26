@@ -9,14 +9,18 @@ let
     ;
 in
 
-routingMark: xraySidecarBasePort: xrayDnsBridgePort:
+routingMark: xraySidecarPort: xrayDnsBridgePort:
 
 lib.optionalString hybridEnabled ''
   XRAY_OUTBOUNDS_JSON='[]'
-  XRAY_INBOUNDS_JSON='[]'
+  XRAY_CLIENTS_JSON='[]'
   XRAY_ROUTE_RULES_JSON='[]'
-  XRAY_SIDECAR_NEXT_PORT=${toString xraySidecarBasePort}
+  XRAY_SIDECAR_PORT=${toString xraySidecarPort}
   XRAY_SIDECAR_DNS_PORT=${toString xrayDnsBridgePort}
+  # Client ids: this run's random prefix plus a counter, so every sidecar outbound has its
+  # own and no other local user can guess one.
+  XRAY_SIDECAR_SECRET=$(cat /proc/sys/kernel/random/uuid)
+  XRAY_SIDECAR_NEXT_ID=0
 
   _proxy_suite_add_sing_box_ob() {
     local ob="$1"
@@ -24,37 +28,42 @@ lib.optionalString hybridEnabled ''
   }
 
   # $1 a JSON array of XRay outbounds, each tagged. One jq pass for the lot: each gets a
-  # loopback SOCKS inbound on the sidecar and stands in sing-box as a hop to it.
+  # client on the sidecar's one loopback VLESS inbound, routed to it by its email, and
+  # stands in sing-box as a hop to it. VLESS rather than SOCKS: UDP rides the stream
+  # (XUDP) with the client id, where SOCKS UDP datagrams carry no user to route by.
   _proxy_suite_add_xray_sidecar_obs() {
     local batch
     batch=$(${jq} -c \
-      --argjson base "$XRAY_SIDECAR_NEXT_PORT" \
+      --argjson next "$XRAY_SIDECAR_NEXT_ID" \
+      --arg secret "$XRAY_SIDECAR_SECRET" \
+      --argjson port "$XRAY_SIDECAR_PORT" \
       --argjson mark ${
         if xraySidecarRoutingMark == null then "null" else toString xraySidecarRoutingMark
       } '
+      def hex12: [range(11; -1; -1) as $i | (. / pow(16; $i) | floor) % 16 | "0123456789abcdef"[.:. + 1]] | add;
       to_entries | map(
-        ($base + .key) as $port
-        | ("proxy-suite-xray-" + ($port | tostring)) as $auth
+        ($secret[:24] + ($next + .key | hex12)) as $id
         | .value.tag as $tag
         | {outbound: (.value
              ${lib.optionalString (
                xraySidecarRoutingMark != null
              ) "| .streamSettings.sockopt.mark = $mark"}
              | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")),
-           inbound: {tag: ($tag + "-inbound"), listen: "127.0.0.1", port: $port, protocol: "socks",
-             settings: {auth: "password", udp: true, accounts: [{user: $auth, pass: $auth}]}},
-           rule: {type: "field", inboundTag: [$tag + "-inbound"], outboundTag: $tag},
-           hop: ({type: "socks", tag: $tag, server: "127.0.0.1", server_port: $port, version: "5",
-             username: $auth, password: $auth}${
+           client: {id: $id, email: $tag},
+           rule: {type: "field", inboundTag: ["sidecar-in"], user: [$tag], outboundTag: $tag},
+           hop: ({type: "vless", tag: $tag, server: "127.0.0.1", server_port: $port, uuid: $id,
+             packet_encoding: "xudp"}${
                lib.optionalString (routingMark != null) " + {routing_mark: ${toString routingMark}}"
              })})
-      | {outbounds: map(.outbound), inbounds: map(.inbound), rules: map(.rule), hops: map(.hop)}
+      | {outbounds: map(.outbound), clients: map(.client), rules: map(.rule), hops: map(.hop)}
     ' <<< "$1")
-    XRAY_SIDECAR_NEXT_PORT=$((XRAY_SIDECAR_NEXT_PORT + $(${jq} '.outbounds | length' <<< "$batch")))
-    XRAY_OUTBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.outbounds' <<< "$XRAY_OUTBOUNDS_JSON")
-    XRAY_INBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.inbounds' <<< "$XRAY_INBOUNDS_JSON")
-    XRAY_ROUTE_RULES_JSON=$(${jq} -c --argjson b "$batch" '. + $b.rules' <<< "$XRAY_ROUTE_RULES_JSON")
-    OUTBOUNDS_JSON=$(${jq} -c --argjson b "$batch" '. + $b.hops' <<< "$OUTBOUNDS_JSON")
+    XRAY_SIDECAR_NEXT_ID=$((XRAY_SIDECAR_NEXT_ID + $(${jq} '.outbounds | length' <<< "$batch")))
+    # Through a file, not --argjson: a big subscription's batch outgrows the kernel's
+    # 128 KiB limit on one argument.
+    XRAY_OUTBOUNDS_JSON=$(${jq} -c --slurpfile b <(printf '%s' "$batch") '. + $b[0].outbounds' <<< "$XRAY_OUTBOUNDS_JSON")
+    XRAY_CLIENTS_JSON=$(${jq} -c --slurpfile b <(printf '%s' "$batch") '. + $b[0].clients' <<< "$XRAY_CLIENTS_JSON")
+    XRAY_ROUTE_RULES_JSON=$(${jq} -c --slurpfile b <(printf '%s' "$batch") '. + $b[0].rules' <<< "$XRAY_ROUTE_RULES_JSON")
+    OUTBOUNDS_JSON=$(${jq} -c --slurpfile b <(printf '%s' "$batch") '. + $b[0].hops' <<< "$OUTBOUNDS_JSON")
   }
 
   # $1 one XRay outbound, $2 its tag.
@@ -69,9 +78,10 @@ lib.optionalString hybridEnabled ''
     ${jq} -n \
       --arg loglevel "$XRAY_LOGLEVEL" \
       --argjson dns_port "$XRAY_SIDECAR_DNS_PORT" \
-      --argjson inbounds "$XRAY_INBOUNDS_JSON" \
-      --argjson outbounds "$XRAY_OUTBOUNDS_JSON" \
-      --argjson route_rules "$XRAY_ROUTE_RULES_JSON" \
+      --argjson port "$XRAY_SIDECAR_PORT" \
+      --slurpfile clients <(printf '%s' "$XRAY_CLIENTS_JSON") \
+      --slurpfile outbounds <(printf '%s' "$XRAY_OUTBOUNDS_JSON") \
+      --slurpfile route_rules <(printf '%s' "$XRAY_ROUTE_RULES_JSON") \
       '
       {
         log: {
@@ -88,11 +98,19 @@ lib.optionalString hybridEnabled ''
             }
           ]
         },
-        inbounds: $inbounds,
-        outbounds: ($outbounds + [{protocol:"freedom",tag:"direct"}]),
+        inbounds: [
+          {
+            tag: "sidecar-in",
+            listen: "127.0.0.1",
+            port: $port,
+            protocol: "vless",
+            settings: {clients: $clients[0], decryption: "none"}
+          }
+        ],
+        outbounds: ($outbounds[0] + [{protocol:"freedom",tag:"direct"}]),
         routing: {
           domainStrategy: "AsIs",
-          rules: ($route_rules + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])
+          rules: ($route_rules[0] + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])
         }
       }' > "$RUNTIME_DIR/xray-sidecar.json"
   }

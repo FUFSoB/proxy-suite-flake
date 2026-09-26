@@ -38,7 +38,7 @@ let
     autoProxyStateDir
     outboundTestPort
     xrayDnsBridgePorts
-    xraySidecarBasePorts
+    xraySidecarPorts
     ;
 
   autoProxyRender = import ../autoproxy-render.nix {
@@ -175,7 +175,7 @@ let
       routingMark ? null,
       enableLocalProxyAuth ? false,
       xrayTunDnsRuntime ? false,
-      xraySidecarBasePort ? xraySidecarBasePorts.socks,
+      xraySidecarPort ? xraySidecarPorts.socks,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
       enableAutoProxy ? false,
       enableOutboundTest ? false,
@@ -197,7 +197,7 @@ let
       ROUTE_RULES_JSON='[]'
       ROUTE_MODE_ACTIVE=false
       CLEAR_DNS_RULES=false
-      ${hybridRuntimeHelpersBlock routingMark xraySidecarBasePort xrayDnsBridgePort}
+      ${hybridRuntimeHelpersBlock routingMark xraySidecarPort xrayDnsBridgePort}
       ${subscriptionCacheHelpersBlock}
       ${lib.optionalString enableLocalProxyAuth ''
         LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
@@ -447,7 +447,7 @@ let
     # TProxy takes the system resolver's own upstream queries too, so a proxy server's name
     # has to resolve inside XRay, as under the TUN.
     xrayTunDnsRuntime = pureXrayEnabled && globalTproxy.enable;
-    xraySidecarBasePort = xraySidecarBasePorts.socks;
+    xraySidecarPort = xraySidecarPorts.socks;
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
     # Only the socks unit: relayed traffic reaches it, and the prober needs one home.
     enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
@@ -460,7 +460,7 @@ let
     configFile = tunFile;
     routingMark = if pureXrayEnabled then globalTproxy.proxyMark else null;
     xrayTunDnsRuntime = pureXrayEnabled;
-    xraySidecarBasePort = xraySidecarBasePorts.tun;
+    xraySidecarPort = xraySidecarPorts.tun;
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
     # Pure XRay's TUN routes by ip rules instead: see xrayTunUpScript.
     excludeServiceUserFromTun = !pureXrayEnabled;
@@ -471,7 +471,7 @@ let
     configFile = perAppTunFile;
     routingMark = if xrayEnabled || globalTproxy.enable then globalTproxy.proxyMark else null;
     xrayTunDnsRuntime = pureXrayEnabled;
-    xraySidecarBasePort = xraySidecarBasePorts.perAppTun;
+    xraySidecarPort = xraySidecarPorts.perAppTun;
     xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
   };
 in

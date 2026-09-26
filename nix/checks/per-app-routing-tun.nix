@@ -73,7 +73,8 @@ in
   assertions = [
     # -- perAppRouting: createDefaultProfiles injects curated tun profile when backend is enabled --
     (
-      assert builtins.length perAppRoutingTunProfiles == 2;
+      # proxychains is off, so no proxychains profile.
+      assert builtins.length perAppRoutingTunProfiles == 1;
       assert builtins.any (
         profile: profile.name == "tun" && profile.route == "tun"
       ) perAppRoutingTunProfiles;

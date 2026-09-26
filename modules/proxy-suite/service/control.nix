@@ -14,6 +14,7 @@ let
     perAppRoutingTproxy
     perAppZapretCfg
     zapretEngine
+    zapretGlobalEnabled
     zapretCutoffEnabled
     constants
     selectionMode
@@ -100,7 +101,8 @@ in
       INBOUNDS_SUBS_FILE = proxyInboundsSubscriptionsFile;
       INBOUNDS_SUB_BASE_URL =
         if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
-      ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2");
+      # Only the system-wide instance reads the site lists; per-app zapret handles all traffic.
+      ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2" && zapretGlobalEnabled);
       ZAPRET_STATE_DIR = constants.zapret2StateDir;
       ZAPRET_CUTOFF_ENABLED = flag zapretCutoffEnabled;
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;

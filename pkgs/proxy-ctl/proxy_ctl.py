@@ -2451,6 +2451,8 @@ def cmd_zapret(*args):
     elif args[:1] == ("cutoff",):
         cmd_zapret_cutoff(*args[1:])
     else:
+        if env("PER_APP_ROUTING_ZAPRET_ENABLED") == "1" and not svc_exists("proxy-suite-zapret"):
+            die("zapret runs per app only (zapret.global.enable = false): proxy-ctl apps run <zapret profile> -- <command>")
         _toggle("proxy-suite-zapret", "zapret", *args)
 
 
@@ -2517,7 +2519,7 @@ def _truncate(path):
 
 def cmd_zapret_auto(verb="list", domain="", *_):
     if env("ZAPRET_AUTO_ENABLED") != "1":
-        die('Learned hostlists need zapret.engine = "zapret2".')
+        die('Learned hostlists need zapret.engine = "zapret2" with zapret.global.enable.')
     auto = _zapret_auto_file("zapret-hosts-auto.txt")
     user = _zapret_auto_file("zapret-hosts-user.txt")
     exclude = _zapret_auto_file("zapret-hosts-user-exclude.txt")
@@ -3028,10 +3030,9 @@ def _ensure_app_routing():
     require_enabled("PER_APP_ROUTING_ENABLED", "perAppRouting")
 
 
-def _check_no_global_proxy(route):
-    for svc in ("proxy-suite-tun", "proxy-suite-tproxy"):
-        if svc_active(f"{svc}.service"):
-            die(f"Global {svc}.service is active. Stop it before using route={route} profiles.")
+def _active_global_proxy():
+    """The global TUN or TProxy unit that is up, which the per-app backends would clash with."""
+    return next((svc for svc in ("proxy-suite-tun", "proxy-suite-tproxy") if svc_active(f"{svc}.service")), "")
 
 
 def _has_units(*args):
@@ -3143,7 +3144,12 @@ def cmd_apps_run(profile="", *cmd):
         _exec(["proxychains4", *env("PROXYCHAINS_QUIET_ARG").split(), "-f", config, *cmd])
     elif route in SLICE_ROUTES:
         slice_base, enabled, option = SLICE_ROUTES[route]
-        _check_no_global_proxy(route)
+        # The global mode already carries the app's traffic, and wrapPerApp launchers must
+        # still start the app: run it as it is rather than refuse.
+        global_svc = _active_global_proxy()
+        if global_svc:
+            print(f"note: {global_svc}.service is active; running without route={route}.", file=sys.stderr)
+            _exec(list(cmd))
         if env(enabled) != "1":
             die(f"Profile '{profile}' uses route={route}, but {option} is false.")
         _warn_stub_resolver(route)

@@ -116,7 +116,8 @@ pkgs.testers.runNixOSTest {
 
     with subtest("the rendered config carries both listeners"):
         cfg = "/run/proxy-suite-inbounds/config.json"
-        server.succeed(f"test $(jq -r '.inbounds | length' {cfg}) = 2")
+        # Plus api-in, the stats API's socket.
+        server.succeed(f"jq -e '[.inbounds[].tag] | sort == [\"api-in\", \"ss-in\", \"vless-in\"]' {cfg}")
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\" and .port == 8443)' {cfg}")
         server.succeed(f"jq -e '.inbounds[] | select(.tag == \"ss-in\" and .port == 8388)' {cfg}")
         # Credentials live only in the runtime config, never in the store.

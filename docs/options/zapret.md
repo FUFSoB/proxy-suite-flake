@@ -16,6 +16,8 @@ Part of the [proxy-suite options reference](./index.md).
     - [upstreamIps](#services-proxy-suite-zapret-directsync-upstreamips)
     - [userIps](#services-proxy-suite-zapret-directsync-userips)
   - [engine](#services-proxy-suite-zapret-engine)
+  - global
+    - [enable](#services-proxy-suite-zapret-global-enable)
   - zapret-discord-youtube
     - [configName](#services-proxy-suite-zapret-zapret-discord-youtube-configname)
     - [domains](#services-proxy-suite-zapret-zapret-discord-youtube-domains)
@@ -63,7 +65,7 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-zapret-enable"></a>
 ## services\.proxy-suite\.zapret\.enable
 
-Whether to enable zapret DPI bypass\.
+Whether to enable zapret DPI bypass\. Needed by ` perAppRouting.zapret ` too\.
 
 **Type:** boolean\
 **Default:** `false`
@@ -120,6 +122,16 @@ Which zapret to run:
 **Type:** one of “zapret-discord-youtube”, “zapret2”\
 **Default:** `"zapret-discord-youtube"`\
 **Example:** `"zapret2"`
+
+<a id="services-proxy-suite-zapret-global-enable"></a>
+## services\.proxy-suite\.zapret\.global\.enable
+
+Run zapret system-wide\. Turn off to keep zapret to apps started with
+` proxy-ctl apps run zapret ` (` perAppRouting.zapret `); ` directSync `, ` cidrExemption ` and
+zapret2’s learned sites then do nothing\.
+
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret-discord-youtube-configname"></a>
 ## services\.proxy-suite\.zapret\.zapret-discord-youtube\.configName

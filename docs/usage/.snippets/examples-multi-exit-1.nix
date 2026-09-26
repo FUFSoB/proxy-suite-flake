@@ -30,10 +30,10 @@ in
       routing = {
         # Unlisted sites leave directly, where zapret2 unblocks what DPI blocks.
         default = "direct";
-        # Russian sites are routed by the last rule below instead.
+        # Russian sites go to WARP by the last rule below instead.
         directRu = false;
 
-        # Checked in order; the first match wins.
+        # Checked in order, before the lists; the first match wins.
         rules = [
           {
             outbound = "ssh-proxy";
@@ -43,7 +43,7 @@ in
             outbound = "warp";
             geosites = [ "youtube" ];
           }
-          # To mask your IP from Russian services
+          # Russian services see WARP's address instead of this host's.
           {
             outbound = "warp";
             geosites = [ "category-ru" ];
@@ -60,8 +60,8 @@ in
         };
       };
 
-      # For blocked sites no list names yet. YouTube is pinned to WARP above, so it
-      # is kept out of the probes.
+      # For blocked sites no list names yet. YouTube already has its rule, so its video
+      # hosts are not worth probing.
       autoProxy = {
         enable = true;
         exclude = [ "googlevideo.com" "gvt1.com" ];
@@ -85,7 +85,8 @@ in
       hostKeyFile = "/run/secrets/proxy-ssh-known-hosts";
     };
 
-    # Tor through the proxy, since this network blocks Tor.
+    # .onion names go to Tor without a rule. Tor is blocked here, so it connects
+    # through the proxy.
     tor = {
       enable = true;
       asOutbound = true;
