@@ -767,6 +767,15 @@ class ZapretAutoTest(EnvTest):
         self.assertEqual(ctl.read_text(auto), "")
         self.assertEqual(ctl.read_text(state), "")
 
+    def test_exclude_takes_learned_ip_literals(self):
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        auto = self.write("zapret-hosts-auto.txt", "82.146.44.102\na.example\n")
+        ok(ctl.cmd_zapret_auto, "exclude", "82.146.44.102")
+        self.assertEqual(ctl.read_text(auto), "a.example\n")
+        self.assertEqual(ctl.read_text(self.path("zapret-hosts-user-exclude.txt")), "82.146.44.102\n")
+        ok(ctl.cmd_zapret_auto, "forget", "2001:db8::1")
+        self.assertIn("zapret auto add <domain>", run(ctl.cmd_zapret_auto, "add", "1.2.3")[2])
+
 
 class InboundsTest(EnvTest):
     def test_stats(self):

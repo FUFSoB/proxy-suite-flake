@@ -8,6 +8,7 @@ import datetime
 import getpass
 import http.client
 import importlib
+import ipaddress
 import json
 import os
 import re
@@ -2517,6 +2518,17 @@ def _truncate(path):
     _replace_lines(path, lambda _: False)
 
 
+def _zapret_auto_host(host):
+    """A hostname, or an IP literal: nfqws2 learns those from bare-IP requests."""
+    if HOSTNAME.fullmatch(host):
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 def cmd_zapret_auto(verb="list", domain="", *_):
     if env("ZAPRET_AUTO_ENABLED") != "1":
         die('Learned hostlists need zapret.engine = "zapret2" with zapret.global.enable.')
@@ -2524,7 +2536,7 @@ def cmd_zapret_auto(verb="list", domain="", *_):
     user = _zapret_auto_file("zapret-hosts-user.txt")
     exclude = _zapret_auto_file("zapret-hosts-user-exclude.txt")
 
-    if verb in ("add", "forget", "exclude", "unpin", "include") and not HOSTNAME.fullmatch(domain):
+    if verb in ("add", "forget", "exclude", "unpin", "include") and not _zapret_auto_host(domain):
         usage(f"zapret auto {verb} <domain>")
     if verb == "list":
         if os.path.isfile(auto) and os.path.getsize(auto) > 0:
