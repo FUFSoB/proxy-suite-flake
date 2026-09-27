@@ -131,7 +131,7 @@ in
     '';
   });
 
-  # Smaller: no firmware (a VM needs none, 800M+), docs, git, RAID or memtest.
+  # Smaller: no firmware (a VM needs none, 800M+), docs, RAID or memtest.
   hardware.enableRedistributableFirmware = lib.mkForce false;
   documentation = {
     enable = lib.mkForce false;
@@ -140,7 +140,6 @@ in
     info.enable = lib.mkForce false;
     nixos.enable = lib.mkForce false;
   };
-  programs.git.enable = lib.mkForce false;
   environment.defaultPackages = lib.mkForce [ ];
   boot.swraid.enable = lib.mkForce false;
   boot.loader.grub.memtest86.enable = lib.mkForce false;
@@ -163,6 +162,9 @@ in
   # Lets the VPS panel see the installer's address.
   services.qemuGuest.enable = true;
 
+  # No channel here (channel.nix is off): without this NIX_PATH still names root's
+  # channels, and every lookup warns that they do not exist. <nixpkgs> is the flake's.
+  nix.channel.enable = false;
   nix.settings.experimental-features = [
     "nix-command"
     "flakes"
@@ -179,6 +181,7 @@ in
   programs.fish.enable = true;
   users.defaultUserShell = pkgs.fish;
   programs.vim.enable = true;
+  programs.git.enable = true;
   environment.systemPackages = [
     installer
     (pkgs.callPackage ./net-rescue.nix { })

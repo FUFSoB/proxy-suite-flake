@@ -82,7 +82,8 @@ in
       default = true;
       description = ''
         Admin comforts: fish as the login shell, vim next to nano (still the default
-        editor), and htop, tmux, jq, mtr, iftop, dig and ncdu.
+        editor), and git, htop, tmux, jq, mtr, iftop, dig, ncdu, iperf3, tcpdump,
+        bandwhich, nload, lsof and nvd.
       '';
     };
 
@@ -282,6 +283,27 @@ in
       "flakes"
     ];
 
+    # A small disk left alone for months: old generations, store duplicates and logs are
+    # cleaned up, not collected until it is full.
+    nix.gc = {
+      automatic = lib.mkDefault true;
+      dates = lib.mkDefault "weekly";
+      options = lib.mkDefault "--delete-older-than 14d";
+    };
+    nix.optimise.automatic = lib.mkDefault true;
+    boot.loader.grub.configurationLimit = lib.mkDefault 10;
+    services.journald.settings.Journal.SystemMaxUse = lib.mkDefault "200M";
+
+    # Password logins on a public address: repeated failures get the address banned
+    # (the sshd jail follows sshPort), for longer each time it comes back.
+    services.fail2ban = {
+      enable = lib.mkDefault true;
+      bantime-increment.enable = lib.mkDefault true;
+    };
+
+    # Traffic per day and month, against the plan's quota: vnstat -m.
+    services.vnstat.enable = lib.mkDefault true;
+
     security.acme = {
       acceptTerms = true;
       defaults.email = cfg.acmeEmail;
@@ -376,14 +398,22 @@ in
       pkgs.iftop
       pkgs.dig
       pkgs.ncdu
+      pkgs.iperf3
+      pkgs.tcpdump
+      pkgs.nload
+      pkgs.lsof
+      pkgs.nvd
     ];
 
     programs = lib.mkIf cfg.tools.enable {
       fish.enable = true;
       # Next to nano, which stays the default editor.
       vim.enable = true;
+      git.enable = true;
       tmux.enable = true;
       mtr.enable = true;
+      # Bandwidth per process and connection, without sudo (a capability wrapper).
+      bandwhich.enable = true;
     };
     users.defaultUserShell = lib.mkIf cfg.tools.enable pkgs.fish;
 

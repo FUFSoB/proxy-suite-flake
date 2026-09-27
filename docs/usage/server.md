@@ -16,8 +16,11 @@ the VPS from it. The console installer asks for the public IP, users, an optiona
 domain, whether to run the QEMU guest agent (so the VPS panel sees the server's state)
 and the disk to erase, then installs NixOS with `nixosModules.server`: VLESS
 REALITY, TLS and WS listeners, ACME certificates and SSH, with fish as the login shell
-and vim (nano stays the default editor), htop, tmux, jq, mtr, iftop, dig and ncdu
-(`services.proxy-suite-server.tools`).
+and vim (nano stays the default editor), git, htop, tmux, jq, mtr, iftop, dig, ncdu,
+iperf3, tcpdump, bandwhich, nload, lsof and nvd (`services.proxy-suite-server.tools`).
+It also collects Nix garbage weekly (generations older than 14 days, 10 boot entries at
+most), caps the journal at 200M, bans addresses that keep failing SSH logins (fail2ban),
+and counts traffic per day and month (`vnstat -m`); each is a NixOS default to override.
 It installs the proxy-suite source the ISO carries: `/etc/nixos` follows this repository
 on GitHub when the ISO's commit is there, and holds a copy otherwise. The disk is laid out by disko
 (`services.proxy-suite-server.disko`): btrfs with `compress=zstd:3`, subvolumes `@` on `/`,

@@ -182,6 +182,16 @@ in
     (ok (ipServer.config.users.defaultUserShell.pname == "fish"))
     (ok (ipServer.config.users.users.admin.shell.pname == "fish"))
     (ok (ipServer.config.programs.vim.enable && ipServer.config.programs.nano.enable))
+    (ok (ipServer.config.programs.git.enable && !plainServer.config.programs.git.enable))
+    # Upkeep: garbage collection, a journal cap, fail2ban on the SSH port, vnstat.
+    (ok (ipServer.config.nix.gc.automatic && ipServer.config.nix.optimise.automatic))
+    (ok (ipServer.config.boot.loader.grub.configurationLimit == 10))
+    (ok (ipServer.config.services.journald.settings.Journal.SystemMaxUse == "200M"))
+    (ok (
+      ipServer.config.services.fail2ban.enable
+      && (mkServer { sshPort = 2222; }).config.services.fail2ban.jails.sshd.settings.port == "2222"
+    ))
+    (ok ipServer.config.services.vnstat.enable)
     (ok (ipServer.config.environment.variables.EDITOR == "nano"))
     (ok (!plainServer.config.programs.fish.enable && !plainServer.config.programs.vim.enable))
     # The console banner names the server and the admin account, interpolated: an escaped
