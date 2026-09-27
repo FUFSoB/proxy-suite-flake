@@ -21,6 +21,11 @@ in
   tunInterfaces = lib.unique (
     lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
     ++ lib.optional (cfg.proxy.enable && cfg.perAppRouting.tun.enable) cfg.perAppRouting.tun.interface
+    # TProxy reroutes local apps' packets out lo to the backend's listener; desync there
+    # corrupts the handshake the backend reads, like on a TUN.
+    ++ lib.optional (
+      cfg.proxy.enable && (cfg.proxy.tproxy.enable || cfg.perAppRouting.tproxy.enable)
+    ) "lo"
   );
 
   # The transparent backends steer the same packets; a per-app zapret instance replaces them.

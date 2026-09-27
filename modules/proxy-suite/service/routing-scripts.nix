@@ -109,6 +109,9 @@ in
     ${deleteXrayTunReplyTable}
     ${nft} -f ${xrayTunReplyRules}
 
+    # XRay may not have brought the link up yet, and routes via a down link fail with
+    # "Device for nexthop is not up".
+    ${ip} link set dev ${lib.escapeShellArg globalTun.interface} up
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
 

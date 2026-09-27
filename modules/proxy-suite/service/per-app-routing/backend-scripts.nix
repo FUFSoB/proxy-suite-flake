@@ -75,6 +75,9 @@ let
     }}
     ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
+    # The backend may not have brought the link up yet, and routes via a down link fail
+    # with "Device for nexthop is not up".
+    ${ip} link set dev ${lib.escapeShellArg perAppRoutingTun.interface} up
     tun_addr="''${tun_cidr%%/*}"
     tun_route_prefix="$(cidr_network "$tun_cidr")"
     ${ip} -4 addr replace "$tun_cidr" dev ${lib.escapeShellArg perAppRoutingTun.interface}

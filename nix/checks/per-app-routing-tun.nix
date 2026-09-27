@@ -148,6 +148,7 @@ in
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
       assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
       # With proxy.ipv6, wrapped apps' IPv6 goes through the app TUN too.
+      assert pkgs.lib.hasInfix "link set dev psperapptun0 up" perAppRoutingTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' perAppRoutingTunUpScript;
       assert pkgs.lib.hasInfix "-6 route replace default dev psperapptun0 table 101"
         perAppRoutingTunUpScript;

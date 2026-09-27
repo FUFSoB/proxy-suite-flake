@@ -84,6 +84,18 @@ let
   tunGlobalBase = mkZapretBase tunFixture;
   tunPerAppBase = mkZapretBaseFor tunFixture "proxy-suite-per-app-zapret";
   tunWithoutPerAppZapretBase = mkZapretBase (mkTunFixture false);
+  tproxyBase = mkZapretBase (evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        perAppRouting = {
+          enable = true;
+          tproxy.enable = true;
+        };
+        zapret.enable = true;
+      };
+    }
+  ]);
 
   runtime = pkgs.runCommand "proxy-suite-per-app-zapret-runtime-check" { } ''
     global_config=${perAppRoutingZapretBase}/config
@@ -157,6 +169,13 @@ let
       DISABLE_IPV4=1 zapret_custom_firewall 1 > ipt-rules
       ! grep '^4 ' ipt-rules
     done
+
+    # TProxy reroutes local apps' packets out lo; desync must stay off it.
+    source ${tproxyBase}/init.d/sysv/custom.d/50-proxy-suite-custom.sh
+    zapret_custom_firewall_nft > rules
+    grep -Fx 'insert rule inet test_zapret postrouting oifname "lo" return comment "proxy-suite TUN bypass"' rules
+    zapret_custom_firewall 1 > ipt-rules
+    grep -Fx '4 1 POSTROUTING -t mangle -o lo -m comment --comment proxy-suite global TUN bypass -j RETURN' ipt-rules
 
     touch "$out"
   '';

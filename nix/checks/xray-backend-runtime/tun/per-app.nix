@@ -39,6 +39,7 @@
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix checkConstants.perAppTunIPv6Address xrayPerAppTunUpScript;
       assert !(pkgs.lib.hasInfix "uplink_addr" xrayPerAppTunUpScript);
+      assert pkgs.lib.hasInfix "link set dev psperapptun0 up" xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' xrayPerAppTunUpScript;
       assert pkgs.lib.hasInfix

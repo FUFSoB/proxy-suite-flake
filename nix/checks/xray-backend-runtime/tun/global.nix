@@ -78,6 +78,7 @@
       assert pkgs.lib.hasInfix "xray_tun_dns_runtime" xrayTunStartScript;
       assert pkgs.lib.hasInfix ''tun_route_prefix="$(cidr_network "$tun_cidr")"'' xrayTunUpScript;
       assert pkgs.lib.hasInfix checkConstants.globalTunIPv6Address xrayTunUpScript;
+      assert pkgs.lib.hasInfix "link set dev singtun0 up" xrayTunUpScript;
       assert pkgs.lib.hasInfix ''addr replace "$tun_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev singtun0'' xrayTunUpScript;
       assert pkgs.lib.hasInfix
