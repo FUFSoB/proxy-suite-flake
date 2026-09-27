@@ -2,8 +2,9 @@
 # applied through a systemd-networkd file in /run, the same way the installed system
 # applies them from /etc, so settings that work here work after the reboot.
 #
-# Sets NET_IFACE NET_MAC NET_DHCP NET_V4 NET_V4_GW NET_V6 NET_V6_GW NET_DNS. Unattended
-# runs (PSI_UNATTENDED=1) take every answer from PSI_<NAME> and fail instead of re-asking.
+# Sets NET_IFACE NET_MAC NET_DHCP NET_V4 NET_V4_GW NET_V6 NET_V6_GW NET_DNS. A wrong
+# answer asks that question again. Unattended runs (PSI_UNATTENDED=1) take every answer
+# from PSI_<NAME> and fail instead of re-asking.
 
 NET_RUNTIME_FILE=/run/systemd/network/05-proxy-suite-net.network
 
@@ -11,33 +12,95 @@ say() { printf '%s\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 
+# Answers given so far, by VAR: asking VAR again offers the last answer as the default.
+# With ANSWERS_FILE set (load_answers), they also outlive the run.
+declare -A REMEMBERED=()
+ANSWERS_FILE=""
+
+# load_answers FILE: keep answers in FILE, starting from those it already holds.
+# Succeeds only if it held some.
+load_answers() {
+  ANSWERS_FILE=$1
+  [[ -s $ANSWERS_FILE ]] || return 1
+  # shellcheck source=/dev/null
+  source "$ANSWERS_FILE"
+}
+
+save_answers() {
+  local name
+  [[ -n $ANSWERS_FILE ]] || return 0
+  install -d -m 0700 "$(dirname "$ANSWERS_FILE")"
+  for name in "${!REMEMBERED[@]}"; do
+    printf 'REMEMBERED[%s]=%q\n' "$name" "${REMEMBERED[$name]}"
+  done >"$ANSWERS_FILE.tmp"
+  mv "$ANSWERS_FILE.tmp" "$ANSWERS_FILE"
+}
+
+forget() {
+  local name
+  for name in "$@"; do unset "REMEMBERED[$name]"; done
+  save_answers
+}
+
 # ask VAR "Question" [default]. PSI_<VAR> in the environment answers it unattended.
+# An earlier answer replaces the default. An empty default makes the question
+# optional: "-" answers it with nothing even when an earlier answer is offered.
 ask() {
-  local __preset="PSI_$1" __reply
+  local __preset="PSI_$1" __reply __default=${3-} __hint __optional=false
   if [[ -n ${!__preset+x} ]]; then
     __reply=${!__preset}
-  elif [[ -n ${3-} ]]; then
-    read -r -p "$2 [$3]: " __reply || true
+    [[ -n $__reply ]] || __reply=$__default
+    printf -v "$1" '%s' "$__reply"
+    return 0
+  fi
+  if [[ -n ${3+x} && -z $3 ]]; then
+    __optional=true
+  fi
+  if [[ -n ${REMEMBERED[$1]-} ]]; then
+    __default=${REMEMBERED[$1]}
+  fi
+  __hint=$__default
+  if [[ $__optional == true && -n $__default ]]; then
+    __hint+=", - for none"
+  fi
+  if [[ -n $__hint ]]; then
+    read -r -p "$2 [$__hint]: " __reply || true
   else
     read -r -p "$2: " __reply || true
   fi
-  [[ -n $__reply ]] || __reply=${3-}
+  if [[ $__optional == true && $__reply == - ]]; then
+    __reply=""
+  elif [[ -z $__reply ]]; then
+    __reply=$__default
+  fi
+  REMEMBERED[$1]=$__reply
+  save_answers
   printf -v "$1" '%s' "$__reply"
 }
 
 # ask_yes VAR "Question" y|n; sets VAR to true or false.
 ask_yes() {
   local __yn
-  ask "$1" "$2 (y/n)" "$3"
-  __yn=${!1}
-  case ${__yn,,} in
-    y | yes | true) printf -v "$1" '%s' true ;;
-    *) printf -v "$1" '%s' false ;;
-  esac
+  while true; do
+    ask "$1" "$2 (y/n)" "$3"
+    __yn=${!1}
+    case ${__yn,,} in
+      y | yes | true)
+        printf -v "$1" '%s' true
+        return 0
+        ;;
+      n | no | false)
+        printf -v "$1" '%s' false
+        return 0
+        ;;
+    esac
+    reject "Answer y or n." "$1"
+  done
 }
 
-# Drop a rejected answer so the next ask prompts; unattended, give up instead.
-reject() {
+# retry MESSAGE VAR...: ask VARs again, offering the answers just given; unattended,
+# give up instead.
+retry() {
   warn "$1"
   shift
   if [[ -n ${PSI_UNATTENDED-} ]]; then
@@ -47,6 +110,13 @@ reject() {
   for name in "$@"; do unset "PSI_$name"; done
 }
 
+# reject MESSAGE VAR...: like retry, but the answers are wrong, so they are not offered.
+reject() {
+  retry "$@"
+  shift
+  forget "$@"
+}
+
 is_ipv4() {
   local IFS=. octet
   [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
@@ -54,6 +124,15 @@ is_ipv4() {
 }
 
 is_ipv6() { [[ $1 == *:* && $1 =~ ^[0-9A-Fa-f:.]+$ ]]; }
+
+is_dns_list() {
+  local dns count=0
+  for dns in $1; do
+    is_ipv4 "$dns" || is_ipv6 "$dns" || return 1
+    count=$((count + 1))
+  done
+  ((count > 0))
+}
 
 mask_to_prefix() {
   local mask=$1 IFS=. octet bits=0
@@ -177,19 +256,31 @@ ask_network() {
       say "Gateway $NET_V4_GW is outside $NET_V4: it is routed on-link, as providers with /32 addresses expect."
     fi
 
-    ask NET_V6_IN "IPv6 address with prefix (empty to skip)" ""
-    if [[ -n $NET_V6_IN ]]; then
+    while true; do
+      ask NET_V6_IN "IPv6 address with prefix (empty to skip)" ""
+      [[ -n $NET_V6_IN ]] || break
       [[ $NET_V6_IN == */* ]] || NET_V6_IN="$NET_V6_IN/64"
-      if is_ipv6 "${NET_V6_IN%/*}"; then
+      prefix=${NET_V6_IN#*/}
+      if is_ipv6 "${NET_V6_IN%/*}" && [[ $prefix =~ ^[0-9]+$ ]] && ((prefix >= 1 && prefix <= 128)); then
         NET_V6=$NET_V6_IN
-        ask NET_V6_GW "IPv6 gateway" "fe80::1"
-      else
-        warn "Not an IPv6 address; skipping IPv6."
+        break
       fi
+      reject "Not an IPv6 address with a valid prefix." NET_V6_IN
+    done
+    if [[ -n $NET_V6 ]]; then
+      while true; do
+        ask NET_V6_GW "IPv6 gateway" "fe80::1"
+        is_ipv6 "$NET_V6_GW" && break
+        reject "Not an IPv6 address." NET_V6_GW
+      done
     fi
   fi
 
-  ask NET_DNS "DNS servers (space-separated)" "1.1.1.1 8.8.8.8"
+  while true; do
+    ask NET_DNS "DNS servers (space-separated)" "1.1.1.1 8.8.8.8"
+    is_dns_list "$NET_DNS" && break
+    reject "One or more IPv4 or IPv6 addresses, separated by spaces." NET_DNS
+  done
 }
 
 # Mirrors the systemd.network config of deploy/server-module.nix.
@@ -261,7 +352,7 @@ setup_network() {
     if apply_network && test_network; then
       return 0
     fi
-    reject "Network settings did not work; enter them again." \
+    retry "Network settings did not work; enter them again." \
       NET_IFACE NET_DHCP NET_ADDR NET_MASK NET_V4_GW NET_V6_IN NET_V6_GW NET_DNS
   done
 }
