@@ -2,7 +2,7 @@
 # certificates (for the domain, or the bare IP), SSH, and networking pinned to the
 # uplink's MAC. Written for the installer ISO (deploy/iso.nix), which fills in
 # host.nix, but usable on its own.
-{ proxySuiteModule }:
+{ proxySuiteModule, diskoModule }:
 
 {
   config,
@@ -58,6 +58,7 @@ in
 {
   imports = [
     proxySuiteModule
+    diskoModule
     "${modulesPath}/profiles/qemu-guest.nix"
   ];
 
@@ -80,6 +81,25 @@ in
       type = types.str;
       description = "Disk GRUB installs its BIOS stage to.";
       example = "/dev/vda";
+    };
+
+    disko = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Lay out bootDisk with disko (deploy/disk-layout.nix): a BIOS boot partition, a
+          512M ESP on /boot, and btrfs (compress=zstd:3) with subvolumes @ on /, @nix,
+          @varlog on /var/log, @home, and @swap holding a swap file. The filesystems then
+          come from here, not hardware-configuration.nix. Off for servers installed
+          before it, whose ext4 root hardware-configuration.nix mounts.
+        '';
+      };
+      swapSize = mkOption {
+        type = types.str;
+        default = "2G";
+        description = "Size of the swap file in the swap subvolume.";
+      };
     };
 
     network = {
@@ -179,9 +199,17 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    disko.devices =
+      lib.mkIf cfg.disko.enable
+        (import ./disk-layout.nix {
+          device = cfg.bootDisk;
+          inherit (cfg.disko) swapSize;
+        }).disko.devices;
+
     boot.loader.grub = {
       enable = true;
-      device = cfg.bootDisk;
+      # disko lists the disk with the BIOS boot partition itself; twice fails an assertion.
+      device = lib.mkIf (!cfg.disko.enable) cfg.bootDisk;
       # BIOS stage on the disk, EFI stage at the removable path: boots either way,
       # and needs no NVRAM entry the VPS may not keep.
       efiSupport = true;

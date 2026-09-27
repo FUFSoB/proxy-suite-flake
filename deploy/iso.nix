@@ -22,18 +22,10 @@ let
       {
         networking.hostName = "proxy-template";
         system.stateVersion = config.system.nixos.release;
-        fileSystems."/" = {
-          device = "/dev/disk/by-label/nixos";
-          fsType = "ext4";
-        };
-        fileSystems."/boot" = {
-          device = "/dev/disk/by-label/ESP";
-          fsType = "vfat";
-          options = [ "umask=077" ];
-        };
         services.proxy-suite-server = {
           enable = true;
           bootDisk = "/dev/vda";
+          disko.enable = true;
           network = {
             mac = "52:54:00:00:00:01";
             ipv4 = {
@@ -58,6 +50,8 @@ let
 
   installer = pkgs.callPackage ./installer.nix {
     xray = import ../pkgs/xray.nix { inherit pkgs; };
+    inherit (self.inputs.disko.packages.${system}) disko;
+    diskLayout = ./disk-layout.nix;
     # A github ref only for a clean, committed tree; the installer falls back to the
     # copy in PSI_FLAKE_SRC when it cannot be fetched (e.g. not pushed yet).
     flakeUrl = lib.optionalString (self ? rev) "github:FUFSoB/proxy-suite-flake/${self.rev}";
@@ -70,7 +64,12 @@ in
 
   isoImage = {
     edition = "proxy-suite";
-    storeContents = [ template.config.system.build.toplevel ] ++ lib.unique (inputSources self);
+    # The template's disko script brings the partitioning tools (btrfs-progs, sgdisk...).
+    storeContents = [
+      template.config.system.build.toplevel
+      template.config.system.build.diskoScript
+    ]
+    ++ lib.unique (inputSources self);
   };
 
   # The same stack the installed system uses, so settings tested here carry over.

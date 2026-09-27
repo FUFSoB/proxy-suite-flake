@@ -284,7 +284,7 @@ let
 
   serverModuleChecks = import ./server-module.nix {
     inherit checkLib pkgs mkInboundsSpec;
-    inherit (checkLib) system nixpkgs proxySuiteModule;
+    inherit (checkLib) system nixpkgs serverModule;
   };
 
   xrayBackendChecks = import ./xray-backends.nix {

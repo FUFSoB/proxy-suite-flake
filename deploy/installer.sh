@@ -40,16 +40,7 @@ confirm_install() {
 
 step() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
-# nvme0n1 -> nvme0n1p1, vda -> vda1
-partition() {
-  if [[ $1 =~ [0-9]$ ]]; then
-    printf '%sp%s' "$1" "$2"
-  else
-    printf '%s%s' "$1" "$2"
-  fi
-}
-
-# A stable name for GRUB, where the disk has one.
+# A stable name for disko and GRUB, where the disk has one.
 stable_disk_path() {
   local link
   for link in /dev/disk/by-id/*; do
@@ -204,7 +195,7 @@ show_summary() {
     net_summary="$NET_V4 via $NET_V4_GW${NET_V6:+, $NET_V6 via $NET_V6_GW} on $NET_IFACE ($NET_MAC)"
   fi
   cat <<SUMMARY
-  Disk          $DISK  (everything on it is erased)
+  Disk          $DISK  (everything on it is erased; btrfs, 2G swap file)
   Network       $net_summary
   DNS           $NET_DNS
   Public IP     $PUBLIC_IP
@@ -228,42 +219,20 @@ done
 
 # --- Partition ------------------------------------------------------------------
 step "Partitioning $DISK"
+boot_disk=$(stable_disk_path "$DISK")
 swapoff -a || true
 umount -R "$MNT" 2>/dev/null || true
-wipefs -af "$DISK"
-sgdisk --zap-all "$DISK"
-sgdisk \
-  -n 1:0:+1M -t 1:EF02 -c 1:bios \
-  -n 2:0:+512M -t 2:EF00 -c 2:ESP \
-  -n 3:0:0 -t 3:8300 -c 3:nixos \
-  "$DISK"
-# sgdisk has the kernel reread the table; wait for udev to finish recreating the
-# partition nodes, or mkfs can write to a node that is about to be replaced.
-udevadm settle
-esp=$(partition "$DISK" 2)
-root=$(partition "$DISK" 3)
-for _ in {1..20}; do
-  [[ -b $esp && -b $root ]] && break
-  sleep 0.5
-done
-wipefs -aq "$esp" "$root"
-mkfs.vfat -F 32 -n ESP "$esp"
-mkfs.ext4 -qF -L nixos "$root"
-sync
-udevadm settle
-mount -t ext4 "$root" "$MNT"
-mkdir -p "$MNT/boot"
-mount -t vfat -o umask=077 "$esp" "$MNT/boot"
+# The layout host.nix enables (services.proxy-suite-server.disko), mounted on $MNT.
+disko --mode destroy,format,mount --yes-wipe-all-disks --root-mountpoint "$MNT" \
+  --argstr device "$boot_disk" "$PSI_DISK_LAYOUT"
 
-nixos-generate-config --root "$MNT"
+# The filesystems and swap come from disko in host.nix, not from here.
+nixos-generate-config --root "$MNT" --no-filesystems
 rm -f "$MNT/etc/nixos/configuration.nix"
 
-# Evaluating NixOS takes more memory than the smallest VPS plans have. Added after
-# nixos-generate-config, which would list it in swapDevices.
-fallocate -l 2G "$MNT/.install-swap"
-chmod 600 "$MNT/.install-swap"
-mkswap "$MNT/.install-swap" >/dev/null
-swapon "$MNT/.install-swap"
+# Evaluating NixOS takes more memory than the smallest VPS plans have: the installed
+# system's swap file, which disko made, serves the install too.
+swapon "$MNT/swap/swapfile"
 
 # --- Secrets --------------------------------------------------------------------
 step "Generating keys"
@@ -300,7 +269,8 @@ cat >"$etc_nixos/host.nix" <<HOST
 
   services.proxy-suite-server = {
     enable = true;
-    bootDisk = $(nix_str "$(stable_disk_path "$DISK")");
+    bootDisk = $(nix_str "$boot_disk");
+    disko.enable = true;
     adminUser = $(nix_str "$ADMIN_USER");
     sshPort = $SSH_PORT;
 $(print_network_nix "    ")
@@ -375,8 +345,7 @@ password=${password,,}
 hash=$(mkpasswd -m yescrypt --stdin <<<"$password")
 nixos-enter --root "$MNT" -- usermod -p "$hash" "$ADMIN_USER"
 
-swapoff "$MNT/.install-swap"
-rm -f "$MNT/.install-swap"
+swapoff "$MNT/swap/swapfile"
 
 # --- Done -----------------------------------------------------------------------
 clear

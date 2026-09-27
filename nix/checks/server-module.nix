@@ -5,15 +5,13 @@
   pkgs,
   system,
   nixpkgs,
-  proxySuiteModule,
+  serverModule,
   mkInboundsSpec,
 }:
 
 let
   inherit (checkLib) ok;
   inherit (pkgs) lib;
-
-  serverModule = import ../../deploy/server-module.nix { inherit proxySuiteModule; };
 
   mkServer =
     extra:
@@ -23,7 +21,7 @@ let
         serverModule
         {
           system.stateVersion = "26.05";
-          fileSystems."/" = {
+          fileSystems."/" = lib.mkDefault {
             device = "/dev/disk/by-label/nixos";
             fsType = "ext4";
           };
@@ -54,6 +52,12 @@ let
     domain = "vpn.example.com";
     network.dhcp = true;
   };
+  # As the installer writes it now: filesystems from disko, not the fixture's ext4 root.
+  diskoServer = mkServer {
+    bootDisk = "/dev/disk/by-id/virtio-disk0";
+    disko.enable = true;
+  };
+  diskoFs = diskoServer.config.fileSystems;
 
   failedAssertions =
     fixture: map (a: a.message) (builtins.filter (a: !a.assertion) fixture.config.assertions);
@@ -70,6 +74,17 @@ in
   assertions = [
     (ok (failedAssertions ipServer == [ ]))
     (ok (failedAssertions domainServer == [ ]))
+    (ok (failedAssertions diskoServer == [ ]))
+
+    # disko: btrfs subvolumes, compressed, the swap file, and GRUB on the disk once.
+    (ok (diskoFs."/".fsType == "btrfs" && builtins.elem "subvol=@" diskoFs."/".options))
+    (ok (builtins.elem "compress=zstd:3" diskoFs."/nix".options))
+    (ok (builtins.elem "subvol=@varlog" diskoFs."/var/log".options))
+    (ok (builtins.elem "subvol=@home" diskoFs."/home".options))
+    (ok (diskoFs."/boot".fsType == "vfat"))
+    (ok (map (s: s.device) diskoServer.config.swapDevices == [ "/swap/swapfile" ]))
+    (ok (diskoServer.config.boot.loader.grub.devices == [ "/dev/disk/by-id/virtio-disk0" ]))
+    (ok (ipServer.config.boot.loader.grub.devices == [ "/dev/vda" ]))
 
     (
       assert

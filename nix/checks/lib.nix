@@ -3,6 +3,7 @@
   system,
   nixpkgs,
   proxySuiteModule,
+  serverModule,
   zapret,
 }:
 
@@ -278,5 +279,6 @@ in
     system
     nixpkgs
     proxySuiteModule
+    serverModule
     ;
 }

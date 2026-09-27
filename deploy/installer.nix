@@ -3,25 +3,23 @@
   lib,
   writeShellApplication,
   xray,
+  disko,
+  diskLayout,
   flakeUrl,
   flakeSource,
   stateVersion,
   coreutils,
   curl,
-  dosfstools,
-  e2fsprogs,
   gawk,
   getent,
   gnugrep,
   gnused,
-  gptfdisk,
   iproute2,
   iputils,
   mkpasswd,
   nix,
   nixos-install-tools,
   openssl,
-  parted,
   systemd,
   util-linux,
   xkcdpass,
@@ -33,20 +31,17 @@ import ./script.nix { inherit lib writeShellApplication; } {
   runtimeInputs = [
     coreutils
     curl
-    dosfstools
-    e2fsprogs
+    disko
     gawk
     getent
     gnugrep
     gnused
-    gptfdisk
     iproute2
     iputils
     mkpasswd
     nix
     nixos-install-tools
     openssl
-    parted
     systemd
     util-linux
     xkcdpass
@@ -56,5 +51,6 @@ import ./script.nix { inherit lib writeShellApplication; } {
     PSI_FLAKE_URL = flakeUrl;
     PSI_FLAKE_SRC = "${flakeSource}";
     PSI_STATE_VERSION = stateVersion;
+    PSI_DISK_LAYOUT = "${diskLayout}";
   };
 }

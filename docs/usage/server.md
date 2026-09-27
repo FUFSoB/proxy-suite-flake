@@ -13,7 +13,10 @@ nix build github:FUFSoB/proxy-suite-flake#installer-iso
 
 Boot the VPS from it. The console installer asks for the public IP, users, an optional
 domain and the disk to erase, then installs NixOS with `nixosModules.server`: VLESS
-REALITY, TLS and WS listeners, ACME certificates and SSH. After the reboot, log in and run:
+REALITY, TLS and WS listeners, ACME certificates and SSH. The disk is laid out by disko
+(`services.proxy-suite-server.disko`): btrfs with `compress=zstd:3`, subvolumes `@` on `/`,
+`@nix`, `@varlog` on `/var/log` and `@home`, and a 2G swap file in `@swap`. After the reboot, log in
+and run:
 
 ```sh
 proxy-ctl inbounds link vless-reality --qr

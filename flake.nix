@@ -15,6 +15,10 @@
       url = "github:necronicle/z2k/z2k-enhanced";
       flake = false;
     };
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -24,6 +28,7 @@
       zapret,
       nfqws2-keenetic,
       z2k,
+      disko,
     }:
     let
       systems = [
@@ -58,7 +63,10 @@
       nixosModules.default = proxySuiteModule;
 
       # A single-user VPS: VLESS REALITY, TLS and WS inbounds, ACME and SSH. Includes default.
-      nixosModules.server = import ./deploy/server-module.nix { inherit proxySuiteModule; };
+      nixosModules.server = import ./deploy/server-module.nix {
+        inherit proxySuiteModule;
+        diskoModule = disko.nixosModules.disko;
+      };
 
       # Rootless, in the user's systemd manager: the local proxy, inbounds on ports from 1024
       # up, and what else needs no root.
@@ -222,6 +230,7 @@
             proxySuiteModules
             zapret
             ;
+          serverModule = self.nixosModules.server;
           generatedOptionsDoc = mkOptionsDoc system;
           generatedReadmeDoc = mkReadmeDoc system;
         }

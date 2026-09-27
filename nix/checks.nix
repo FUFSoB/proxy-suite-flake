@@ -3,6 +3,7 @@
   nixpkgs,
   proxySuiteModule,
   proxySuiteModules,
+  serverModule,
   generatedOptionsDoc,
   generatedReadmeDoc,
   zapret,
@@ -27,6 +28,7 @@ let
       system
       nixpkgs
       proxySuiteModule
+      serverModule
       zapret
       ;
   };
