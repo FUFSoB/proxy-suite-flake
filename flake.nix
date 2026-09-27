@@ -185,7 +185,7 @@
                 })
                 { nixpkgs.hostPlatform = system; }
               ];
-            }).config.system.build.isoImage;
+            }).config.system.build.installerIso;
           optionsDoc = mkOptionsDoc system;
           usageSnippets = pkgs.runCommand "proxy-suite-usage-snippets" { } (
             ''

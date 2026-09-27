@@ -77,6 +77,15 @@ in
       description = "SSH port.";
     };
 
+    tools.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Admin comforts: fish as the login shell, vim next to nano (still the default
+        editor), and htop, tmux, jq, mtr, iftop, dig and ncdu.
+      '';
+    };
+
     bootDisk = mkOption {
       type = types.str;
       description = "Disk GRUB installs its BIOS stage to.";
@@ -360,6 +369,29 @@ in
     environment.systemPackages = [
       pkgs.qrencode
       (pkgs.callPackage ./net-rescue.nix { })
+    ]
+    ++ lib.optionals cfg.tools.enable [
+      pkgs.htop
+      pkgs.jq
+      pkgs.iftop
+      pkgs.dig
+      pkgs.ncdu
     ];
+
+    programs = lib.mkIf cfg.tools.enable {
+      fish.enable = true;
+      # Next to nano, which stays the default editor.
+      vim.enable = true;
+      tmux.enable = true;
+      mtr.enable = true;
+    };
+    users.defaultUserShell = lib.mkIf cfg.tools.enable pkgs.fish;
+
+    # Man pages stay; the NixOS manual, info and HTML docs are a download no server needs.
+    documentation = {
+      doc.enable = lib.mkDefault false;
+      info.enable = lib.mkDefault false;
+      nixos.enable = lib.mkDefault false;
+    };
   };
 }

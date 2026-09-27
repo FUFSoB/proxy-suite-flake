@@ -58,6 +58,7 @@ let
     disko.enable = true;
   };
   diskoFs = diskoServer.config.fileSystems;
+  plainServer = mkServer { tools.enable = false; };
 
   failedAssertions =
     fixture: map (a: a.message) (builtins.filter (a: !a.assertion) fixture.config.assertions);
@@ -176,6 +177,13 @@ in
         && !(lib.hasInfix "--onion" ipServer.config.services.getty.helpLine);
       true
     )
+    # tools: fish for every login, and vim next to nano, which stays the editor; off, the
+    # NixOS defaults.
+    (ok (ipServer.config.users.defaultUserShell.pname == "fish"))
+    (ok (ipServer.config.users.users.admin.shell.pname == "fish"))
+    (ok (ipServer.config.programs.vim.enable && ipServer.config.programs.nano.enable))
+    (ok (ipServer.config.environment.variables.EDITOR == "nano"))
+    (ok (!plainServer.config.programs.fish.enable && !plainServer.config.programs.vim.enable))
     # The console banner names the server and the admin account, interpolated: an escaped
     # ''${...} used to reach the login screen verbatim.
     (

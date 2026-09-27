@@ -1,11 +1,12 @@
 # proxy-suite-install: turn a VPS booted from the installer ISO into a proxy-suite
 # server. Everything asked here ends up in /etc/nixos/host.nix on the target.
 #
-# Baked in by deploy/installer.nix: PSI_FLAKE_URL (github ref at the ISO's commit, or
-# empty), PSI_FLAKE_SRC (this flake's source in the store), PSI_STATE_VERSION.
+# Baked in by deploy/installer.nix: PSI_FLAKE_REV (the ISO's commit, or empty for a
+# dirty tree or a path: build), PSI_FLAKE_SRC (this flake's source in the store),
+# PSI_STATE_VERSION.
 # Unattended: PSI_UNATTENDED=1 plus PSI_<NAME> for every answer (see ask in net-lib.sh).
 
-: "${PSI_FLAKE_URL?}" "${PSI_FLAKE_SRC:?}" "${PSI_STATE_VERSION:?}"
+: "${PSI_FLAKE_REV?}" "${PSI_FLAKE_SRC:?}" "${PSI_STATE_VERSION:?}"
 
 MNT=/mnt
 SECRETS_DIR=/var/lib/proxy-suite-server
@@ -112,6 +113,7 @@ ask_all() {
     fi
     reject "A free port from 1 to 65535 (80, 443, 2053 and 8443 are taken)." SSH_PORT
   done
+  ask_yes QEMU_GUEST "QEMU guest agent (lets the VPS panel see the server's state)" "y"
 
   # --- Proxy --------------------------------------------------------------------
   step "Proxy"
@@ -201,6 +203,7 @@ show_summary() {
   Public IP     $PUBLIC_IP
   Hostname      $HOST_NAME
   SSH           $ADMIN_USER@$PUBLIC_IP port $SSH_PORT (password shown at the end)
+  Guest agent   $(if [[ $QEMU_GUEST == true ]]; then echo yes; else echo no; fi)
   Proxy user    $PROXY_USER
   Certificate   ${DOMAIN:-$PUBLIC_IP (IP certificate)}${ACME_EMAIL:+, $ACME_EMAIL}
   REALITY       443 as $REALITY_SNI
@@ -266,6 +269,7 @@ cat >"$etc_nixos/host.nix" <<HOST
   networking.hostName = $(nix_str "$HOST_NAME");
   time.timeZone = "UTC";
   system.stateVersion = $(nix_str "$PSI_STATE_VERSION");
+  services.qemuGuest.enable = $QEMU_GUEST;
 
   services.proxy-suite-server = {
     enable = true;
@@ -311,15 +315,24 @@ write_flake() {
 FLAKE
 }
 
-# The ISO's own commit on GitHub, so `nix flake update` follows upstream later. An ISO
-# built from an unpushed tree has none: its source is copied next to the flake instead.
+# Upstream on GitHub, locked to the ISO's commit, so `nix flake update` follows upstream
+# later. Only if GitHub has that commit with the very source on this ISO: otherwise (not
+# pushed, a dirty tree, a path: build) the source is copied next to the flake instead,
+# so what is installed is always what the ISO carries.
+flake_repo=github:FUFSoB/proxy-suite-flake
 locked=false
-if [[ -n $PSI_FLAKE_URL ]]; then
-  write_flake "$PSI_FLAKE_URL"
-  if nix flake lock "$etc_nixos"; then
+if [[ -n $PSI_FLAKE_REV ]]; then
+  write_flake "$flake_repo/$PSI_FLAKE_REV"
+  if nix flake lock "$etc_nixos" &&
+    [[ $(jq -r '.nodes["proxy-suite"].locked.narHash' "$etc_nixos/flake.lock") == "$(nix hash path "$PSI_FLAKE_SRC")" ]]; then
+    # Unpinned in flake.nix, as `nix flake lock` would have left it had upstream been
+    # at this commit.
+    write_flake "$flake_repo"
+    jq '.nodes["proxy-suite"].original |= del(.rev)' "$etc_nixos/flake.lock" >"$etc_nixos/flake.lock.tmp"
+    mv "$etc_nixos/flake.lock.tmp" "$etc_nixos/flake.lock"
     locked=true
   else
-    warn "Could not lock $PSI_FLAKE_URL; using the copy of proxy-suite on this ISO instead."
+    warn "GitHub does not have this ISO's commit $PSI_FLAKE_REV; using the copy of proxy-suite on this ISO instead."
   fi
 fi
 if [[ $locked == false ]]; then

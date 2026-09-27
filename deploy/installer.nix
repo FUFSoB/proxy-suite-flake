@@ -5,7 +5,7 @@
   xray,
   disko,
   diskLayout,
-  flakeUrl,
+  flakeRev,
   flakeSource,
   stateVersion,
   coreutils,
@@ -16,6 +16,7 @@
   gnused,
   iproute2,
   iputils,
+  jq,
   mkpasswd,
   nix,
   nixos-install-tools,
@@ -38,6 +39,7 @@ import ./script.nix { inherit lib writeShellApplication; } {
     gnused
     iproute2
     iputils
+    jq
     mkpasswd
     nix
     nixos-install-tools
@@ -48,7 +50,7 @@ import ./script.nix { inherit lib writeShellApplication; } {
     xray
   ];
   runtimeEnv = {
-    PSI_FLAKE_URL = flakeUrl;
+    PSI_FLAKE_REV = flakeRev;
     PSI_FLAKE_SRC = "${flakeSource}";
     PSI_STATE_VERSION = stateVersion;
     PSI_DISK_LAYOUT = "${diskLayout}";

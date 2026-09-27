@@ -11,9 +11,15 @@ If your provider lets you boot a custom ISO, build the installer:
 nix build github:FUFSoB/proxy-suite-flake#installer-iso
 ```
 
-Boot the VPS from it. The console installer asks for the public IP, users, an optional
-domain and the disk to erase, then installs NixOS with `nixosModules.server`: VLESS
-REALITY, TLS and WS listeners, ACME certificates and SSH. The disk is laid out by disko
+The image is `result/iso/proxy-suite-installer-<build time>-<commit>-<system>.iso`. Boot
+the VPS from it. The console installer asks for the public IP, users, an optional
+domain, whether to run the QEMU guest agent (so the VPS panel sees the server's state)
+and the disk to erase, then installs NixOS with `nixosModules.server`: VLESS
+REALITY, TLS and WS listeners, ACME certificates and SSH, with fish as the login shell
+and vim (nano stays the default editor), htop, tmux, jq, mtr, iftop, dig and ncdu
+(`services.proxy-suite-server.tools`).
+It installs the proxy-suite source the ISO carries: `/etc/nixos` follows this repository
+on GitHub when the ISO's commit is there, and holds a copy otherwise. The disk is laid out by disko
 (`services.proxy-suite-server.disko`): btrfs with `compress=zstd:3`, subvolumes `@` on `/`,
 `@nix`, `@varlog` on `/var/log` and `@home`, and a 2G swap file in `@swap`. After the reboot, log in
 and run:
