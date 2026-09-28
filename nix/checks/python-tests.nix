@@ -73,7 +73,10 @@ pkgs.lib.mapAttrs mkPythonCheck {
   proxy-ctl-unit = {
     drv = "proxy-suite-proxy-ctl-unit";
     file = "${proxyCtl}/test_proxy_ctl.py";
-    env = singBox;
+    # `awg add` and AmneziaWG outbounds hand their configs to it.
+    env = singBox // {
+      AWG_CONFIG_TOOL = "${scripts}/amneziawg_config.py";
+    };
   };
   # proxy-suitectl, nix-on-droid's service manager: real processes restarted, timed and stopped.
   proxy-suite-supervisor-unit = {

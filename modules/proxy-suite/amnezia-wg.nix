@@ -16,6 +16,11 @@ let
     awgGlobalGroup
     awgOutboundRulePriority
     awgServerUdpRulePriority
+    runtimeAwgDir
+    runtimeOutboundsDir
+    awgRuntimeTunnelBasePort
+    awgRuntimeTunnelSlots
+    systemctl
     ;
   killSwitchUnit = "proxy-suite-killswitch.service";
   # Profiles behind a loopback SOCKS hop, in a tunnel unit rather than awg-quick.
@@ -91,8 +96,63 @@ let
     );
   configTool = "${import ./lib/scripts-dir.nix { inherit lib; }}/amneziawg_config.py";
   awgCommon = import ./awg-common.nix { inherit lib pkgs awgCfg; };
-  runtimeDir = name: "/run/${serviceName name}";
-  runtimeConfig = name: profile: "${runtimeDir name}/${profile.interfaceName}.conf";
+
+  # What a unit's scripts know of the profile they run. `init` is their first line and sets
+  # $profile_name; `runDir` is the runtime directory, as shell text; `source` the arguments
+  # amneziawg_config.py reads the profile with; `outbound` whether it is an "interface" one.
+  staticSpec = name: profile: {
+    inherit name profile;
+    template = false;
+    unit = serviceName name;
+    init = "profile_name=${lib.escapeShellArg name}";
+    runDir = "/run/${serviceName name}";
+    runtimeDirectory = serviceName name;
+    source = "--manifest ${lib.escapeShellArg (toString (manifestFor profile))}";
+    outbound = profile.asOutbound == "interface";
+  };
+
+  # Global profiles added with `proxy-ctl awg add`: instances of one template, the name
+  # passed in as $1 (%i), the .conf in runtimeAwgDir. They share an interface, and hooks are
+  # refused (--config), since whoever added one need not be root.
+  runtimeProfile = {
+    inherit (awgCfg.runtime) interfaceName;
+    asOutbound = null;
+    autostart = false;
+    settings = null;
+  };
+  runtimeSpec = {
+    name = "$profile_name";
+    profile = runtimeProfile;
+    template = true;
+    unit = "proxy-suite-awg@";
+    init = ''
+      profile_name=''${1:-}
+      if [[ ! $profile_name =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$ ]]; then
+        echo "proxy-suite: '$profile_name' is not an AmneziaWG profile name" >&2
+        exit 1
+      fi
+    '';
+    runDir = "/run/proxy-suite-awg-rt-$profile_name";
+    runtimeDirectory = "proxy-suite-awg-rt-%i";
+    source = ''--config "${runtimeAwgDir}/$profile_name.conf"'';
+    outbound = false;
+  };
+  specConfig = spec: "${spec.runDir}/${spec.profile.interfaceName}.conf";
+
+  # Runtime profiles cannot be named in Conflicts= at build time, and share one interface:
+  # starting any global profile stops the runtime ones still up. $1: its own instance, if one.
+  stopRuntimeProfiles = pkgs.writeShellScript "proxy-suite-awg" ''
+    set -uo pipefail
+    self="proxy-suite-awg@''${1:-}.service"
+    # A failed unit's line starts with a glyph: take the name wherever it is.
+    ${systemctl} list-units --plain --no-legend --state=active,activating,reloading 'proxy-suite-awg@*.service' \
+      | ${pkgs.gnugrep}/bin/grep -o 'proxy-suite-awg@[^ ]*\.service' \
+      | while read -r unit; do
+        [[ $unit == "$self" ]] || ${systemctl} stop "$unit" || true
+      done
+    # grep finds nothing when none is up, which pipefail would make this script's failure.
+    exit 0
+  '';
   # Keep proxy backend sockets (proxyMark) out of AWG's default-route table.
   proxyBypassRulePriority = 8998;
   bypassRule =
@@ -211,14 +271,15 @@ let
   # awg-quick turns src_valid_mark on for a default route and never back off; left on, it
   # changes how the kernel checks every marked packet's source. Put back as it was.
   srcValidMark = "/proc/sys/net/ipv4/conf/all/src_valid_mark";
-  savedSrcValidMark = name: "${runtimeDir name}/src_valid_mark";
-  saveSrcValidMark = name: ''
-    [[ -e ${savedSrcValidMark name} ]] || cat ${srcValidMark} > ${savedSrcValidMark name}
+  # Unquoted: a runtime profile's name is checked against [A-Za-z0-9_-] first (runtimeSpec).
+  savedSrcValidMark = spec: "${spec.runDir}/src_valid_mark";
+  saveSrcValidMark = spec: ''
+    [[ -e ${savedSrcValidMark spec} ]] || cat ${srcValidMark} > ${savedSrcValidMark spec}
   '';
-  restoreSrcValidMark = name: ''
-    if [[ -s ${savedSrcValidMark name} ]]; then
-      cat ${savedSrcValidMark name} > ${srcValidMark} || true
-      rm -f ${savedSrcValidMark name}
+  restoreSrcValidMark = spec: ''
+    if [[ -s ${savedSrcValidMark spec} ]]; then
+      cat ${savedSrcValidMark spec} > ${srcValidMark} || true
+      rm -f ${savedSrcValidMark spec}
     fi
   '';
 
@@ -233,15 +294,15 @@ let
 
   # An outbound interface keeps the host's routes and resolver, and marks its packets so TUN and
   # TProxy let them past. A global one under the kill switch marks them with a mark it knows.
-  prepareCommand = profile: output: ''
+  prepareCommand = spec: output: ''
     ${pkgs.python3}/bin/python3 ${configTool} \
-      --manifest ${lib.escapeShellArg (toString (manifestFor profile))} \
+      ${spec.source} \
       --output ${output}${
-        if profile.asOutbound == "interface" then
+        if spec.profile.asOutbound == "interface" then
           " --outbound-fwmark ${toString cfg.proxy.tproxy.proxyMark}"
         else
           lib.optionalString (
-            derived.killSwitchEnabled && profile.asOutbound == null
+            derived.killSwitchEnabled && spec.profile.asOutbound == null
           ) " --fwmark ${toString awgGlobalFwmark} --resolve-endpoints"
       }
   '';
@@ -259,19 +320,27 @@ let
     exec "$@"
   '';
 
+  # A global profile, or an "interface" outbound: a unit for a declared profile (staticSpec),
+  # or the template the runtime ones start from (runtimeSpec). `conflicts`: the global units
+  # it stops by starting.
   mkService =
-    name: profile:
+    spec: conflicts:
     let
-      outbound = profile.asOutbound == "interface";
-      configPath = runtimeConfig name profile;
-      prepare = pkgs.writeShellScript "proxy-suite-awg" ''
+      inherit (spec) name profile outbound;
+      configPath = specConfig spec;
+      # Every script: a template's instance name comes in as $1.
+      withInit = body: ''
+        ${spec.init}
+        ${body}
+      '';
+      prepare = pkgs.writeShellScript "proxy-suite-awg" (withInit ''
         set -euo pipefail
         ${
           lib.optionalString (
             derived.killSwitchEnabled && !outbound
           ) "${pkgs.util-linux}/bin/unshare --mount ${ownLookups} "
-        }${prepareCommand profile (lib.escapeShellArg configPath)}
-      '';
+        }${prepareCommand spec ''"${configPath}"''}
+      '');
       proxyBypassUp = pkgs.writeShellScript "proxy-suite-awg" ''
         set -euo pipefail
         ${clearBypassRules}
@@ -286,12 +355,12 @@ let
         set +e
         ${clearBypassRules}
       '';
-      start = pkgs.writeShellScript "proxy-suite-awg" ''
+      start = pkgs.writeShellScript "proxy-suite-awg" (withInit ''
         set -Eeuo pipefail
 
         cleanup() {
           set +e
-          ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath}
+          ${awgCfg.toolsPackage}/bin/awg-quick down "${configPath}"
 
           # Without the control socket awg-quick cannot find its fwmark; clean up this
           # interface only.
@@ -318,7 +387,7 @@ let
             if outbound then
               outboundRuleCleanup name profile
             else
-              repliesDown profile + restoreSrcValidMark name
+              repliesDown profile + restoreSrcValidMark spec
           }
         }
         trap cleanup ERR
@@ -326,9 +395,9 @@ let
         ${awgCommon.modprobe}
 
         read -r implementation probe _ < <(${pkgs.python3}/bin/python3 ${configTool} \
-          --inspect ${lib.escapeShellArg configPath})
-        ${lib.optionalString (!outbound) (saveSrcValidMark name)}
-        ${awgCommon.awgQuickUp "$implementation" (lib.escapeShellArg configPath)}
+          --inspect "${configPath}")
+        ${lib.optionalString (!outbound) (saveSrcValidMark spec)}
+        ${awgCommon.awgQuickUp "$implementation" ''"${configPath}"''}
         ${if outbound then outboundRoutesUp name profile else repliesUp profile}
 
         ${mkHandshakeHelpers profile}
@@ -344,21 +413,23 @@ let
           fi
         done
 
-        echo "proxy-suite: AmneziaWG profile '${name}' did not complete a handshake; rolling back routes" >&2
+        echo "proxy-suite: AmneziaWG profile '$profile_name' did not complete a handshake; rolling back routes" >&2
         false
-      '';
-      stop = pkgs.writeShellScript "proxy-suite-awg" ''
+      '');
+      stop = pkgs.writeShellScript "proxy-suite-awg" (withInit ''
         set -uo pipefail
         status=0
-        ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath} || status=$?
+        ${awgCfg.toolsPackage}/bin/awg-quick down "${configPath}" || status=$?
         ${
           if outbound then
             outboundRuleCleanup name profile
           else
-            repliesDown profile + restoreSrcValidMark name
+            repliesDown profile + restoreSrcValidMark spec
         }
         exit "$status"
-      '';
+      '');
+      # A template's scripts get the instance name.
+      withArg = script: if spec.template then "${script} %i" else script;
     in
     (
       if outbound then
@@ -372,7 +443,11 @@ let
         }
       else
         {
-          description = "proxy-suite AmneziaWG client profile ${name}";
+          description =
+            if spec.template then
+              "proxy-suite AmneziaWG client profile %i (added at runtime)"
+            else
+              "proxy-suite AmneziaWG client profile ${name}";
           # Start the local proxy before AWG takes the default route, so HTTP_PROXY clients
           # do not race it.
           after = [
@@ -386,7 +461,7 @@ let
           ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service"
           ++ lib.optional derived.killSwitchEnabled killSwitchUnit;
           wantedBy = lib.optionals profile.autostart [ "multi-user.target" ];
-          conflicts = allProfileConflicts name ++ [
+          conflicts = conflicts ++ [
             "proxy-suite-tun.service"
             "proxy-suite-tproxy.service"
             "proxy-suite-zapret.service"
@@ -410,7 +485,7 @@ let
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        RuntimeDirectory = serviceName name;
+        RuntimeDirectory = spec.runtimeDirectory;
         RuntimeDirectoryMode = "0700";
         UMask = "0077";
         NoNewPrivileges = true;
@@ -421,9 +496,14 @@ let
         ProtectKernelLogs = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
-        ExecStartPre = [ prepare ] ++ lib.optionals (cfg.proxy.enable && !outbound) [ proxyBypassUp ];
-        ExecStart = start;
-        ExecStop = stop;
+        # Another profile stopping clears the bypass rules on its way out: before they go in.
+        ExecStartPre = [
+          (withArg prepare)
+        ]
+        ++ lib.optionals (!outbound && derived.awgRuntimeGlobal) [ (withArg stopRuntimeProfiles) ]
+        ++ lib.optionals (cfg.proxy.enable && !outbound) [ proxyBypassUp ];
+        ExecStart = withArg start;
+        ExecStop = withArg stop;
       }
       // lib.optionalAttrs (cfg.proxy.enable && !outbound) {
         ExecStopPost = proxyBypassDown;
@@ -464,9 +544,80 @@ let
           fi
         ''}
         profile="$RUNTIME_DIRECTORY/profile.conf"
-        ${prepareCommand profile ''"$profile"''}
+        ${prepareCommand (staticSpec ob.name profile) ''"$profile"''}
       '';
     };
+
+  # Outbounds added with `proxy-ctl proxy outbounds add`: <tag>.awg in the runtime outbound
+  # spool, and the loopback port proxy-ctl gave it in <tag>.port. They run in wireproxy,
+  # which keeps the obfuscation; --config refuses hooks, as the spool is group-writable.
+  runtimeTunnelLastPort = awgRuntimeTunnelBasePort + awgRuntimeTunnelSlots - 1;
+  runtimeTunnelService = mkTunnel {
+    description = "proxy-suite AmneziaWG tunnel behind the %i outbound (added at runtime)";
+    unit = "proxy-suite-awg-tunnel@";
+    runtimeDirectory = "proxy-suite-awg-tunnel-%i";
+    engine = "userspace";
+    tag = "$TUNNEL_TAG";
+    tunnelPort = "$TUNNEL_PORT";
+    execArgs = " %i";
+    # The sync unit starts one per entry.
+    wantedBy = [ ];
+    # A removed entry exits cleanly, and stays stopped.
+    restart = "on-failure";
+    profile = ''
+      TUNNEL_TAG=''${1:-}
+      if [[ ! $TUNNEL_TAG =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        echo "proxy-suite: '$TUNNEL_TAG' is not an outbound tag" >&2
+        exit 1
+      fi
+      profile="${runtimeOutboundsDir}/$TUNNEL_TAG.awg"
+      if [[ ! -s $profile ]]; then
+        echo "proxy-suite: no AmneziaWG outbound '$TUNNEL_TAG' in ${runtimeOutboundsDir}" >&2
+        exit 0
+      fi
+      TUNNEL_PORT=$(${pkgs.coreutils}/bin/head -n 1 "${runtimeOutboundsDir}/$TUNNEL_TAG.port" 2>/dev/null || true)
+      if [[ ! $TUNNEL_PORT =~ ^[0-9]+$ ]] || (( TUNNEL_PORT < ${toString awgRuntimeTunnelBasePort} || TUNNEL_PORT > ${toString runtimeTunnelLastPort} )); then
+        echo "proxy-suite: AmneziaWG outbound '$TUNNEL_TAG' needs a port in ${toString awgRuntimeTunnelBasePort}-${toString runtimeTunnelLastPort} in $TUNNEL_TAG.port" >&2
+        exit 1
+      fi
+      export TUNNEL_TAG TUNNEL_PORT
+    '';
+  };
+
+  # One tunnel per runtime AmneziaWG outbound, and none for an entry removed since: at boot,
+  # and with every proxy-suite-outbound-reload, which proxy-ctl starts after a change.
+  runtimeSyncService = {
+    description = "proxy-suite AmneziaWG outbounds added at runtime";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    wantedBy = [
+      "multi-user.target"
+      "proxy-suite-outbound-reload.service"
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "proxy-suite-awg" ''
+        set -uo pipefail
+        declare -A keep=()
+        for entry in "${runtimeOutboundsDir}"/*.awg; do
+          [[ -e $entry ]] || continue
+          tag=''${entry##*/}
+          tag=''${tag%.awg}
+          keep[$tag]=1
+          ${systemctl} start --no-block "proxy-suite-awg-tunnel@$tag.service" || true
+        done
+        ${systemctl} list-units --all --plain --no-legend 'proxy-suite-awg-tunnel@*.service' \
+          | ${pkgs.gnugrep}/bin/grep -o 'proxy-suite-awg-tunnel@[^ ]*\.service' \
+          | while read -r unit; do
+            tag=''${unit#proxy-suite-awg-tunnel@}
+            tag=''${tag%.service}
+            [[ -n ''${keep[$tag]:-} ]] || ${systemctl} stop --no-block "$unit" || true
+          done
+        # grep finds nothing when no tunnel is loaded, which pipefail would make a failure.
+        exit 0
+      '';
+    };
+  };
 
   # Runs alongside a started profile. Its pings keep traffic flowing, and traffic makes
   # WireGuard rekey every RekeyAfterTime (120 seconds by default); a handshake older than that
@@ -477,15 +628,18 @@ let
   # peer can keep rekeying while carrying no traffic. After three misses the peer is re-added
   # for a fresh session (a new port alone keeps the old one), at most once in five minutes.
   mkWatchdog =
-    name: profile:
+    spec:
     let
+      inherit (spec) profile;
       egressProbe = profile.asOutbound == "interface";
+      unit = if spec.template then "proxy-suite-awg@%i.service" else "${spec.unit}.service";
       watchdog = pkgs.writeShellScript "proxy-suite-awg" ''
+        ${spec.init}
         set -uo pipefail
         read -r _ probe rekey < <(${pkgs.python3}/bin/python3 ${configTool} \
-          --inspect ${lib.escapeShellArg (runtimeConfig name profile)}) || exit 1
+          --inspect "${specConfig spec}") || exit 1
         if (( rekey == 0 )); then
-          echo "proxy-suite: AmneziaWG profile '${name}' never rekeys; nothing to watch" >&2
+          echo "proxy-suite: AmneziaWG profile '$profile_name' never rekeys; nothing to watch" >&2
           exec ${pkgs.coreutils}/bin/sleep infinity
         fi
         ${mkHandshakeHelpers profile}
@@ -512,7 +666,7 @@ let
           if (( $(handshake_age) <= rekey + 10 )); then
             stale=0
           elif (( ++stale >= 2 )); then
-            echo "proxy-suite: AmneziaWG profile '${name}' is not rekeying; moving to a new source port" >&2
+            echo "proxy-suite: AmneziaWG profile '$profile_name' is not rekeying; moving to a new source port" >&2
             new_source_port
             stale=0
             ${lib.optionalString egressProbe "continue"}
@@ -522,7 +676,7 @@ let
               ${lib.escapeShellArg cfg.proxy.urlTest.url}; then
               misses=0
             elif (( ++misses >= 3 && SECONDS - last_session >= 300 )); then
-              echo "proxy-suite: AmneziaWG profile '${name}' carries no IPv4 past its peer; starting a new session" >&2
+              echo "proxy-suite: AmneziaWG profile '$profile_name' carries no IPv4 past its peer; starting a new session" >&2
               new_session
               misses=0
               last_session=$SECONDS
@@ -532,12 +686,15 @@ let
       '';
     in
     {
-      description = "proxy-suite AmneziaWG client profile ${name} watchdog";
-      bindsTo = [ "${serviceName name}.service" ];
-      after = [ "${serviceName name}.service" ];
-      wantedBy = [ "${serviceName name}.service" ];
+      description = "proxy-suite AmneziaWG client profile ${
+        if spec.template then "%i" else spec.name
+      } watchdog";
+      bindsTo = [ unit ];
+      after = [ unit ];
+      # A template's instances are pulled in by the profile's own Wants=.
+      wantedBy = lib.optional (!spec.template) unit;
       serviceConfig = {
-        ExecStart = watchdog;
+        ExecStart = if spec.template then "${watchdog} %i" else watchdog;
         Restart = "on-failure";
         RestartSec = 5;
         CapabilityBoundingSet = [
@@ -620,7 +777,9 @@ let
     )
   ) profileNames;
 
-  interfaceNames = map (name: profiles.${name}.interfaceName) profileNames;
+  interfaceNames =
+    map (name: profiles.${name}.interfaceName) profileNames
+    ++ lib.optional derived.awgRuntimeGlobal awgCfg.runtime.interfaceName;
   autostartProfiles = builtins.filter (name: profiles.${name}.autostart) globalProfileNames;
   globalAutostartCount =
     builtins.length autostartProfiles + (if cfg.proxy.autostart != null then 1 else 0);
@@ -630,10 +789,12 @@ in
     awgCfg.toolsPackage
     awgCfg.userspacePackage
   ]
-  ++ lib.optional (builtins.any (ob: ob.kind == "userspace") tunnelOutbounds) awgCfg.wireproxyPackage;
+  ++ lib.optional (
+    derived.awgRuntimeOutbounds || builtins.any (ob: ob.kind == "userspace") tunnelOutbounds
+  ) awgCfg.wireproxyPackage;
 
   services.proxy-suite.internal.groups = lib.optional (
-    derived.killSwitchEnabled && globalProfileNames != [ ]
+    derived.killSwitchEnabled && derived.awgGlobalAvailable
   ) awgGlobalGroup;
 
   services.proxy-suite.internal.kernelModulePackages =
@@ -649,11 +810,30 @@ in
 
   services.proxy-suite.internal.services = lib.mkMerge [
     (lib.mapAttrs' (
-      name: profile: lib.nameValuePair (serviceName name) (mkService name profile)
+      name: profile:
+      lib.nameValuePair (serviceName name) (
+        mkService (staticSpec name profile) (allProfileConflicts name)
+      )
     ) interfaceProfiles)
     (lib.mapAttrs' (
-      name: profile: lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog name profile)
+      name: profile:
+      lib.nameValuePair "${serviceName name}-watchdog" (mkWatchdog (staticSpec name profile))
     ) interfaceProfiles)
+    (lib.mkIf derived.awgRuntimeGlobal {
+      "proxy-suite-awg@" = lib.mkMerge [
+        (mkService runtimeSpec (map (other: "${serviceName other}.service") globalProfileNames))
+        {
+          wants = [ "proxy-suite-awg-watchdog@%i.service" ];
+          # The kill switch cannot order itself after instances it does not know.
+          before = [ killSwitchUnit ];
+        }
+      ];
+      "proxy-suite-awg-watchdog@" = mkWatchdog runtimeSpec;
+    })
+    (lib.mkIf derived.awgRuntimeOutbounds {
+      "proxy-suite-awg-tunnel@" = runtimeTunnelService;
+      proxy-suite-awg-runtime-sync = runtimeSyncService;
+    })
     (lib.listToAttrs (
       map (ob: lib.nameValuePair (serviceName ob.name) (mkTunnelService ob)) tunnelOutbounds
     ))
@@ -667,8 +847,8 @@ in
 
   assertions = profileAssertions ++ [
     {
-      assertion = profiles != { };
-      message = "proxy-suite: amneziaWg.enable requires at least one profile";
+      assertion = profiles != { } || derived.awgRuntimeGlobal || derived.awgRuntimeOutbounds;
+      message = "proxy-suite: amneziaWg.enable needs a profile, or amneziaWg.runtime.enable for profiles added with proxy-ctl (global ones need a root host, outbounds proxy.enable)";
     }
     {
       assertion = builtins.length interfaceNames == builtins.length (lib.unique interfaceNames);

@@ -165,6 +165,18 @@ let
   ];
   smCfg = systemManager.config;
 
+  # AmneziaWG with nothing declared: outbounds added with proxy-ctl run as user units.
+  hmRuntimeAwg = evalHost "homeManager" [
+    rootlessSettings
+    {
+      services.proxy-suite.amneziaWg = {
+        enable = true;
+        kernelModulePackage = null;
+      };
+    }
+  ];
+  hmRuntimeAwgUnits = hmRuntimeAwg.config.systemd.user.services;
+
   nixOnDroid = evalHost "nixOnDroid" [ rootlessSettings ];
   nodCfg = nixOnDroid.config;
 
@@ -198,6 +210,17 @@ in
         !(lib.hasInfix "setpriv" (
           toString hmCfg.systemd.user.services.proxy-suite-socks.Service.ExecStart
         ));
+      true
+    )
+    (
+      # Rootless: AmneziaWG outbounds added at runtime, never a global profile.
+      assert failedAssertions hmRuntimeAwg == [ ];
+      assert hmRuntimeAwgUnits ? "proxy-suite-awg-tunnel@";
+      assert hmRuntimeAwgUnits ? proxy-suite-awg-runtime-sync;
+      assert !(hmRuntimeAwgUnits ? "proxy-suite-awg@");
+      assert
+        !(lib.hasInfix "setpriv" (toString hmRuntimeAwgUnits."proxy-suite-awg-tunnel@".Service.ExecStart));
+      assert forced hmRuntimeAwgUnits;
       true
     )
     (
@@ -244,6 +267,13 @@ in
         perAppRouting.zapret.enable = true;
       } "perAppRouting.zapret needs root";
       assert rejects "nixOnDroid" { gui.enable = true; } "the GUI needs a desktop session";
+      # No templates in proxy-suitectl, and no root for a global profile: nothing to add to.
+      assert rejects "nixOnDroid" {
+        amneziaWg = {
+          enable = true;
+          kernelModulePackage = null;
+        };
+      } "amneziaWg.enable needs a profile";
       assert rejects "nixOnDroid" {
         inbounds.listeners.vless.port = lib.mkForce 443;
       } "inbounds.listeners.vless.port = 443 is a privileged port";

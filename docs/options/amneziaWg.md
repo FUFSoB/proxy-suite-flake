@@ -66,6 +66,9 @@ Part of the [proxy-suite options reference](./index.md).
       - [vpn](#services-proxy-suite-amneziawg-profiles-name-vpn)
       - [vpnContainer](#services-proxy-suite-amneziawg-profiles-name-vpncontainer)
       - [vpnFile](#services-proxy-suite-amneziawg-profiles-name-vpnfile)
+  - runtime
+    - [enable](#services-proxy-suite-amneziawg-runtime-enable)
+    - [interfaceName](#services-proxy-suite-amneziawg-runtime-interfacename)
   - [serverUdpPorts](#services-proxy-suite-amneziawg-serverudpports)
   - [toolsPackage](#services-proxy-suite-amneziawg-toolspackage)
   - [userspacePackage](#services-proxy-suite-amneziawg-userspacepackage)
@@ -547,6 +550,25 @@ File with a vpn:// export\.
 
 **Type:** null or string\
 **Default:** `null`
+
+<a id="services-proxy-suite-amneziawg-runtime-enable"></a>
+## services\.proxy-suite\.amneziaWg\.runtime\.enable
+
+Let ` proxy-ctl ` add configs and ` vpn:// ` links without a rebuild: ` proxy-ctl awg add `
+for a global profile (root hosts only), and ` proxy-ctl proxy outbounds add ` for an
+outbound, which runs in wireproxy (needs ` proxy.enable `)\. wg-quick hooks such as
+` PostUp ` are always refused in them\. With this on, ` profiles ` may be empty\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-amneziawg-runtime-interfacename"></a>
+## services\.proxy-suite\.amneziaWg\.runtime\.interfaceName
+
+Interface of the global profiles added at runtime\. Only one of them runs at a time, so they share it\.
+
+**Type:** string matching the pattern ^\[A-Za-z0-9_\.-]{1,15}$\
+**Default:** `"awg-rt"`
 
 <a id="services-proxy-suite-amneziawg-serverudpports"></a>
 ## services\.proxy-suite\.amneziaWg\.serverUdpPorts

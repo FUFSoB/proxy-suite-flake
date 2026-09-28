@@ -11,7 +11,10 @@ import unittest
 from unittest import mock
 
 import proxy_ctl as ctl
-import proxy_model as model
+
+CLI_AWG_PROFILES = ctl._awg_profiles  # before setUp patches it
+
+import proxy_model as model  # noqa: E402
 
 
 def walk(items):
@@ -244,9 +247,66 @@ class ModelTest(unittest.TestCase):
             ("zapret", "not a host", "Not a share link"),
         ]:
             with self.subTest(text=text):
-                argv, message = paste(tab, text)
+                argv, message, stdin = paste(tab, text)
                 self.assertIsNone(argv)
+                self.assertIsNone(stdin)
                 self.assertIn(why, message)
+
+    def test_paste_amneziawg(self):
+        conf = "[Interface]\nPrivateKey = secret\nAddress = 10.8.0.2/32\n\n[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\n"
+        runtime = {"AWG_RUNTIME_GLOBAL": "1", "AWG_RUNTIME_OUTBOUNDS": "1"}
+        with mock.patch.dict(os.environ, runtime):
+            # A global profile, but an outbound on the outbounds tab. The config itself only on stdin.
+            self.assertEqual(model.paste_argv("services", conf), (["awg", "add", "-"], "", conf.strip()))
+            self.assertEqual(model.paste_argv("awg", "vpn://AAAA"), (["awg", "add", "-"], "", "vpn://AAAA"))
+            self.assertEqual(model.paste_argv("outbounds", "vpn://AAAA"), (["proxy", "outbounds", "add", "-"], "", "vpn://AAAA"))
+        with mock.patch.dict(os.environ, {"AWG_RUNTIME_GLOBAL": "0", "AWG_RUNTIME_OUTBOUNDS": "1"}):
+            self.assertEqual(model.paste_argv("services", "vpn://AAAA")[0], ["proxy", "outbounds", "add", "-"])
+        with mock.patch.dict(os.environ, {"AWG_RUNTIME_GLOBAL": "0", "AWG_RUNTIME_OUTBOUNDS": "0"}):
+            argv, why, stdin = model.paste_argv("services", conf)
+            self.assertIsNone(argv)
+            self.assertIn("amneziaWg.runtime", why)
+
+    def test_awg_tab(self):
+        tab = next(t for t in model.TABS if t.id == "awg")
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "added.conf"), "w").close()
+            profiles = os.path.join(d, "profiles.json")
+            with open(profiles, "w") as f:
+                json.dump(["home"], f)
+            env = {"AWG_RUNTIME_GLOBAL": "1", "AWG_RUNTIME_DIR": d, "AWG_PROFILES_FILE": profiles}
+            with mock.patch.dict(os.environ, env), mock.patch.object(ctl, "_awg_profiles", CLI_AWG_PROFILES):
+                self.assertTrue(tab.available({}))
+                rows, _ = model.load_tab(tab, {"proxy-suite-awg@added": "active"})
+                self.assertEqual(
+                    [(r["profile"], r["unit"], r["state"], r["source"]) for r in rows],
+                    [("home", "proxy-suite-awg-home", "inactive", "declared"), ("added", "proxy-suite-awg@added", "active", "runtime")],
+                )
+                self.assertEqual([a.key for a in model.applicable(tab, rows[0])], ["space", "l", "n"])
+                self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["space", "ctrl+r", "l", "n", "d"])
+                act = {a.key: a for a in tab.actions}
+                self.assertEqual(act["space"].argv(rows[1], "", {}), ["awg", "off", "added"])
+                self.assertEqual(act["d"].argv(rows[1], "", {}), ["awg", "rm", "added"])
+                # The Services tab's row for the instance toggles it through `awg` too.
+                self.assertEqual(model.toggle_argv({"unit": "proxy-suite-awg@added", "state": "active"}), ["awg", "off", "added"])
+        add = next(a for a in tab.actions if a.key == "n")
+        self.assertEqual((add.argv(None, "work vpn://AAAA", {}), add.stdin(None, "work vpn://AAAA")), (["awg", "add", "work", "-"], "vpn://AAAA"))
+        self.assertEqual((add.argv(None, "vpn://AAAA", {}), add.stdin(None, "vpn://AAAA")), (["awg", "add", "-"], "vpn://AAAA"))
+        # A path goes as one: proxy-ctl reads it, and it may run as root elsewhere.
+        self.assertEqual((add.argv(None, "work /tmp/w.conf", {}), add.stdin(None, "work /tmp/w.conf")), (["awg", "add", "work", "/tmp/w.conf"], None))
+        outbound_add = next(a for a in next(t for t in model.TABS if t.id == "outbounds").actions if a.key == "n")
+        self.assertEqual(outbound_add.argv(None, "de vpn://AAAA", {}), ["proxy", "outbounds", "add", "de", "-"])
+        self.assertEqual(outbound_add.stdin(None, "de vpn://AAAA"), "vpn://AAAA")
+        self.assertEqual(outbound_add.argv(None, "de vless://x", {}), ["proxy", "outbounds", "add", "de", "vless://x"])
+        self.assertIsNone(outbound_add.stdin(None, "de vless://x"))
+
+    def test_popen_feeds_stdin(self):
+        with mock.patch.object(model, "CTL", "cat"):
+            for stdin, out in (("secret\n", "secret\n"), (None, "")):
+                p = model.popen([], stdin=stdin)
+                with p.stdout:
+                    self.assertEqual(p.stdout.read(), out)
+                p.wait()
 
     def test_load_tab(self):
         tab = next(t for t in model.TABS if t.id == "outbounds")

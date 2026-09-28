@@ -65,6 +65,8 @@ Changes and secrets need root or the userControl group.
   proxy outbounds add [tag] <url|json|-> [--detour <tag>]
                                          add an outbound from a link or JSON (-: stdin);
                                          --detour: connect through another outbound
+  proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]
+                                         add an AmneziaWG outbound (runs in wireproxy)
   proxy outbounds chain <tag> <through-tag> [new tag]
                                          add a copy of an outbound that connects through another
   proxy outbounds rm <tag>               remove a runtime outbound
@@ -105,6 +107,9 @@ Changes and secrets need root or the userControl group.
 
   awg [list]                             AmneziaWG profiles
   awg on <profile> | off [profile] | toggle [profile] | restart [profile]
+  awg add [name] <vpn://…|file.conf|-> [--container <name>]
+                                         add a global profile (-: stdin)
+  awg rm <profile>                       remove a profile added with awg add
 
   killswitch [status|on|off]             block traffic outside the global tunnel;
                                          stays on until turned off here or with the tunnel
@@ -442,7 +447,33 @@ def _sub_tags():
 
 
 def _awg_profiles():
+    """Global AmneziaWG profiles: the declared ones, then those added with `awg add`."""
+    declared = _awg_declared()
+    return declared + [p for p in _awg_runtime_profiles() if p not in declared]
+
+
+def _awg_declared():
     return _json_list(env("AWG_PROFILES_FILE"))
+
+
+def _awg_added(profile):
+    """Whether a profile was added with `awg add` (a declared one of that name wins)."""
+    return profile in _awg_runtime_profiles() and profile not in _awg_declared()
+
+
+def _awg_runtime_dir():
+    return env("AWG_RUNTIME_DIR", f"{state_dir()}/amneziawg.d")
+
+
+def _awg_runtime_profiles():
+    """Profiles added with `awg add`: <name>.conf in a listable dir, each file root-only."""
+    if env("AWG_RUNTIME_GLOBAL") != "1":
+        return []
+    try:
+        names = os.listdir(_awg_runtime_dir())
+    except OSError:
+        return []
+    return sorted(n.removesuffix(".conf") for n in names if n.endswith(".conf") and AWG_NAME.fullmatch(n.removesuffix(".conf")))
 
 
 # --- completion ---------------------------------------------------------------
@@ -612,8 +643,12 @@ COMPLETE = {
             "off": "stop a profile",
             "toggle": "start a profile if stopped, stop it if running",
             "restart": "restart a profile",
+            "add": "add a profile from a .conf or vpn:// link",
+            "rm": "remove a profile added with awg add",
         }
     },
+    "awg add": {"flags": {"--container": "which container of a vpn:// export"}},
+    "awg rm": {"args": lambda: _names(_awg_runtime_profiles())},
     "awg on": {"args": lambda: _names(_awg_profiles())},
     "awg off": {"args": lambda: _names(_awg_profiles())},
     "awg toggle": {"args": lambda: _names(_awg_profiles())},
@@ -770,7 +805,8 @@ def _status_snapshot(states=None):
         name: {"available": unit in states, "active": states.get(unit) == "active"} for name, unit in SNAPSHOT_UNITS.items()
     }
     snapshot["awg"] = {
-        "available": bool(profiles),
+        # With runtime profiles on, `awg add` can add the first one.
+        "available": bool(profiles) or env("AWG_RUNTIME_GLOBAL") == "1",
         "profiles": profiles,
         "active": next((p for p in profiles if states.get(_awg_service(p)) == "active"), ""),
     }
@@ -1006,7 +1042,14 @@ def cmd_outbounds(verb="list", *args):
             del args[i : i + 2]
             if not detour:
                 usage("proxy outbounds add [tag] <url|json|-> [--detour <tag>]")
-        _runtime_entry_add("outbound", *args, detour=detour)
+        container = ""
+        if "--container" in args:
+            i = args.index("--container")
+            container = args[i + 1] if i + 1 < len(args) else ""
+            del args[i : i + 2]
+            if not container:
+                usage("proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]")
+        _runtime_entry_add("outbound", *args, detour=detour, container=container)
     elif verb == "chain":
         cmd_outbound_chain(*args)
     elif verb in ("rm", "remove", "del"):
@@ -1409,13 +1452,13 @@ def _runtime_tags(kind):
         names = os.listdir(_runtime_dir(kind))
     except OSError:
         return []
-    exts = (".url", ".json") if kind == "outbound" else (".url",)
+    exts = (".url", ".json", ".awg") if kind == "outbound" else (".url",)
     return sorted(os.path.splitext(n)[0] for n in names if n.endswith(exts))
 
 
 def _runtime_path(kind, tag):
     """The file behind a runtime entry, or its .url spelling when there is none."""
-    for ext in (".url", ".json") if kind == "outbound" else (".url",):
+    for ext in (".url", ".json", ".awg") if kind == "outbound" else (".url",):
         path = os.path.join(_runtime_dir(kind), tag + ext)
         if os.path.exists(path):
             return path
@@ -1453,6 +1496,8 @@ RUNTIME_TAG_MAX = 32
 
 def _runtime_source(kind, arg):
     """Whether an add argument is the entry itself rather than its tag."""
+    if kind == "outbound" and (_awg_source(arg) or _awg_file(arg)):
+        return True
     return "://" in arg or (kind == "outbound" and (arg == "-" or arg.lstrip().startswith("{")))
 
 
@@ -1516,7 +1561,7 @@ def _unique_runtime_tag(kind, name, fallback):
     return tag
 
 
-def _runtime_entry_add(kind, *args, detour=""):
+def _runtime_entry_add(kind, *args, detour="", container=""):
     what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url>"
     shape = f"proxy {_runtime_noun(kind)} add [tag] {what}"
     if len(args) == 1 and _runtime_source(kind, args[0]):
@@ -1534,6 +1579,13 @@ def _runtime_entry_add(kind, *args, detour=""):
         die(f"Cannot chain through '{detour}': not an outbound. See: proxy-ctl proxy outbounds")
     if kind == "outbound" and url == "-":
         url = sys.stdin.read()
+    if kind == "outbound" and _awg_file(url):
+        url = _awg_input(url)
+    if kind == "outbound" and _awg_source(url):
+        _awg_outbound_add(tag, url, detour, container)
+        return
+    if container:
+        die("--container only applies to an AmneziaWG vpn:// link.")
     if not tag:
         tag = _runtime_tag_for(kind, url)
         _check_runtime_tag(kind, tag)
@@ -1583,6 +1635,8 @@ def cmd_outbound_chain(tag="", hop="", new_tag="", *_):
         die(f"'{tag}' cannot chain through itself; name another outbound as the hop.")
     entry = _outbound_share_entry(tag)
     source = _s(entry.get("url") or "")
+    if not source and _awg_tunnel_hop(entry.get("outbound") or {}):
+        die(f"'{tag}' is an AmneziaWG outbound: its tunnel dials the peer itself and cannot go through another outbound.")
     if not source:
         ob = entry.get("outbound") or {}
         if not ob:
@@ -1610,7 +1664,7 @@ def _runtime_entry_rm(kind, tag="", *_):
     try:
         os.unlink(path)
         # Its hop, and a disable left from it: a new entry of this name would inherit them.
-        for extra in (".detour", ".disabled") if kind == "outbound" else ():
+        for extra in (".detour", ".disabled", ".port") if kind == "outbound" else ():
             if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
                 os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
     except FileNotFoundError:
@@ -2832,8 +2886,214 @@ def cmd_where(domain="", *_):
 # --- awg ----------------------------------------------------------------------
 
 
+AWG_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}")
+
+
 def _awg_service(profile):
+    # Added with `awg add`: an instance of the template, which reads amneziawg.d/<name>.conf.
+    if profile and _awg_added(profile):
+        return f"proxy-suite-awg@{profile}"
     return f"proxy-suite-awg-{profile}"
+
+
+# --- AmneziaWG configs added at runtime -----------------------------------------
+#
+# A .conf or vpn:// link becomes a global profile (`awg add`, amneziawg.d/<name>.conf) or an
+# outbound (`proxy outbounds add`, outbounds.d/<tag>.awg with its tunnel's port in <tag>.port).
+# amneziawg_config.py --import checks and normalizes it, hooks refused. The config always
+# reaches it on stdin: keys in argv would show in ps.
+
+
+def _awg_source(text):
+    """Whether text is an AmneziaWG config itself: a vpn:// link, or .conf text."""
+    t = (text or "").strip()
+    return t.startswith("vpn://") or ("[interface]" in t.lower() and "[peer]" in t.lower())
+
+
+def _awg_file(arg):
+    """Whether an add argument names a .conf or vpn:// export on disk."""
+    return bool(arg) and arg.endswith((".conf", ".vpn")) and os.path.isfile(os.path.expanduser(arg))
+
+
+def _awg_input(arg):
+    """The config an add argument stands for: stdin (-), the text itself, or a file's."""
+    if arg == "-":
+        return sys.stdin.read()
+    if _awg_source(arg):
+        return arg
+    path = os.path.expanduser(arg)
+    try:
+        return read_text(path)
+    except OSError as e:
+        die(f"Cannot read {path}: {e.strerror or e}")
+
+
+def _awg_import(text, *args):
+    """amneziawg_config.py --import on text: its output, or its complaint as ours."""
+    tool = env("AWG_CONFIG_TOOL")
+    if not tool:
+        die("AmneziaWG is not enabled in this configuration.")
+    try:
+        p = subprocess.run([sys.executable, tool, "--import", "-", *args], input=text, capture_output=True, text=True)
+    except OSError as e:
+        die(f"Cannot run {tool}: {e}")
+    if p.returncode:
+        message = p.stderr.strip().removeprefix("amneziawg-config: ") or f"{tool} exited with {p.returncode}"
+        die(message.replace("set vpnContainer", "pick one with --container <name>"))
+    return p.stdout
+
+
+def _awg_describe(text, container=""):
+    """What the config says of itself: {"name", "endpoint"}. Dies when it is not one."""
+    out = _awg_import(text, "--describe", *(["--container", container] if container else []))
+    try:
+        described = json.loads(out)
+    except ValueError:
+        described = {}
+    return described if isinstance(described, dict) else {}
+
+
+def _awg_label(described, fallback):
+    """A name for an entry added without one: the export's description, else awg-<its host>."""
+    name = _s(described.get("name") or "")
+    host = _s(described.get("endpoint") or "").rsplit(":", 1)[0].strip("[]")
+    if name and name == host:
+        return f"awg-{_host_label(host)}"
+    return name or fallback
+
+
+def _awg_write(text, path, container=""):
+    """The normalized config at path, 0600; the directory must let us in."""
+    directory = os.path.dirname(path)
+    if not os.access(directory, os.W_OK | os.X_OK):
+        denied(directory, "write to")
+    _awg_import(text, "--output", path, *(["--container", container] if container else []))
+
+
+def _awg_tunnel_ports():
+    return range(int(env("AWG_TUNNEL_BASE_PORT", "18800")), int(env("AWG_TUNNEL_BASE_PORT", "18800")) + int(env("AWG_TUNNEL_SLOTS", "32")))
+
+
+def _awg_tunnel_hop(ob):
+    """Whether a backend outbound is the SOCKS hop to a runtime AmneziaWG tunnel."""
+    port = ob.get("server_port") or (ob.get("settings") or {}).get("port")
+    server = ob.get("server") or (ob.get("settings") or {}).get("address")
+    return server == "127.0.0.1" and isinstance(port, int) and port in _awg_tunnel_ports()
+
+
+def _awg_free_port():
+    taken = set()
+    directory = _runtime_dir("outbound")
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        names = []
+    for name in names:
+        if name.endswith(".port"):
+            try:
+                taken.add(int(read_text(os.path.join(directory, name)).split()[0]))
+            except (OSError, ValueError, IndexError):
+                pass
+    port = next((p for p in _awg_tunnel_ports() if p not in taken), None)
+    if port is None:
+        die(f"No free port for another AmneziaWG outbound: all {len(_awg_tunnel_ports())} are taken. Remove one first.")
+    return port
+
+
+def _awg_outbound_add(tag, text, detour, container):
+    require_enabled("AWG_RUNTIME_OUTBOUNDS", "Adding AmneziaWG outbounds at runtime")
+    if detour:
+        die("An AmneziaWG outbound cannot chain through another: its tunnel dials the peer itself.")
+    described = _awg_describe(text, container)
+    if not tag:
+        tag = _unique_runtime_tag("outbound", _awg_label(described, "awg"), "awg")
+        _check_runtime_tag("outbound", tag)
+        print(f"Tag: {tag} (none given; pass one first to choose it)")
+    directory = _runtime_dir("outbound")
+    if not os.access(directory, os.W_OK | os.X_OK):
+        denied(directory, "write to")
+    port = _awg_free_port()
+    old = os.umask(0o027)
+    try:
+        # The port first: the config is what the start script and the sync unit look for.
+        for extra in (".detour", ".disabled"):
+            if os.path.exists(os.path.join(directory, tag + extra)):
+                os.unlink(os.path.join(directory, tag + extra))  # left from an earlier entry of this name
+        with open(os.path.join(directory, f"{tag}.port"), "w", encoding="utf-8") as f:
+            f.write(f"{port}\n")
+    except OSError:
+        denied(directory, "write to")
+    finally:
+        os.umask(old)
+    _awg_write(text, os.path.join(directory, f"{tag}.awg"), container)
+    _runtime_reload()
+    _runtime_entry_verify("outbound", tag)
+
+
+def _awg_add(*args):
+    shape = "awg add [name] <vpn://…|file.conf|-> [--container <name>]"
+    args = list(args)
+    container = ""
+    if "--container" in args:
+        i = args.index("--container")
+        container = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        if not container:
+            usage(shape)
+    require_enabled("AWG_RUNTIME_GLOBAL", "Adding AmneziaWG profiles at runtime")
+    if len(args) == 1:
+        name, source = "", args[0]
+    elif len(args) == 2 and (_awg_source(args[0]) or args[0] == "-"):
+        die(f"The name goes first, the config after it: proxy-ctl {shape}")
+    elif len(args) == 2:
+        name, source = args
+    else:
+        usage(shape)
+    # "warp" names WARP's own AmneziaWG unit (_warp_unit).
+    taken = {*_awg_profiles(), "warp"}
+    if name == "warp":
+        die("'warp' is reserved for WARP; pick another name.")
+    if name:
+        if not AWG_NAME.fullmatch(name):
+            die(f"Invalid profile name '{name}': up to 32 letters, digits, dashes and underscores, starting with a letter or digit.")
+        if name in taken:
+            die(f"An AmneziaWG profile named '{name}' already exists." + ("" if name in _awg_runtime_profiles() else " It is declared in the NixOS configuration."))
+    text = _awg_input(source)
+    described = _awg_describe(text, container)
+    if not name:
+        base = re.sub(r"[^A-Za-z0-9_-]+", "-", _awg_label(described, "awg")).strip("-_")[:32].strip("-_") or "awg"
+        name, n = base, 1
+        while name in taken:
+            n += 1
+            name = f"{base[: 32 - len(str(n)) - 1]}-{n}"
+        print(f"Name: {name} (none given; pass one first to choose it)")
+    _awg_write(text, os.path.join(_awg_runtime_dir(), f"{name}.conf"), container)
+    print(f"Added AmneziaWG profile: {name} - start it with: proxy-ctl awg on {name}")
+
+
+def _awg_rm(name="", *_):
+    if not name:
+        usage("awg rm <profile>")
+    if name not in _awg_runtime_profiles():
+        if name in _awg_profiles():
+            die(f"'{name}' is declared in the NixOS configuration; remove it there.")
+        die(f"No AmneziaWG profile named '{name}' was added with awg add.")
+    directory = _awg_runtime_dir()
+    if not os.access(directory, os.W_OK | os.X_OK):
+        denied(directory, "write to")
+    unit = _awg_service(name)
+    if svc_active(unit) or svc_state(unit) == "failed":
+        must("stop", unit)
+        # As `awg off`: the kill switch would otherwise hold with no tunnel to guard.
+        if svc_exists(KILL_SWITCH):
+            systemctl("stop", KILL_SWITCH)
+    try:
+        os.unlink(os.path.join(directory, f"{name}.conf"))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        denied(os.path.join(directory, f"{name}.conf"), "remove")
+    print(f"Removed AmneziaWG profile: {name}")
 
 
 def _active_awg_profiles():
@@ -2841,6 +3101,12 @@ def _active_awg_profiles():
 
 
 def cmd_awg(verb="list", *args):
+    if verb == "add":
+        _awg_add(*args)
+        return
+    if verb in ("rm", "remove", "del"):
+        _awg_rm(*args)
+        return
     profiles = _awg_profiles()
     if args and args[0] not in profiles:
         die(f"Unknown AmneziaWG profile: {args[0]}")
@@ -2854,11 +3120,11 @@ def cmd_awg(verb="list", *args):
             usage("awg toggle <profile>")
     if verb in ("list", "status"):
         if not profiles:
-            print("No AmneziaWG profiles configured.")
+            print("No AmneziaWG profiles configured." + (" Add one with: proxy-ctl awg add <vpn://…|file.conf>" if env("AWG_RUNTIME_GLOBAL") == "1" else ""))
             return
-        print(f"  {'PROFILE':<24} STATUS")
+        print(f"  {'PROFILE':<24} {'STATUS':<12} SOURCE")
         for profile in profiles:
-            print(f"  {profile:<24} {svc_state(_awg_service(profile)) or 'unknown'}")
+            print(f"  {profile:<24} {svc_state(_awg_service(profile)) or 'unknown':<12} {'runtime' if _awg_added(profile) else 'declared'}")
     elif verb == "on":
         if not args:
             usage("awg on <profile>")
@@ -2873,7 +3139,7 @@ def cmd_awg(verb="list", *args):
         if verb == "off" and svc_exists(KILL_SWITCH):
             systemctl("stop", KILL_SWITCH)
     else:
-        usage("awg [list] | on <profile> | off [profile] | toggle [profile] | restart [profile]")
+        usage("awg [list] | on <profile> | off [profile] | toggle [profile] | restart [profile] | add [name] <config> | rm <profile>")
 
 
 # --- wl -----------------------------------------------------------------------

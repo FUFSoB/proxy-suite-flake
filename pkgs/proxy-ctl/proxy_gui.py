@@ -953,11 +953,11 @@ class Window(Adw.ApplicationWindow):
         except GLib.Error as e:
             self.toast(f"Cannot read the clipboard: {e.message}")
             return
-        argv, what = model.paste_argv(page.tab.id, text)
+        argv, what, stdin = model.paste_argv(page.tab.id, text)
         if argv is None:
             self.toast(what)
         else:
-            self.app.run_argv("run", argv, self)
+            self.app.run_argv("run", argv, self, stdin=stdin)
 
     def follow_logs(self):
         self.app.run_argv("suspend", ["logs"], self)
@@ -977,13 +977,14 @@ class Window(Adw.ApplicationWindow):
         def with_text(text=""):
             try:
                 argv = action.argv(row, text, self.app.states)
+                stdin = action.stdin(row, text) if action.stdin else None
             except (ValueError, IndexError) as e:
                 self.toast(f"Cannot run that: {e}")
                 return
             if model.needs_confirm(action, row):
-                self.app.confirm(argv, lambda: self.app.run_argv(action.mode, argv, self), self)
+                self.app.confirm(argv, lambda: self.app.run_argv(action.mode, argv, self, stdin=stdin), self)
             else:
-                self.app.run_argv(action.mode, argv, self)
+                self.app.run_argv(action.mode, argv, self, stdin=stdin)
 
         if not action.prompt:
             with_text()
@@ -1280,9 +1281,10 @@ class ProxySuiteGui(Adw.Application):
         dialog.connect("response", lambda _, r: r == "run" and then())
         dialog.present(parent)
 
-    def run_argv(self, mode, argv, win, root=False):
+    def run_argv(self, mode, argv, win, root=False, stdin=None):
         """run: a toast; dialog, suspend, pause: output streamed into a dialog; copy: the last line to the clipboard.
-        root, or the elevated toggle: through pkexec. Never `apps run`, which is per user."""
+        root, or the elevated toggle: through pkexec. Never `apps run`, which is per user.
+        stdin: text proxy-ctl reads (argv says "-"), kept out of argv and pkexec's log."""
         root = (root or self.elevated()) and argv[:1] != ["apps"]
         command = f"{'pkexec ' if root else ''}proxy-ctl {shlex.join(argv)}"
         retry_argv = argv
@@ -1295,12 +1297,12 @@ class ProxySuiteGui(Adw.Application):
             dialog.present(win)
         elif win is not None:
             win.toast(f"… {command}")
-        threading.Thread(target=self.stream, args=(command, argv, mode, win, dialog, qr, root, retry_argv), daemon=True).start()
+        threading.Thread(target=self.stream, args=(command, argv, mode, win, dialog, qr, root, retry_argv, stdin), daemon=True).start()
 
-    def stream(self, command, argv, mode, win, dialog, qr, root, retry_argv):
+    def stream(self, command, argv, mode, win, dialog, qr, root, retry_argv, stdin=None):
         out = []
         try:
-            p = model.popen(argv, "pkexec" if root else None)
+            p = model.popen(argv, "pkexec" if root else None, stdin=stdin)
             if dialog:
                 GLib.idle_add(lambda: dialog.running(p, stoppable=not root) and False)
             for line in p.stdout:
@@ -1313,13 +1315,13 @@ class ProxySuiteGui(Adw.Application):
             status = 127
         if root and status == 126 and not out:
             out.append("authentication cancelled")  # pkexec: the password dialog was dismissed
-        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status, retry_argv) and False)
+        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status, retry_argv, stdin) and False)
 
-    def ran(self, command, mode, win, dialog, qr, out, status, retry_argv):
+    def ran(self, command, mode, win, dialog, qr, out, status, retry_argv, stdin=None):
         last = last_line(out)
         text = "\n".join(out)
         output = (command, text)
-        retry = (lambda: self.run_argv(mode, retry_argv, win, root=True)) if model.needs_root(out, status) else None
+        retry = (lambda: self.run_argv(mode, retry_argv, win, root=True, stdin=stdin)) if model.needs_root(out, status) else None
         if win is not None:
             win.last_output = output
             win.last_retry = retry

@@ -66,6 +66,25 @@ in
       ];
     };
 
+    runtime = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Let `proxy-ctl` add configs and `vpn://` links without a rebuild: `proxy-ctl awg add`
+          for a global profile (root hosts only), and `proxy-ctl proxy outbounds add` for an
+          outbound, which runs in wireproxy (needs `proxy.enable`). wg-quick hooks such as
+          `PostUp` are always refused in them. With this on, `profiles` may be empty.
+        '';
+      };
+
+      interfaceName = mkOption {
+        type = types.strMatching "^[A-Za-z0-9_.-]{1,15}$";
+        default = "awg-rt";
+        description = "Interface of the global profiles added at runtime. Only one of them runs at a time, so they share it.";
+      };
+    };
+
     profiles = mkOption {
       type = types.attrsOf t.profileType;
       default = { };

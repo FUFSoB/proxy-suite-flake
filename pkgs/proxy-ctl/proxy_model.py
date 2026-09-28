@@ -66,6 +66,7 @@ class Action:
     mode: str = "run"  # run: result in the feedback line; dialog: output streamed into a dialog; suspend: hand over the terminal; pause: suspend, then wait for enter; copy: last line to the clipboard
     offered: Callable = None  # () -> this configuration has it; None: every one does
     tty: bool = False  # it asks on the terminal: only a front end that hands the terminal over offers it
+    stdin: Callable = None  # (selected row or None, prompt text) -> text proxy-ctl reads on stdin, or None
 
 
 @dataclass
@@ -150,6 +151,7 @@ TOGGLES = {
     "proxy-suite-zapret": ["zapret"],
 }
 AWG_PREFIX = ctl._awg_service("")
+AWG_RUNTIME_PREFIX = "proxy-suite-awg@"
 ZAPRET_LISTS = (
     ("learned", "zapret-hosts-auto.txt"),
     ("pinned", "zapret-hosts-user.txt"),
@@ -183,8 +185,11 @@ def _wl_argv(verb, *extra):
 
 def _awg_profile(row):
     """The global AmneziaWG profile behind a row, or empty."""
-    name = row["unit"].removeprefix(AWG_PREFIX)
-    return name if row["unit"].startswith(AWG_PREFIX) and name in ctl._awg_profiles() else ""
+    unit = row["unit"]
+    for prefix in (AWG_RUNTIME_PREFIX, AWG_PREFIX):
+        if unit.startswith(prefix) and (name := unit.removeprefix(prefix)) in ctl._awg_profiles():
+            return name
+    return ""
 
 
 def _unit_argv(row, verb):
@@ -262,6 +267,44 @@ def outbound_summary():
         f"Pinned: {ctl._s(inventory.get('pinned') or '(none)')}   "
         f"Current: {ctl._outbound_current() or '-'}"
     )
+
+
+def awg_rows(states):
+    return [
+        {
+            "key": p,
+            "profile": p,
+            "unit": ctl._awg_service(p),
+            "state": states.get(ctl._awg_service(p)) or "inactive",
+            "source": "runtime" if ctl._awg_added(p) else "declared",
+        }
+        for p in ctl._awg_profiles()
+    ]
+
+
+def _awg_available(_):
+    return bool(ctl._awg_profiles()) or ctl.env("AWG_RUNTIME_GLOBAL") == "1"
+
+
+def _awg_add(text):
+    """[name] <config> as typed: (name or None, the config or a path to it)."""
+    text = text.strip()
+    if ctl._awg_source(text):
+        return None, text
+    parts = text.split(None, 1)
+    return (parts[0], parts[1].strip()) if len(parts) == 2 else (None, text)
+
+
+def _awg_add_argv(text):
+    name, source = _awg_add(text)
+    # The config itself goes on stdin: in argv its keys would show in ps, sudo's log and here.
+    what = "-" if ctl._awg_source(source) else _path(source)
+    return ["awg", "add", *([name] if name else []), what]
+
+
+def _awg_add_stdin(text):
+    _, source = _awg_add(text)
+    return source if ctl._awg_source(source) else None
 
 
 def subscription_rows(_):
@@ -441,9 +484,19 @@ def _sub_url(row):
 
 
 def _add_args(text):
-    """[tag] <url>, or JSON with spaces in it, as `proxy-ctl ... add` takes them."""
+    """[tag] <url>, or JSON with spaces in it, as `proxy-ctl ... add` takes them.
+    An AmneziaWG config becomes "-": _add_stdin hands it over on stdin."""
     text = text.strip()
-    return [text] if text.startswith("{") else text.split(None, 1)
+    if text.startswith("{"):
+        return [text]
+    name, source = _awg_add(text)
+    if ctl._awg_source(source):
+        return [*([name] if name else []), "-"]
+    return text.split(None, 1)
+
+
+def _add_stdin(text):
+    return _awg_add_stdin(text)
 
 
 def _zapret_auto():
@@ -520,6 +573,28 @@ TABS = [
         ],
     ),
     Tab(
+        "awg",
+        "AmneziaWG",
+        _awg_available,
+        [("profile", "Profile"), ("state", "State"), ("source", "Source")],
+        awg_rows,
+        summary=lambda: "Only one global tunnel runs at a time: starting a profile stops TUN, TProxy and any other profile.",
+        actions=[
+            Action("space", "start / stop", lambda r, *_: ["awg", "off" if r["state"] == "active" else "on", r["profile"]], when=ROW),
+            Action("ctrl+r", "restart it", lambda r, *_: ["awg", "restart", r["profile"]], when=lambda r: r["state"] in ("active", "failed")),
+            Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
+            Action(
+                "n",
+                "add a profile (name optional)…",
+                lambda r, t, _: _awg_add_argv(t),
+                prompt="[name] <vpn://… or a .conf path> - e.g. home vpn://… (or paste a whole .conf onto the table)",
+                stdin=lambda r, t: _awg_add_stdin(t),
+                offered=lambda: ctl.env("AWG_RUNTIME_GLOBAL") == "1",
+            ),
+            Action("d", "remove it", lambda r, *_: ["awg", "rm", r["profile"]], when=lambda r: r["source"] == "runtime", confirm=True),
+        ],
+    ),
+    Tab(
         "routing",
         "Routing",
         _socks,
@@ -557,7 +632,8 @@ TABS = [
                 "n",
                 "add a runtime outbound (tag optional)…",
                 lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t)],
-                prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
+                prompt="[tag] <url, JSON or vpn://> - e.g. de-1 vless://… or just vless://…",
+                stdin=lambda r, t: _add_stdin(t),
             ),
             Action(
                 "h",
@@ -704,28 +780,42 @@ OUTBOUND_ADD = ["proxy", "outbounds", "add"]
 
 
 def paste_argv(tab_id, text):
-    """What pasting the clipboard onto a tab runs: (argv, ""), or (None, why it runs nothing).
+    """What pasting the clipboard onto a tab runs: (argv, "", stdin), or (None, why it runs nothing, None).
 
     Dumb on purpose: a share link becomes an outbound, a subscription URL a subscription,
-    a bare host a pinned or learned one. The tag comes from the link, as `add` derives it.
+    a bare host a pinned or learned one, an AmneziaWG vpn:// link or .conf a global profile
+    (an outbound on the outbounds tab). The tag comes from the link, as `add` derives it.
     """
     text = (text or "").strip()
     if not text:
-        return None, "Nothing to paste."
+        return None, "Nothing to paste.", None
+    if ctl._awg_source(text):
+        return _awg_paste(tab_id, text)
     if text.startswith("{"):
-        return [*OUTBOUND_ADD, text], ""  # only outbounds take JSON
+        return [*OUTBOUND_ADD, text], "", None  # only outbounds take JSON
     if len(text.splitlines()) > 1:
-        return None, "Paste one link at a time."
+        return None, "Paste one link at a time.", None
     scheme = text.split("://", 1)[0].lower() if "://" in text else ""
     if scheme in PROXY_SCHEMES:
-        return [*OUTBOUND_ADD, text], ""
+        return [*OUTBOUND_ADD, text], "", None
     if scheme in ("http", "https"):
-        return ([*OUTBOUND_ADD, text] if tab_id == "outbounds" else ["proxy", "subs", "add", text]), ""
+        return ([*OUTBOUND_ADD, text] if tab_id == "outbounds" else ["proxy", "subs", "add", text]), "", None
     if scheme:
-        return None, f"Nothing takes a {scheme}:// link."
+        return None, f"Nothing takes a {scheme}:// link.", None
     if HOST.fullmatch(text) and tab_id in HOST_ARGV:
-        return [*HOST_ARGV[tab_id], text], ""
-    return None, "Not a share link, a subscription URL or a host."
+        return [*HOST_ARGV[tab_id], text], "", None
+    return None, "Not a share link, a subscription URL or a host.", None
+
+
+def _awg_paste(tab_id, text):
+    """An AmneziaWG config, on stdin: an outbound where outbounds are, else a global profile."""
+    outbound = ctl.env("AWG_RUNTIME_OUTBOUNDS") == "1"
+    global_ = ctl.env("AWG_RUNTIME_GLOBAL") == "1"
+    if outbound and (tab_id == "outbounds" or not global_):
+        return [*OUTBOUND_ADD, "-"], "", text
+    if global_:
+        return ["awg", "add", "-"], "", text
+    return None, "AmneziaWG configs cannot be added here: amneziaWg.runtime is off in this configuration.", None
 
 
 def available_tabs(states):
@@ -795,13 +885,28 @@ def load_tab_as_root(tab, via):
         return None, (p.stderr.strip().splitlines() or [f"exit status {p.returncode}"])[-1]
 
 
-def popen(argv, root=None):
+def popen(argv, root=None, stdin=None):
     """proxy-ctl with its output streamed: its own process group, so stop() takes down what it spawned too.
-    root: "pkexec" to run it as root, asking through the desktop's polkit agent."""
-    return subprocess.Popen(
-        elevated(argv, root) if root else [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+    root: "pkexec" to run it as root, asking through the desktop's polkit agent.
+    stdin: text for it to read (argv then says "-"), kept out of argv, ps and sudo's log."""
+    p = subprocess.Popen(
+        elevated(argv, root) if root else [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
         text=True, errors="replace", start_new_session=True,
     )
+    feed(p, stdin)
+    return p
+
+
+def feed(p, stdin):
+    """Hands a started process its stdin text, and closes it."""
+    if stdin is None:
+        return
+    try:
+        p.stdin.write(stdin)
+        p.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass  # it exited first: its output says why
 
 
 def stop(proc):
@@ -889,7 +994,8 @@ def tray_menu(snap, outbounds=None):
         if snap[name]["available"]:
             active = snap[name]["active"]
             traffic.append(MenuItem(name, label, kind="check", checked=active, argv=["proxy", name, "off" if active else "on"]))
-    if snap["awg"]["available"]:
+    # Available with none added yet: nothing to pick until `awg add`.
+    if snap["awg"]["available"] and snap["awg"]["profiles"]:
         current = snap["awg"]["active"]
         traffic.append(
             MenuItem(

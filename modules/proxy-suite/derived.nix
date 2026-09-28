@@ -59,7 +59,7 @@ let
   # Some global tunnel for it to guard.
   killSwitchEnabled =
     cfg.killSwitch.enable
-    && (proxyEnabled && (globalTun.enable || globalTproxy.enable) || awgGlobalProfiles != { });
+    && (proxyEnabled && (globalTun.enable || globalTproxy.enable) || awgGlobalAvailable);
   perAppRoutingTun = cfg.perAppRouting.tun;
   perAppRoutingTproxy = cfg.perAppRouting.tproxy;
   zapretCfg = cfg.zapret;
@@ -158,6 +158,14 @@ let
     }
   ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
   awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;
+  # Added with proxy-ctl at runtime: global profiles (`awg add`), as template instances
+  # sharing runtime.interfaceName, need root; outbounds (`proxy outbounds add`) run in
+  # wireproxy template instances, which the supervisor cannot template.
+  awgRuntimeEnabled = cfg.amneziaWg.enable && cfg.amneziaWg.runtime.enable;
+  awgRuntimeGlobal = awgRuntimeEnabled && cfg.host.privileged;
+  awgRuntimeOutbounds = awgRuntimeEnabled && proxyEnabled && cfg.host.serviceManager != "supervisor";
+  # Some global profile may run: declared, or added at runtime.
+  awgGlobalAvailable = awgGlobalProfiles != { } || awgRuntimeGlobal;
   # Profiles run behind a loopback SOCKS hop rather than an interface.
   awgTunnelOutbounds = builtins.filter (ob: ob.kind != "interface") awgOutbounds;
 
@@ -442,6 +450,12 @@ let
     awgOutboundRulePriority = 8991;
     # A global AmneziaWG profile's rules keeping the host's UDP services on the main table.
     awgServerUdpRulePriority = 8989;
+    # Global profiles and outbounds added with proxy-ctl: <name>.conf here, and
+    # <tag>.awg with <tag>.port in runtimeOutboundsDir.
+    runtimeAwgDir = "${stateDir}/amneziawg.d";
+    # Loopback SOCKS listeners of the runtime AmneziaWG outbounds, one per slot.
+    awgRuntimeTunnelBasePort = 18800;
+    awgRuntimeTunnelSlots = 32;
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Downloaded proxy.routing.ruleSets, one file each, written by the service user.
@@ -550,6 +564,9 @@ in
     torOnionInbounds
     proxyInboundOnionCapable
     awgGlobalProfiles
+    awgGlobalAvailable
+    awgRuntimeGlobal
+    awgRuntimeOutbounds
     awgOutbounds
     awgInterfaceOutbounds
     awgTunnelOutbounds

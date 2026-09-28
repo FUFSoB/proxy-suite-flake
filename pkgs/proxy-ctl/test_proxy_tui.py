@@ -54,7 +54,8 @@ class TuiTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.ran = []
-        patcher = mock.patch.object(tui.ProxyTui, "run_argv", lambda app, mode, argv: self.ran.append(argv))
+        # A run with stdin is recorded with it: (argv, stdin).
+        patcher = mock.patch.object(tui.ProxyTui, "run_argv", lambda app, mode, argv, stdin=None: self.ran.append(argv if stdin is None else (argv, stdin)))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -69,7 +70,7 @@ class TuiTest(unittest.TestCase):
 
     def test_retry_root_leaves_sigint_to_sudo(self):
         """Ctrl-C at sudo's password prompt is sudo's: raised here it would take the TUI down with it."""
-        app = mock.MagicMock(retry=("run", ["proxy", "on"]))
+        app = mock.MagicMock(retry=("run", ["proxy", "on"], None))
         app.suspend.return_value = contextlib.nullcontext()
         before, during = signal.getsignal(signal.SIGINT), []
         with mock.patch.object(tui.subprocess, "Popen") as popen, contextlib.redirect_stdout(io.StringIO()):
@@ -79,6 +80,20 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(during, [signal.SIG_IGN])
         self.assertEqual(signal.getsignal(signal.SIGINT), before)
         self.assertEqual(app.finish.call_args.args[-2:], (["done"], 0))
+        self.assertNotIn("stdin", popen.call_args.kwargs)
+
+    def test_retry_root_carries_stdin(self):
+        """A config pasted on stdin reaches sudo's proxy-ctl the same way."""
+        app = mock.MagicMock(retry=("run", ["awg", "add", "-"], "vpn://AAAA"))
+        app.suspend.return_value = contextlib.nullcontext()
+        with mock.patch.object(tui.subprocess, "Popen") as popen, contextlib.redirect_stdout(io.StringIO()):
+            popen.return_value.stdout = iter(["Added\n"])
+            popen.return_value.wait.return_value = 0
+            tui.ProxyTui.action_retry_root(app)
+        self.assertEqual(popen.call_args.args[0][-3:], ["awg", "add", "-"])
+        self.assertEqual(popen.call_args.kwargs["stdin"], tui.subprocess.PIPE)
+        popen.return_value.stdin.write.assert_called_once_with("vpn://AAAA")
+        self.assertEqual(app.finish.call_args.kwargs["stdin"], "vpn://AAAA")
 
     def test_filter_sort_pack(self):
         rows = [{"key": "a", "host": "a.example", "kind": "learned"}, {"key": "b", "host": "learned.org", "kind": "pinned"}]
@@ -139,6 +154,12 @@ class TuiTest(unittest.TestCase):
                 await pilot.pause()
                 self.assertEqual(self.ran, [])
                 self.assertIn("ftp:// link", str(app.main.query_one("#feedback").content))
+                # An AmneziaWG config: its keys go on stdin, never into argv.
+                self.env["AWG_RUNTIME_OUTBOUNDS"] = "1"
+                conf = "[Interface]\nPrivateKey = k\n[Peer]\nPublicKey = p"
+                app.post_message(events.Paste(conf))
+                await pilot.pause()
+                self.assertEqual(self.ran.pop(), (["proxy", "outbounds", "add", "-"], conf))
 
         asyncio.run(run())
 
@@ -211,7 +232,16 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(self.ran.pop(), ["awg", "restart", "p"])
             app.table().move_cursor(row=list(app.rows["services"]).index("proxy-suite-tun"))
 
-            # Right arrow moves to Routing and its table has focus.
+            # Right arrow moves to AmneziaWG, there with a profile, and its table has focus.
+            await pilot.press("right")
+            await self.settle(app, pilot)
+            self.assertEqual((app.active_tab(), app.focused.id), ("awg", "awg-table"))
+            await pilot.press("space")
+            self.assertEqual(self.ran.pop(), ["awg", "off", "p"])
+            # Declared: nothing removes it here.
+            self.assertNotIn("d", app.screen.active_bindings)
+
+            # On to Routing.
             await pilot.press("right")
             await self.settle(app, pilot)
             self.assertEqual((app.active_tab(), app.focused.id), ("routing", "routing-table"))
@@ -263,7 +293,7 @@ class TuiTest(unittest.TestCase):
             await pilot.press("escape")
 
             # An empty tab says how to fill it.
-            await pilot.press("4")
+            await pilot.press("5")
             await self.settle(app, pilot)
             self.assertIn("Nothing here yet.   n: add a runtime subscription", str(app.main.query_one("#subs-summary").content))
 
@@ -280,7 +310,7 @@ class TuiTest(unittest.TestCase):
             # Brackets in a summary are text, not markup.
             self.env["ZAPRET_CUTOFF_ENABLED"] = "1"
             self.capture = "Probed:  [b] from [/x]\nCutoff:  none on this line\n"
-            await pilot.press("5")
+            await pilot.press("6")
             await self.settle(app, pilot)
             self.assertIn("[/x]", str(app.main.query_one("#zapret-summary").content))
             await self.settle(app, pilot)
@@ -333,7 +363,7 @@ class TuiTest(unittest.TestCase):
             self.env["INBOUNDS_ENABLED"] = "1"
             app.action_reload()
             await self.settle(app, pilot)
-            await pilot.press("6")
+            await pilot.press("7")
             await self.settle(app, pilot)
             await pilot.press("c")
             self.assertEqual(self.ran.pop(), ["inbounds", "link", "vless", "alice"])

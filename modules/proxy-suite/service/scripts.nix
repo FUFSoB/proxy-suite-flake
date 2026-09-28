@@ -128,6 +128,7 @@ let
       torCfg
       whitelistBypassJoiners
       awgOutbounds
+      awgRuntimeOutbounds
       constants
       pureXrayEnabled
       hybridEnabled

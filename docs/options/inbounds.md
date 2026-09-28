@@ -122,6 +122,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [via](#services-proxy-suite-inbounds-routing-via)
     - [zapretDirect](#services-proxy-suite-inbounds-routing-zapretdirect)
   - [serverAddress](#services-proxy-suite-inbounds-serveraddress)
+  - [serverAliases](#services-proxy-suite-inbounds-serveraliases)
   - [shareLinks](#services-proxy-suite-inbounds-sharelinks)
   - subscriptions
     - [enable](#services-proxy-suite-inbounds-subscriptions-enable)
@@ -1136,6 +1137,19 @@ Public address for share links\. ` null `: detect the uplink IPv4\.
 **Type:** null or string matching the pattern \[^\[:space:]]+\
 **Default:** `null`\
 **Example:** `"vpn.example.com"`
+
+<a id="services-proxy-suite-inbounds-serveraliases"></a>
+## services\.proxy-suite\.inbounds\.serverAliases
+
+Other names and IPs of this host that clients reach through the tunnel, such as a
+TURN relay’s name beside the site on ` serverAddress `\. Like ` serverAddress `, they go
+direct on the listener ports instead of looping back through ` routing.via `, which
+often cannot reach this host at all\. List the IPs too: a client that resolves a name
+itself hands XRay the address, which no name rule matches\.
+
+**Type:** list of string matching the pattern \[^\[:space:]]+\
+**Default:** `[ ]`\
+**Example:** `[ "turn.example.com" "203.0.113.10" "2001:db8::10" ]`
 
 <a id="services-proxy-suite-inbounds-sharelinks"></a>
 ## services\.proxy-suite\.inbounds\.shareLinks

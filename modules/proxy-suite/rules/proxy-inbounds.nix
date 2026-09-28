@@ -38,13 +38,15 @@ let
   };
 
   # The address clients dial must stay reachable even when blockRu covers it
-  # (a .ru domain or IP). After blockPrivate, so it cannot open the LAN.
-  serverAddressIsIp =
-    let
-      addr = proxyInboundsCfg.serverAddress;
-    in
-    addr != null
-    && (lib.hasInfix ":" addr || builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" addr != null);
+  # (a .ru domain or IP). After blockPrivate, so it cannot open the LAN. Its aliases
+  # too: routing.via usually cannot loop back to this host, so they would fail there.
+  isIp =
+    addr: lib.hasInfix ":" addr || builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" addr != null;
+  serverAddresses =
+    lib.optional (proxyInboundsCfg.serverAddress != null) proxyInboundsCfg.serverAddress
+    ++ proxyInboundsCfg.serverAliases;
+  serverIps = lib.unique (builtins.filter isIp serverAddresses);
+  serverNames = lib.unique (builtins.filter (addr: !isIp addr) serverAddresses);
 
   # Only the ports clients dial there: the rest of this host (wildcard services the
   # firewall keeps from the internet) must not be reachable through it.
@@ -59,23 +61,23 @@ let
     ]
   );
 
+  # Names and IPs in rules of their own: XRay ANDs the fields of one rule.
+  mkServerAddressRule =
+    ruleTag: field: items:
+    lib.optional (items != [ ] && exceptionInboundTags != [ ]) {
+      type = "field";
+      inherit ruleTag;
+      ${field} = items;
+      inboundTag = exceptionInboundTags;
+      port = lib.concatMapStringsSep "," toString serverAddressPorts;
+      outboundTag = "direct";
+    };
+
   serverAddressRule =
-    lib.optional (proxyInboundsCfg.serverAddress != null && exceptionInboundTags != [ ])
-      (
-        {
-          type = "field";
-          ruleTag = "inbound-server-address-direct";
-          inboundTag = exceptionInboundTags;
-          port = lib.concatMapStringsSep "," toString serverAddressPorts;
-          outboundTag = "direct";
-        }
-        // (
-          if serverAddressIsIp then
-            { ip = [ proxyInboundsCfg.serverAddress ]; }
-          else
-            { domain = [ "full:${proxyInboundsCfg.serverAddress}" ]; }
-        )
-      );
+    mkServerAddressRule "inbound-server-address-direct" "domain" (
+      map (name: "full:${name}") serverNames
+    )
+    ++ mkServerAddressRule "inbound-server-address-direct-ip" "ip" serverIps;
 
   blockRuRules = lib.optionals proxyInboundsCfg.routing.blockRu [
     {

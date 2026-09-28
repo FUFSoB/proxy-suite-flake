@@ -25,6 +25,7 @@ in
           "zapret"
           "stats"
           "whitelistBypass"
+          "amneziaWg"
         ]
       );
       default = [ ];
@@ -39,6 +40,9 @@ in
         - "zapret": change zapret2's learned sites, and `zapret cutoff probe`.
         - "stats": `inbounds stats`.
         - "whitelistBypass": everything under `proxy-ctl wl`.
+        - "amneziaWg": add and remove global AmneziaWG profiles (`proxy-ctl awg add`, `awg rm`).
+          A global profile takes over the host's routes and DNS. Starting and stopping one is
+          "services"; an AmneziaWG outbound is "outbounds".
       '';
       example = [
         "services"

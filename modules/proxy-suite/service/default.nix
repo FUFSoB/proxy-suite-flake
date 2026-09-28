@@ -175,24 +175,33 @@ lib.mkMerge [
       # files proxy-ctl drops here inherit the group; without the outbounds scope
       # only root writes them. tmpfiles rather than the start scripts, so the group can add an
       # outbound before the proxy has ever run.
-      tmpfiles = lib.mkIf (cfg.enable && proxyEnabled) (
-        map
-          (
-            dir:
-            "d ${dir} ${
-              if userControlAllows "outbounds" then
-                "2770 root ${userControlCfg.group}"
-              else if constants.privileged then
-                "0700 root root"
-              else
-                "0700 - -"
-            } -"
-          )
-          [
-            constants.runtimeOutboundsDir
-            constants.runtimeSubscriptionsDir
-          ]
-      );
+      tmpfiles = lib.mkMerge [
+        (lib.mkIf (cfg.enable && proxyEnabled) (
+          map
+            (
+              dir:
+              "d ${dir} ${
+                if userControlAllows "outbounds" then
+                  "2770 root ${userControlCfg.group}"
+                else if constants.privileged then
+                  "0700 root root"
+                else
+                  "0700 - -"
+              } -"
+            )
+            [
+              constants.runtimeOutboundsDir
+              constants.runtimeSubscriptionsDir
+            ]
+        ))
+        # Global AmneziaWG profiles added at runtime. Listable, so the tray and TUI show
+        # their names to everyone; each file is 0600 (amneziawg_config.py writes it so).
+        (lib.mkIf (cfg.enable && derived.awgRuntimeGlobal) [
+          "d ${constants.runtimeAwgDir} ${
+            if userControlAllows "amneziaWg" then "2775 root ${userControlCfg.group}" else "0755 root root"
+          } -"
+        ])
+      ];
 
       userServices = lib.mkMerge [
         (mkNamedUnits userServiceEntries)

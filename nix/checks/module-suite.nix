@@ -332,6 +332,7 @@ in
 {
   proxy-suite-module = builtins.seq validated (pkgs.writeText "proxy-suite-module-check" "ok");
   amneziawg-secret-manifest = amneziaWgChecks.manifest;
+  amneziawg-unit-scripts = amneziaWgChecks.unitScripts;
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
   tor-guard-runtime = torChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;

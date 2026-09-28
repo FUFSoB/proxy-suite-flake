@@ -503,6 +503,8 @@ in
         has exclude zapret auto
         has proxy-suite-awg-work logs
         has work awg on
+        has add awg
+        has rm awg
         has torrent apps run
         has unpin proxy
         has newnym tor

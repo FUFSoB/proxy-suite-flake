@@ -22,6 +22,9 @@ let
     proxyInboundsCfg
     proxyInboundsEnabled
     amneziaWgProfileNamesFile
+    awgRuntimeGlobal
+    awgRuntimeOutbounds
+    proxySuiteScriptsDir
     ruleSets
     pkgs
     ;
@@ -73,6 +76,13 @@ in
       ROUTE_MODE_STATE_FILE = routeModeStateFile;
       DEFAULT_ROUTE_MODE = if proxyCfg.routing.default == "proxy" then "blacklist" else "whitelist";
       AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
+      # Profiles and outbounds added with `awg add` and `proxy outbounds add`.
+      AWG_RUNTIME_GLOBAL = flag awgRuntimeGlobal;
+      AWG_RUNTIME_OUTBOUNDS = flag awgRuntimeOutbounds;
+      AWG_RUNTIME_DIR = constants.runtimeAwgDir;
+      AWG_CONFIG_TOOL = "${proxySuiteScriptsDir}/amneziawg_config.py";
+      AWG_TUNNEL_BASE_PORT = toString constants.awgRuntimeTunnelBasePort;
+      AWG_TUNNEL_SLOTS = toString constants.awgRuntimeTunnelSlots;
       WL_FILE = toString (
         pkgs.writeText "proxy-suite-control" (
           builtins.toJSON (

@@ -30,6 +30,23 @@ in
       example = "vpn.example.com";
     };
 
+    serverAliases = mkOption {
+      type = types.listOf (types.strMatching "[^[:space:]]+");
+      default = [ ];
+      description = ''
+        Other names and IPs of this host that clients reach through the tunnel, such as a
+        TURN relay's name beside the site on `serverAddress`. Like `serverAddress`, they go
+        direct on the listener ports instead of looping back through `routing.via`, which
+        often cannot reach this host at all. List the IPs too: a client that resolves a name
+        itself hands XRay the address, which no name rule matches.
+      '';
+      example = [
+        "turn.example.com"
+        "203.0.113.10"
+        "2001:db8::10"
+      ];
+    };
+
     openFirewall = bool true "Open the firewall for every listener not on loopback.";
     shareLinks = bool true "Generate client share links for `proxy-ctl inbounds link`. Readable by root, and by `userControl.group` with the secrets scope.";
 

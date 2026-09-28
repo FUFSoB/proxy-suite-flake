@@ -6,7 +6,12 @@
 }:
 
 let
-  inherit (import ./derived.nix { inherit lib cfg; }) constants awgGlobalProfiles;
+  inherit (import ./derived.nix { inherit lib cfg; })
+    constants
+    awgGlobalProfiles
+    awgGlobalAvailable
+    awgRuntimeGlobal
+    ;
   inherit (constants) serviceUser;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
@@ -158,8 +163,10 @@ let
   ++ lib.optional perAppTun.enable perAppTun.fwmark
   ++ lib.optional perAppTproxy.enable perAppTproxy.fwmark
   ++ lib.optional tgWsProxyBypassEnabled tgWsProxyCfg.fwmark
-  ++ lib.optional (awgGlobalProfiles != { }) constants.awgGlobalFwmark;
-  awgGlobalInterfaces = lib.mapAttrsToList (_: profile: profile.interfaceName) awgGlobalProfiles;
+  ++ lib.optional awgGlobalAvailable constants.awgGlobalFwmark;
+  awgGlobalInterfaces =
+    lib.mapAttrsToList (_: profile: profile.interfaceName) awgGlobalProfiles
+    ++ lib.optional awgRuntimeGlobal cfg.amneziaWg.runtime.interfaceName;
   globalTunEnabled = proxyCfg.enable && proxyCfg.tun.enable;
   killSwitchAllowLines = ''
     ip daddr $RESERVED_IP accept
@@ -183,7 +190,7 @@ let
       ip daddr ${proxyCfg.tun.address} accept
       ${lib.optionalString proxyCfg.ipv6 "ip6 daddr ${constants.globalTunIPv6Address} accept"}
     ''}
-    ${lib.optionalString (awgGlobalProfiles != { }) ''
+    ${lib.optionalString awgGlobalAvailable ''
       oifname { ${lib.concatMapStringsSep ", " (i: ''"${i}"'') awgGlobalInterfaces} } accept
       meta skgid "${constants.awgGlobalGroup}" accept
     ''}

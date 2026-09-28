@@ -536,6 +536,62 @@ class AmneziaWgConfigTests(unittest.TestCase):
         unmarked = amneziawg_config.as_wireproxy(config, "127.0.0.1:18700")
         self.assertEqual(amneziawg_config.section_values(unmarked, "interface", "fwmark"), [])
 
+    def import_cli(self, text, *args):
+        return subprocess.run(
+            [sys.executable, amneziawg_config.__file__, "--import", "-", *args],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_import_conf_and_vpn_links(self):
+        conf = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+        config, described = amneziawg_config.import_source(conf)
+        self.assertIn("MTU = 1280", config)
+        self.assertEqual(described, {"name": "vpn.example.com", "endpoint": "vpn.example.com:51820"})
+
+        data = vpn_data(("amnezia-awg", "awg", BASE_CONFIG))
+        data["description"] = "Home server"
+        config, described = amneziawg_config.import_source(encode_vpn(data))
+        self.assertIn("DNS = 1.1.1.1,8.8.8.8", config)
+        self.assertEqual(described["name"], "Home server")
+
+        direct = "vpn://" + base64.urlsafe_b64encode(conf.encode()).decode()
+        self.assertIn("[Peer]", amneziawg_config.import_source(direct)[0])
+
+    def test_import_picks_a_container_and_refuses_hooks(self):
+        data = vpn_data(
+            ("amnezia-awg", "awg", BASE_CONFIG),
+            ("amnezia-awg2", "awg", BASE_CONFIG.replace("10.8.0.2", "10.9.0.2")),
+        )
+        data["defaultContainer"] = "not-awg"
+        with self.assertRaisesRegex(ConfigError, "multiple AmneziaWG"):
+            amneziawg_config.import_source(encode_vpn(data))
+        self.assertIn("10.9.0.2", amneziawg_config.import_source(encode_vpn(data), "amnezia-awg2")[0])
+        conf = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+        with self.assertRaisesRegex(ConfigError, "only applies"):
+            amneziawg_config.import_source(conf, "amnezia-awg")
+        with self.assertRaisesRegex(ConfigError, "privileged"):
+            amneziawg_config.import_source(conf.replace("Address =", "PostUp = id\nAddress ="))
+        with self.assertRaisesRegex(ConfigError, "expected"):
+            amneziawg_config.import_source("vless://nope")
+
+    def test_import_cli_writes_a_private_conf_and_describes_it(self):
+        conf = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "home.conf"
+            result = self.import_cli(conf, "--describe", "--output", str(output))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["name"], "vpn.example.com")
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertIn("[Interface]", output.read_text())
+            hooked = self.import_cli(conf.replace("Address =", "PreUp = id\nAddress ="), "--output", str(output))
+            self.assertEqual(hooked.returncode, 1)
+            self.assertIn("privileged", hooked.stderr)
+            # A refused import leaves what was there.
+            self.assertIn("[Interface]", output.read_text())
+        self.assertEqual(self.import_cli(conf).returncode, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,6 +134,42 @@ pkgs.testers.runNixOSTest {
         userspace.succeed("systemctl stop proxy-suite-awg-test.service")
         userspace.fail("ip link show awg-test")
 
+    with subtest("a profile added at runtime"):
+        # The same client as "test", as a .conf pasted in rather than declared.
+        userspace.succeed("""umask 077; cat > /root/rt.conf <<'EOF'
+    [Interface]
+    PrivateKey = ${keys.peer1.privateKey}
+    Address = 10.23.42.2/32
+    Jc = ${toString obfuscation.jc}
+    Jmin = ${toString obfuscation.jmin}
+    Jmax = ${toString obfuscation.jmax}
+    S1 = ${toString obfuscation.s1}
+    S2 = ${toString obfuscation.s2}
+
+    [Peer]
+    PublicKey = ${keys.peer0.publicKey}
+    Endpoint = 192.168.0.1:23542
+    AllowedIPs = 10.23.42.1/32
+    PersistentKeepalive = 5
+    EOF""")
+        userspace.succeed("proxy-ctl awg add rt /root/rt.conf")
+        userspace.succeed("test $(stat -c %a /var/lib/proxy-suite/amneziawg.d/rt.conf) = 600")
+        userspace.succeed("proxy-ctl awg list | grep -E 'rt +inactive +runtime'")
+        userspace.succeed("proxy-ctl awg on rt")
+        userspace.succeed("ip link show awg-rt")
+        userspace.succeed("ping -c 5 10.23.42.1")
+        userspace.succeed("systemctl is-active proxy-suite-awg-watchdog@rt.service")
+        # A declared profile takes over: they share the peer, and only one global tunnel runs.
+        userspace.succeed("systemctl start proxy-suite-awg-test.service")
+        userspace.fail("systemctl is-active proxy-suite-awg@rt.service")
+        userspace.fail("ip link show awg-rt")
+        userspace.succeed("systemctl stop proxy-suite-awg-test.service")
+        # Hooks are refused whoever adds the config, and nothing is written.
+        userspace.fail("sed 's/^Address/PostUp = touch \\/pwned\\nAddress/' /root/rt.conf | proxy-ctl awg add hooked -")
+        userspace.fail("test -e /var/lib/proxy-suite/amneziawg.d/hooked.conf")
+        userspace.succeed("proxy-ctl awg rm rt")
+        userspace.fail("test -e /var/lib/proxy-suite/amneziawg.d/rt.conf")
+
     with subtest("failed handshake rolls back userspace routing"):
         userspace.fail("systemctl start proxy-suite-awg-broken.service")
         userspace.fail("ip link show awg-broken")

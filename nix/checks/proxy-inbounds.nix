@@ -122,6 +122,19 @@ let
   };
   ipNamedConfig = mkInboundsConfig ipNamedFixture;
 
+  # Other names and IPs of this host, beside the one in share links.
+  aliasedFixture = mkInbounds {
+    serverAddress = "vpn.example.com";
+    serverAliases = [
+      "turn.example.com"
+      "203.0.113.10"
+      "2001:db8::10"
+      "vpn.example.com"
+    ];
+    listeners.vless-in = realityListener;
+  };
+  aliasedConfig = mkInboundsConfig aliasedFixture;
+
   unguardedFixture = mkInbounds {
     routing = {
       blockRu = false;
@@ -812,7 +825,28 @@ let
     (ok ((ruleByTag blockedConfig "inbound-server-address-direct").inboundTag == [ "open" ]))
     # No address to exempt when it is detected at runtime instead.
     (ok (!builtins.elem "inbound-server-address-direct" (ruleTags relayConfig)))
-    (ok ((ruleByTag ipNamedConfig "inbound-server-address-direct").ip == [ "82.146.44.102" ]))
+    (ok ((ruleByTag ipNamedConfig "inbound-server-address-direct-ip").ip == [ "82.146.44.102" ]))
+    (ok (!builtins.elem "inbound-server-address-direct" (ruleTags ipNamedConfig)))
+    (ok (!builtins.elem "inbound-server-address-direct-ip" (ruleTags namedConfig)))
+    # Aliases join serverAddress, names and IPs apart, as XRay ANDs one rule's fields.
+    (
+      assert
+        (ruleByTag aliasedConfig "inbound-server-address-direct").domain == [
+          "full:vpn.example.com"
+          "full:turn.example.com"
+        ];
+      true
+    )
+    (
+      assert
+        (ruleByTag aliasedConfig "inbound-server-address-direct-ip").ip == [
+          "203.0.113.10"
+          "2001:db8::10"
+        ];
+      true
+    )
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443"))
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct"))
     (ok (!builtins.elem "inbound-block-ru-domain" (ruleTags unguardedConfig)))
 
     # A per-listener via becomes its own rule; listeners on the default do not.

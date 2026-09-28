@@ -11,6 +11,7 @@ import json
 import os
 import re
 import socket
+import sys
 import tempfile
 import zlib
 from pathlib import Path
@@ -736,6 +737,35 @@ def prepare(manifest: dict[str, Any]) -> str:
     return config
 
 
+def import_source(text: str, container: str | None = None) -> tuple[str, dict[str, str]]:
+    """A pasted .conf or vpn:// link as a normalized .conf, and what it says about itself.
+
+    For profiles added at runtime: hooks are refused whatever the source, since whoever may
+    add one need not be root. The name is the export's description, else its server's host.
+    """
+    text = text.strip()
+    name = ""
+    if text.startswith("vpn://"):
+        data = decode_vpn_link(text)
+        config = extract_vpn_config(data, container)
+        for key in ("description", "name", "hostName"):
+            if isinstance(data.get(key), str) and data[key].strip():
+                name = data[key].strip()
+                break
+    elif "[interface]" in text.lower():
+        if container:
+            raise ConfigError("--container only applies to a vpn:// link")
+        config = _apply_awg3_mtu_default(text + "\n")
+    else:
+        raise ConfigError("expected an AmneziaWG .conf or a vpn:// link")
+    validate_config(config)
+    endpoints = section_values(config, "peer", "endpoint")
+    endpoint = endpoints[0] if endpoints else ""
+    if not name and endpoint:
+        name = endpoint.rsplit(":", 1)[0].strip("[]")
+    return config, {"name": name, "endpoint": endpoint}
+
+
 def write_private(path: str, content: str) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -783,6 +813,18 @@ def main() -> int:
         help="write Endpoint names as the addresses they resolve to here",
     )
     parser.add_argument(
+        "--import",
+        dest="import_",
+        metavar="SOURCE",
+        help="normalize a .conf or vpn:// link (a path, or - for stdin), hooks refused",
+    )
+    parser.add_argument("--container", help="with --import: which container of a vpn:// export")
+    parser.add_argument(
+        "--describe",
+        action="store_true",
+        help="with --import: print the name and endpoint it carries as JSON",
+    )
+    parser.add_argument(
         "--inspect",
         metavar="CONFIG",
         help="print the transport implementation, a probe address and the rekey interval",
@@ -795,6 +837,25 @@ def main() -> int:
             config = _read_limited(args.inspect)
             print(transport_implementation(config), probe_address(config), rekey_after_time(config))
             return 0
+        if args.import_ is not None:
+            if args.manifest is not None or args.config is not None:
+                raise ConfigError("--import cannot be combined with --manifest or --config")
+            if args.output is None and not args.describe:
+                raise ConfigError("--import needs --output, --describe or both")
+            if args.import_ == "-":
+                text = sys.stdin.read(MAX_INPUT_BYTES + 1)
+                if len(text) > MAX_INPUT_BYTES:
+                    raise ConfigError(f"input exceeds {MAX_INPUT_BYTES} bytes")
+            else:
+                text = _read_limited(args.import_)
+            config, described = import_source(text, args.container)
+            if args.output is not None:
+                write_private(args.output, config)
+            if args.describe:
+                print(json.dumps(described))
+            return 0
+        if args.container is not None or args.describe:
+            raise ConfigError("--container and --describe only apply to --import")
         if (args.manifest is None) == (args.config is None) or args.output is None:
             raise ConfigError(
                 "--output and one of --manifest or --config are required when rendering a configuration"
@@ -815,7 +876,7 @@ def main() -> int:
         if args.resolve_endpoints:
             config = resolve_endpoints(config)
         write_private(args.output, config)
-    except (ConfigError, KeyError, OSError, json.JSONDecodeError) as exc:
+    except (ConfigError, KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         parser.exit(1, f"amneziawg-config: {exc}\n")
     return 0
 

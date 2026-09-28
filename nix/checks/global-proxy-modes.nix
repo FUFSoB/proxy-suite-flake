@@ -151,8 +151,9 @@ in
       assert cfg.users.groups ? proxy-suite-awg;
       assert pkgs.lib.hasInfix "--fwmark 51820" awgKillSwitchPrepare;
       assert pkgs.lib.hasInfix ''meta skgid "proxy-suite-awg" accept'' rules;
+      # And the one the profiles added at runtime share.
       assert pkgs.lib.hasInfix
-        ''oifname { "${cfg.services.proxy-suite.amneziaWg.profiles.home.interfaceName}" } accept''
+        ''oifname { "${cfg.services.proxy-suite.amneziaWg.profiles.home.interfaceName}", "awg-rt" } accept''
         rules;
       assert pkgs.lib.hasInfix "meta mark { 1, 2, 51820 } accept" rules;
       assert !(pkgs.lib.hasInfix "skgid" killSwitchNftRules);

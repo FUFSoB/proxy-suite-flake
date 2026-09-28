@@ -43,6 +43,10 @@ services.proxy-suite = {
     enable = false;
     kernelModulePackage = ‹amneziawg from boot.kernelPackages on NixOS, null elsewhere›;
     profiles = { };
+    runtime = {
+      enable = true;
+      interfaceName = "awg-rt";
+    };
     serverUdpPorts = [ ];
     toolsPackage = ‹proxy-suite's patched amneziawg-tools (pkgs/amneziawg.nix)›;
     userspacePackage = ‹proxy-suite's patched amneziawg-go (pkgs/amneziawg.nix)›;
@@ -81,6 +85,7 @@ services.proxy-suite = {
       zapretDirect = true;
     };
     serverAddress = null;
+    serverAliases = [ ];
     shareLinks = true;
     subscriptions = {
       baseUrl = null;

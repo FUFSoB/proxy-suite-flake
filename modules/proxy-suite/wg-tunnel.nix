@@ -147,6 +147,9 @@ let
   # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort,
   # `endpoint`, a host:port in place of the profile's Endpoint, and `domainStrategy`, the
   # address family it dials destinations over first.
+  #
+  # A template unit passes `tag` and `tunnelPort` as shell words ("$TUNNEL_TAG") that
+  # `profile` exports: the watchdog runs as a script of its own, after the exec.
   mkTunnel =
     {
       description,
@@ -158,6 +161,11 @@ let
       endpoint ? null,
       domainStrategy ? null,
       engine ? "singBox",
+      runtimeDirectory ? unit,
+      wantedBy ? [ "multi-user.target" ],
+      restart ? "always",
+      # " %i" for a template, whose `profile` reads the instance name from $1.
+      execArgs ? "",
     }:
     let
       chosen = (if engine == "userspace" then wireproxyEngine else singBoxEngine) {
@@ -188,18 +196,17 @@ let
       '';
     in
     {
-      inherit description;
+      inherit description wantedBy;
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      wantedBy = [ "multi-user.target" ];
       # Probe-triggered restarts must not trip the start limit.
       startLimitIntervalSec = 0;
       serviceConfig = {
         Type = "simple";
-        ExecStart = tunnelScript;
-        Restart = "always";
+        ExecStart = if execArgs == "" then tunnelScript else "${tunnelScript}${execArgs}";
+        Restart = restart;
         RestartSec = 2;
-        RuntimeDirectory = unit;
+        RuntimeDirectory = runtimeDirectory;
         RuntimeDirectoryMode = "0750";
         UMask = "0077";
       };

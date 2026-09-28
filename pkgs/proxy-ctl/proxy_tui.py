@@ -433,7 +433,7 @@ class ProxyTui(App):
         self.typed = {}  # prompt title -> what was last typed there
         self.feedback_timer = None
         self.last_output = None  # (title, text)
-        self.retry = None  # (mode, argv) of the last run that only root could do
+        self.retry = None  # (mode, argv, stdin) of the last run that only root could do
         self.animation_level = "none"  # tab switches land at once
         self.register_theme(THEME)
         self.theme = THEME.name
@@ -641,11 +641,11 @@ class ProxyTui(App):
         if self.screen is not self.main:
             return
         event.stop()
-        argv, what = model.paste_argv(self.active_tab(), event.text)
+        argv, what, stdin = model.paste_argv(self.active_tab(), event.text)
         if argv is None:
             self.feedback(what, False)
         else:
-            self.run_argv("run", argv)
+            self.run_argv("run", argv, stdin)
 
     def action_where(self):
         self.perform(model.WHERE, None)
@@ -705,13 +705,14 @@ class ProxyTui(App):
         def with_text(text=""):
             try:
                 argv = action.argv(row, text, self.states)
+                stdin = action.stdin(row, text) if action.stdin else None
             except (ValueError, IndexError) as e:  # an unbalanced quote in a typed command
                 self.feedback(f"Cannot run that: {e}", False)
                 return
             if model.needs_confirm(action, row):
-                self.push_screen(Confirm(f"proxy-ctl {shlex.join(argv)}"), lambda ok: ok and self.run_argv(action.mode, argv))
+                self.push_screen(Confirm(f"proxy-ctl {shlex.join(argv)}"), lambda ok: ok and self.run_argv(action.mode, argv, stdin))
             else:
-                self.run_argv(action.mode, argv)
+                self.run_argv(action.mode, argv, stdin)
 
         def typed(text):
             if text:
@@ -724,7 +725,8 @@ class ProxyTui(App):
         else:
             with_text()
 
-    def run_argv(self, mode, argv):
+    def run_argv(self, mode, argv, stdin=None):
+        """stdin: text proxy-ctl reads (argv says "-"); only for runs that stay in the TUI."""
         command = f"proxy-ctl {shlex.join(argv)}"
         if mode in ("suspend", "pause"):
             self.foreground(mode, [CTL, *argv])
@@ -734,7 +736,7 @@ class ProxyTui(App):
         if dialog:
             self.push_screen(dialog)
         self.feedback(f"… {command}")
-        self.stream(command, argv, dialog, mode == "copy")
+        self.stream(command, argv, dialog, mode == "copy", stdin)
 
     def foreground(self, mode, argv):
         with self.suspend():
@@ -747,10 +749,10 @@ class ProxyTui(App):
         self.action_reload()
 
     @work(thread=True)
-    def stream(self, command, argv, dialog, copy=False):
+    def stream(self, command, argv, dialog, copy=False, stdin=None):
         out = []
         try:
-            p = model.popen(argv)
+            p = model.popen(argv, stdin=stdin)
             if dialog:
                 dialog.proc = p
             for line in p.stdout:
@@ -761,9 +763,9 @@ class ProxyTui(App):
         except OSError as e:
             out.append(f"cannot run proxy-ctl: {e}")
             status = 127
-        self.call_from_thread(self.finish, command, argv, dialog, copy, out, status, stream_shown=True)
+        self.call_from_thread(self.finish, command, argv, dialog, copy, out, status, stream_shown=True, stdin=stdin)
 
-    def finish(self, command, argv, dialog, copy, out, status, stream_shown=False):
+    def finish(self, command, argv, dialog, copy, out, status, stream_shown=False, stdin=None):
         """A run's end: the feedback line, the clipboard, and the dialog's tail."""
         if dialog and not stream_shown:
             for line in out:
@@ -784,7 +786,7 @@ class ProxyTui(App):
         hints = ["o: full output"] if len(out) > 1 and not dialog else []
         self.retry = None
         if model.needs_root(out, status):
-            self.retry = ("dialog" if dialog else "copy" if copy else "run", argv)
+            self.retry = ("dialog" if dialog else "copy" if copy else "run", argv, stdin)
             hints.append("!: retry as root")
             if dialog:
                 dialog.offer_retry()
@@ -795,7 +797,8 @@ class ProxyTui(App):
         if not self.retry:
             self.feedback("Nothing to retry as root.")
             return
-        (mode, argv), self.retry = self.retry, None
+        (mode, argv, *rest), self.retry = self.retry, None
+        stdin = rest[0] if rest else None
         command = f"sudo proxy-ctl {shlex.join(argv)}"
         root_argv = model.elevated(argv, "sudo")
         # sudo asks on the terminal, so the run happens there; the output comes back as usual.
@@ -803,7 +806,12 @@ class ProxyTui(App):
         with self.suspend():
             print(f"$ {command}", flush=True)
             try:
-                p = subprocess.Popen(root_argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+                # sudo asks for the password on the terminal itself, so stdin can carry the text.
+                p = subprocess.Popen(
+                    root_argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                    **({"stdin": subprocess.PIPE} if stdin is not None else {}),
+                )
+                model.feed(p, stdin)
             except OSError as e:
                 p, status, out = None, 127, [f"cannot run sudo: {e}"]
             if p:
@@ -821,7 +829,7 @@ class ProxyTui(App):
         dialog = Output(command, wrap="--qr" not in argv) if mode == "dialog" else None
         if dialog:
             self.push_screen(dialog)
-        self.finish(command, argv, dialog, mode == "copy", out, status)
+        self.finish(command, argv, dialog, mode == "copy", out, status, stdin=stdin)
 
     def action_switch_root(self):
         def switch(ok):

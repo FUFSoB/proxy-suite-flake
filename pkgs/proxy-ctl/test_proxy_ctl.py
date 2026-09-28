@@ -602,7 +602,9 @@ class AutoProxyTest(EnvTest):
         self.assertIn("proxy-suite group, or re-run with sudo", err)
 
 
-class RuntimeEntryTest(EnvTest):
+class RuntimeSpoolTest(EnvTest):
+    """The runtime spools, and a backend that reads them back on every reload."""
+
     def setUp(self):
         super().setUp()
         os.environ.update(
@@ -636,6 +638,8 @@ class RuntimeEntryTest(EnvTest):
         self.backend_start()
         return 0, ""
 
+
+class RuntimeEntryTest(RuntimeSpoolTest):
     def test_tag_for(self):
         tag = ctl._runtime_tag_for
         self.assertEqual(tag("outbound", "vless://u@de1.example.net:443?security=reality#%F0%9F%87%A9%F0%9F%87%AA%20DE-1"), "DE-1")
@@ -752,6 +756,115 @@ class RuntimeEntryTest(EnvTest):
         ok(ctl.cmd_outbounds, "disable", "de")
         ok(ctl.cmd_outbounds, "rm", "de")
         self.assertEqual(os.listdir(self.path("outbounds.d")), [])
+
+
+AWG_CONF = """[Interface]
+PrivateKey = private
+Address = 10.8.0.2/32
+
+[Peer]
+PublicKey = public
+AllowedIPs = 0.0.0.0/0
+Endpoint = vpn.example.com:51820
+"""
+
+
+def awg_vpn_link(description):
+    """A vpn:// export carrying AWG_CONF, as the Amnezia app writes one."""
+    import base64
+    import zlib
+
+    data = json.dumps({"description": description, "containers": [{"container": "amnezia-awg", "awg": {"last_config": json.dumps({"config": AWG_CONF})}}]}).encode()
+    return "vpn://" + base64.urlsafe_b64encode(len(data).to_bytes(4, "big") + zlib.compress(data)).decode().rstrip("=")
+
+
+class AmneziaWgRuntimeTest(RuntimeSpoolTest):
+    """`awg add`/`rm` and AmneziaWG outbounds: amneziawg_config.py itself checks and writes them."""
+
+    def setUp(self):
+        super().setUp()
+        tool = os.environ.get("AWG_CONFIG_TOOL") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../scripts/amneziawg_config.py")
+        os.makedirs(self.path("amneziawg.d"))
+        os.environ.update(
+            AWG_CONFIG_TOOL=tool,
+            AWG_RUNTIME_GLOBAL="1",
+            AWG_RUNTIME_OUTBOUNDS="1",
+            AWG_RUNTIME_DIR=self.path("amneziawg.d"),
+            AWG_PROFILES_FILE=self.write("awg-profiles.json", ["home"]),
+            AWG_TUNNEL_BASE_PORT="18800",
+            AWG_TUNNEL_SLOTS="2",
+        )
+        self.active = set()
+        self.patch("svc_active", lambda unit: unit in self.active)
+        self.patch("svc_state", lambda unit: "active" if unit in self.active else "inactive")
+        self.patch("svc_exists", lambda unit: True)
+
+    def test_add_and_rm_global_profiles(self):
+        # Named after the server's host, then after the export's description; the config on stdin.
+        self.assertIn("Name: awg-example (none given", ok(ctl.cmd_awg, "add", AWG_CONF))
+        self.assertIn("Name: awg-example-2", ok(ctl.cmd_awg, "add", AWG_CONF))
+        with mock.patch.object(sys, "stdin", io.StringIO(awg_vpn_link("Work VPN"))):
+            self.assertIn("Name: Work-VPN", ok(ctl.cmd_awg, "add", "-"))
+        conf = self.write("office.conf", AWG_CONF)
+        ok(ctl.cmd_awg, "add", "office", conf)
+        path = self.path("amneziawg.d/office.conf")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertIn("Endpoint = vpn.example.com:51820", ctl.read_text(path))
+        self.assertEqual(ctl._awg_profiles(), ["home", "Work-VPN", "awg-example", "awg-example-2", "office"])
+        self.assertEqual(ctl._awg_service("office"), "proxy-suite-awg@office")
+        self.assertEqual(ctl._awg_service("home"), "proxy-suite-awg-home")
+        listing = ok(ctl.cmd_awg, "list")
+        self.assertRegex(listing, r"home\s+inactive\s+declared")
+        self.assertRegex(listing, r"office\s+inactive\s+runtime")
+        self.assertIn("office", ctl._complete_tree("awg", "rm"))
+        # Refused: a taken or reserved name, the wrong order, hooks, and anything but a config.
+        for args, why in [
+            (("home", AWG_CONF), "declared in the NixOS configuration"),
+            (("office", AWG_CONF), "already exists"),
+            (("warp", AWG_CONF), "reserved"),
+            (("bad name", AWG_CONF), "Invalid profile name"),
+            ((AWG_CONF, "later"), "The name goes first"),
+            (("hooked", AWG_CONF.replace("Address", "PostUp = id\nAddress")), "privileged"),
+            (("nothing", "vless://u@x.test:443"), "Cannot read"),
+        ]:
+            with self.subTest(args=args[0][:10]):
+                status, _, err = run(ctl.cmd_awg, "add", *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn(why, err)
+        self.assertFalse(os.path.exists(self.path("amneziawg.d/hooked.conf")))
+        # rm: only what awg add added; a running one stops first, and its kill switch with it.
+        self.assertIn("remove it there", run(ctl.cmd_awg, "rm", "home")[2])
+        self.active.add("proxy-suite-awg@office")
+        self.assertIn("Removed AmneziaWG profile: office", ok(ctl.cmd_awg, "rm", "office"))
+        self.assertIn(("stop", "proxy-suite-awg@office"), self.started)
+        self.assertIn(("stop", ctl.KILL_SWITCH), self.started)
+        self.assertFalse(os.path.exists(path))
+        self.assertNotIn("office", ctl._awg_profiles())
+        # Off in the configuration: nothing to add to, and nothing listed.
+        os.environ["AWG_RUNTIME_GLOBAL"] = "0"
+        self.assertIn("not enabled", run(ctl.cmd_awg, "add", AWG_CONF)[2])
+        self.assertEqual(ctl._awg_profiles(), ["home"])
+
+    def test_outbounds(self):
+        self.assertIn("Tag: awg-example", ok(ctl.cmd_outbounds, "add", AWG_CONF))
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/awg-example.port")), "18800\n")
+        self.assertEqual(os.stat(self.path("outbounds.d/awg-example.awg")).st_mode & 0o777, 0o600)
+        self.assertIn("proxy-suite-outbound-reload.service", self.started)
+        # A file, with a tag: the next port.
+        self.assertIn("Added outbound: de", ok(ctl.cmd_outbounds, "add", "de", self.write("de.conf", AWG_CONF)))
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/de.port")), "18801\n")
+        self.assertIn("No free port", run(ctl.cmd_outbounds, "add", "fr", AWG_CONF)[2])
+        self.assertIn("cannot chain", run(ctl.cmd_outbounds, "add", "fr", AWG_CONF, "--detour", "primary")[2])
+        self.assertIn("--container only applies", run(ctl.cmd_outbounds, "add", "x", "vless://u@x.test:443", "--container", "c")[2])
+        # A copy through a hop makes no sense for a tunnel that dials its peer itself.
+        self.write("outbound-share.json", {"outbounds": {"de": {"outbound": {"type": "socks", "server": "127.0.0.1", "server_port": 18801}}}})
+        self.assertIn("AmneziaWG outbound", run(ctl.cmd_outbound_chain, "de", "primary")[2])
+        # rm takes the port along, which frees it.
+        ok(ctl.cmd_outbounds, "rm", "de")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/de.port")))
+        self.assertEqual(ctl._awg_free_port(), 18801)
+        os.environ["AWG_RUNTIME_OUTBOUNDS"] = "0"
+        self.assertIn("not enabled", run(ctl.cmd_outbounds, "add", "fr", AWG_CONF)[2])
 
 
 class ZapretAutoTest(EnvTest):

@@ -146,6 +146,8 @@ Changes and secrets need root or the userControl group.
   proxy outbounds add [tag] <url|json|-> [--detour <tag>]
                                          add an outbound from a link or JSON (-: stdin);
                                          --detour: connect through another outbound
+  proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]
+                                         add an AmneziaWG outbound (runs in wireproxy)
   proxy outbounds chain <tag> <through-tag> [new tag]
                                          add a copy of an outbound that connects through another
   proxy outbounds rm <tag>               remove a runtime outbound
@@ -186,6 +188,9 @@ Changes and secrets need root or the userControl group.
 
   awg [list]                             AmneziaWG profiles
   awg on <profile> | off [profile] | toggle [profile] | restart [profile]
+  awg add [name] <vpn://…|file.conf|-> [--container <name>]
+                                         add a global profile (-: stdin)
+  awg rm <profile>                       remove a profile added with awg add
 
   killswitch [status|on|off]             block traffic outside the global tunnel;
                                          stays on until turned off here or with the tunnel

@@ -82,7 +82,12 @@ let
     ++ map (j: j.port) derived.whitelistBypassJoiners
     ++ lib.optionals derived.proxyInboundsEnabled (
       map (listener: listener.internalPort) derived.proxyInboundsAwg
-    );
+    )
+    ++ awgRuntimeTunnelPorts;
+  # The loopback listeners of AmneziaWG outbounds added at runtime, one per slot.
+  awgRuntimeTunnelPorts = lib.optionals derived.awgRuntimeOutbounds (
+    lib.genList (i: constants.awgRuntimeTunnelBasePort + i) constants.awgRuntimeTunnelSlots
+  );
 
   # A rootless host (home-manager, nix-on-droid) runs everything as the user: nothing
   # that programs routing, firewalls or interfaces, and no privileged ports.
@@ -274,7 +279,7 @@ let
     (mkAssertion
       (
         !derived.killSwitchEnabled
-        || derived.awgGlobalProfiles == { }
+        || !derived.awgGlobalAvailable
         || !builtins.elem constants.awgGlobalFwmark (
           [
             globalTproxy.fwmark
@@ -461,11 +466,12 @@ let
         !proxyInboundsEnabled
         || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
           map (listener: listener.internalPort) derived.proxyInboundsAwg
+          ++ awgRuntimeTunnelPorts
           ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
           ++ lib.optionals hybridEnabled (builtins.attrValues derived.constants.xraySidecarPorts)
         )
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, the runtime AmneziaWG outbounds' 18800-18831, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -764,7 +770,8 @@ let
     map (ib: ib.listener.amneziaWg.interfaceName) awgListeners
     ++ lib.optionals cfg.amneziaWg.enable (
       lib.mapAttrsToList (_: profile: profile.interfaceName) cfg.amneziaWg.profiles
-    );
+    )
+    ++ lib.optional derived.awgRuntimeGlobal cfg.amneziaWg.runtime.interfaceName;
   otherInterfaces =
     lib.optional (proxyEnabled && globalTun.enable) globalTun.interface
     ++ lib.optional (perAppRoutingCfg.enable && perAppRoutingTun.enable) perAppRoutingTun.interface;

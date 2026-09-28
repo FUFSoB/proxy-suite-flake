@@ -8,6 +8,7 @@
   torCfg,
   whitelistBypassJoiners,
   awgOutbounds,
+  awgRuntimeOutbounds ? false,
   constants,
   pureXrayEnabled,
   hybridEnabled,
@@ -136,6 +137,27 @@ let
         OUTBOUND_SOURCES_JSON=$(${jq} --arg t "$1" --arg s "$2" '.[$t] = $s' <<< "$OUTBOUND_SOURCES_JSON")
       }
 
+      # $1 tag, $2 loopback SOCKS port, $3 source label: mkTunnelOutboundBlock, for a port
+      # only known at runtime (an AmneziaWG outbound added with proxy-ctl).
+      _proxy_suite_add_socks_hop() {
+        local ob
+        ob=$(${jq} -nc --arg t "$1" --argjson p "$2" ${
+          lib.escapeShellArg (
+            if pureXrayEnabled then
+              ''{protocol: "socks", tag: $t, settings: {address: "127.0.0.1", port: $p}}''
+            else
+              ''{type: "socks", tag: $t, server: "127.0.0.1", server_port: $p}''
+          )
+        }) || return 1
+        ${
+          if hybridEnabled then
+            ''_proxy_suite_add_sing_box_ob "$ob"''
+          else
+            ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+        }
+        _proxy_suite_record_tag_source "$1" "$3"
+      }
+
       # $1 sub tag, $2 file holding its URL, $3 its links file (absent for a cache
       # written before links existed: those entries share as JSON until the next update).
       _proxy_suite_record_subscription_share() {
@@ -196,13 +218,14 @@ let
         _proxy_suite_record_tag_source "$tag" "$source"
       }
 
-      # Every runtime outbound, as "<tag>\t<file>" lines: <tag>.url or <tag>.json. proxy-ctl refuses
+      # Every runtime outbound, as "<tag>\t<file>" lines: <tag>.url, <tag>.json or <tag>.awg (an
+      # AmneziaWG config, behind a tunnel on the port in <tag>.port). proxy-ctl refuses
       # the reserved names, but the spool is group-writable, so check again here:
       # a second outbound tagged "proxy" would quietly shadow the real one.
       _proxy_suite_runtime_outbounds() {
         local f tag
         [ -d "${runtimeOutboundsDir}" ] || return 0
-        for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json; do
+        for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json${lib.optionalString awgRuntimeOutbounds ''"${runtimeOutboundsDir}"/*.awg''}; do
           [ -e "$f" ] || continue
           tag="''${f##*/}"
           tag="''${tag%.*}"
@@ -448,6 +471,8 @@ let
       [ -n "$RUNTIME_OB_TAG" ] || continue
       case "$RUNTIME_OB_SRC" in
         *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
+        # Its tunnel (proxy-suite-awg-tunnel@<tag>) checks the port again before listening.
+        *.awg) _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(head -n 1 "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null)" runtime ;;
         *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(cat "$RUNTIME_OB_SRC")" runtime ;;
       esac || { echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2; continue; }
       if [ -s "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" ]; then

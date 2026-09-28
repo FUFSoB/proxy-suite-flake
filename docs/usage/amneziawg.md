@@ -64,6 +64,43 @@ host's routes and DNS alone. Use it like any other outbound: for selection, in
 | `"userspace"` | yes | no | Runs in wireproxy. The only mode on home-manager and Nix-on-Droid. |
 | `"singBox"` | no | no | Plain WireGuard inside sing-box. For servers without obfuscation, such as WARP. |
 
+## Add one without rebuilding
+
+`amneziaWg.enable` alone is enough: profiles and outbounds can come from `proxy-ctl` instead
+of the config.
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  amneziaWg.enable = true; # no profiles needed
+  userControl = {
+    enable = true;
+    scopes = [ "services" "amneziaWg" "outbounds" ]; # optional: no sudo for these
+  };
+};
+```
+
+```sh
+proxy-ctl awg add vpn://AAAA…               # named after the export, or the server's host
+proxy-ctl awg add home ~/home.conf          # a name first; a link, a file, or - for stdin
+proxy-ctl awg on home
+proxy-ctl awg rm home
+proxy-ctl proxy outbounds add de ~/de.conf  # an outbound instead (needs proxy.enable)
+```
+
+- A global profile works like a declared one: `awg on`, the tray menu, the kill switch. The
+  ones added this way share one interface, `amneziaWg.runtime.interfaceName`.
+- An outbound runs in wireproxy (like `asOutbound = "userspace"`), so the obfuscation stays.
+  It cannot chain through another outbound.
+- In `proxy-tui` and the desktop app, paste a `vpn://` link or a whole `.conf` onto a tab: on
+  the Outbounds tab it becomes an outbound, anywhere else a global profile. The AmneziaWG tab
+  also adds one from a prompt, and removes what was added.
+- Hooks (`PostUp` and the like) are always refused, whoever adds the config.
+  `--container <name>` picks one from a `vpn://` export that holds several.
+- Adding and removing takes root, or a `userControl` scope: `amneziaWg` for global profiles,
+  `outbounds` for outbounds. Turning a profile on and off is `services`.
+- They are kept across reboots. `amneziaWg.runtime.enable = false` turns all of this off.
+
 ## Good to know
 
 - A profile that stops getting handshake replies moves to a new source port on its own.
@@ -77,5 +114,6 @@ host's routes and DNS alone. Use it like any other outbound: for selection, in
 ## See also
 
 - [`amneziaWg.profiles`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles)
+- [`amneziaWg.runtime`](../options/amneziaWg.md#services-proxy-suite-amneziawg-runtime-enable)
 - [`asOutbound`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles-name-asoutbound)
 - [`settings`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles-name-settings)

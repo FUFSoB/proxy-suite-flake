@@ -37,7 +37,8 @@ Members of the group get the listed scopes. An empty `scopes` list grants all of
 |---|---|
 | `services` | turning services on, off and restarting them |
 | `routing` | `proxy pin`, `proxy unpin`, `proxy mode` |
-| `outbounds` | adding, removing, enabling and disabling outbounds and subscriptions |
+| `outbounds` | adding, removing, enabling and disabling outbounds and subscriptions, AmneziaWG outbounds included |
+| `amneziaWg` | `awg add` and `awg rm`: global AmneziaWG profiles, which take over the host's routes and DNS |
 | `perApp` | `apps run` with `tun`, `tproxy` and `zapret` profiles |
 | `secrets` | reading share links, subscription URLs and running configs |
 | `autoProxy`, `zapret`, `stats`, `whitelistBypass` | the matching `proxy-ctl` groups |
@@ -49,13 +50,19 @@ admin password, or you run `proxy-ctl` with sudo.
 
 | Change | Lasts |
 |---|---|
-| `proxy outbounds add`, `proxy subs add` | until removed with `rm`; kept across reboots |
+| `proxy outbounds add`, `proxy subs add`, `awg add` | until removed with `rm`; kept across reboots |
 | `proxy outbounds disable` | until `enable`; works on outbounds from Nix too |
 | `proxy pin` | until `unpin`; kept across reboots |
 | `proxy mode` | until the next reboot |
 | `… on` / `… off` | until the next reboot; boot state comes from the config |
 
-Outbounds from the Nix config cannot be removed at runtime, only disabled.
+Outbounds from the Nix config cannot be removed at runtime, only disabled. The same goes for
+AmneziaWG profiles: `awg rm` only removes those added with `awg add`.
+
+In the TUI and the app, pasting a link onto a tab adds it there: a share link becomes an
+outbound, a subscription URL a subscription. An AmneziaWG `vpn://` link or a whole `.conf`
+becomes a global profile, or an outbound when pasted onto the Outbounds tab. See
+[Use an AmneziaWG config](./amneziawg.md).
 
 ## Commands
 

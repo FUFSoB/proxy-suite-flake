@@ -11,6 +11,10 @@ let
     "proxy-suite-route-mode@" = "routing";
     "proxy-suite-outbound-reload." = "outbounds";
     "proxy-suite-subscription-update." = "outbounds";
+    # Tunnels of the AmneziaWG outbounds added at runtime; a global profile's own unit
+    # (proxy-suite-awg@) is "services", like the declared ones.
+    "proxy-suite-awg-tunnel@" = "outbounds";
+    "proxy-suite-awg-runtime-sync." = "outbounds";
     "proxy-suite-autoproxy-learn." = "autoProxy";
     "proxy-suite-zapret2-cutoff." = "zapret";
     "proxy-suite-inbound-stats." = "stats";
