@@ -1,7 +1,12 @@
-{ lib, ... }:
+{ config, lib, ... }:
 
 let
-  inherit (lib) mkEnableOption mkOption types;
+  inherit (lib)
+    literalExpression
+    mkEnableOption
+    mkOption
+    types
+    ;
   inherit (import ./lib.nix { inherit lib; }) endpoint;
 in
 {
@@ -57,6 +62,25 @@ in
         - "userspace": an AmneziaWG profile, without root. Needs `amneziaWg.enable`.
         - "interface": an AmneziaWG profile with its own interface. Needs `amneziaWg.enable`.
       '';
+    };
+
+    domainStrategy = mkOption {
+      type = types.nullOr (
+        types.enum [
+          "prefer_ipv4"
+          "prefer_ipv6"
+          "ipv4_only"
+          "ipv6_only"
+        ]
+      );
+      default = if config.services.proxy-suite.host.enableIPv6 then "prefer_ipv6" else "prefer_ipv4";
+      defaultText = literalExpression ''if config.networking.enableIPv6 then "prefer_ipv6" else "prefer_ipv4"'';
+      description = ''
+        Which address family the "warp" outbound dials a name over first. Ignored with
+        `asOutbound = "userspace"`. Also applies to names resolved by the inbounds'
+        `routing.blockPrivate` check, unless `proxy.dns.strategy` is set.
+      '';
+      example = "prefer_ipv4";
     };
 
     asAmneziaWg = mkOption {

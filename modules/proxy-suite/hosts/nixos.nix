@@ -59,6 +59,10 @@ in
           security.polkit.extraConfig = forwardWith lib.mkAfter internal.polkit.rules;
 
           networking.nftables.enable = lib.mkIf cfg.internal.nftables (lib.mkDefault true);
+          networking.nftables.tables = lib.mapAttrs (_: content: {
+            family = "inet";
+            inherit content;
+          }) cfg.internal.nftablesTables;
           networking.firewall = {
             allowedTCPPorts = forward internal.firewall.allowedTCPPorts;
             allowedUDPPorts = forward internal.firewall.allowedUDPPorts;
@@ -71,6 +75,10 @@ in
           boot.kernel.sysctl = lib.mapAttrs (_: lib.mkDefault) cfg.internal.sysctl;
 
           assertions = [
+            {
+              assertion = cfg.internal.nftablesTables == { } || config.networking.nftables.enable;
+              message = "proxy-suite: hysteria.portHopping needs nftables (networking.nftables.enable)";
+            }
             {
               assertion =
                 cfg.internal.firewall.extraInputRules == ""

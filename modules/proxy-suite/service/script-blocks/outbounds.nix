@@ -405,12 +405,29 @@ let
           }
           // lib.optionalAttrs (routingMark != null) { mark = routingMark; };
         }
+        // lib.optionalAttrs (ob.domainStrategy != null) {
+          settings.domainStrategy =
+            {
+              prefer_ipv4 = "UseIPv4v6";
+              prefer_ipv6 = "UseIPv6v4";
+              ipv4_only = "UseIPv4";
+              ipv6_only = "UseIPv6";
+            }
+            .${ob.domainStrategy};
+        }
       else
         {
           type = "direct";
           inherit (ob) tag;
           bind_interface = ob.interface;
-          domain_resolver = constants.awgDnsServerTag ob.tag;
+          domain_resolver =
+            if ob.domainStrategy == null then
+              constants.awgDnsServerTag ob.tag
+            else
+              {
+                server = constants.awgDnsServerTag ob.tag;
+                strategy = ob.domainStrategy;
+              };
         }
         // lib.optionalAttrs (routingMark != null) { routing_mark = routingMark; }
     );

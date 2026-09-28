@@ -184,6 +184,23 @@ let
     };
   };
   firewallSpec = mkInboundsSpec firewallFixture;
+  firewallNft = firewallFixture.config.networking.nftables.tables;
+
+  hopFixture = mkInbounds {
+    listeners.hy2-in = {
+      type = "hysteria2";
+      port = 443;
+      users = [ { passwordFile = "/run/secrets/hy2"; } ];
+      tls = {
+        certificateFile = "/c";
+        keyFile = "/k";
+      };
+      hysteria.salamander.enable = true;
+      hysteria.portHopping = "20000-30000";
+    };
+  };
+  hopSpec = lib.head (mkInboundsSpec hopFixture).listeners;
+  hopTable = hopFixture.config.networking.nftables.tables.proxy-suite-hysteria-hop;
   wsListener = lib.head (builtins.filter (l: l.tag == "ws-in") firewallSpec.listeners);
 
   # A ws listener behind a TLS front's fallback, and a decoy web server.
@@ -592,6 +609,57 @@ let
       }
     ) "needs both tls.certificateFile and tls.keyFile")
 
+    # A PROXY header opens a TCP stream; QUIC has none to open.
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.hy2-in = {
+            type = "hysteria2";
+            port = 8444;
+            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            acceptProxyProtocol = true;
+            tls = {
+              certificateFile = "/c";
+              keyFile = "/k";
+            };
+          };
+        };
+      }
+    ) "acceptProxyProtocol is for TCP listeners")
+
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.vless-in = realityListener // {
+            hysteria.salamander.enable = true;
+          };
+        };
+      }
+    ) "hysteria.salamander and hysteria.portHopping are for hysteria2 listeners only")
+
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          listeners.hy2-in = {
+            type = "hysteria2";
+            port = 443;
+            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            hysteria.portHopping = "30000-20000";
+            tls = {
+              certificateFile = "/c";
+              keyFile = "/k";
+            };
+          };
+        };
+      }
+    ) "hysteria.portHopping must be a range")
+
     (mkRejects (
       baseProxy
       // {
@@ -811,6 +879,54 @@ let
       true
     )
     (ok (wsListener.port == 10002 && wsListener.sharePort == 443))
+    # hysteria2 port hopping: the range is redirected to the listener's port, which alone
+    # stays open; nothing is installed without it.
+    (ok (
+      hopTable.family == "inet"
+      && lib.hasInfix "udp dport 20000-30000 redirect to :443" hopTable.content
+      && lib.hasInfix "type nat hook prerouting" hopTable.content
+    ))
+    (ok (!(firewallNft ? proxy-suite-hysteria-hop)))
+    (ok (hopSpec.hysteria.salamander.enable && hopSpec.hysteria.portHopping == "20000-30000"))
+    (ok (lib.hasSuffix "/inbounds/hy2-in/salamander-password" hopSpec.salamanderStateFile))
+    # Lowest order first, then tags alphabetically: links and subscriptions follow the spec.
+    (ok (
+      map (l: l.tag)
+        (mkInboundsSpec (mkInbounds {
+          listeners = {
+            a-in = realityListener // {
+              port = 8441;
+            };
+            b-in = realityListener // {
+              port = 8442;
+              order = 0;
+            };
+            c-in = realityListener // {
+              port = 8443;
+            };
+          };
+        })).listeners == [
+        "b-in"
+        "a-in"
+        "c-in"
+      ]
+    ))
+    # Off unless asked for, and handed to the script with REALITY's xver.
+    (ok (!wsListener.acceptProxyProtocol))
+    (ok (
+      let
+        spec =
+          lib.head
+            (mkInboundsSpec (mkInbounds {
+              listeners.vless-in = lib.recursiveUpdate realityListener {
+                address = "127.0.0.1";
+                acceptProxyProtocol = true;
+                reality.xver = 2;
+              };
+            })).listeners;
+      in
+      spec.acceptProxyProtocol && spec.reality.xver == 2
+    ))
     # A fallback to a listener is resolved to its address, in PROXY protocol; a dest is kept as is.
     (ok (
       (fallbackSpecListener "front-in").fallbacks == [

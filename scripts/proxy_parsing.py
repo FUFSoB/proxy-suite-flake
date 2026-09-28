@@ -161,6 +161,18 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
         }
         if ob.get("password"):
             stream["hysteriaSettings"]["auth"] = ob["password"]
+        # XRay wants udphop outermost, ahead of any other UDP mask.
+        if ob.get("server_ports"):
+            stream.setdefault("finalmask", {}).setdefault("udp", []).append(
+                {
+                    "type": "udphop",
+                    "settings": {
+                        "mode": "intervalRemote",
+                        "interval": "20-40",
+                        "remotePorts": ",".join(r.replace(":", "-") for r in ob["server_ports"]),
+                    },
+                }
+            )
         if ob.get("obfs", {}).get("type") == "salamander":
             stream.setdefault("finalmask", {}).setdefault("udp", []).append(
                 {

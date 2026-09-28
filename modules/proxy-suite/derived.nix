@@ -148,6 +148,7 @@ let
       tag = name;
       kind = profile.asOutbound;
       interface = profile.interfaceName;
+      inherit (profile) domainStrategy;
       # Loopback listeners of a "singBox" or "userspace" tunnel, as warpCfg.tunnelPort/directPort
       # (only sing-box listens on directPort).
       tunnelPort = awgTunnelBasePort + 2 * index;
@@ -164,10 +165,13 @@ let
   proxyInboundsEnabled = proxyInboundsCfg.enable;
 
   # Listeners as a list, with `via` resolved against the default.
-  proxyInbounds = lib.mapAttrsToList (tag: listener: {
-    inherit tag listener;
-    via = if listener.via == null then proxyInboundsCfg.routing.via else listener.via;
-  }) proxyInboundsCfg.listeners;
+  # By order, then tag: the attrset yields tags alphabetically and the sort is stable.
+  proxyInbounds = builtins.sort (a: b: a.listener.order < b.listener.order) (
+    lib.mapAttrsToList (tag: listener: {
+      inherit tag listener;
+      via = if listener.via == null then proxyInboundsCfg.routing.via else listener.via;
+    }) proxyInboundsCfg.listeners
+  );
 
   # .onion names from clients go to the local proxy, whose rule hands them to Tor, whatever
   # the listener's via. AmneziaWG listeners never pass XRay's routing.
@@ -196,6 +200,12 @@ let
     && proxyInboundsCfg.routing.blockPrivate
     && proxyInboundsNeedLocalProxy
     && !pureXrayEnabled;
+  # The guard's resolved addresses are dialed in its order, so it follows WARP's preference.
+  proxyInboundsGuardStrategy =
+    if proxyCfg.dns.strategy == null && warpCfg.enable && warpCfg.asOutbound != null then
+      warpCfg.domainStrategy
+    else
+      null;
 
   # Other vias name static outbounds, rendered into the inbound service's own config.
   proxyInboundViaTags = lib.unique (
@@ -547,10 +557,12 @@ in
     proxyInboundsEnabled
     proxyInbounds
     proxyInboundsAwg
+    proxyInboundIsUdpOnly
     proxyInboundsRouteOnion
     proxyInboundsNeedLocalProxy
     proxyInboundsResolveInSingBox
     proxyInboundsGuardPrivate
+    proxyInboundsGuardStrategy
     proxyInboundViaTags
     proxyInboundViaOutbounds
     invalidInboundViaTargets

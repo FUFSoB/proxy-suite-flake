@@ -11,6 +11,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [package](#services-proxy-suite-inbounds-package)
   - [listeners](#services-proxy-suite-inbounds-listeners)
     - `<name>`
+      - [acceptProxyProtocol](#services-proxy-suite-inbounds-listeners-name-acceptproxyprotocol)
       - [address](#services-proxy-suite-inbounds-listeners-name-address)
       - [amneziaWg](#services-proxy-suite-inbounds-listeners-name-amneziawg)
         - [clientAllowedIPs](#services-proxy-suite-inbounds-listeners-name-amneziawg-clientallowedips)
@@ -60,8 +61,14 @@ Part of the [proxy-suite options reference](./index.md).
       - [flow](#services-proxy-suite-inbounds-listeners-name-flow)
       - hysteria
         - [masquerade](#services-proxy-suite-inbounds-listeners-name-hysteria-masquerade)
+        - [portHopping](#services-proxy-suite-inbounds-listeners-name-hysteria-porthopping)
+        - salamander
+          - [enable](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-enable)
+          - [password](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-password)
+          - [passwordFile](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-passwordfile)
       - [jsonFile](#services-proxy-suite-inbounds-listeners-name-jsonfile)
       - [method](#services-proxy-suite-inbounds-listeners-name-method)
+      - [order](#services-proxy-suite-inbounds-listeners-name-order)
       - [port](#services-proxy-suite-inbounds-listeners-name-port)
       - [reality](#services-proxy-suite-inbounds-listeners-name-reality)
         - [enable](#services-proxy-suite-inbounds-listeners-name-reality-enable)
@@ -71,8 +78,10 @@ Part of the [proxy-suite options reference](./index.md).
         - [publicKey](#services-proxy-suite-inbounds-listeners-name-reality-publickey)
         - [serverNames](#services-proxy-suite-inbounds-listeners-name-reality-servernames)
         - [shortIds](#services-proxy-suite-inbounds-listeners-name-reality-shortids)
+        - [xver](#services-proxy-suite-inbounds-listeners-name-reality-xver)
       - [serverPassword](#services-proxy-suite-inbounds-listeners-name-serverpassword)
       - [serverPasswordFile](#services-proxy-suite-inbounds-listeners-name-serverpasswordfile)
+      - [shareAddress](#services-proxy-suite-inbounds-listeners-name-shareaddress)
       - [sharePort](#services-proxy-suite-inbounds-listeners-name-shareport)
       - [tls](#services-proxy-suite-inbounds-listeners-name-tls)
         - [enable](#services-proxy-suite-inbounds-listeners-name-tls-enable)
@@ -170,6 +179,20 @@ Server listeners, by tag\.
 }
 
 ````
+
+<a id="services-proxy-suite-inbounds-listeners-name-acceptproxyprotocol"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.acceptProxyProtocol
+
+Read the client address from a PROXY protocol header (v1 or v2) that opens every
+connection, as sent by a TCP front such as nginx’s ` stream ` with ` proxy_protocol on `\.
+Without it such a listener records every client as the front’s address, which
+` proxy-ctl inbounds online ` never counts\. TCP listeners only\.
+
+Every connection must carry the header, so only set it on a listener nothing but
+the front can reach, such as one on loopback\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-listeners-name-address"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.address
@@ -581,6 +604,51 @@ Site shown to anything that is not a hysteria2 client, such as browsers and prob
 **Default:** `null`\
 **Example:** `"https://www.example.com"`
 
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-porthopping"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.portHopping
+
+UDP port range redirected to ` port ` (nftables, NixOS only), which clients hop across
+every half a minute or so\. A single throttled or blocked flow then lasts until the
+next hop instead of for the whole session\. Share links name it as ` mport `; clients
+that do not know it stay on ` port `\.
+
+Keep it clear of ports other services on this host receive on, and below the
+ephemeral range (32768 and up on Linux)\.
+
+**Type:** null or string matching the pattern \[0-9]±\[0-9]+\
+**Default:** `null`\
+**Example:** `"20000-30000"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-salamander-enable"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.salamander\.enable
+
+Salamander obfuscation: every packet is scrambled with a shared password, so the
+traffic no longer looks like QUIC (no visible handshake or SNI) but like random
+UDP\. Clients need the password, which the share links carry; those without it
+cannot connect, and probes no longer reach ` masquerade `\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-salamander-password"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.salamander\.password
+
+Salamander password\. Ends up in the Nix store; prefer ` passwordFile `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"hunter2"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-salamander-passwordfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.salamander\.passwordFile
+
+File with the Salamander password\. With neither this nor ` password `, one is
+generated on first start and kept in the state directory\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-salamander"`
+
 <a id="services-proxy-suite-inbounds-listeners-name-jsonfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.jsonFile
 
@@ -598,6 +666,16 @@ Shadowsocks cipher\. 2022 ciphers take a base64 key of matching length as the pa
 **Type:** string\
 **Default:** `"2022-blake3-aes-128-gcm"`\
 **Example:** `"aes-128-gcm"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-order"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.order
+
+Position in subscriptions and link listings, lowest first; listeners with the same
+order follow their tags alphabetically\. Clients usually pick the first entry\.
+
+**Type:** signed integer\
+**Default:** `1000`\
+**Example:** `0`
 
 <a id="services-proxy-suite-inbounds-listeners-name-port"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.port
@@ -676,6 +754,16 @@ Accepted short IDs (hex)\. The first goes into share links\.
 **Default:** `[ "" ]`\
 **Example:** `[ "0123abcd" ]`
 
+<a id="services-proxy-suite-inbounds-listeners-name-reality-xver"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.reality\.xver
+
+PROXY protocol version sent to ` dest ` with each forwarded connection, or 0 for none\.
+Lets a ` dest ` on this host that expects the header (nginx with ` proxy_protocol `)
+see the visitor’s address instead of XRay’s\.
+
+**Type:** one of 0, 1, 2\
+**Default:** `0`
+
 <a id="services-proxy-suite-inbounds-listeners-name-serverpassword"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.serverPassword
 
@@ -693,6 +781,17 @@ File with the server key\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"/run/secrets/proxy-inbound-ss-server-key"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-shareaddress"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareAddress
+
+Address in this listener’s share links (and the default SNI of their TLS), instead of
+` inbounds.serverAddress `: a name of its own, so the name clients look up is the one
+they then send as SNI\. Links of listeners behind its fallbacks use it too\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"cdn.example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-shareport"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.sharePort

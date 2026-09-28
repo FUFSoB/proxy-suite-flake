@@ -316,6 +316,7 @@ services.proxy-suite = {
     asOutbound = null;
     autostart = false;
     configFile = null;
+    domainStrategy = if config.networking.enableIPv6 then "prefer_ipv6" else "prefer_ipv4";
     enable = false;
     endpoint = null;
     generatorUrl = null;

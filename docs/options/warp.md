@@ -12,6 +12,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [asOutbound](#services-proxy-suite-warp-asoutbound)
   - [autostart](#services-proxy-suite-warp-autostart)
   - [configFile](#services-proxy-suite-warp-configfile)
+  - [domainStrategy](#services-proxy-suite-warp-domainstrategy)
   - [endpoint](#services-proxy-suite-warp-endpoint)
   - [generatorUrl](#services-proxy-suite-warp-generatorurl)
 
@@ -66,6 +67,17 @@ through the local proxy if enabled\. WARP does not work until that succeeds\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"/run/secrets/wgcf-profile.conf"`
+
+<a id="services-proxy-suite-warp-domainstrategy"></a>
+## services\.proxy-suite\.warp\.domainStrategy
+
+Which address family the “warp” outbound dials a name over first\. Ignored with
+` asOutbound = "userspace" `\. Also applies to names resolved by the inbounds’
+` routing.blockPrivate ` check, unless ` proxy.dns.strategy ` is set\.
+
+**Type:** null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”\
+**Default:** `if config.networking.enableIPv6 then "prefer_ipv6" else "prefer_ipv4"`\
+**Example:** `"prefer_ipv4"`
 
 <a id="services-proxy-suite-warp-endpoint"></a>
 ## services\.proxy-suite\.warp\.endpoint

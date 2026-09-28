@@ -66,6 +66,8 @@ in
       rules = internalOption types.lines "";
     };
     nftables = internalOption types.bool false;
+    # nftables tables by name, family inet (NixOS only): NAT the firewall option cannot express.
+    nftablesTables = internalOption (types.attrsOf types.lines) { };
     # ../helpers.nix, which the NixOS and home-manager adapters publish as
     # config.lib.proxy-suite; the other hosts have no config.lib.
     helpers = internalOption types.raw { };

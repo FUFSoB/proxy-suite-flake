@@ -3,6 +3,7 @@
   pureXrayEnabled,
   selectionMode,
   proxyInboundsGuardPrivate,
+  proxyInboundsGuardStrategy ? null,
   userDnsRules ? [ ],
 }:
 
@@ -120,7 +121,11 @@ else
     # proxy rules above take stay unresolved and none reaches a direct dial unchecked. Local
     # mixed-in clients lose names that resolve private. Rules for other inbounds do not count:
     # autoProxy's direct probe pin would put the guard first, resolving every name, .onion too.
-    | [{inbound: ["mixed-in"], action: "resolve"},
+    | [{inbound: ["mixed-in"], action: "resolve"${
+      lib.optionalString (
+        proxyInboundsGuardStrategy != null
+      ) ", strategy: \"${proxyInboundsGuardStrategy}\""
+    }},
        {inbound: ["mixed-in"], ip_is_private: true, action: "reject"}] as $guard
     | (.route.rules
        | map((.outbound? // "") == "direct" and ((.inbound? // ["mixed-in"]) | index(["mixed-in"])) != null)

@@ -48,6 +48,12 @@ let
     builtinTags
     ;
   constants = derived.constants;
+  hopRedirects = lib.concatMapStrings (
+    ib:
+    lib.optionalString (ib.listener.type == "hysteria2" && ib.listener.hysteria.portHopping != null) ''
+      fib daddr type local udp dport ${ib.listener.hysteria.portHopping} redirect to :${toString ib.listener.port}
+    ''
+  ) derived.proxyInbounds;
   routingScripts = import ./routing-scripts.nix { inherit (context) ctx; };
 
   serviceUnits = import ./units.nix {
@@ -97,6 +103,16 @@ lib.mkMerge [
         || perAppRoutingTproxy.enable
         || perAppZapretEnabled
       ) true;
+
+      # hysteria2 port hopping: the range lands on the listener's port before the firewall
+      # sees it, so only that port needs opening.
+      nftablesTables = lib.mkIf (proxyInboundsEnabled && hopRedirects != "") {
+        proxy-suite-hysteria-hop = ''
+          chain prerouting {
+            type nat hook prerouting priority dstnat; policy accept;
+          ${hopRedirects}}
+        '';
+      };
 
       # Inbound listeners are reached from outside, so their ports have to be open.
       firewall = lib.mkMerge [

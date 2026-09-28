@@ -87,6 +87,7 @@ let
       tunnelPort,
       directPort,
       endpoint,
+      domainStrategy,
     }:
     {
       convert = ''
@@ -100,7 +101,17 @@ let
             (${builtins.toJSON (dnsServer "remote" cfg.proxy.dns.remote)} + {detour: "${tag}", domain_resolver: "local"})
           ]},
           route: {
-            default_domain_resolver: "remote",
+            default_domain_resolver: ${
+              builtins.toJSON (
+                if domainStrategy == null then
+                  "remote"
+                else
+                  {
+                    server = "remote";
+                    strategy = domainStrategy;
+                  }
+              )
+            },
             rules: [{inbound: ["direct-in"], outbound: "direct"}],
             final: "${tag}"
           },
@@ -134,7 +145,8 @@ let
 
   # `profile` is a shell snippet, run as root on a privileged host, that sets $profile to
   # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort,
-  # and `endpoint`, a host:port in place of the profile's Endpoint.
+  # `endpoint`, a host:port in place of the profile's Endpoint, and `domainStrategy`, the
+  # address family it dials destinations over first.
   mkTunnel =
     {
       description,
@@ -144,6 +156,7 @@ let
       tunnelPort,
       directPort ? null,
       endpoint ? null,
+      domainStrategy ? null,
       engine ? "singBox",
     }:
     let
@@ -153,6 +166,7 @@ let
           tunnelPort
           directPort
           endpoint
+          domainStrategy
           ;
       };
       tunnelScript = pkgs.writeShellScript "proxy-suite-wg-tunnel" ''

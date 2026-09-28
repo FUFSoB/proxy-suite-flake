@@ -94,7 +94,7 @@ in
   services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
     warp = {
       configFile = w.profilePath;
-      inherit (w) endpoint;
+      inherit (w) endpoint domainStrategy;
       asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
       autostart = lib.mkIf w.autostart true;
     };
@@ -113,7 +113,12 @@ in
             until [ -s "$profile" ]; do sleep 5; done
           fi
         '';
-        inherit (w) tunnelPort directPort endpoint;
+        inherit (w)
+          tunnelPort
+          directPort
+          endpoint
+          domainStrategy
+          ;
       };
     })
 

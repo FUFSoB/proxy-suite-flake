@@ -15,6 +15,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [asOutbound](#services-proxy-suite-amneziawg-profiles-name-asoutbound)
       - [autostart](#services-proxy-suite-amneziawg-profiles-name-autostart)
       - [configFile](#services-proxy-suite-amneziawg-profiles-name-configfile)
+      - [domainStrategy](#services-proxy-suite-amneziawg-profiles-name-domainstrategy)
       - [endpoint](#services-proxy-suite-amneziawg-profiles-name-endpoint)
       - [interfaceName](#services-proxy-suite-amneziawg-profiles-name-interfacename)
       - [settings](#services-proxy-suite-amneziawg-profiles-name-settings)
@@ -137,6 +138,16 @@ File with an AmneziaWG \.conf\.
 
 **Type:** null or string\
 **Default:** `null`
+
+<a id="services-proxy-suite-amneziawg-profiles-name-domainstrategy"></a>
+## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.domainStrategy
+
+Which address family the outbound dials a name over first\. Ignored with
+` asOutbound = "userspace" `\. ` null `: the backend’s default\.
+
+**Type:** null or one of “prefer_ipv4”, “prefer_ipv6”, “ipv4_only”, “ipv6_only”\
+**Default:** `null`\
+**Example:** `"prefer_ipv6"`
 
 <a id="services-proxy-suite-amneziawg-profiles-name-endpoint"></a>
 ## services\.proxy-suite\.amneziaWg\.profiles\.\<name>\.endpoint

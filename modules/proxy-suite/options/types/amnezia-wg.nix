@@ -199,6 +199,22 @@ let
           '';
         };
         endpoint = endpoint "host:port (IPv6 in brackets) that replaces the first peer's endpoint.";
+        domainStrategy = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "prefer_ipv4"
+              "prefer_ipv6"
+              "ipv4_only"
+              "ipv6_only"
+            ]
+          );
+          default = null;
+          description = ''
+            Which address family the outbound dials a name over first. Ignored with
+            `asOutbound = "userspace"`. `null`: the backend's default.
+          '';
+          example = "prefer_ipv6";
+        };
         allowConfigHooks = mkOption {
           type = types.bool;
           default = false;

@@ -449,7 +449,12 @@ let
       description = "proxy-suite AmneziaWG tunnel behind the ${ob.name} outbound";
       unit = serviceName ob.name;
       engine = ob.kind;
-      inherit (ob) tag tunnelPort directPort;
+      inherit (ob)
+        tag
+        tunnelPort
+        directPort
+        domainStrategy
+        ;
       profile = ''
         ${lib.optionalString (profile.configFile != null) ''
           # It may not exist yet: WARP's appears once proxy-suite-warp has registered.
@@ -467,9 +472,14 @@ let
   # WireGuard rekey every RekeyAfterTime (120 seconds by default); a handshake older than that
   # on two checks in a row is a rekey that is not getting through, so the interface moves to
   # a new port.
+  #
+  # An outbound interface also fetches proxy.urlTest.url over IPv4 through the tunnel, since a
+  # peer can keep rekeying while carrying no traffic. After three misses the peer is re-added
+  # for a fresh session (a new port alone keeps the old one), at most once in five minutes.
   mkWatchdog =
     name: profile:
     let
+      egressProbe = profile.asOutbound == "interface";
       watchdog = pkgs.writeShellScript "proxy-suite-awg" ''
         set -uo pipefail
         read -r _ probe rekey < <(${pkgs.python3}/bin/python3 ${configTool} \
@@ -479,6 +489,23 @@ let
           exec ${pkgs.coreutils}/bin/sleep infinity
         fi
         ${mkHandshakeHelpers profile}
+        ${lib.optionalString egressProbe ''
+          new_session() {
+            local peers
+            peers=$("$awg" showconf "$interface" | ${pkgs.gawk}/bin/awk '/^\[Peer\]/ { p = 1 } p') || return
+            [[ -n $peers ]] || return
+            new_source_port
+            "$awg" show "$interface" peers | while read -r peer; do
+              "$awg" set "$interface" peer "$peer" remove || true
+            done
+            "$awg" addconf "$interface" <(printf '%s\n' "$peers") || true
+          }
+          # Only an interface with IPv4 can be judged by it.
+          probe_egress=0
+          [[ -n $(${pkgs.iproute2}/bin/ip -4 -o addr show dev "$interface") ]] && probe_egress=1
+          misses=0
+          last_session=-300
+        ''}
         stale=0
         while sleep 15; do
           ${pingVia profile} -W 2 "$probe" >/dev/null 2>&1 || true
@@ -488,7 +515,19 @@ let
             echo "proxy-suite: AmneziaWG profile '${name}' is not rekeying; moving to a new source port" >&2
             new_source_port
             stale=0
+            ${lib.optionalString egressProbe "continue"}
           fi
+          ${lib.optionalString egressProbe ''
+            if (( !probe_egress )) || ${pkgs.curl}/bin/curl -4 -s --noproxy "*" --interface "$interface" -m 5 -o /dev/null \
+              ${lib.escapeShellArg cfg.proxy.urlTest.url}; then
+              misses=0
+            elif (( ++misses >= 3 && SECONDS - last_session >= 300 )); then
+              echo "proxy-suite: AmneziaWG profile '${name}' carries no IPv4 past its peer; starting a new session" >&2
+              new_session
+              misses=0
+              last_session=$SECONDS
+            fi
+          ''}
         done
       '';
     in

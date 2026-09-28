@@ -76,6 +76,8 @@ let
           type
           port
           sharePort
+          shareAddress
+          acceptProxyProtocol
           users
           flow
           method
@@ -89,6 +91,8 @@ let
           jsonFile
           ;
         listen = ib.listener.address;
+        # Where a Salamander password given neither inline nor as a file is kept.
+        salamanderStateFile = "${cfg.host.stateDir}/inbounds/${ib.tag}/salamander-password";
         fallbacks = map renderFallback ib.listener.fallbacks;
         # The listener in front, whose port and TLS or REALITY the share links carry.
         front =
@@ -104,6 +108,7 @@ let
                 type
                 port
                 sharePort
+                shareAddress
                 tls
                 reality
                 ;

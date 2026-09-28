@@ -619,6 +619,41 @@ let
       ) "${prefix}: hysteria.masquerade is for hysteria2 listeners only")
       (mkAssertion (
         !proxyInboundsEnabled
+        || (!l.hysteria.salamander.enable && l.hysteria.portHopping == null)
+        || l.type == "hysteria2"
+      ) "${prefix}: hysteria.salamander and hysteria.portHopping are for hysteria2 listeners only")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.hysteria.salamander.password == null
+        || l.hysteria.salamander.passwordFile == null
+      ) "${prefix}: set at most one of hysteria.salamander.password and passwordFile")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.hysteria.portHopping == null
+        || (
+          let
+            bounds = map lib.toInt (lib.splitString "-" l.hysteria.portHopping);
+          in
+          builtins.elemAt bounds 0 >= 1
+          && builtins.elemAt bounds 0 <= builtins.elemAt bounds 1
+          && builtins.elemAt bounds 1 <= 65535
+        )
+      ) "${prefix}: hysteria.portHopping must be a range \"from-to\" within 1-65535, from <= to")
+      # The redirect is an nftables table, which only the NixOS adapter installs.
+      (mkAssertion (
+        !proxyInboundsEnabled || l.hysteria.portHopping == null || hostKind == "nixos"
+      ) "${prefix}: hysteria.portHopping needs a NixOS host")
+      # A PROXY header opens a TCP stream; raw JSON listeners set their own sockopt.
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || !l.acceptProxyProtocol
+          || (l.type != null && l.type != "amneziawg" && !derived.proxyInboundIsUdpOnly l)
+        )
+        "${prefix}: acceptProxyProtocol is for TCP listeners with a type (not hysteria2, amneziawg, h3-only xhttp, xrayJson or jsonFile)"
+      )
+      (mkAssertion (
+        !proxyInboundsEnabled
         || l.fallbacks == [ ]
         || (
           builtins.elem l.type [

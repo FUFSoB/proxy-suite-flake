@@ -23,6 +23,7 @@ let
     xray
     proxyInboundsCfg
     proxyInboundsGuardPrivate
+    proxyInboundsGuardStrategy
     routeModeRulesFile
     tproxyFile
     tunFile
@@ -156,6 +157,7 @@ let
       pureXrayEnabled
       selectionMode
       proxyInboundsGuardPrivate
+      proxyInboundsGuardStrategy
       ;
     userDnsRules = proxyCfg.dns.singBox.rules;
   };

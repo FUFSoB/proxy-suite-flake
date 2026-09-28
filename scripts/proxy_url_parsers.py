@@ -433,6 +433,12 @@ def parse_hysteria2(url: str, tag: str) -> dict:
     if params.get("obfs") == "salamander":
         ob["obfs"] = {"type": "salamander", "password": params.get("obfs-password", "")}
 
+    # Port hopping, as v2rayN writes it: "20000-30000", or several joined by commas. A fixed
+    # interval: hop_interval_max, which would randomise it, is newer than sing-box 1.13.
+    if params.get("mport"):
+        ob["server_ports"] = [r.strip().replace("-", ":") for r in params["mport"].split(",") if r.strip()]
+        ob["hop_interval"] = "30s"
+
     return ob
 
 

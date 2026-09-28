@@ -238,6 +238,20 @@ let
         description = "Accepted short IDs (hex). The first goes into share links.";
         example = [ "0123abcd" ];
       };
+
+      xver = mkOption {
+        type = types.enum [
+          0
+          1
+          2
+        ];
+        default = 0;
+        description = ''
+          PROXY protocol version sent to `dest` with each forwarded connection, or 0 for none.
+          Lets a `dest` on this host that expects the header (nginx with `proxy_protocol`)
+          see the visitor's address instead of XRay's.
+        '';
+      };
     };
   };
 
@@ -328,6 +342,12 @@ let
           example = 443;
         };
 
+        shareAddress = nullStr ''
+          Address in this listener's share links (and the default SNI of their TLS), instead of
+          `inbounds.serverAddress`: a name of its own, so the name clients look up is the one
+          they then send as SNI. Links of listeners behind its fallbacks use it too.
+        '' "cdn.example.com";
+
         address = mkOption {
           type = types.strMatching "[^[:space:]]+";
           default = "::";
@@ -335,7 +355,31 @@ let
           example = "127.0.0.1";
         };
 
+        acceptProxyProtocol = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Read the client address from a PROXY protocol header (v1 or v2) that opens every
+            connection, as sent by a TCP front such as nginx's `stream` with `proxy_protocol on`.
+            Without it such a listener records every client as the front's address, which
+            `proxy-ctl inbounds online` never counts. TCP listeners only.
+
+            Every connection must carry the header, so only set it on a listener nothing but
+            the front can reach, such as one on loopback.
+          '';
+        };
+
         via = nullStr "Where this listener's traffic exits, as in `inbounds.routing.via`. `null`: use that default." "nl-vps";
+
+        order = mkOption {
+          type = types.int;
+          default = 1000;
+          description = ''
+            Position in subscriptions and link listings, lowest first; listeners with the same
+            order follow their tags alphabetically. Clients usually pick the first entry.
+          '';
+          example = 0;
+        };
 
         users = mkOption {
           type = types.listOf userType;
@@ -412,6 +456,39 @@ let
           Site shown to anything that is not a hysteria2 client, such as browsers and probes.
           `null`: answer 404.
         '' "https://www.example.com";
+
+        hysteria.salamander = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Salamander obfuscation: every packet is scrambled with a shared password, so the
+              traffic no longer looks like QUIC (no visible handshake or SNI) but like random
+              UDP. Clients need the password, which the share links carry; those without it
+              cannot connect, and probes no longer reach `masquerade`.
+            '';
+          };
+          password = nullStr "Salamander password. Ends up in the Nix store; prefer `passwordFile`." "hunter2";
+          passwordFile = nullStr ''
+            File with the Salamander password. With neither this nor `password`, one is
+            generated on first start and kept in the state directory.
+          '' "/run/secrets/proxy-inbound-salamander";
+        };
+
+        hysteria.portHopping = mkOption {
+          type = types.nullOr (types.strMatching "[0-9]+-[0-9]+");
+          default = null;
+          description = ''
+            UDP port range redirected to `port` (nftables, NixOS only), which clients hop across
+            every half a minute or so. A single throttled or blocked flow then lasts until the
+            next hop instead of for the whole session. Share links name it as `mport`; clients
+            that do not know it stay on `port`.
+
+            Keep it clear of ports other services on this host receive on, and below the
+            ephemeral range (32768 and up on Linux).
+          '';
+          example = "20000-30000";
+        };
 
         amneziaWg = mkOption {
           type = mkAmneziaWgType name;

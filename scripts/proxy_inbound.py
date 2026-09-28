@@ -11,6 +11,8 @@ without changing the spec or the link generator.
 import base64
 import hashlib
 import json
+import os
+import secrets
 import urllib.parse
 
 from awg_inbound import client_entries
@@ -57,6 +59,34 @@ def _server_secret(listener: dict, tag: str) -> str:
     )
 
 
+def _salamander(listener: dict) -> str | None:
+    """The Salamander password of a hysteria2 listener that obfuscates, else None.
+
+    Given inline or as a file; otherwise generated on first start and kept in the
+    state file, so share links stay the same across restarts.
+    """
+    salamander = (listener.get("hysteria") or {}).get("salamander") or {}
+    if not salamander.get("enable"):
+        return None
+    if salamander.get("password") is not None or salamander.get("passwordFile") is not None:
+        return _resolve(
+            salamander.get("password"), salamander.get("passwordFile"), "salamander password", listener["tag"]
+        )
+    path = listener["salamanderStateFile"]
+    try:
+        stored = _read_secret(path)
+    except FileNotFoundError:
+        stored = ""
+    if stored:
+        return stored
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    generated = secrets.token_urlsafe(24)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(generated + "\n")
+    return generated
+
+
 def _b64(value: str) -> str:
     """base64 without padding, as share links carry it."""
     return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
@@ -100,12 +130,16 @@ def _xray_stream(listener: dict, tag: str) -> dict:
         masquerade = (listener.get("hysteria") or {}).get("masquerade")
         if masquerade:
             settings["masquerade"] = {"type": "proxy", "url": masquerade, "rewriteHost": True}
-        return {
+        stream = {
             "network": "hysteria",
             "hysteriaSettings": settings,
             "security": "tls",
             "tlsSettings": _tls_settings(listener["tls"], ["h3"]),
         }
+        salamander = _salamander(listener)
+        if salamander is not None:
+            stream["finalmask"] = {"udp": [{"type": "salamander", "settings": {"password": salamander}}]}
+        return stream
 
     transport = listener["transport"]
     network = transport["type"]
@@ -126,8 +160,9 @@ def _xray_stream(listener: dict, tag: str) -> dict:
     # online; the forwarded address is only trusted when one of these headers is present.
     if transport.get("trustedXForwardedFor"):
         stream.setdefault("sockopt", {})["trustedXForwardedFor"] = transport["trustedXForwardedFor"]
-    # Behind another listener's fallback, the client address arrives in PROXY protocol.
-    if listener.get("front"):
+    # Behind another listener's fallback or a TCP front, the client address arrives in
+    # PROXY protocol.
+    if listener.get("front") or listener.get("acceptProxyProtocol"):
         stream.setdefault("sockopt", {})["acceptProxyProtocol"] = True
 
     reality = listener["reality"]
@@ -146,6 +181,8 @@ def _xray_stream(listener: dict, tag: str) -> dict:
             ),
             "shortIds": reality["shortIds"],
         }
+        if reality.get("xver"):
+            stream["realitySettings"]["xver"] = reality["xver"]
     elif tls["enable"] or listener["type"] == "trojan":
         stream["security"] = "tls"
         stream["tlsSettings"] = _tls_settings(tls)
@@ -312,6 +349,12 @@ def build_share_link(
     if user_index < 0 or user_index >= len(users):
         raise ValueError(f"listener '{tag}': user index {user_index} is out of range")
 
+    # Behind another listener's fallback, clients dial that one, under its TLS or REALITY.
+    front = listener.get("front") or listener
+    # A listener with a name of its own is dialled by it, so the name clients look up is the
+    # one they then send as SNI; it is also the default SNI.
+    server_address = front.get("shareAddress") or server_address
+
     user = users[user_index]
     secret = _user_secret(user, listener_type, tag)
     user_name = user.get("name") or f"{tag}-{user_index}"
@@ -319,8 +362,6 @@ def build_share_link(
     fragment = urllib.parse.quote(label, safe="")
     endpoint_address = onion_address or server_address
     host = f"[{endpoint_address}]" if ":" in endpoint_address else endpoint_address
-    # Behind another listener's fallback, clients dial that one, under its TLS or REALITY.
-    front = listener.get("front") or listener
     endpoint = f"{host}:{_share_port(front)}"
 
     if listener_type == "vmess":
@@ -349,6 +390,13 @@ def build_share_link(
     if listener_type == "hysteria2":
         tls = listener["tls"]
         params = {"sni": tls.get("serverName") or server_address, "alpn": ",".join(tls.get("alpn") or ["h3"])}
+        salamander = _salamander(listener)
+        if salamander is not None:
+            params.update({"obfs": "salamander", "obfs-password": salamander})
+        # v2rayN's name for the hop range; clients that do not know it stay on the port.
+        hopping = (listener.get("hysteria") or {}).get("portHopping")
+        if hopping:
+            params["mport"] = hopping
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return f"hysteria2://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 

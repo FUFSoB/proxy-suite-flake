@@ -18,6 +18,7 @@ def listener(**overrides):
         "type": "vless",
         "port": 443,
         "sharePort": None,
+        "acceptProxyProtocol": False,
         "listen": "::",
         "via": "direct",
         "users": [{"name": "", "uuid": "uuid-1", "uuidFile": None, "password": None, "passwordFile": None}],
@@ -40,6 +41,7 @@ def listener(**overrides):
             "privateKeyFile": None,
             "publicKey": None,
             "shortIds": [""],
+            "xver": 0,
         },
         "xrayJson": None,
         "jsonFile": None,
@@ -57,6 +59,7 @@ def reality(**overrides):
         "privateKeyFile": None,
         "publicKey": "public-key",
         "shortIds": ["0123abcd"],
+        "xver": 0,
     }
     settings.update(overrides)
     return settings
@@ -181,6 +184,19 @@ class RenderInboundTests(unittest.TestCase):
         self.assertEqual(
             render_xray_inbound(listener(transport=transport, front=front))["streamSettings"]["sockopt"],
             {"trustedXForwardedFor": ["X-Real-IP"], "acceptProxyProtocol": True},
+        )
+
+    def test_accept_proxy_protocol_behind_a_tcp_front(self):
+        """nginx's stream front sends the client address in PROXY protocol, with no fallback involved."""
+        ib = render_xray_inbound(listener(acceptProxyProtocol=True, reality=reality()))
+        self.assertEqual(ib["streamSettings"]["sockopt"], {"acceptProxyProtocol": True})
+        self.assertNotIn("sockopt", render_xray_inbound(listener(reality=reality()))["streamSettings"])
+
+    def test_reality_xver_only_when_set(self):
+        self.assertNotIn("xver", render_xray_inbound(listener(reality=reality()))["streamSettings"]["realitySettings"])
+        self.assertEqual(
+            render_xray_inbound(listener(reality=reality(xver=2)))["streamSettings"]["realitySettings"]["xver"],
+            2,
         )
 
     def test_grpc_transport(self):
@@ -447,6 +463,66 @@ class RoundTripTests(unittest.TestCase):
         # Without masquerade XRay answers non-clients with 404; nothing to render.
         plain = render_xray_inbound(dict(spec, hysteria={"masquerade": None}))
         self.assertEqual(plain["streamSettings"]["hysteriaSettings"], {"version": 2})
+        self.assertNotIn("finalmask", plain["streamSettings"])
+
+    def test_hysteria2_salamander_and_hopping_reach_links(self):
+        salamander = {"enable": True, "password": "m@sk", "passwordFile": None}
+        spec = listener(
+            type="hysteria2",
+            users=[{"name": "phone", "password": "pw", "passwordFile": None}],
+            tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": "hy.example.com"},
+            hysteria={"masquerade": None, "salamander": salamander, "portHopping": "20000-30000"},
+        )
+        self.assertEqual(
+            render_xray_inbound(spec)["streamSettings"]["finalmask"],
+            {"udp": [{"type": "salamander", "settings": {"password": "m@sk"}}]},
+        )
+        link = build_share_link(spec, "vpn.example.com")
+        params = link_params(link)
+        self.assertEqual((params["obfs"], params["obfs-password"], params["mport"]), ("salamander", "m@sk", "20000-30000"))
+        # The link reads back with both, into either backend.
+        ob = build_outbound(link, "hop", backend="sing-box")
+        self.assertEqual(ob["obfs"], {"type": "salamander", "password": "m@sk"})
+        self.assertEqual(ob["server_ports"], ["20000:30000"])
+        self.assertEqual(ob["server_port"], 443)
+        masks = build_outbound(link, "hop", backend="xray")["streamSettings"]["finalmask"]["udp"]
+        self.assertEqual([m["type"] for m in masks], ["udphop", "salamander"])
+        self.assertEqual(masks[0]["settings"]["remotePorts"], "20000-30000")
+
+    def test_share_address_is_dialled_and_the_default_sni(self):
+        tls = {"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None}
+        front = listener(shareAddress="cdn.example.com", tls=tls, flow="xtls-rprx-vision")
+        link = build_share_link(front, "vpn.example.com")
+        self.assertTrue(link.startswith("vless://uuid-1@cdn.example.com:443?"), link)
+        self.assertEqual(link_params(link)["sni"], "cdn.example.com")
+        # A listener behind its fallback is dialled the same way.
+        behind = listener(
+            port=10006,
+            address="127.0.0.1",
+            transport={"type": "xhttp", "path": "/x", "host": None, "mode": None, "serviceName": "", "trustedXForwardedFor": []},
+            front={"tag": "front-in", "type": "vless", "port": 443, "sharePort": None, "shareAddress": "cdn.example.com", "tls": tls, "reality": reality(enable=False)},
+        )
+        self.assertTrue(build_share_link(behind, "vpn.example.com").startswith("vless://uuid-1@cdn.example.com:443?"))
+        self.assertTrue(build_share_link(listener(tls=tls), "vpn.example.com").startswith("vless://uuid-1@vpn.example.com:443?"))
+
+    def test_hysteria2_salamander_password_generated_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "inbounds", "hy2-in", "salamander-password")
+            spec = listener(
+                type="hysteria2",
+                users=[{"name": "phone", "password": "pw", "passwordFile": None}],
+                tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None},
+                hysteria={"salamander": {"enable": True, "password": None, "passwordFile": None}},
+                salamanderStateFile=state,
+            )
+            first = link_params(build_share_link(spec, "vpn.example.com"))["obfs-password"]
+            self.assertTrue(first)
+            self.assertEqual(oct(os.stat(state).st_mode & 0o777), "0o600")
+            # Kept across restarts, so the links users hold stay valid.
+            self.assertEqual(link_params(build_share_link(spec, "vpn.example.com"))["obfs-password"], first)
+            self.assertEqual(
+                render_xray_inbound(spec)["streamSettings"]["finalmask"]["udp"][0]["settings"]["password"], first
+            )
 
     def test_trojan_round_trip(self):
         link = build_share_link(
