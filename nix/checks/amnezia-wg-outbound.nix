@@ -29,6 +29,10 @@ let
           amneziaWg = {
             enable = true;
             kernelModulePackage = null;
+            serverUdpPorts = [
+              3478
+              "49152-65535"
+            ];
             profiles = {
               de = {
                 asOutbound = "interface";
@@ -58,6 +62,10 @@ let
   deStart = generated.readDerivation de.serviceConfig.ExecStart;
   plainTunnel = generated.readDerivation services.proxy-suite-awg-plain.serviceConfig.ExecStart;
   dnsServer = dnsServerByTag (mkTProxyConfig singBox) "awg-dns-de";
+  home = services.proxy-suite-awg-home;
+  homeStart = generated.readDerivation home.serviceConfig.ExecStart;
+  homeStop = generated.readDerivation home.serviceConfig.ExecStop;
+  deStop = generated.readDerivation de.serviceConfig.ExecStop;
 
   warpInterface = mkProxySuite {
     enable = true;
@@ -110,6 +118,38 @@ in
       assert hasInfix ''iifname "awg-de" accept''
         singBox.config.networking.firewall.extraReversePathFilterRules;
       assert (mkProxyCtlDerived singBox).awgProfiles == [ "home" ];
+      true
+    )
+    # IPv6 needs a route for sockets bound to the interface: a table of its own, looked up
+    # only by them, and gone with the unit.
+    (
+      assert hasInfix "route replace default dev awg-de table 110" deStart;
+      assert hasInfix "rule add pref 8991 oif awg-de table 110" deStart;
+      assert hasInfix "rule del pref 8991 oif awg-de" deStop;
+      assert !(hasInfix "fib daddr type local" deStart);
+      true
+    )
+    # A global profile answers connections to this host the way they came, not through itself.
+    (
+      assert hasInfix
+        ''ct state new iifname != { "lo", "awg-home" } fib daddr type local ct mark set $fwmark''
+        homeStart;
+      assert hasInfix "type route hook output priority mangle - 5" homeStart;
+      assert hasInfix "nft delete table inet proxy-suite-awg-awg-home" homeStop;
+      assert !(hasInfix "oif awg-home" homeStart);
+      # UDP services answer from the right address even on a socket bound to every address.
+      assert hasInfix "for port in 3478 49152-65535" homeStart;
+      assert hasInfix ''rule add pref 8989 ipproto udp sport "$port" lookup main'' homeStart;
+      assert hasInfix "rule del pref 8989" homeStop;
+      # src_valid_mark goes back to what it was before awg-quick turned it on.
+      assert hasInfix
+        "cat /proc/sys/net/ipv4/conf/all/src_valid_mark > /run/proxy-suite-awg-home/src_valid_mark"
+        homeStart;
+      assert hasInfix
+        "cat /run/proxy-suite-awg-home/src_valid_mark > /proc/sys/net/ipv4/conf/all/src_valid_mark"
+        homeStop;
+      assert !(hasInfix "src_valid_mark" deStart);
+      assert !(hasInfix "pref 8989" deStart);
       true
     )
     # "singBox": a tunnel unit behind a loopback SOCKS hop, fed the prepared profile.

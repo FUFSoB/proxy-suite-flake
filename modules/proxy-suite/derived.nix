@@ -152,6 +152,8 @@ let
       # (only sing-box listens on directPort).
       tunnelPort = awgTunnelBasePort + 2 * index;
       directPort = awgTunnelBasePort + 1 + 2 * index;
+      # Only an "interface" one routes by it.
+      routeTable = constants.awgOutboundRouteTableBase + index;
     }
   ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
   awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;
@@ -424,6 +426,12 @@ let
     # (an Endpoint's name) get past the kill switch.
     awgGlobalFwmark = 51820;
     awgGlobalGroup = "proxy-suite-awg";
+    # An "interface" AmneziaWG outbound's table (the base plus its index) and the rule
+    # sending sockets bound to the interface there, clear of the tables above.
+    awgOutboundRouteTableBase = 110;
+    awgOutboundRulePriority = 8991;
+    # A global AmneziaWG profile's rules keeping the host's UDP services on the main table.
+    awgServerUdpRulePriority = 8989;
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Downloaded proxy.routing.ruleSets, one file each, written by the service user.

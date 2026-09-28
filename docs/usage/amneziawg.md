@@ -33,6 +33,11 @@ proxy-ctl awg off
 Only one global tunnel runs at a time: an AmneziaWG profile, TUN or TProxy. Starting one
 stops the others.
 
+Connections made to this machine from elsewhere (SSH, a web server, inbound listeners) are
+still answered the way they came in, not through the tunnel. For UDP that takes knowing the
+port: the inbound listeners and, on NixOS, the firewall's open ports are known; add others to
+`amneziaWg.serverUdpPorts`.
+
 ## As an outbound
 
 ```nix

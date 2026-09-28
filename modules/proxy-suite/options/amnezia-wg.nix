@@ -51,6 +51,21 @@ in
       description = "AWG 3.1 kernel module package. `null`: userspace only.";
     };
 
+    serverUdpPorts = mkOption {
+      type = types.listOf (types.either types.port (types.strMatching "[0-9]+-[0-9]+"));
+      default = [ ];
+      description = ''
+        UDP ports of services on this host that others reach, whose packets a global profile
+        leaves on the host's own routes. A reply from a socket bound to every address would
+        otherwise leave through the tunnel, from the tunnel's address. The UDP inbound listeners
+        and, on NixOS, the ports the firewall opens are included already.
+      '';
+      example = [
+        3478
+        "49152-65535"
+      ];
+    };
+
     profiles = mkOption {
       type = types.attrsOf t.profileType;
       default = { };

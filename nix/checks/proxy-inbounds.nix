@@ -901,7 +901,11 @@ let
     (ok (builtins.elem "proxy-suite-inbounds-awg.service" (service awgFixture).wants))
     (ok (!(relayFixture.config.systemd.services ? "proxy-suite-inbounds-awg")))
     (
-      assert lib.hasInfix "rule add pref 8990 fwmark 20 table 103" (awgStartScript awgFixture);
+      # Scoped to the listener's interface, so src_valid_mark cannot make clients martians.
+      assert lib.hasInfix "rule add pref 8990 iif awgi-home fwmark 20 table 103" (
+        awgStartScript awgFixture
+      );
+      assert !(lib.hasInfix "rule add pref 8990 fwmark 20" (awgStartScript awgFixture));
       assert lib.hasInfix "awg_inbound.py prepare" (awgStartScript awgFixture);
       true
     )

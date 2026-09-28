@@ -204,6 +204,9 @@ let
     (requireEnabled (
       cfg.warp.enable && cfg.warp.asAmneziaWg
     ) cfg.amneziaWg.enable "proxy-suite: warp.asAmneziaWg requires amneziaWg.enable = true")
+    (requireEnabled (cfg.warp.enable && cfg.warp.autostart) cfg.warp.asAmneziaWg
+      "proxy-suite: warp.autostart starts the global AmneziaWG profile and requires warp.asAmneziaWg = true"
+    )
     (requireEnabled proxyCfg.autoProxy.enable proxyEnabled
       "proxy-suite: proxy.autoProxy.enable requires proxy.enable = true"
     )

@@ -10,6 +10,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [enable](#services-proxy-suite-warp-enable)
   - [asAmneziaWg](#services-proxy-suite-warp-asamneziawg)
   - [asOutbound](#services-proxy-suite-warp-asoutbound)
+  - [autostart](#services-proxy-suite-warp-autostart)
   - [configFile](#services-proxy-suite-warp-configfile)
   - [endpoint](#services-proxy-suite-warp-endpoint)
   - [generatorUrl](#services-proxy-suite-warp-generatorurl)
@@ -43,6 +44,15 @@ Add WARP as an outbound tagged “warp”\.
 
 **Type:** null or one of “singBox”, “userspace”, “interface”\
 **Default:** `null`
+
+<a id="services-proxy-suite-warp-autostart"></a>
+## services\.proxy-suite\.warp\.autostart
+
+Bring the “warp” AmneziaWG profile up at boot, as ` autostart ` of an ` amneziaWg ` profile
+does\. Needs ` asAmneziaWg `\. Only one global mode can autostart\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-warp-configfile"></a>
 ## services\.proxy-suite\.warp\.configFile

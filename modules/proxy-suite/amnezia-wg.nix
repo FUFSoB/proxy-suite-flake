@@ -11,7 +11,12 @@ let
   profiles = awgCfg.profiles;
   profileNames = builtins.attrNames profiles;
   globalProfileNames = builtins.attrNames derived.awgGlobalProfiles;
-  inherit (derived.constants) awgGlobalFwmark awgGlobalGroup;
+  inherit (derived.constants)
+    awgGlobalFwmark
+    awgGlobalGroup
+    awgOutboundRulePriority
+    awgServerUdpRulePriority
+    ;
   killSwitchUnit = "proxy-suite-killswitch.service";
   # Profiles behind a loopback SOCKS hop, in a tunnel unit rather than awg-quick.
   tunnelOutbounds = derived.awgTunnelOutbounds;
@@ -128,6 +133,95 @@ let
     }
   '';
 
+  # An outbound interface runs with Table=off. A socket bound to it reaches IPv4 without a
+  # route (the kernel takes the destination as on-link), but IPv6 is unreachable, so the
+  # interface gets a table of its own, which only sockets bound to it look up.
+  outboundRuleCleanup = name: profile: ''
+    for family in -4 -6; do
+      while ${pkgs.iproute2}/bin/ip "$family" rule del pref ${toString awgOutboundRulePriority} oif ${lib.escapeShellArg profile.interfaceName} 2>/dev/null; do :; done
+      ${pkgs.iproute2}/bin/ip "$family" route flush table ${toString (outboundRouteTable name)} 2>/dev/null || true
+    done
+  '';
+  outboundRoutesUp = name: profile: ''
+    ${outboundRuleCleanup name profile}
+    for family in -4 -6; do
+      if [[ -n $(${pkgs.iproute2}/bin/ip "$family" -o addr show dev ${lib.escapeShellArg profile.interfaceName} scope global) ]]; then
+        ${pkgs.iproute2}/bin/ip "$family" route replace default dev ${lib.escapeShellArg profile.interfaceName} table ${toString (outboundRouteTable name)}
+        ${pkgs.iproute2}/bin/ip "$family" rule add pref ${toString awgOutboundRulePriority} oif ${lib.escapeShellArg profile.interfaceName} table ${toString (outboundRouteTable name)}
+      fi
+    done
+  '';
+  outboundRouteTable =
+    name: (lib.findFirst (ob: ob.name == name) null derived.awgInterfaceOutbounds).routeTable;
+
+  # A global profile sends everything without its fwmark into the tunnel, replies to
+  # connections made to this host from elsewhere (SSH, a web server, inbound listeners)
+  # included, which then never reach the client. Those connections get the fwmark, so
+  # their packets take the main table and leave the way they came. Before the
+  # reverse-path filter, which then finds the route back as well.
+  #
+  # A UDP socket bound to every address is routed before any packet exists to mark, so the
+  # tunnel's address would become its source. The ports the host serves UDP on are sent to
+  # the main table by rule instead, which the kernel checks before it picks the source.
+  repliesTable = profile: "proxy-suite-awg-${profile.interfaceName}";
+  serverUdpPorts = lib.unique (
+    map toString (awgCfg.serverUdpPorts ++ derived.proxyInboundFirewallUdpPorts)
+    ++ cfg.host.openUdpPorts
+  );
+  serverUdpRulesDown = ''
+    for family in -4 -6; do
+      while ${pkgs.iproute2}/bin/ip "$family" rule del pref ${toString awgServerUdpRulePriority} 2>/dev/null; do :; done
+    done
+  '';
+  serverUdpRulesUp = ''
+    ${serverUdpRulesDown}
+    for family in -4 -6; do
+      for port in ${lib.escapeShellArgs serverUdpPorts}; do
+        # IPv6 may be off.
+        ${pkgs.iproute2}/bin/ip "$family" rule add pref ${toString awgServerUdpRulePriority} ipproto udp sport "$port" lookup main \
+          || [[ $family == -6 ]]
+      done
+    done
+  '';
+  repliesUp = profile: ''
+    fwmark=$(${awgCfg.toolsPackage}/bin/awg show ${lib.escapeShellArg profile.interfaceName} fwmark)
+    # Off when the profile routes nothing by default (a table of its own, or Table=off).
+    if [[ "$fwmark" != off ]]; then
+      ${serverUdpRulesUp}
+      ${pkgs.nftables}/bin/nft -f - <<EOF
+    table inet ${repliesTable profile} {
+        chain prerouting {
+            type filter hook prerouting priority mangle - 5; policy accept;
+            ct state new iifname != { "lo", "${profile.interfaceName}" } fib daddr type local ct mark set $fwmark
+            ct mark $fwmark meta mark set $fwmark
+        }
+        chain output {
+            type route hook output priority mangle - 5; policy accept;
+            ct mark $fwmark meta mark set $fwmark
+        }
+    }
+    EOF
+    fi
+  '';
+  repliesDown = profile: ''
+    ${pkgs.nftables}/bin/nft delete table inet ${repliesTable profile} 2>/dev/null || true
+    ${serverUdpRulesDown}
+  '';
+
+  # awg-quick turns src_valid_mark on for a default route and never back off; left on, it
+  # changes how the kernel checks every marked packet's source. Put back as it was.
+  srcValidMark = "/proc/sys/net/ipv4/conf/all/src_valid_mark";
+  savedSrcValidMark = name: "${runtimeDir name}/src_valid_mark";
+  saveSrcValidMark = name: ''
+    [[ -e ${savedSrcValidMark name} ]] || cat ${srcValidMark} > ${savedSrcValidMark name}
+  '';
+  restoreSrcValidMark = name: ''
+    if [[ -s ${savedSrcValidMark name} ]]; then
+      cat ${savedSrcValidMark name} > ${srcValidMark} || true
+      rm -f ${savedSrcValidMark name}
+    fi
+  '';
+
   # `ping` for the handshake probe. An outbound interface has no route to the probe address, so
   # the probe is bound to it.
   pingVia =
@@ -220,6 +314,12 @@ let
           fi
           ${cfg.host.resolvconfPackage}/bin/resolvconf -d "${profile.interfaceName}" -f 2>/dev/null || true
           ${pkgs.iproute2}/bin/ip link delete dev ${lib.escapeShellArg profile.interfaceName} 2>/dev/null || true
+          ${
+            if outbound then
+              outboundRuleCleanup name profile
+            else
+              repliesDown profile + restoreSrcValidMark name
+          }
         }
         trap cleanup ERR
 
@@ -227,7 +327,9 @@ let
 
         read -r implementation probe _ < <(${pkgs.python3}/bin/python3 ${configTool} \
           --inspect ${lib.escapeShellArg configPath})
+        ${lib.optionalString (!outbound) (saveSrcValidMark name)}
         ${awgCommon.awgQuickUp "$implementation" (lib.escapeShellArg configPath)}
+        ${if outbound then outboundRoutesUp name profile else repliesUp profile}
 
         ${mkHandshakeHelpers profile}
         # A handshake is retried every 5 seconds: each retry after the first gets a new port.
@@ -246,8 +348,16 @@ let
         false
       '';
       stop = pkgs.writeShellScript "proxy-suite-awg" ''
-        set -euo pipefail
-        exec ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath}
+        set -uo pipefail
+        status=0
+        ${awgCfg.toolsPackage}/bin/awg-quick down ${lib.escapeShellArg configPath} || status=$?
+        ${
+          if outbound then
+            outboundRuleCleanup name profile
+          else
+            repliesDown profile + restoreSrcValidMark name
+        }
+        exit "$status"
       '';
     in
     (

@@ -43,6 +43,8 @@ in
     enableIPv6 = internalOption types.bool true;
     kernelPackages = internalOption (types.nullOr types.raw) null;
     firewallPackage = internalOption (types.nullOr types.package) null;
+    # UDP ports the host's firewall opens, as "port" or "from-to".
+    openUdpPorts = internalOption (types.listOf types.str) [ ];
     resolvconfPackage = internalOption (types.nullOr types.package) null;
   };
 

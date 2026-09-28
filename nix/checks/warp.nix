@@ -83,6 +83,17 @@ let
     };
   };
 
+  amneziaWgAutostart = mkProxySuite {
+    enable = true;
+    amneziaWg.enable = true;
+    warp = {
+      enable = true;
+      configFile = profile;
+      asAmneziaWg = true;
+      autostart = true;
+    };
+  };
+
   amneziaWgEndpoint = mkProxySuite {
     enable = true;
     amneziaWg.enable = true;
@@ -141,6 +152,17 @@ let
         configFile = profile;
         asOutbound = "singBox";
         asAmneziaWg = true;
+      };
+      proxy.enable = true;
+    }
+    # autostart is the global profile's; an outbound always runs.
+    {
+      enable = true;
+      warp = {
+        enable = true;
+        configFile = profile;
+        asOutbound = "singBox";
+        autostart = true;
       };
       proxy.enable = true;
     }
@@ -266,6 +288,15 @@ in
     )
     (
       assert !(amneziaWg.config.systemd.services ? "proxy-suite-warp-tunnel");
+      true
+    )
+    # The global profile starts on demand (proxy-ctl awg on warp), or at boot with autostart.
+    (
+      assert
+        amneziaWg.config.systemd.services."proxy-suite-awg-warp".wantedBy == [ ]
+        &&
+          builtins.elem "multi-user.target"
+            amneziaWgAutostart.config.systemd.services."proxy-suite-awg-warp".wantedBy;
       true
     )
     # endpoint replaces the profile's Endpoint at conversion; the sing-box tunnel gets it quoted.

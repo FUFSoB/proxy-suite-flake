@@ -67,5 +67,14 @@ in
         `amneziaWg.enable`. Cannot be used with `asOutbound`.
       '';
     };
+
+    autostart = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Bring the "warp" AmneziaWG profile up at boot, as `autostart` of an `amneziaWg` profile
+        does. Needs `asAmneziaWg`. Only one global mode can autostart.
+      '';
+    };
   };
 }

@@ -96,6 +96,7 @@ in
       configFile = w.profilePath;
       inherit (w) endpoint;
       asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
+      autostart = lib.mkIf w.autostart true;
     };
   };
 

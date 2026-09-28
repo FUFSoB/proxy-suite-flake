@@ -86,7 +86,8 @@ services.proxy-suite = {
   still pin them.
 - autoProxy tries your exits, WARP included, for each blocked site and keeps the first one
   that works.
-- WARP can also run as a global VPN instead, through AmneziaWG: `warp.asAmneziaWg`.
+- WARP can also run as a global VPN instead, through AmneziaWG: `warp.asAmneziaWg`, with
+  `warp.autostart` to bring it up at boot.
 
 ## See also
 

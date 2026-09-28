@@ -65,6 +65,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [vpn](#services-proxy-suite-amneziawg-profiles-name-vpn)
       - [vpnContainer](#services-proxy-suite-amneziawg-profiles-name-vpncontainer)
       - [vpnFile](#services-proxy-suite-amneziawg-profiles-name-vpnfile)
+  - [serverUdpPorts](#services-proxy-suite-amneziawg-serverudpports)
   - [toolsPackage](#services-proxy-suite-amneziawg-toolspackage)
   - [userspacePackage](#services-proxy-suite-amneziawg-userspacepackage)
   - [wireproxyPackage](#services-proxy-suite-amneziawg-wireproxypackage)
@@ -535,6 +536,18 @@ File with a vpn:// export\.
 
 **Type:** null or string\
 **Default:** `null`
+
+<a id="services-proxy-suite-amneziawg-serverudpports"></a>
+## services\.proxy-suite\.amneziaWg\.serverUdpPorts
+
+UDP ports of services on this host that others reach, whose packets a global profile
+leaves on the host’s own routes\. A reply from a socket bound to every address would
+otherwise leave through the tunnel, from the tunnel’s address\. The UDP inbound listeners
+and, on NixOS, the ports the firewall opens are included already\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]±\[0-9]+)\
+**Default:** `[ ]`\
+**Example:** `[ 3478 "49152-65535" ]`
 
 <a id="services-proxy-suite-amneziawg-toolspackage"></a>
 ## services\.proxy-suite\.amneziaWg\.toolsPackage

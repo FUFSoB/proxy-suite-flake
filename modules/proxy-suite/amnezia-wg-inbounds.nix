@@ -143,10 +143,15 @@ let
       '') sysctl
     )}
 
-    # Diverted packets are for the local XRay sockets, whatever their destination.
+    # Diverted packets are for the local XRay sockets, whatever their destination. Only as
+    # they come in: with src_valid_mark on (awg-quick turns it on for a global profile and
+    # leaves it), the kernel checks a packet's source by its mark too, and the local route
+    # here would make every client's IPv4 address a martian.
     ${lib.concatMapStrings (family: ''
       ${ip} ${family} route replace local default dev lo table ${toString awgInboundRouteTable}
-      ${ip} ${family} rule add pref ${toString awgInboundRulePriority} fwmark ${toString awgInboundFwmark} table ${toString awgInboundRouteTable}
+      ${lib.concatMapStrings (listener: ''
+        ${ip} ${family} rule add pref ${toString awgInboundRulePriority} iif ${lib.escapeShellArg listener.interface} fwmark ${toString awgInboundFwmark} table ${toString awgInboundRouteTable}
+      '') listeners}
     '') ([ "-4" ] ++ lib.optional ipv6 "-6")}
 
     ${nft} -f ${nftRulesFile}

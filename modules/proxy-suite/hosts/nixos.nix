@@ -30,6 +30,17 @@ in
         inherit (config.networking) enableIPv6;
         inherit (config.boot) kernelPackages;
         firewallPackage = config.networking.firewall.package;
+        openUdpPorts =
+          let
+            firewall = config.networking.firewall;
+          in
+          lib.unique (
+            lib.concatMap (
+              open:
+              map toString open.allowedUDPPorts
+              ++ map (range: "${toString range.from}-${toString range.to}") open.allowedUDPPortRanges
+            ) ([ firewall ] ++ lib.attrValues firewall.interfaces)
+          );
         resolvconfPackage = config.networking.resolvconf.package;
       };
       # NixOS's place for helper functions; set even while disabled, so a config can
