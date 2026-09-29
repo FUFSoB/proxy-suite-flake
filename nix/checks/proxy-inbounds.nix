@@ -127,9 +127,15 @@ let
     serverAddress = "vpn.example.com";
     serverAliases = [
       "turn.example.com"
+      "domain:example.net"
       "203.0.113.10"
       "2001:db8::10"
       "vpn.example.com"
+    ];
+    serverPorts = [
+      993
+      "7882-7885"
+      443
     ];
     listeners.vless-in = realityListener;
   };
@@ -834,6 +840,7 @@ let
         (ruleByTag aliasedConfig "inbound-server-address-direct").domain == [
           "full:vpn.example.com"
           "full:turn.example.com"
+          "domain:example.net"
         ];
       true
     )
@@ -845,7 +852,9 @@ let
         ];
       true
     )
-    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443"))
+    # serverPorts join the listener's, ranges as they are.
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct").port == "443,993,7882-7885"))
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct"))
     (ok (!builtins.elem "inbound-block-ru-domain" (ruleTags unguardedConfig)))
 

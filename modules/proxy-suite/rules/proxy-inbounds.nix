@@ -40,16 +40,20 @@ let
   # The address clients dial must stay reachable even when blockRu covers it
   # (a .ru domain or IP). After blockPrivate, so it cannot open the LAN. Its aliases
   # too: routing.via usually cannot loop back to this host, so they would fail there.
+  # A "domain:" alias is a suffix, for a wildcard DNS record: the name and every name under it.
+  isSuffix = lib.hasPrefix "domain:";
   isIp =
-    addr: lib.hasInfix ":" addr || builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" addr != null;
+    addr:
+    !isSuffix addr
+    && (lib.hasInfix ":" addr || builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" addr != null);
   serverAddresses =
     lib.optional (proxyInboundsCfg.serverAddress != null) proxyInboundsCfg.serverAddress
     ++ proxyInboundsCfg.serverAliases;
   serverIps = lib.unique (builtins.filter isIp serverAddresses);
   serverNames = lib.unique (builtins.filter (addr: !isIp addr) serverAddresses);
 
-  # Only the ports clients dial there: the rest of this host (wildcard services the
-  # firewall keeps from the internet) must not be reachable through it.
+  # Only the ports clients dial there, and the ones listed as public: the rest of this host
+  # (wildcard services the firewall keeps from the internet) must not be reachable through it.
   serverAddressPorts = lib.unique (
     map (ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port) (
       # AmneziaWG is UDP to the interface, never relayed through XRay.
@@ -59,6 +63,7 @@ let
       80
       443
     ]
+    ++ proxyInboundsCfg.serverPorts
   );
 
   # Names and IPs in rules of their own: XRay ANDs the fields of one rule.
@@ -75,7 +80,7 @@ let
 
   serverAddressRule =
     mkServerAddressRule "inbound-server-address-direct" "domain" (
-      map (name: "full:${name}") serverNames
+      map (name: if isSuffix name then name else "full:${name}") serverNames
     )
     ++ mkServerAddressRule "inbound-server-address-direct-ip" "ip" serverIps;
 

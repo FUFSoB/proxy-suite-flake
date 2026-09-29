@@ -51,7 +51,18 @@ let
 
   builders = import ./builders.nix { inherit lib pkgs; };
 
-  polkit = import ./polkit.nix { inherit userControlCfg; };
+  polkit = import ./polkit.nix {
+    inherit lib pkgs userControlCfg;
+    unitNames =
+      let
+        declared =
+          suffix: units:
+          map (name: if lib.hasSuffix "@" name then name else "${name}.${suffix}") (
+            lib.attrNames (lib.filterAttrs (_: unit: unit.enable) units)
+          );
+      in
+      declared "service" cfg.internal.services ++ declared "timer" cfg.internal.timers;
+  };
 
   # One context for the service layer: everything derived.nix computes, the tool paths and
   # generated files above, and the shell-snippet builders. Sub-modules take it whole and

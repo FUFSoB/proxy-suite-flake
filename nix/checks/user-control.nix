@@ -78,6 +78,18 @@ in
       assert hasInfix "var scopes = [];" (polkitConfig allFixture);
       assert hasInfix "subject.isInGroup(\"proxy-suite\")" (polkitConfig allFixture);
       assert hasInfix "\"proxy-suite-zapret2-cutoff.\":\"zapret\"" (polkitConfig allFixture);
+      # Declared units by name: systemd asks polkit the same question, with the same unit
+      # name, for a transient unit, so a prefix match would run any command as root.
+      assert hasInfix "\"proxy-suite-socks.service\"" (polkitConfig allFixture);
+      assert hasInfix "\"proxy-suite-per-app-tun-user@\"" (polkitConfig allFixture);
+      assert !(hasInfix "unit.indexOf(\"proxy-suite-\") === 0 ?" (polkitConfig allFixture));
+      # Only start, stop and the like: not set-property, kill or clean.
+      assert hasInfix "\"reload-or-try-restart\",\"reset-failed\"].indexOf(verb)" (
+        polkitConfig allFixture
+      );
+      assert !(hasInfix "\"set-property\"" (polkitConfig allFixture));
+      # A user's per-app marking is theirs alone.
+      assert hasInfix "if (instance !== uid)" (polkitConfig allFixture);
       assert groupReadsSecrets allFixture;
       assert hasInfix "chown proxy-suite-daemon:proxy-suite \"$backend_config\"" (socksStart allFixture);
       assert
@@ -87,6 +99,20 @@ in
           "proxy-suite"
         ];
       assert (service allFixture "proxy-suite-autoproxy").StateDirectoryMode == "0771";
+      # Root writes by fixed names in that group-writable directory: nowhere else.
+      assert builtins.all
+        (
+          unit:
+          let
+            c = service allFixture unit;
+          in
+          c.ProtectSystem == "strict" && c.ProtectHome && c.PrivateTmp
+        )
+        [
+          "proxy-suite-autoproxy"
+          "proxy-suite-autoproxy-learn"
+          "proxy-suite-autoproxy-sample"
+        ];
       assert builtins.elem "d /var/lib/proxy-suite/outbounds.d 2770 root proxy-suite -" (
         allFixture.config.systemd.tmpfiles.rules
       );

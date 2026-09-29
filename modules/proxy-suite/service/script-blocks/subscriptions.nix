@@ -31,6 +31,7 @@ let
   # Defined in every script that touches a cache: the start scripts and the
   # update unit.
   subscriptionCacheHelpersBlock = ''
+    ${constants.readSourceFunction pkgs}
     SUB_CACHE_DIR="${subscriptionCacheDir}"
     RUNTIME_SUBS_DIR="${runtimeSubscriptionsDir}"
 
@@ -69,7 +70,7 @@ let
     _proxy_suite_fetch_subscription() {
       local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" links="$SUB_CACHE_DIR/$1.links"
       mkdir -p "$SUB_CACHE_DIR"
-      if printf '%s' "$(cat "$src")" \
+      if printf '%s' "$(_proxy_suite_read_source "$src")" \
         | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${fetchSubscriptionPy} \
             ${subscriptionBackendArg} --tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"; then
         if _proxy_suite_commit_subscription_cache "$cache.tmp" "$cache" "$tag"; then
@@ -89,7 +90,7 @@ let
       local f tag
       [ -d "$RUNTIME_SUBS_DIR" ] || return 0
       for f in "$RUNTIME_SUBS_DIR"/*.url; do
-        [ -e "$f" ] || continue
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
         tag="''${f##*/}"
         tag="''${tag%.url}"
         printf '%s\t%s\n' "$tag" "$f"
@@ -113,13 +114,13 @@ let
         if hybridEnabled then
           ''
             SUB_SING_BOX_JSON=$(${jq} -c '.singBox' "$cache")
-            ${markBlock}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_SING_BOX_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+            ${markBlock}OUTBOUNDS_JSON=$(${jq} --slurpfile sub <(printf '%s' "$SUB_SING_BOX_JSON") '. + $sub[0]' <<< "$OUTBOUNDS_JSON")
             _proxy_suite_add_xray_sidecar_obs "$(${jq} -c '.xray' "$cache")"
           ''
         else
           ''
             SUB_JSON=$(cat "$cache")
-            ${markBlock}OUTBOUNDS_JSON=$(${jq} --argjson sub "$SUB_JSON" '. + $sub' <<< "$OUTBOUNDS_JSON")
+            ${markBlock}OUTBOUNDS_JSON=$(${jq} --slurpfile sub <(printf '%s' "$SUB_JSON") '. + $sub[0]' <<< "$OUTBOUNDS_JSON")
           '';
     in
     ''

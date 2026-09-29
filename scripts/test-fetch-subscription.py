@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
 import base64
+import http.server
+import threading
 import unittest
+import urllib.error
 from proxy_parsing import (
     decode_subscription,
     fetch_raw,
@@ -43,6 +46,26 @@ class FetchSubscriptionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "http"):
                 fetch_raw(url)
 
+    def test_fetch_refuses_redirects_off_http(self):
+        # A subscription server may redirect; not to a local file or FTP, which root would fetch.
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "ftp://127.0.0.1/sub" if self.path == "/ftp" else "file:///etc/passwd")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        # urllib refuses file: itself, and follows ftp: unless told not to.
+        with self.assertRaises(urllib.error.HTTPError):
+            fetch_raw(f"{base}/file")
+        with self.assertRaisesRegex(ValueError, "redirected off http"):
+            fetch_raw(f"{base}/ftp")
 
     def test_base64_payload_mixed_protocols(self):
         payload = _make_b64_payload(VLESS_URI, SS_URI, HY2_URI)

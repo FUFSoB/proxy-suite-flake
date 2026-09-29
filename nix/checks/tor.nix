@@ -175,7 +175,7 @@ let
   );
   guardRuntime = pkgs.runCommand "proxy-suite-tor-guard-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
     echo '{"inbounds":[],"outbounds":[],"dns":{"rules":[]},"route":{"rules":[]}}' |
-      jq --argjson obs '[]' --argjson auth_enabled false --arg user "" --arg password "" \
+      jq --slurpfile obs <(echo '[]') --argjson auth_enabled false --arg user "" --arg password "" \
         --argjson route_enabled true --argjson route_rules "$(cat ${guardRouteRules})" \
         --arg route_final proxy --arg dns_final remote --argjson clear_dns_rules false \
         --argjson probe_inbounds '[]' --argjson autoproxy_rule_sets '[]' --argjson autoproxy_rules '[]' \

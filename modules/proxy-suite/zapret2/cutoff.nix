@@ -66,13 +66,24 @@ let
       ]
     }
     cd ${lib.escapeShellArg dir}
+    # Root works only here, which nobody else writes to now; the group's probe requests
+    # come through requests/. Anything left from when the group could write here goes:
+    # a symlink under a name below would have root write, or read, where it points.
+    for f in asn.txt sni.txt asn.new sni.new proxy.json proxy.json.tmp egress ts force; do
+      if [ -L "$f" ] || { [ -e "$f" ] && [ ! -O "$f" ]; }; then
+        rm -f -- "$f"
+      fi
+    done
     touch asn.txt sni.txt
     force=0
-    if [ -e force ]; then
+    if [ -e requests/force ]; then
       force=1
-      rm -f force
+      rm -f requests/force
     fi
     now=$(date +%s)
+    # Digits only: $(( )) would run what a[$(...)] in it names.
+    last=$(cat ts 2>/dev/null || true)
+    [[ $last =~ ^[0-9]+$ ]] || last=0
 
     # The name map belongs to this line: probe again when its network changes, else
     # once a day. No answer (offline, captive portal) is no reason to probe.
@@ -84,7 +95,7 @@ let
       exit 0
     fi
     if [ "$force" = 0 ] && [ "$egress" = "$(cat egress 2>/dev/null || true)" ] &&
-      [ $((now - $(cat ts 2>/dev/null || echo 0))) -lt 86400 ]; then
+      [ $((now - last)) -lt 86400 ]; then
       exit 0
     fi
     echo "probing the line from $egress"
@@ -156,17 +167,22 @@ in
     wants = [ "network-online.target" ];
     serviceConfig = {
       Type = "oneshot";
-      StateDirectory = "proxy-suite/zapret2/cutoff";
+      StateDirectory = "proxy-suite/zapret2-cutoff";
       ExecStartPre = "${exempt}";
       ExecStart = "${probe}";
       ExecStopPost = "-${nft} delete table inet ${table}";
+      # Root writes and reads here by fixed names: only root may add entries. The group's
+      # `proxy-ctl zapret cutoff probe` drops its `force` file in requests/ instead.
+      StateDirectoryMode = "0755";
     }
-    # The group's `proxy-ctl zapret cutoff probe` drops its `force` file here.
-    // lib.optionalAttrs (userControlAllows "zapret") {
-      Group = cfg.userControl.group;
-      StateDirectoryMode = "2775";
-    };
+    // constants.rootInSharedDirConfig;
   };
+
+  tmpfiles = [
+    "d ${dir}/requests ${
+      if userControlAllows "zapret" then "2770 root ${cfg.userControl.group}" else "0700 root root"
+    } -"
+  ];
 
   timer = {
     description = "proxy-suite 16 KB cutoff probe schedule";

@@ -115,6 +115,7 @@ in
       ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2" && zapretGlobalEnabled);
       ZAPRET_STATE_DIR = constants.zapret2StateDir;
       ZAPRET_CUTOFF_ENABLED = flag zapretCutoffEnabled;
+      ZAPRET_CUTOFF_DIR = constants.zapret2CutoffDir;
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;
       RUNTIME_OUTBOUNDS_DIR = constants.runtimeOutboundsDir;
       RUNTIME_SUBS_DIR = constants.runtimeSubscriptionsDir;

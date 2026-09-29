@@ -250,10 +250,27 @@ lib.mkMerge [
         ;
     };
 
-    warnings = lib.optional (proxyEnabled && !derived.hasAvailableOutbounds) (
-      "proxy-suite: no outbounds or subscriptions are declared; the proxy will not start"
-      + " until one is added with `proxy-ctl proxy outbounds add`"
-    );
+    warnings =
+      lib.optional (proxyEnabled && !derived.hasAvailableOutbounds) (
+        "proxy-suite: no outbounds or subscriptions are declared; the proxy will not start"
+        + " until one is added with `proxy-ctl proxy outbounds add`"
+      )
+      ++
+        lib.optional
+          (
+            proxyEnabled
+            && !localProxyAuthEnabled
+            && !(
+              lib.hasPrefix "127." proxyCfg.listener.address
+              || proxyCfg.listener.address == "::1"
+              || proxyCfg.listener.address == "localhost"
+            )
+          )
+          (
+            "proxy-suite: proxy.listener.address is ${proxyCfg.listener.address} without listener.auth:"
+            + " anyone who reaches the port uses your outbounds; set listener.auth, or keep it off the"
+            + " firewall's allowed ports"
+          );
   }
 
   # A certificate or key XRay cannot read is copied in at start (proxy-inbounds-scripts.nix),

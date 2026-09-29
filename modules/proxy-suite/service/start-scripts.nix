@@ -269,8 +269,9 @@ let
         # hybrid XRay outbound is a sing-box socks hop whose real server is the sidecar's.
         # A loopback hop (the WARP tunnel, XRay's SSH listener) has no server worth timing.
         ENDPOINTS_TMP="$RUNTIME_DIR/outbound-endpoints.json.tmp"
-        ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" '
-          def endpoint:
+        ${jq} -c --slurpfile sidecar <(printf '%s' "''${XRAY_OUTBOUNDS_JSON:-[]}") '
+          $sidecar[0] as $sidecar
+          | def endpoint:
             if .server then {server, port: .server_port}
             elif .settings.address then {server: .settings.address, port: .settings.port}
             elif .settings.vnext then {server: .settings.vnext[0].address, port: .settings.vnext[0].port}
@@ -299,9 +300,10 @@ let
         # proxy-ctl's share links: the URL each outbound was given, and its backend JSON.
         # Credentials: root and the userControl group only.
         SHARE_TMP="$RUNTIME_DIR/outbound-share.json.tmp"
-        (umask 077 && ${jq} -c --argjson sidecar "''${XRAY_OUTBOUNDS_JSON:-[]}" \
-          --argjson urls "$OUTBOUND_URLS_JSON" --argjson subs "$SUBSCRIPTION_URLS_JSON" '
-          ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
+        (umask 077 && ${jq} -c --slurpfile sidecar <(printf '%s' "''${XRAY_OUTBOUNDS_JSON:-[]}") \
+          --slurpfile urls <(printf '%s' "$OUTBOUND_URLS_JSON") --slurpfile subs <(printf '%s' "$SUBSCRIPTION_URLS_JSON") '
+          $sidecar[0] as $sidecar | $urls[0] as $urls | $subs[0] as $subs
+          | ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | {outbounds: ([.[] | select(.type != "selector" and .type != "urltest")
                | (.tag | ltrimstr("proxy-suite-ob-")) as $tag
                | {key: $tag, value: {url: $urls[$tag], outbound: (($real[$tag] // $real[.tag] // .) | .tag = $tag)}}]
@@ -347,15 +349,22 @@ let
         fi
       ''}
 
-      ${jq} \
-        --argjson obs "$OUTBOUNDS_JSON" \
+      # umask: the file holds credentials until the chmod below; the process
+      # substitutions keep them out of the argv every local user can read.
+      (umask 077 && ${jq} \
+        --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
         --argjson probe_inbounds "$PROBE_INBOUNDS_JSON" \
         --argjson probe_pin_rules "$PROBE_PIN_RULES_JSON" \
         --argjson autoproxy_rule_sets "$AUTOPROXY_RULE_SETS_JSON" \
         --argjson autoproxy_rules "$AUTOPROXY_RULES_JSON" \
         --argjson auth_enabled ${if enableLocalProxyAuth then "true" else "false"} \
         --arg user ${if enableLocalProxyAuth then lib.escapeShellArg localProxyAuth.username else "''"} \
-        --arg password ${if enableLocalProxyAuth then "\"$LOCAL_PROXY_PASSWORD\"" else "''"} \
+        ${
+          if enableLocalProxyAuth then
+            "--rawfile password <(printf '%s' \"$LOCAL_PROXY_PASSWORD\")"
+          else
+            "--arg password ''"
+        } \
         --argjson route_enabled "$ROUTE_MODE_ACTIVE" \
         --argjson route_rules "$ROUTE_RULES_JSON" \
         --arg route_final "$ROUTE_FINAL" \
@@ -366,15 +375,35 @@ let
         --argjson xray_selectable "$SELECTABLE_TAGS_JSON" \
         --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
         -f "$BACKEND_JQ_FILTER" \
-        "${configFile}" > "$RUNTIME_DIR/config.json"
+        "${configFile}" > "$RUNTIME_DIR/config.json")
       ${lib.optionalString excludeServiceUserFromTun ''
         # proxy-suite's own daemons (the inbound XRay, replies to its clients included)
         # stay out of the TUN; the uid is only known on this host.
         SERVICE_UID=$(${pkgs.coreutils}/bin/id -u ${constants.serviceUser})
-        ${jq} --argjson uid "$SERVICE_UID" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = [$uid]' \
-          "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next"
+        (umask 077 && ${jq} --argjson uid "$SERVICE_UID" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = [$uid]' \
+          "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next")
         mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
       ''}
+      # The Clash API lists every connection and switches outbounds. Loopback alone lets
+      # every local user at it, and every web page too (sing-box allows any origin): a
+      # secret per start, readable where outbound-endpoints.json is.
+      if ${jq} -e '.experimental.clash_api? != null' "$RUNTIME_DIR/config.json" >/dev/null; then
+        CLASH_SECRET=$(${pkgs.coreutils}/bin/od -An -tx1 -N24 /dev/urandom | ${pkgs.coreutils}/bin/tr -d ' \n')
+        (umask 077 && ${jq} --rawfile s <(printf '%s' "$CLASH_SECRET") '.experimental.clash_api.secret = $s' \
+          "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next")
+        mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
+        (umask 077 && printf '%s\n' "$CLASH_SECRET" > "$RUNTIME_DIR/clash-secret.tmp")
+        ${
+          if userControlCfg.enable || localProxyAuthEnabled then
+            ''
+              ${constants.ifPrivileged ''${chgrp} ${userControlGroup} "$RUNTIME_DIR/clash-secret.tmp"''}
+              chmod 640 "$RUNTIME_DIR/clash-secret.tmp"
+            ''
+          else
+            ''chmod 600 "$RUNTIME_DIR/clash-secret.tmp"''
+        }
+        mv "$RUNTIME_DIR/clash-secret.tmp" "$RUNTIME_DIR/clash-secret"
+      fi
       # Credentials, read by the backend running as ${constants.serviceUser}. With
       # userControl its group reads them too; a file has one group, so the daemon
       # reads as owner then.

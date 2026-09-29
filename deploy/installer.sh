@@ -113,6 +113,12 @@ ask_all() {
     fi
     reject "A free port from 1 to 65535 (80, 443, 2053 and 8443 are taken)." SSH_PORT
   done
+  say "With a public key, SSH takes no passwords (the console still does)."
+  while true; do
+    ask SSH_KEY "SSH public key for $ADMIN_USER (empty: the password)" ""
+    [[ -z $SSH_KEY || $SSH_KEY =~ ^(ssh-|ecdsa-sha2-|sk-)[a-z0-9@.-]+\ [A-Za-z0-9+/]+=*(\ [^[:cntrl:]]*)?$ ]] && break
+    reject "Not an OpenSSH public key (ssh-ed25519 AAAA... comment)." SSH_KEY
+  done
   ask_yes QEMU_GUEST "QEMU guest agent (lets the VPS panel see the server's state)" "y"
 
   # --- Proxy --------------------------------------------------------------------
@@ -202,7 +208,7 @@ show_summary() {
   DNS           $NET_DNS
   Public IP     $PUBLIC_IP
   Hostname      $HOST_NAME
-  SSH           $ADMIN_USER@$PUBLIC_IP port $SSH_PORT (password shown at the end)
+  SSH           $ADMIN_USER@$PUBLIC_IP port $SSH_PORT ($(if [[ -n $SSH_KEY ]]; then echo "your key; password for the console"; else echo "password shown at the end"; fi))
   Guest agent   $(if [[ $QEMU_GUEST == true ]]; then echo yes; else echo no; fi)
   Proxy user    $PROXY_USER
   Certificate   ${DOMAIN:-$PUBLIC_IP (IP certificate)}${ACME_EMAIL:+, $ACME_EMAIL}
@@ -277,6 +283,7 @@ cat >"$etc_nixos/host.nix" <<HOST
     disko.enable = true;
     adminUser = $(nix_str "$ADMIN_USER");
     sshPort = $SSH_PORT;
+    sshKeys = [ $(if [[ -n $SSH_KEY ]]; then nix_str "$SSH_KEY"; fi) ];
 $(print_network_nix "    ")
     publicAddress = $(nix_str "$PUBLIC_IP");
     domain = $(if [[ -n $DOMAIN ]]; then nix_str "$DOMAIN"; else printf null; fi);

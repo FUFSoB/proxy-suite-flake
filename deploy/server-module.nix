@@ -77,6 +77,16 @@ in
       description = "SSH port.";
     };
 
+    sshKeys = mkOption {
+      type = types.listOf (types.strMatching "(ssh-|ecdsa-sha2-|sk-)[^\n]+");
+      default = [ ];
+      description = ''
+        Public keys adminUser logs in with over SSH. With any, SSH takes no passwords (the
+        console still does); without, it takes the password, and fail2ban bans guessers.
+      '';
+      example = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... admin@laptop" ];
+    };
+
     tools.enable = mkOption {
       type = types.bool;
       default = true;
@@ -261,9 +271,13 @@ in
       enable = true;
       ports = [ cfg.sshPort ];
       settings = {
-        PasswordAuthentication = true;
+        PasswordAuthentication = cfg.sshKeys == [ ];
         KbdInteractiveAuthentication = false;
         PermitRootLogin = "no";
+        # The one login this server has: an account some package adds later gets no SSH.
+        AllowUsers = [ cfg.adminUser ];
+        MaxAuthTries = 3;
+        X11Forwarding = false;
       };
     };
 
@@ -271,6 +285,7 @@ in
     users.users.${cfg.adminUser} = {
       isNormalUser = true;
       extraGroups = [ "wheel" ];
+      openssh.authorizedKeys.keys = cfg.sshKeys;
     };
 
     boot.kernel.sysctl = {
@@ -414,6 +429,14 @@ in
       mtr.enable = true;
       # Bandwidth per process and connection, without sudo (a capability wrapper).
       bandwhich.enable = true;
+    };
+    # Wheel only: the wrapper's capabilities (sys_ptrace, dac_read_search, net_raw) show
+    # every connection on the host, the proxy users' included, to whoever runs it.
+    security.wrappers = lib.mkIf cfg.tools.enable {
+      bandwhich = {
+        group = lib.mkForce "wheel";
+        permissions = "u+rx,g+x";
+      };
     };
     users.defaultUserShell = lib.mkIf cfg.tools.enable pkgs.fish;
 

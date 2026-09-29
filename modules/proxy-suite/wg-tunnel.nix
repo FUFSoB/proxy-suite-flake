@@ -94,7 +94,8 @@ let
         endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag ${tag}${markArg "--routing-mark"}${
           lib.optionalString (endpoint != null) " --endpoint ${lib.escapeShellArg endpoint}"
         } < "$profile")
-        (umask 027 && ${pkgs.jq}/bin/jq -n --argjson ep "$endpoint" '{
+        # From a pipe: the endpoint holds the private key, and argv is public.
+        (umask 027 && ${pkgs.jq}/bin/jq -n --slurpfile ep <(printf '%s' "$endpoint") '$ep[0] as $ep | {
           log: {level: "warn"},
           dns: {servers: [
             ${builtins.toJSON (dnsServer "local" cfg.proxy.dns.local)},

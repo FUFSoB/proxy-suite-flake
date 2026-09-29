@@ -53,7 +53,7 @@ if pureXrayEnabled then
         else .dns.servers += [.dns.servers[] | select((.tag? // "") == "local")
                               | . + {domains: ($names | map("full:" + .)), skipFallback: true}]
         end;
-    .outbounds = ($obs + .outbounds)
+    .outbounds = ($obs[0] + .outbounds)
       | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
       | if $auth_enabled then
           (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
@@ -95,7 +95,7 @@ else
       [.route.rules[]
        | select(((.action? // "") == "hijack-dns")
          and (((.inbound? // []) | index("xray-dns-in")) != null))];
-    .outbounds = ($obs + .outbounds)
+    .outbounds = ($obs[0] + .outbounds)
       | if $auth_enabled then
           (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
         else . end
@@ -112,6 +112,12 @@ else
       # (they only match their own listener), learned rules last before final, so
       # explicit rules win. All [] when off.
       | .inbounds += $probe_inbounds
+      # The loopback probe and test listeners reach every exit: with listener.auth, the
+      # same login, or any local user would get past it through them.
+      | if $auth_enabled then
+          (.inbounds[] | select(.type == "mixed" and (.tag == "proxy-suite-test-in" or (.tag | startswith("probe-in-")))) | .users)
+            = [{username:$user,password:$password}]
+        else . end
       | .route.rule_set = ((.route.rule_set // []) + $autoproxy_rule_sets)
       | .route.rules = ($probe_pin_rules + .route.rules + $autoproxy_rules)
   ''

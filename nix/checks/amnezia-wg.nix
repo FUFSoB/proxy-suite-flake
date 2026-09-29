@@ -348,8 +348,12 @@ in
       assert builtins.elem fakeTools overrideFixture.config.environment.systemPackages;
       assert builtins.elem fakeUserspace overrideFixture.config.environment.systemPackages;
       assert builtins.elem fakeKernelModule overrideFixture.config.boot.extraModulePackages;
-      assert pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0"
+      # userControl covers the profile's unit by name, never by prefix: a prefix would also
+      # match a transient unit (systemd-run --unit=proxy-suite-x), which runs anything as root.
+      assert pkgs.lib.hasInfix "\"proxy-suite-awg-home.service\""
         awgOnly.config.security.polkit.extraConfig;
+      assert
+        !(pkgs.lib.hasInfix "unit.indexOf(\"proxy-suite-\") === 0" awgOnly.config.security.polkit.extraConfig);
       true
     )
     (

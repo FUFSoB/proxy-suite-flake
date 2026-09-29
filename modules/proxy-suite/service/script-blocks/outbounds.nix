@@ -97,7 +97,7 @@ let
         else
           ''
             ob=$(_proxy_suite_parse_url "$tag" "$url") || return 1
-            OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+            OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")
           '';
       # Raw JSON gets the tag and the routing mark a Nix-declared one gets (rawOutboundJson).
       singBoxMark = lib.optionalString (routingMark != null) " | .routing_mark = ${toString routingMark}";
@@ -122,12 +122,13 @@ let
               echo "proxy-suite: outbound '$tag' is not ${want} JSON" >&2
               return 1
             fi
-            OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob${
+            OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + [$ob[0]${
               if pureXrayEnabled then xrayMark else singBoxMark
             }]' <<< "$OUTBOUNDS_JSON")
           '';
     in
     ''
+      ${constants.readSourceFunction pkgs}
       OUTBOUND_SOURCES_JSON='{}'
       # What proxy-ctl shares back: tag -> the URL it was given, sub tag -> its URL.
       OUTBOUND_URLS_JSON='{}'
@@ -153,7 +154,7 @@ let
           if hybridEnabled then
             ''_proxy_suite_add_sing_box_ob "$ob"''
           else
-            ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+            ''OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")''
         }
         _proxy_suite_record_tag_source "$1" "$3"
       }
@@ -161,7 +162,7 @@ let
       # $1 sub tag, $2 file holding its URL, $3 its links file (absent for a cache
       # written before links existed: those entries share as JSON until the next update).
       _proxy_suite_record_subscription_share() {
-        SUBSCRIPTION_URLS_JSON=$(${jq} --arg t "$1" --rawfile u "$2" '.[$t] = ($u | rtrimstr("\n"))' <<< "$SUBSCRIPTION_URLS_JSON")
+        SUBSCRIPTION_URLS_JSON=$(${jq} --arg t "$1" --rawfile u <(_proxy_suite_read_source "$2") '.[$t] = ($u | rtrimstr("\n"))' <<< "$SUBSCRIPTION_URLS_JSON")
         if [ -s "$3" ]; then
           OUTBOUND_URLS_JSON=$(${jq} --slurpfile l "$3" '. + $l[0]' <<< "$OUTBOUND_URLS_JSON") || true
         fi
@@ -206,13 +207,13 @@ let
         local tag="$1" url="$2" source="$3" pref="''${4:-auto}" ob
         ${addBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
-        OUTBOUND_URLS_JSON=$(${jq} --arg t "$tag" --arg u "$url" '.[$t] = $u' <<< "$OUTBOUND_URLS_JSON")
+        OUTBOUND_URLS_JSON=$(${jq} --arg t "$tag" --rawfile u <(printf '%s' "$url") '.[$t] = $u' <<< "$OUTBOUND_URLS_JSON")
       }
 
       # $1 tag, $2 file holding one sing-box or XRay outbound, $3 source label.
       _proxy_suite_add_json_outbound() {
         local tag="$1" source="$3" ob kind
-        ob=$(${jq} -ce --arg t "$tag" 'select(type == "object") | .tag = $t' "$2" 2>/dev/null) || return 1
+        ob=$(${jq} -ce --arg t "$tag" 'select(type == "object") | .tag = $t' <(_proxy_suite_read_source "$2") 2>/dev/null) || return 1
         kind=$(${jq} -r 'if has("protocol") then "xray" elif has("type") then "sing-box" else "" end' <<< "$ob")
         ${jsonAddBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
@@ -226,7 +227,7 @@ let
         local f tag
         [ -d "${runtimeOutboundsDir}" ] || return 0
         for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json${lib.optionalString awgRuntimeOutbounds ''"${runtimeOutboundsDir}"/*.awg''}; do
-          [ -e "$f" ] || continue
+          [ -f "$f" ] && [ ! -L "$f" ] || continue
           tag="''${f##*/}"
           tag="''${tag%.*}"
           case "$tag" in
@@ -250,7 +251,7 @@ let
       ''
         # outbound: ${tag} (static ${backend} json)
         OB_JSON=$(cat "${jsonFile}")
-        OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+        OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
       ''
     else
@@ -373,7 +374,7 @@ let
         if hybridEnabled then
           ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
         else
-          ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+          ''OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")''
       }
       _proxy_suite_record_tag_source ${sshProxyTag} ssh
     '';
@@ -386,7 +387,7 @@ let
       if hybridEnabled then
         ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
       else
-        ''OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")''
+        ''OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")''
     }
     _proxy_suite_record_tag_source ${lib.escapeShellArg outbound.tag} ${source}
   '';
@@ -472,11 +473,11 @@ let
       case "$RUNTIME_OB_SRC" in
         *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
         # Its tunnel (proxy-suite-awg-tunnel@<tag>) checks the port again before listening.
-        *.awg) _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(head -n 1 "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null)" runtime ;;
-        *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(cat "$RUNTIME_OB_SRC")" runtime ;;
+        *.awg) _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null | head -n 1)" runtime ;;
+        *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "$RUNTIME_OB_SRC")" runtime ;;
       esac || { echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2; continue; }
       if [ -s "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" ]; then
-        RUNTIME_DETOURS_JSON=$(${jq} -c --arg t "$RUNTIME_OB_TAG" --rawfile h "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" \
+        RUNTIME_DETOURS_JSON=$(${jq} -c --arg t "$RUNTIME_OB_TAG" --rawfile h <(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour") \
           '.[$t] = ($h | rtrimstr("\n"))' <<< "$RUNTIME_DETOURS_JSON")
       fi
     done < <(_proxy_suite_runtime_outbounds)
@@ -508,9 +509,9 @@ let
     DETOURS_JSON=$(${jq} -c --argjson runtime "$RUNTIME_DETOURS_JSON" '.outbounds = $runtime + .outbounds' \
       <<< ${lib.escapeShellArg (builtins.toJSON detours)})
     while [ "$DETOURS_JSON" != '{"outbounds":{},"subscriptions":{}}' ]; do
-      DETOUR_RESULT=$(${jq} -c --argjson xob "${
+      DETOUR_RESULT=$(${jq} -c --slurpfile xob <(printf '%s' "${
         if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"
-      }" '{outbounds: ., xray: $xob}' <<< "$OUTBOUNDS_JSON" \
+      }") '{outbounds: ., xray: $xob[0]}' <<< "$OUTBOUNDS_JSON" \
         | ${jq} -c -f ${
           builtins.path {
             name = "proxy-suite-outbound-detours";
@@ -601,12 +602,12 @@ let
       --argjson sources "$OUTBOUND_SOURCES_JSON" \
       --arg pinned "$PINNED_OUTBOUND" \
       --arg selection ${lib.escapeShellArg selectionMode} \
-      --argjson obs "$OUTBOUNDS_JSON" \
-      --argjson xobs "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}" \
+      --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
+      --slurpfile xobs <(printf '%s' "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}") \
       --argjson selectable "$SELECTABLE_TAGS_JSON" \
       --argjson disabled "$DISABLED_TAGS_JSON" \
       '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
-        detours: ([($xobs + $obs)[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
+        detours: ([($xobs[0] + $obs[0])[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
           | select($h != null) | {key: .tag, value: $h}] | from_entries),
         excluded: ($tags - $selectable), disabled: $disabled}' \
       > "$RUNTIME_DIR/outbounds.json"

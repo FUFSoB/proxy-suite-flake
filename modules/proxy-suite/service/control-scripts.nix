@@ -102,8 +102,13 @@ let
       printf '%s\n' "$tag" > "${pinnedOutboundFile}"
       # Live switch when the running config exposes a selector; the persisted pin
       # is what keeps it after the next restart.
+      CLASH_SECRET_FILE="$(dirname "${outboundInventoryFile}")/clash-secret"
+      CLASH_SECRET=""
+      [ ! -r "$CLASH_SECRET_FILE" ] || CLASH_SECRET=$(${pkgs.coreutils}/bin/tr -d '\r\n' < "$CLASH_SECRET_FILE")
+      # The header from a pipe: argv is readable by every local user.
       if ${curl} -sf -X PUT "${clashApi}/proxies/proxy" \
         -H "Content-Type: application/json" \
+        -H @<(printf 'Authorization: Bearer %s\n' "$CLASH_SECRET") \
         -d "$(${jq} -cn --arg name "$tag" '{name:$name}')" >/dev/null 2>&1; then
         # A live switch skips the restart that rewrites the inventory, and the pin
         # is only ever read from there: without this the outbound reads as merely

@@ -24,7 +24,7 @@ lib.optionalString hybridEnabled ''
 
   _proxy_suite_add_sing_box_ob() {
     local ob="$1"
-    OUTBOUNDS_JSON=$(${jq} --argjson ob "$ob" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+    OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")
   }
 
   # $1 a JSON array of XRay outbounds, each tagged. One jq pass for the lot: each gets a
@@ -35,7 +35,7 @@ lib.optionalString hybridEnabled ''
     local batch
     batch=$(${jq} -c \
       --argjson next "$XRAY_SIDECAR_NEXT_ID" \
-      --arg secret "$XRAY_SIDECAR_SECRET" \
+      --rawfile secret <(printf '%s' "$XRAY_SIDECAR_SECRET") \
       --argjson port "$XRAY_SIDECAR_PORT" \
       --argjson mark ${
         if xraySidecarRoutingMark == null then "null" else toString xraySidecarRoutingMark

@@ -38,13 +38,27 @@ in
         TURN relay's name beside the site on `serverAddress`. Like `serverAddress`, they go
         direct on the listener ports instead of looping back through `routing.via`, which
         often cannot reach this host at all. List the IPs too: a client that resolves a name
-        itself hands XRay the address, which no name rule matches.
+        itself hands XRay the address, which no name rule matches. `domain:example.com`
+        covers that name and every name under it, for a host behind a wildcard record.
       '';
       example = [
         "turn.example.com"
+        "domain:example.com"
         "203.0.113.10"
         "2001:db8::10"
       ];
+    };
+
+    serverPorts = mkOption {
+      type = types.listOf (types.either types.port (types.strMatching "[0-9]+-[0-9]+"));
+      default = [ ];
+      description = ''
+        Ports of this host's other services that clients reach through the tunnel on
+        `serverAddress` and `serverAliases`, such as mail, beside the listeners' own. Direct
+        like those: a connection to this host from itself skips its firewall, so list only
+        what the firewall already opens to the internet. TCP and UDP alike.
+      '';
+      example = literalExpression "config.networking.firewall.allowedTCPPorts";
     };
 
     openFirewall = bool true "Open the firewall for every listener not on loopback.";

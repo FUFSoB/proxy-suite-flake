@@ -575,7 +575,8 @@ let
         echo "proxy-suite: no AmneziaWG outbound '$TUNNEL_TAG' in ${runtimeOutboundsDir}" >&2
         exit 0
       fi
-      TUNNEL_PORT=$(${pkgs.coreutils}/bin/head -n 1 "${runtimeOutboundsDir}/$TUNNEL_TAG.port" 2>/dev/null || true)
+      # O_NOFOLLOW: the spool is group-writable, and the port is echoed back on error.
+      TUNNEL_PORT=$(${pkgs.coreutils}/bin/dd if="${runtimeOutboundsDir}/$TUNNEL_TAG.port" iflag=nofollow,nonblock status=none 2>/dev/null | ${pkgs.coreutils}/bin/head -n 1 || true)
       if [[ ! $TUNNEL_PORT =~ ^[0-9]+$ ]] || (( TUNNEL_PORT < ${toString awgRuntimeTunnelBasePort} || TUNNEL_PORT > ${toString runtimeTunnelLastPort} )); then
         echo "proxy-suite: AmneziaWG outbound '$TUNNEL_TAG' needs a port in ${toString awgRuntimeTunnelBasePort}-${toString runtimeTunnelLastPort} in $TUNNEL_TAG.port" >&2
         exit 1

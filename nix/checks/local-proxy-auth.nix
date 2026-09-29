@@ -99,7 +99,10 @@ in
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix "--arg user local-user" localProxyAuthStartScript;
-      assert pkgs.lib.hasInfix ''--arg password "$LOCAL_PROXY_PASSWORD"'' localProxyAuthStartScript;
+      # From a pipe: argv is readable by every local user.
+      assert pkgs.lib.hasInfix ''--rawfile password <(printf '%s' "$LOCAL_PROXY_PASSWORD")''
+        localProxyAuthStartScript;
+      assert !(pkgs.lib.hasInfix ''--arg password "$LOCAL_PROXY_PASSWORD"'' localProxyAuthStartScript);
       assert pkgs.lib.hasInfix ''select(.type == "mixed" and .tag == "mixed-in") | .users''
         localProxyAuthBackendJqFilter;
       # The password is in the config: root and the backend's group only.

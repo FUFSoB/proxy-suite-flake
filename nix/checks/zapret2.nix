@@ -74,6 +74,24 @@ in
       true
     )
 
+    # Root works in directories the zapret scope's group writes to: nfqws2 and the cutoff
+    # probe write nowhere else, whatever a name there points at. The probe's own directory
+    # is root's alone, apart from requests/.
+    (
+      let
+        gc = zapret2Global.config.systemd.services.${globalService}.serviceConfig;
+        pc = zapret2PerApp.config.systemd.services.${perAppService}.serviceConfig;
+        cc = zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig;
+        sandboxed = c: c.ProtectSystem == "strict" && c.ProtectHome && c.PrivateTmp;
+      in
+      assert sandboxed gc && sandboxed pc && sandboxed cc;
+      assert cc.StateDirectory == "proxy-suite/zapret2-cutoff" && cc.StateDirectoryMode == "0755";
+      assert !(cc ? Group);
+      assert builtins.any (lib.hasPrefix "d /var/lib/proxy-suite/zapret2-cutoff/requests ")
+        zapret2Global.config.systemd.tmpfiles.rules;
+      true
+    )
+
     # Two nfqws2 processes must not share a pidfile or a config.
     (
       assert envValue zapret2PerApp globalService "PIDDIR=" == "/run/proxy-suite-zapret";
@@ -102,7 +120,7 @@ in
       assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-cutoff);
       assert (proxyCtlEnv zapret2Global).ZAPRET_CUTOFF_ENABLED == "1";
       assert
-        envValue zapret2Z2k globalService "Z2K_TCP16_ASN=" == "/var/lib/proxy-suite/zapret2/cutoff/asn.txt";
+        envValue zapret2Z2k globalService "Z2K_TCP16_ASN=" == "/var/lib/proxy-suite/zapret2-cutoff/asn.txt";
       assert
         !(builtins.any (lib.hasPrefix "Z2K_TCP16_ASN=")
           zapret2Global.config.systemd.services.${globalService}.serviceConfig.Environment
@@ -205,6 +223,12 @@ in
         if grep -qF -- 'z2k-tcp16.lua' "${globalRuntime}/config"; then exit 1; fi
         # zapret2 leaves the probe's own connections alone, in every chain.
         test "$(grep -c 'ct mark and 0x2000000 != 0 return' "${globalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh")" = 4
+
+        # ts is checked for digits before arithmetic, which would run what a[$(...)] in it names.
+        grep -qF -- '[[ $last =~ ^[0-9]+$ ]] || last=0' ${cutoffProbe}
+        if grep -qF -- '$((now - $(cat ts' ${cutoffProbe}; then exit 1; fi
+        # The group's probe request comes through requests/, not the directory root works in.
+        grep -qF -- 'if [ -e requests/force ]; then' ${cutoffProbe}
 
         # Cut-off networks without a name become the proxy's rule-set; named ones stay with zapret2.
         rules=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2 asn.txt' ${cutoffProbe} | cut -d' ' -f1)

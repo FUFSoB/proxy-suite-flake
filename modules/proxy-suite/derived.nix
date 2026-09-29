@@ -402,6 +402,14 @@ let
         RestrictSUIDSGID = true;
         LockPersonality = true;
       };
+    # For a unit that stays root but works in a directory the userControl group writes to:
+    # the file system read-only but for its own State-, Runtime- and private Tmp
+    # directories, so a symlink the group plants there leads root's writes nowhere else.
+    rootInSharedDirConfig = lib.optionalAttrs cfg.host.privileged {
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+    };
     # Socket marks and IP_TRANSPARENT, TUN and auto_redirect, listeners below 1024, ICMP.
     backendCaps = [
       "net_admin"
@@ -410,7 +418,9 @@ let
     ];
 
     zapret2StateDir = "${stateDir}/zapret2";
-    zapret2CutoffDir = "${stateDir}/zapret2/cutoff";
+    # Not under zapret2/, which the zapret scope's group writes to: root works here by
+    # fixed names (the group asks for probes in requests/).
+    zapret2CutoffDir = "${stateDir}/zapret2-cutoff";
     # Conntrack bit on the cutoff probe's own connections, which zapret2 leaves alone.
     zapret2CutoffProbeCtMark = 33554432; # 0x2000000
 
@@ -430,6 +440,24 @@ let
     pinnedOutboundFile = "${stateDir}/pinned-outbound";
     runtimeOutboundsDir = "${stateDir}/outbounds.d";
     runtimeSubscriptionsDir = "${stateDir}/subscriptions.d";
+    # Shell function for the scripts that read those spools as root. $1 a file: in a spool,
+    # a regular file only, and never through a symlink, which would hand over any file root
+    # can read (a share link or an error message then shows it), nor a FIFO, which would
+    # hang the start. Declared files elsewhere (a sops symlink, say) are read as they are.
+    readSourceFunction = pkgs: ''
+      _proxy_suite_read_source() {
+        case "$1" in
+          ${stateDir}/outbounds.d/* | ${stateDir}/subscriptions.d/*)
+            if [ ! -f "$1" ] || [ -L "$1" ]; then
+              echo "proxy-suite: $1 is not a regular file" >&2
+              return 1
+            fi
+            ${pkgs.coreutils}/bin/dd if="$1" iflag=nofollow,nonblock status=none
+            ;;
+          *) ${pkgs.coreutils}/bin/cat -- "$1" ;;
+        esac
+      }
+    '';
     # Written by every backend start script; proxy-ctl reads the socks copy.
     outboundInventoryFile = "${runtimeDir}/proxy-suite-socks/outbounds.json";
 

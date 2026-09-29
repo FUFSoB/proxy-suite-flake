@@ -95,11 +95,16 @@ let
   '';
 
   # nfqws2 runs supervised; the firewall comes and goes around it.
-  daemonConfig = runtimeEnv: {
-    Type = "notify";
-    ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
-    Environment = runtimeEnv;
-  };
+  daemonConfig =
+    runtimeEnv:
+    {
+      Type = "notify";
+      ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
+      Environment = runtimeEnv;
+    }
+    # nfqws2 runs as root and writes its lists in a directory the zapret scope's group
+    # writes to as well.
+    // constants.rootInSharedDirConfig;
 
   cutoff = import ./zapret2/cutoff.nix {
     inherit
@@ -119,6 +124,7 @@ in
     lib.mkIf cutoffCfg.enable cutoff.service;
   services.proxy-suite.internal.timers.proxy-suite-zapret2-cutoff =
     lib.mkIf cutoffCfg.enable cutoff.timer;
+  services.proxy-suite.internal.tmpfiles = lib.mkIf cutoffCfg.enable cutoff.tmpfiles;
 
   services.proxy-suite.internal.services.proxy-suite-zapret =
     lib.mkIf zapretGlobalEnabled

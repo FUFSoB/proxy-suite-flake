@@ -14,6 +14,7 @@
 
 let
   apCfg = cfg.proxy.autoProxy;
+  inherit ((import ./derived.nix { inherit lib cfg; }).constants) rootInSharedDirConfig;
   # The autoProxy scope's group writes the directory: `proxy auto learn` queues there.
   stateDirMode = if userControlAllows "autoProxy" then "0771" else "0751";
   render = import ./autoproxy-render.nix {
@@ -41,13 +42,13 @@ let
 
   excludePattern = lib.concatStringsSep "|" (map lib.escapeRegex apCfg.exclude);
 
-  # Sets $clash_api (empty when the API is off) and $clash_auth (curl args).
+  # Sets $clash_api (empty when the API is off) and $clash_secret (curl sends it through
+  # clash_auth_header, never argv, which every local user can read).
   clashApiBlock = ''
     socks_config="$(dirname "$index")/config.json"
     clash_api=$(jq -r '.experimental.clash_api.external_controller // empty' "$socks_config" 2>/dev/null || true)
     clash_secret=$(jq -r '.experimental.clash_api.secret // empty' "$socks_config" 2>/dev/null || true)
-    clash_auth=()
-    [ -z "$clash_secret" ] || clash_auth=(-H "Authorization: Bearer $clash_secret")
+    clash_auth_header() { printf 'Authorization: Bearer %s\n' "$clash_secret"; }
   '';
 
   sampler = pkgs.writeShellScript "proxy-suite-autoproxy" ''
@@ -66,7 +67,7 @@ let
     lines=$(
       for i in $(seq 0 10); do
         [ "$i" -eq 0 ] || sleep 1
-        curl -sS --noproxy '*' --max-time 1 "''${clash_auth[@]}" "http://$clash_api/connections" 2>/dev/null ||
+        curl -sS --noproxy '*' --max-time 1 -H @<(clash_auth_header) "http://$clash_api/connections" 2>/dev/null ||
           echo '{}'
       done | jq -s -r --argjson min ${toString (300 * 1024)} \
         --argjson below ${
@@ -470,7 +471,10 @@ let
     StateDirectoryMode = stateDirMode;
     UMask = "0027";
   }
-  // lib.optionalAttrs (userControlAllows "autoProxy") { Group = cfg.userControl.group; };
+  // lib.optionalAttrs (userControlAllows "autoProxy") { Group = cfg.userControl.group; }
+  # Root writes by fixed names in a directory the group writes to: nowhere else, whatever
+  # a name there points at.
+  // rootInSharedDirConfig;
 
   mkUnit = description: args: {
     inherit description;

@@ -26,6 +26,15 @@ pkgs.buildGo126Module (finalAttrs: {
     "headless/dion-joiner"
     "headless/bitrix-joiner"
   ];
+  # The local proxy's password from the environment, not argv: a creator runs for good,
+  # and every local user reads its command line.
+  postPatch = ''
+    for p in vk telemost wbstream dion bitrix; do
+      substituteInPlace headless/$p/main.go --replace-fail \
+        'flag.String("upstream-pass", "",' \
+        'flag.String("upstream-pass", os.Getenv("WB_UPSTREAM_PASS"),'
+    done
+  '';
   ldflags = [
     "-s"
     "-w"

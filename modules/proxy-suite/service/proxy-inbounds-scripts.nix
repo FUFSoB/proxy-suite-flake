@@ -99,7 +99,7 @@ let
           pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON (ob.xrayJson // { inherit (ob) tag; }))
         })
         ${dialerBlock}
-        OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+        OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")
       ''
     else
       ''
@@ -108,7 +108,7 @@ let
         OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} \
           --backend xray --tag ${lib.escapeShellArg ob.tag})
         ${dialerBlock}
-        OUTBOUNDS_JSON=$(${jq} --argjson ob "$OB_JSON" '. + [$ob]' <<< "$OUTBOUNDS_JSON")
+        OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")
       '';
 
   viaOutboundsBlock = lib.concatMapStrings mkViaOutboundBlock proxyInboundViaOutbounds;
@@ -168,13 +168,18 @@ let
     ''}
 
     ${jq} \
-      --argjson ibs "$INBOUNDS_JSON" \
-      --argjson obs "$OUTBOUNDS_JSON" \
+      --slurpfile ibs <(printf '%s' "$INBOUNDS_JSON") \
+      --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
       --argjson auth_enabled ${if needsLocalProxyAuth then "true" else "false"} \
       --arg user ${if needsLocalProxyAuth then lib.escapeShellArg localProxyAuth.username else "''"} \
-      --arg password ${if needsLocalProxyAuth then "\"$LOCAL_PROXY_PASSWORD\"" else "''"} \
-      '.inbounds += $ibs
-       | .outbounds = $obs + .outbounds
+      ${
+        if needsLocalProxyAuth then
+          "--rawfile password <(printf '%s' \"$LOCAL_PROXY_PASSWORD\")"
+        else
+          "--arg password ''"
+      } \
+      '.inbounds += $ibs[0]
+       | .outbounds = $obs[0] + .outbounds
        | if $auth_enabled then
            (.outbounds[] | select(.tag == "proxy") | .settings.servers[0].users)
              = [{user:$user,pass:$password}]

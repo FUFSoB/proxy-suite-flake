@@ -141,6 +141,27 @@ class ProbeVerdictTest(unittest.TestCase):
 
 
 class ProbeFetchTest(EnvTest):
+    def test_listener_login_goes_through_a_file(self):
+        """With listener.auth the probe listeners want the login; never on curl's argv."""
+        os.environ["PROXYCHAINS_CONFIG"] = self.write(
+            "proxychains.conf", 'strict_chain\n\n[ProxyList]\nsocks5 127.0.0.1 1080 user pa"ss\\w\n'
+        )
+        seen = []
+
+        def curl(argv):
+            with open(argv[argv.index("-K") + 1]) as f:
+                seen.append((argv, f.read()))
+            return 0, "0|0.1|200|10|"
+
+        self.patch("run_curl", curl)
+        ctl._probe_fetch("site.test", "/", "--proxy", "http://127.0.0.1:18600")
+        argv, curlrc = seen[0]
+        self.assertEqual(curlrc, 'proxy-user = "user:pa\\"ss\\\\w"\n')
+        self.assertFalse(any("pa" in a and "ss" in a for a in argv))
+        # Direct fetches, and a config without a login, carry none.
+        self.write("proxychains.conf", "strict_chain\n\n[ProxyList]\nsocks5 127.0.0.1 1080\n")
+        self.assertIsNone(ctl._local_proxy_login())
+
     def test_redirect_chains(self):
         calls = []
         table = {

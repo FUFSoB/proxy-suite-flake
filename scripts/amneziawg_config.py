@@ -11,6 +11,7 @@ import json
 import os
 import re
 import socket
+import stat
 import sys
 import tempfile
 import zlib
@@ -67,8 +68,26 @@ class ConfigError(ValueError):
     pass
 
 
+def _shared_directory(path: str) -> bool:
+    """Whether someone besides this user may add files next to path.
+
+    Runtime profiles come from a group-writable spool and are read as root: a symlink
+    there would hand over any file root can read, and a FIFO would hang the unit.
+    """
+    try:
+        info = os.stat(os.path.dirname(os.path.abspath(path)))
+    except OSError:
+        return True
+    return info.st_uid != os.geteuid() or bool(info.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+
+
 def _read_limited(path: str) -> str:
-    with Path(path).open("rb") as handle:
+    """At most MAX_INPUT_BYTES of path, as UTF-8; in a shared directory, only a regular file."""
+    shared = _shared_directory(path)
+    fd = os.open(path, os.O_RDONLY | (os.O_NOFOLLOW | os.O_NONBLOCK if shared else 0))
+    with os.fdopen(fd, "rb") as handle:
+        if shared and not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ConfigError(f"{path} is not a regular file")
         data = handle.read(MAX_INPUT_BYTES + 1)
     if len(data) > MAX_INPUT_BYTES:
         raise ConfigError(f"input exceeds {MAX_INPUT_BYTES} bytes")
@@ -659,16 +678,24 @@ def render_settings(settings: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# What ends a line for str.splitlines(), which the rewrites here split on, but not for
+# awg-quick's `read -r`, plus NUL, which bash drops from what it reads: "PostUp \f= cmd"
+# or "Post\0Up = cmd" would reach awg-quick as a hook no check here saw. A lone CR too;
+# a CRLF line end is fine. No real configuration has any of them.
+_AMBIGUOUS_CHARACTERS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x85\u2028\u2029]|\r(?!\n)")
+
+
 def validate_config(config: str, allow_hooks: bool = False) -> None:
+    if _AMBIGUOUS_CHARACTERS.search(config):
+        raise ConfigError("configuration contains control characters")
     lowered = config.lower()
     if "[interface]" not in lowered or "[peer]" not in lowered:
         raise ConfigError("configuration requires [Interface] and [Peer] sections")
     if not allow_hooks:
-        for line in config.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(("#", ";")) or "=" not in stripped:
-                continue
-            key = stripped.split("=", 1)[0].strip().lower()
+        # Read as awg-quick reads it: lines end at \n, a comment starts at #, and the
+        # key is what precedes the first =, or the whole line without one.
+        for line in config.split("\n"):
+            key = line.split("#", 1)[0].split("=", 1)[0].strip().lower()
             if key in FORBIDDEN_WG_QUICK_KEYS:
                 raise ConfigError(
                     f"configuration contains privileged wg-quick directive '{key}'; "
@@ -875,6 +902,9 @@ def main() -> int:
             config = _set_interface_value(config, "FwMark", str(args.fwmark))
         if args.resolve_endpoints:
             config = resolve_endpoints(config)
+        if args.wireproxy is None:
+            # What awg-quick runs, checked again after the rewrites above.
+            validate_config(config, bool(manifest.get("allowConfigHooks", False)))
         write_private(args.output, config)
     except (ConfigError, KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         parser.exit(1, f"amneziawg-config: {exc}\n")

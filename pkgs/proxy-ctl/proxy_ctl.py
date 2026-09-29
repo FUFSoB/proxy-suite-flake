@@ -1098,20 +1098,45 @@ def _outbound_current():
     return "" if now is None else _s(now)
 
 
+def _local_proxy_login():
+    """(user, password) the loopback listeners take with listener.auth, else None.
+
+    From the proxychains config the socks start script writes for it, which root and the
+    userControl group read; without auth that file names no login.
+    """
+    try:
+        with open(env("PROXYCHAINS_CONFIG"), encoding="utf-8") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) == 5 and fields[0] == "socks5":
+                    return fields[3], fields[4]
+    except (OSError, UnicodeError):
+        pass
+    return None
+
+
 def _clash(method, path, body=None, timeout=10):
     """(HTTP status, JSON body or None) from the backend's Clash API; status 0 when unreachable."""
     # The API is on loopback: never through the shell's HTTP(S)_PROXY.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     data = None if body is None else json.dumps(body).encode()
+    headers = {"Content-Type": "application/json"}
+    # The socks start script's secret for this run: root and the userControl group read it.
+    # Anyone else gets 401, which reads as no API.
+    try:
+        with open(_runtime_file("clash-secret"), encoding="utf-8") as f:
+            headers["Authorization"] = f"Bearer {f.read().strip()}"
+    except (OSError, UnicodeError):
+        pass
     try:
         # Building the request is part of reaching the API: an unset or malformed
         # CLASH_API is "unreachable", not a traceback out of `status` or `where`.
-        request = urllib.request.Request(
-            f"{env('CLASH_API')}{path}", data=data, method=method, headers={"Content-Type": "application/json"}
-        )
+        request = urllib.request.Request(f"{env('CLASH_API')}{path}", data=data, method=method, headers=headers)
         with opener.open(request, timeout=timeout) as r:
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return 0, None
         status, raw = e.code, e.read()
     except (OSError, ValueError, http.client.HTTPException):
         return 0, None
@@ -1180,7 +1205,9 @@ def _timed_download(port):
     anywhere else.
     """
     conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=TEST_DOWNLOAD_SECONDS)
-    conn.set_tunnel(TEST_DOWNLOAD_HOST)
+    login = _local_proxy_login()
+    auth = {"Proxy-Authorization": "Basic " + base64.b64encode(":".join(login).encode()).decode()} if login else {}
+    conn.set_tunnel(TEST_DOWNLOAD_HOST, headers=auth)
     got = 0
     start = time.monotonic()
     try:
@@ -1943,6 +1970,15 @@ def _probe_fetch(domain, path, *selector):
     ua = [] if curl else ["-A", env("PROBE_UA", "Mozilla/5.0 (X11; Linux x86_64) proxy-suite-probe")]
     result = ""
     with tempfile.TemporaryDirectory(prefix="proxy-ctl-probe-") as tmp:
+        # The listener's login through a file in this private directory: argv is public.
+        login = _local_proxy_login() if "--proxy" in selector else None
+        auth = []
+        if login:
+            curlrc = os.path.join(tmp, "login.curlrc")
+            quoted = ":".join(login).replace("\\", "\\\\").replace('"', '\\"')
+            with open(os.open(curlrc, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
+                f.write(f'proxy-user = "{quoted}"\n')
+            auth = ["-K", curlrc]
         for hop in range(6):
             head, body = os.path.join(tmp, f"{hop}.head"), os.path.join(tmp, f"{hop}.body")
             status, out = run_curl(
@@ -1960,6 +1996,7 @@ def _probe_fetch(domain, path, *selector):
                     env("PROBE_MAX_TIME", "15"),
                     "-w",
                     PROBE_WRITE_OUT,
+                    *auth,
                     *selector,
                     url,
                 ]
@@ -2515,6 +2552,11 @@ def _zapret_state_dir():
     return env("ZAPRET_STATE_DIR", f"{state_dir()}/zapret2")
 
 
+def _zapret_cutoff_dir():
+    """The cutoff probe's own directory, outside the one the group writes to."""
+    return env("ZAPRET_CUTOFF_DIR", f"{state_dir()}/zapret2-cutoff")
+
+
 def _zapret_auto_file(name):
     return os.path.join(_zapret_state_dir(), name)
 
@@ -2640,14 +2682,16 @@ def _tsv(path):
 
 
 def cmd_zapret_cutoff(verb="status", *_):
-    path = os.path.join(_zapret_state_dir(), "cutoff")
+    path = _zapret_cutoff_dir()
     if env("ZAPRET_CUTOFF_ENABLED") != "1":
         die('The cutoff probe needs zapret.engine = "zapret2" with zapret2.cutoff.enable.')
     if verb == "probe":
+        # requests/: the only part of the probe's directory the group writes to.
+        requests = os.path.join(path, "requests")
         try:
-            open(os.path.join(path, "force"), "w").close()
+            open(os.path.join(requests, "force"), "w").close()
         except OSError:
-            denied(path, "write")
+            denied(requests, "write")
         print("Probing this line; this takes a few minutes...")
         if systemctl("start", "proxy-suite-zapret2-cutoff.service")[0]:
             die(f"The probe failed. Details: {journal_hint('proxy-suite-zapret2-cutoff', 30)}")

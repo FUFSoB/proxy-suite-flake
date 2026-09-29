@@ -38,9 +38,16 @@ let
   fetchScript = pkgs.writeShellScript "proxy-suite-rulesets" ''
     set -uo pipefail
     proxy=(--proxy socks5h://${localProxy.hostPart}:${toString cfg.proxy.listener.port})
-    ${lib.optionalString withProxyAuth ''
-      proxy+=(--proxy-user ${lib.escapeShellArg auth.username}:"$(< "$CREDENTIALS_DIRECTORY/proxy-password")")
-    ''}
+    # The listener's login as curl config on a pipe (-K): argv is readable by every local user.
+    proxy_login() {
+      [ "$1" = proxy ] || return 0
+      ${lib.optionalString withProxyAuth ''
+        local login
+        login=${lib.escapeShellArg auth.username}:"$(< "$CREDENTIALS_DIRECTORY/proxy-password")"
+        login=''${login//\\/\\\\}
+        printf 'proxy-user = "%s"\n' "''${login//\"/\\\"}"
+      ''}
+    }
     failed=0
 
     # A download replaces the file only once sing-box has read it back, so a bad one never
@@ -52,7 +59,7 @@ let
       [ "$detour" = proxy ] && args+=("''${proxy[@]}")
       tmp=$(${pkgs.coreutils}/bin/mktemp "$path.XXXXXX") || { failed=1; return; }
       dnsTmp=$(${pkgs.coreutils}/bin/mktemp "$dns.XXXXXX") || { rm -f "$tmp"; failed=1; return; }
-      if ${curl} "''${args[@]}" --output "$tmp" "$url" && valid "$tmp" "$format" &&
+      if ${curl} "''${args[@]}" -K <(proxy_login "$detour") --output "$tmp" "$url" && valid "$tmp" "$format" &&
         domains "$tmp" "$format" > "$dnsTmp" && valid "$dnsTmp" source; then
         chmod 0644 "$tmp" "$dnsTmp"
         mv -f "$dnsTmp" "$dns"

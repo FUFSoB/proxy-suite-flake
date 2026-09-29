@@ -123,6 +123,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [zapretDirect](#services-proxy-suite-inbounds-routing-zapretdirect)
   - [serverAddress](#services-proxy-suite-inbounds-serveraddress)
   - [serverAliases](#services-proxy-suite-inbounds-serveraliases)
+  - [serverPorts](#services-proxy-suite-inbounds-serverports)
   - [shareLinks](#services-proxy-suite-inbounds-sharelinks)
   - subscriptions
     - [enable](#services-proxy-suite-inbounds-subscriptions-enable)
@@ -1145,11 +1146,33 @@ Other names and IPs of this host that clients reach through the tunnel, such as 
 TURN relay’s name beside the site on ` serverAddress `\. Like ` serverAddress `, they go
 direct on the listener ports instead of looping back through ` routing.via `, which
 often cannot reach this host at all\. List the IPs too: a client that resolves a name
-itself hands XRay the address, which no name rule matches\.
+itself hands XRay the address, which no name rule matches\. ` domain:example.com `
+covers that name and every name under it, for a host behind a wildcard record\.
 
 **Type:** list of string matching the pattern \[^\[:space:]]+\
 **Default:** `[ ]`\
-**Example:** `[ "turn.example.com" "203.0.113.10" "2001:db8::10" ]`
+**Example:**
+
+```nix
+[
+  "turn.example.com"
+  "domain:example.com"
+  "203.0.113.10"
+  "2001:db8::10"
+]
+```
+
+<a id="services-proxy-suite-inbounds-serverports"></a>
+## services\.proxy-suite\.inbounds\.serverPorts
+
+Ports of this host’s other services that clients reach through the tunnel on
+` serverAddress ` and ` serverAliases `, such as mail, beside the listeners’ own\. Direct
+like those: a connection to this host from itself skips its firewall, so list only
+what the firewall already opens to the internet\. TCP and UDP alike\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]±\[0-9]+)\
+**Default:** `[ ]`\
+**Example:** `config.networking.firewall.allowedTCPPorts`
 
 <a id="services-proxy-suite-inbounds-sharelinks"></a>
 ## services\.proxy-suite\.inbounds\.shareLinks

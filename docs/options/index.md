@@ -86,6 +86,7 @@ services.proxy-suite = {
     };
     serverAddress = null;
     serverAliases = [ ];
+    serverPorts = [ ];
     shareLinks = true;
     subscriptions = {
       baseUrl = null;

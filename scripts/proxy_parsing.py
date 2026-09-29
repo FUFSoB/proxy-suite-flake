@@ -229,17 +229,27 @@ def build_outbound(
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 
 
+class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Redirects stay on http and https: urllib's own also follows one to ftp:."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme not in ("http", "https"):
+            raise ValueError("subscription redirected off http:// and https://")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch_raw(url: str) -> bytes:
     # urlopen also speaks file:, ftp: and data:. This runs as root over a URL that
     # reaches it from a group-writable spool, so only the two a subscription is
-    # ever served over.
+    # ever served over, redirects included.
     if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         raise ValueError("subscription URL must be http:// or https://")
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "v2rayN/6.0"},
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    opener = urllib.request.build_opener(_HttpOnlyRedirects)
+    with opener.open(request, timeout=30) as response:
         data = response.read(MAX_SUBSCRIPTION_BYTES + 1)
     if len(data) > MAX_SUBSCRIPTION_BYTES:
         raise ValueError(f"subscription is larger than {MAX_SUBSCRIPTION_BYTES} bytes")

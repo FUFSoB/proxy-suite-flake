@@ -382,7 +382,7 @@ _cutoff = {}  # ts mtime -> status text: a probe rewrites ts
 
 def _cutoff_status():
     try:
-        mtime = os.path.getmtime(os.path.join(ctl._zapret_state_dir(), "cutoff", "ts"))
+        mtime = os.path.getmtime(os.path.join(ctl._zapret_cutoff_dir(), "ts"))
     except OSError:
         mtime = None
     if mtime not in _cutoff:

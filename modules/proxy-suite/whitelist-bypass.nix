@@ -105,7 +105,10 @@ let
           ${lib.optionalString viaProxy ''
             args+=(--upstream-socks ${derived.localProxy.hostPart}:${toString cfg.proxy.listener.port})
           ''}${lib.optionalString withProxyAuth ''
-            args+=(--upstream-user ${lib.escapeShellArg auth.username} --upstream-pass "$(< "$CREDENTIALS_DIRECTORY/proxy-password")")
+            args+=(--upstream-user ${lib.escapeShellArg auth.username})
+            # The package reads it from here (pkgs/whitelist-bypass.nix): argv is public.
+            WB_UPSTREAM_PASS="$(< "$CREDENTIALS_DIRECTORY/proxy-password")"
+            export WB_UPSTREAM_PASS
           ''}
           exec ${w.package}/bin/headless-${c.platform}-creator "''${args[@]}"
         '';

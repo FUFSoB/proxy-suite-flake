@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -341,6 +342,46 @@ class AmneziaWgConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "privileged"):
             validate_config(hooked)
         validate_config(hooked, allow_hooks=True)
+
+    def test_hooks_hidden_from_python_line_splitting_rejected(self):
+        # Each is one line to awg-quick, whose key comes out as PostUp; splitlines()
+        # would cut it before the "=", or a later rewrite would turn it into two lines.
+        for hidden in (
+            "PostUp \f= touch /root/pwned",
+            "PostUp \v= touch /root/pwned",
+            "PostUp \x1c= touch /root/pwned",
+            "PostUp \u2028= touch /root/pwned",
+            "PostUp \r= touch /root/pwned",
+            "Post\0Up = touch /root/pwned",
+            "MTU = 1280\fPostUp = touch /root/pwned",
+        ):
+            with self.subTest(hidden=hidden), self.assertRaises(ConfigError):
+                validate_config(BASE_CONFIG.replace("Address =", f"{hidden}\nAddress ="))
+        # A line without "=" is still a PostUp to awg-quick.
+        with self.assertRaisesRegex(ConfigError, "privileged"):
+            validate_config(BASE_CONFIG.replace("Address =", "PostUp\nAddress ="))
+        validate_config(BASE_CONFIG.replace("\n", "\r\n"))
+
+    def test_shared_directory_refuses_symlinks_and_fifos(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            secret = directory / "secret.conf"
+            secret.write_text(BASE_CONFIG)
+            spool = directory / "spool"
+            spool.mkdir()
+            (spool / "link.conf").symlink_to(secret)
+            os.mkfifo(spool / "fifo.conf")
+            (spool / "plain.conf").write_text(BASE_CONFIG)
+            # Private: a declared secret may well be a symlink (sops, agenix).
+            spool.chmod(0o700)
+            self.assertEqual(amneziawg_config._read_limited(str(spool / "link.conf")), BASE_CONFIG)
+            # Group-writable, as the runtime spool is.
+            spool.chmod(0o770)
+            with self.assertRaises(OSError):
+                amneziawg_config._read_limited(str(spool / "link.conf"))
+            with self.assertRaisesRegex(ConfigError, "not a regular file"):
+                amneziawg_config._read_limited(str(spool / "fifo.conf"))
+            self.assertEqual(amneziawg_config._read_limited(str(spool / "plain.conf")), BASE_CONFIG)
 
     def test_declarative_awg3_and_secret_files(self):
         with tempfile.TemporaryDirectory() as directory:

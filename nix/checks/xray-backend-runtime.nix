@@ -54,7 +54,7 @@ let
           local output="$TMPDIR/$name.json"
 
           jq \
-            --argjson obs "$OBS" \
+            --slurpfile obs <(printf "%s" "$OBS") \
             --argjson auth_enabled false \
             --arg user "" \
             --arg password "" \
