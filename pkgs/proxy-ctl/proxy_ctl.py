@@ -2499,14 +2499,23 @@ def _subscription_cache(tag):
 
 
 def _runtime_entry_verify(kind, tag):
-    """Only the backend parses the entry, so confirm it actually came up."""
-    if kind == "outbound":
-        if tag in _outbound_tags():
-            print(f"Added outbound: {tag}")
+    """Only the backend parses the entry, so confirm it actually came up.
+
+    The reload's restart returns once the start script is forked, before it writes the
+    inventory again, so this gives it a moment.
+    """
+    deadline = time.monotonic() + 15
+    while True:
+        if kind == "outbound":
+            if tag in _outbound_tags():
+                print(f"Added outbound: {tag}")
+                return
+        elif os.path.isfile(_subscription_cache(tag)):
+            print(f"Added subscription: {tag} ({_subscription_proxy_count_text(_subscription_cache(tag))} proxies)")
             return
-    elif os.path.isfile(_subscription_cache(tag)):
-        print(f"Added subscription: {tag} ({_subscription_proxy_count_text(_subscription_cache(tag))} proxies)")
-        return
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
     sys.stdout.flush()
     print(f"Saved {kind} '{tag}', but it did not come up. Check: proxy-ctl logs", file=sys.stderr)
     print(f"Remove it again with: proxy-ctl proxy {_runtime_noun(kind)} rm {tag}", file=sys.stderr)

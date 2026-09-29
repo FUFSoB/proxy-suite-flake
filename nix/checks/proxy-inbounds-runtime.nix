@@ -168,7 +168,9 @@ pkgs.testers.runNixOSTest {
     with subtest("runtime users and listeners"):
         cfg = "/run/proxy-suite-inbounds/config.json"
         server.succeed("proxy-ctl inbounds users add friend --listener vless-in")
-        server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\", \"friend\"]' {cfg}")
+        # The reload's restart returns once the start script is forked: config.json is
+        # gone until it renders it again.
+        server.wait_until_succeeds(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\", \"friend\"]' {cfg}")
         server.succeed("proxy-ctl inbounds add rt vless --port 9001 --user friend --user tester")
         server.wait_for_open_port(9001)
         server.succeed("proxy-ctl inbounds users | grep friend | grep -q rt")
@@ -196,6 +198,6 @@ pkgs.testers.runNixOSTest {
         server.succeed("journalctl -u proxy-suite-inbounds | grep -q \"ignoring runtime listener 'rt'\"")
         server.succeed("rm /var/lib/proxy-suite/inbounds.d/listeners/rt.json")
         server.succeed("proxy-ctl inbounds users rm friend")
-        server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\"]' {cfg}")
+        server.wait_until_succeeds(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\"]' {cfg}")
   '';
 }
