@@ -5,13 +5,20 @@ let
   inherit (import ./amnezia-wg.nix { inherit lib; }) obfuscationType;
   inherit (import ../lib.nix { inherit lib; }) nullStr;
 
-  userType = types.submodule {
+  # One inbound user, in `inbounds.users` under their name (shown in share links, subscriptions
+  # and stats); listeners name the ones they accept.
+  userModule = {
     options = {
-      name = mkOption {
-        type = types.str;
-        default = "";
-        description = "User name, shown in share links, subscriptions and stats.";
-        example = "phone";
+      order = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        description = ''
+          The user's number, for good: their `inbounds.routing.serverSource` addresses are
+          that many past the start of each range (5: 10.78.0.5 in 10.78.0.0/24). Users
+          without one follow the highest number given, by name, and move when users are
+          added before them. Unique.
+        '';
+        example = 1;
       };
       uuid = nullStr "UUID (vless, vmess). Ends up in the Nix store; prefer `uuidFile`." "b831381d-6324-4d53-ad4f-8cda48b30811";
       uuidFile = nullStr "File with the UUID." "/run/secrets/proxy-inbound-uuid";
@@ -382,10 +389,15 @@ let
         };
 
         users = mkOption {
-          type = types.listOf userType;
+          # Resolved to the users themselves, with their name, by the listeners option's apply
+          # (options/inbounds.nix): everything past the options reads full users.
+          type = types.listOf (types.strMatching "[^[:space:]]+");
           default = [ ];
-          description = "Accepted users.";
-          example = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+          description = "Accepted users, by their names in `inbounds.users`.";
+          example = [
+            "phone"
+            "laptop"
+          ];
         };
 
         flow = mkOption {
@@ -500,5 +512,5 @@ let
   );
 in
 {
-  inherit inboundType;
+  inherit inboundType userModule;
 }

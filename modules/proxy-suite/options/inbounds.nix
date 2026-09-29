@@ -1,4 +1,9 @@
-{ lib, proxySuiteUpstream, ... }:
+{
+  config,
+  lib,
+  proxySuiteUpstream,
+  ...
+}:
 
 let
   inherit (lib)
@@ -108,19 +113,88 @@ in
       blockRu = bool true ''Block Russian destinations (geosite "category-ru", geoip "ru").'';
       blockPrivate = bool true "Block private and loopback addresses, so clients cannot reach this host's LAN or local services.";
 
-      zapretDirect = bool true "Send zapret hostlist sites direct, so this host's zapret unblocks them. Only for the default `via`.";
+      zapretDirect = bool true "Send zapret hostlist sites direct, so this host's zapret unblocks them. Only for the default `via`. With a direct listener or the XRay backend, only by IP: XRay matches names by what a client puts in its handshake, whatever address it connects to.";
+
+      # Consumed in derived.nix (the addresses), rules/proxy-inbounds.nix and the inbounds'
+      # start script (the interface).
+      serverSource = {
+        ipv4 = mkOption {
+          type = types.nullOr (types.strMatching "([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}");
+          default = null;
+          example = "10.78.0.0/24";
+          description = ''
+            Range each inbound user gets an address from, for the connections they make to this
+            host itself (`serverAddress`, `serverAliases`, `serverPorts`). Otherwise those come
+            from this host's own address, and its services (mail, the web server, their rate
+            limits and bans) see every user as one. They see neither the users' real addresses.
+            The addresses sit on a dummy interface and reach nothing but this host. Pick a range
+            nothing here routes or trusts. Users are numbered by their `order`, then name, from
+            the range's second address: set `order` to keep each user's address as users come
+            and go.
+          '';
+        };
+        ipv6 = mkOption {
+          type = types.nullOr (types.strMatching "[0-9a-fA-F:]*::/[0-9]{1,3}");
+          default = null;
+          example = "fd78:78:78::/64";
+          description = ''
+            The same for IPv6: a prefix written with "::", such as a ULA /64. Needed as well when
+            `serverAliases` lists an IPv6 address, which is otherwise dialed from this host's own.
+          '';
+        };
+        interface = mkOption {
+          type = types.strMatching "[a-zA-Z0-9_-]{1,15}";
+          default = "ps-self";
+          description = "Dummy interface the `serverSource` addresses are put on.";
+        };
+      };
+    };
+
+    users = mkOption {
+      type = types.attrsOf (types.submodule t.userModule);
+      default = { };
+      description = ''
+        Inbound users, by name, which listeners accept by naming them in their `users`. Each
+        listener takes the secret its protocol wants: `uuid`/`uuidFile` for vless and vmess,
+        `password`/`passwordFile` for the others, the keys for AmneziaWG.
+      '';
+      example = literalExpression ''
+        {
+          phone = {
+            order = 1;
+            uuidFile = "/run/secrets/proxy-inbound-uuid";
+          };
+          laptop.order = 2;
+        }
+      '';
     };
 
     listeners = mkOption {
       type = types.attrsOf t.inboundType;
       default = { };
       description = "Server listeners, by tag.";
+      # Each named user becomes the user, with their name: nothing past the options sees names.
+      apply = lib.mapAttrs (
+        tag: listener:
+        listener
+        // {
+          users = map (
+            name:
+            (config.services.proxy-suite.inbounds.users.${name}
+              or (throw "proxy-suite: inbounds listener '${tag}' names user '${name}', which inbounds.users does not define")
+            )
+            // {
+              inherit name;
+            }
+          ) listener.users;
+        }
+      );
       example = literalExpression ''
         {
           vless-reality = {
             type = "vless";
             port = 443;
-            users = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+            users = [ "phone" ];
             flow = "xtls-rprx-vision";
             reality = {
               enable = true;
@@ -134,7 +208,7 @@ in
           home = {
             type = "amneziawg";
             port = 51820;
-            users = [ { name = "phone"; } { name = "laptop"; } ];
+            users = [ "phone" "laptop" ];
             amneziaWg.mode = "lan";
           };
         }

@@ -27,10 +27,21 @@ let
   withProxyAuth = viaProxy && derived.localProxy.authEnabled;
   bridgesEnabled = t.bridges.lines != [ ] || t.bridges.file != null;
 
-  # Members of userControl.group may use the control socket for `proxy-ctl tor
-  # status|newnym`, so Tor runs with that group on a system install: Tor refuses a
-  # group-writable socket whose directory is owned by any group but its own.
-  controlGroup = privileged && derived.userControlAllows "services";
+  # The control socket is Tor's own (and root's): with it, one can publish any loopback
+  # port as an onion service, point Tor at another upstream, or read the proxy password
+  # from its config. userControl's group asks for a new identity through
+  # proxy-suite-tor-newnym instead.
+  controlSocket = derived.constants.torControlSocket;
+  newnymScript = pkgs.writeShellScript "proxy-suite-tor-newnym" ''
+    set -euo pipefail
+    reply=$(printf 'AUTHENTICATE\r\nSIGNAL NEWNYM\r\nQUIT\r\n' \
+      | ${pkgs.socat}/bin/socat -t 5 - UNIX-CONNECT:${lib.escapeShellArg controlSocket})
+    # One "250 OK" each for AUTHENTICATE and SIGNAL.
+    if [ "$(${pkgs.gnugrep}/bin/grep -c '^250 OK' <<< "$reply")" -lt 2 ]; then
+      printf 'Tor refused: %s\n' "$reply" >&2
+      exit 1
+    fi
+  '';
 
   # An onion service port per listener: its share port, forwarded to where XRay listens.
   onionTarget =
@@ -68,7 +79,6 @@ let
         "TransPort 0"
         "NATDPort 0"
         "CookieAuthentication 0"
-        "ControlSocketsGroupWritable 1"
       ]
       ++ lib.optional t.clientOnly "ClientOnly 1"
       ++ (if t.asOutbound then [ "SocksPort 127.0.0.1:${toString t.socksPort}" ] else [ "SocksPort 0" ])
@@ -103,9 +113,7 @@ let
     umask 0077
 
     torrc="$RUNTIME_DIRECTORY/torrc"
-    ${pkgs.coreutils}/bin/mkdir -p -m ${
-      if controlGroup then "0750" else "0700"
-    } "$RUNTIME_DIRECTORY/control"
+    ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$RUNTIME_DIRECTORY/control"
     {
       cat <<'TORRC'
     ${staticConfig}
@@ -161,7 +169,19 @@ in
         RestartSec = 5;
         LimitNOFILE = 65536;
       }
-      // lib.optionalAttrs controlGroup { Group = cfg.userControl.group; }
       // lib.optionalAttrs onionKeyEnabled { ExecStartPre = onionKeyScript; };
+  };
+
+  # `proxy-ctl tor newnym` for userControl's group ("services" scope), which cannot open
+  # the control socket. Root.
+  services.proxy-suite.internal.services.proxy-suite-tor-newnym = lib.mkIf privileged {
+    description = "proxy-suite - new Tor circuits for new connections";
+    after = [ "proxy-suite-tor.service" ];
+    # Only a running Tor: this never starts one.
+    unitConfig.Requisite = [ "proxy-suite-tor.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = newnymScript;
+    };
   };
 }

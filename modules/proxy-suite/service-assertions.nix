@@ -185,6 +185,34 @@ let
     (mkAssertion (!(cfg.warp.enable && cfg.warp.asOutbound != null && cfg.warp.asAmneziaWg))
       "proxy-suite: warp.asOutbound and warp.asAmneziaWg share one WARP key and would knock each other off; enable one"
     )
+    # inbounds.routing.serverSource: a dummy interface, and an address per user in each range.
+    (
+      let
+        src = cfg.inbounds.routing.serverSource;
+        highest = lib.foldl lib.max 0 (map (s: s.number) derived.proxyInboundsSelfSources);
+        v4 = builtins.match "([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)" src.ipv4;
+        v4Prefix = lib.toInt (lib.last v4);
+        v4Int = lib.foldl (acc: o: acc * 256 + lib.toInt o) 0 (lib.take 4 v4);
+        v4Size = lib.foldl (acc: _: acc * 2) 1 (lib.range 1 (32 - v4Prefix));
+      in
+      mkAssertion
+        (
+          src.ipv4 == null
+          || (v4Prefix >= 8 && v4Prefix <= 30 && lib.mod v4Int v4Size == 0 && highest + 2 <= v4Size)
+        )
+        "proxy-suite: inbounds.routing.serverSource.ipv4 must be a network address (host bits zero), /8 to /30, with room for user number ${toString highest}"
+    )
+    # A user's order is their serverSource number: two would share an address.
+    (uniqueValues true (builtins.filter (order: order != null) (
+      lib.mapAttrsToList (_: user: user.order) cfg.inbounds.users
+    )) "proxy-suite: inbounds.users must each have a distinct order")
+    (mkAssertion (
+      cfg.inbounds.routing.serverSource.ipv6 == null
+      || lib.toInt (lib.last (lib.splitString "/" cfg.inbounds.routing.serverSource.ipv6)) <= 112
+    ) "proxy-suite: inbounds.routing.serverSource.ipv6 must be a prefix of /112 or shorter")
+    (mkAssertion (derived.proxyInboundsSelfSources == [ ] || cfg.host.privileged)
+      "proxy-suite: inbounds.routing.serverSource needs a system install: it puts addresses on a dummy interface"
+    )
     # Daemon configs are readable by the service group; users must not share it.
     (mkAssertion (cfg.userControl.group != derived.constants.serviceUser)
       "proxy-suite: userControl.group must not be ${derived.constants.serviceUser}, the group that can read backend configs"
@@ -845,9 +873,6 @@ let
         ];
     in
     lib.optionals (proxyInboundsEnabled && l.type == "amneziawg") [
-      (mkAssertion (lib.all (user: user.name != "")
-        l.users
-      ) "${prefix}: AmneziaWG users each need a name, which their keys and address are kept under")
       (mkAssertion (builtins.stringLength awg.interfaceName <= 15)
         "${prefix}: amneziaWg.interfaceName '${awg.interfaceName}' is longer than the kernel's 15 characters"
       )

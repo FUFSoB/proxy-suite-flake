@@ -12,17 +12,10 @@ let
   inherit (derived.constants) unprivilegedServiceConfig privileged serviceUser;
   inherit (derived.localProxy) auth;
 
-  # Every flag that takes the call, joiner and creator alike.
-  linkFlag = {
-    wbstream = "--room";
-    dion = "--room";
-    bitrix = "--room";
-    telemost = "--tm-link";
-    vk = "--vk-link";
-  };
-  joinerLinkFlag = linkFlag // {
-    bitrix = "--link";
-  };
+  # A file in the state directory, which the whitelistBypass scope's group writes to: a
+  # regular file only, never through a symlink, which could name the backend's config
+  # (the daemon reads it) and have its credentials on a command line.
+  readState = file: "${pkgs.coreutils}/bin/dd if=${file} iflag=nofollow,nonblock status=none";
 
   passwordSource =
     if auth.passwordFile != null then
@@ -59,6 +52,9 @@ let
         StateDirectory = "proxy-suite/whitelist-bypass";
         StateDirectoryMode = stateMode;
       }
+      # The group writes the state directory: whatever a name there points at, the daemon
+      # writes nowhere else.
+      // lib.optionalAttrs privileged { ProtectSystem = "strict"; }
       // lib.optionalAttrs groupAccess { Group = stateGroup; }
       // serviceConfig;
   };
@@ -72,9 +68,10 @@ let
           set -euo pipefail
           join="$STATE_DIRECTORY/${j.tag}.join"
           ${lib.optionalString (j.linkFile != null) ''[ -e "$join" ] || join="$CREDENTIALS_DIRECTORY/link"''}
-          link=$(tr -d '[:space:]' < "$join")
-          exec ${w.package}/bin/headless-${j.platform}-joiner \
-            ${joinerLinkFlag.${j.platform}} "$link" --socks-port ${toString j.port}
+          # The link from the environment (pkgs/whitelist-bypass.nix): argv is public.
+          WB_LINK=$(${readState ''"$join"''} | tr -d '[:space:]')
+          export WB_LINK
+          exec ${w.package}/bin/headless-${j.platform}-joiner --socks-port ${toString j.port}
         '';
         LoadCredential = lib.optional (j.linkFile != null) "link:${j.linkFile}";
       }
@@ -91,6 +88,8 @@ let
           set -euo pipefail
           cookies="$STATE_DIRECTORY/${name}.cookies.json"
           links="$STATE_DIRECTORY/${name}.link"
+          # The creator opens it by name: not through a symlink the group left there.
+          if [ -L "$cookies" ]; then rm -f -- "$cookies"; fi
           ${lib.optionalString (c.cookiesFile != null) ''
             [ -e "$cookies" ] || install -m 600 "$CREDENTIALS_DIRECTORY/cookies" "$cookies"
           ''}
@@ -99,9 +98,10 @@ let
             if c.linkFile != null then
               ''link=$(tr -d '[:space:]' < "$CREDENTIALS_DIRECTORY/link")''
             else
-              ''link=$(tail -n 1 "$links" 2>/dev/null || true)''
+              "link=$(${readState ''"$links"''} 2>/dev/null | tail -n 1 || true)"
           }
-          [ -z "$link" ] || args+=(${linkFlag.${c.platform}} "$link")
+          # From the environment (pkgs/whitelist-bypass.nix): argv is public.
+          export WB_LINK="$link"
           ${lib.optionalString viaProxy ''
             args+=(--upstream-socks ${derived.localProxy.hostPart}:${toString cfg.proxy.listener.port})
           ''}${lib.optionalString withProxyAuth ''

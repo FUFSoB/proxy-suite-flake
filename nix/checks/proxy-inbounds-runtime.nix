@@ -48,21 +48,20 @@ pkgs.testers.runNixOSTest {
             inherit serverAddress;
             routing.via = "direct";
             openFirewall = true;
+            users = {
+              tester.uuidFile = "/run/inbound-secrets/uuid";
+              ss-user.passwordFile = "/run/inbound-secrets/password";
+            };
             listeners.vless-in = {
               type = "vless";
               port = 8443;
-              users = [
-                {
-                  name = "tester";
-                  uuidFile = "/run/inbound-secrets/uuid";
-                }
-              ];
+              users = [ "tester" ];
             };
             listeners.ss-in = {
               type = "shadowsocks";
               port = 8388;
               method = "2022-blake3-aes-128-gcm";
-              users = [ { passwordFile = "/run/inbound-secrets/password"; } ];
+              users = [ "ss-user" ];
             };
           };
         };

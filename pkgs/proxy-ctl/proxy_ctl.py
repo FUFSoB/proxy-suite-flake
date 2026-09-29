@@ -364,7 +364,8 @@ def _warp_unit():
 def _tor_control(*commands):
     """Replies to commands on Tor's control socket, one list of lines per command.
 
-    The socket authenticates by who can open it: root and the userControl group.
+    The socket authenticates by who can open it: root, and Tor's own user. Not the
+    userControl group, which could publish any loopback port as an onion service with it.
     """
     path = env("TOR_CONTROL_SOCKET", f"{runtime_dir()}/proxy-suite-tor/control/socket")
     replies = []
@@ -413,7 +414,11 @@ def cmd_tor(verb="status", *args):
     if verb == "newnym":
         if not svc_exists(unit):
             die("tor is not enabled in this configuration.")
-        _tor_control("SIGNAL NEWNYM")
+        if env("PRIVILEGED") == "1" and os.geteuid() != 0:
+            # The group's way in, polkit's "services" scope: a root unit that asks Tor.
+            must("start", "proxy-suite-tor-newnym.service")
+        else:
+            _tor_control("SIGNAL NEWNYM")
         print("New connections take new circuits (Tor allows this once every 10 seconds).")
         return
     if verb not in ("status", "on", "off", "toggle", "restart"):

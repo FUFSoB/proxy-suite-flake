@@ -120,16 +120,12 @@ in
                   inbounds = {
                     enable = true;
                     serverAddress = "203.0.113.1";
+                    users.a.password = "b";
                     listeners.main = {
                       type = "socks";
                       port = 1081;
                       via = "exit";
-                      users = [
-                        {
-                          name = "a";
-                          password = "b";
-                        }
-                      ];
+                      users = [ "a" ];
                     };
                   };
                 };
@@ -276,16 +272,12 @@ in
       inbounds = {
         enable = true;
         serverAddress = "203.0.113.1";
+        users.a.password = "b";
         listeners.main = {
           type = "socks";
           port = 1081;
           via = "exit";
-          users = [
-            {
-              name = "a";
-              password = "b";
-            }
-          ];
+          users = [ "a" ];
         };
       };
     }

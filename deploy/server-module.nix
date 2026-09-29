@@ -43,12 +43,7 @@ let
     };
   };
 
-  user = [
-    {
-      name = cfg.user;
-      uuidFile = "${cfg.secretsDir}/uuid";
-    }
-  ];
+  user = [ cfg.user ];
   tls = {
     enable = true;
     certificateFile = "${certDir}/fullchain.pem";
@@ -355,6 +350,7 @@ in
       };
       inbounds = {
         enable = true;
+        users.${cfg.user}.uuidFile = "${cfg.secretsDir}/uuid";
         serverAddress = certName;
         routing.via = "direct";
         listeners = {

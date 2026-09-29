@@ -23,7 +23,7 @@ let
   domain = "vpn.example.com";
   certDir = config.security.acme.certs.${domain}.directory;
 
-  users = map (name: { inherit name; uuidFile = "/run/secrets/proxy-uuid-${name}"; }) [
+  users = [
     "alice"
     "bob"
     "carol"
@@ -74,6 +74,7 @@ in
     };
 
     inbounds = {
+      users = lib.genAttrs users (name: { uuidFile = "/run/secrets/proxy-uuid-${name}"; });
       enable = true;
       serverAddress = domain;
       routing.via = "proxy";

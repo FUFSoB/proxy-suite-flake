@@ -1301,6 +1301,16 @@ class TorTest(EnvTest):
         self.thread.join(5)
         self.assertEqual(self.received, ["AUTHENTICATE", "SIGNAL NEWNYM"])
 
+    def test_newnym_as_the_group_goes_through_the_unit(self):
+        """On a system install only root opens the socket: the group starts a root unit."""
+        os.environ["PRIVILEGED"] = "1"
+        started = []
+        self.patch("systemctl", lambda *a, **kw: started.append(a) or (0, None))
+        with mock.patch.object(ctl.os, "geteuid", return_value=1000):
+            ok(ctl.cmd_tor, "newnym")
+        self.assertIn(("start", "proxy-suite-tor-newnym.service"), started)
+        self.assertEqual(self.received, [])
+
     def test_not_running(self):
         os.environ["TOR_CONTROL_SOCKET"] = "missing"
         status, _, err = run(ctl.cmd_tor, "newnym")

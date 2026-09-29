@@ -270,6 +270,32 @@ lib.mkMerge [
             "proxy-suite: proxy.listener.address is ${proxyCfg.listener.address} without listener.auth:"
             + " anyone who reaches the port uses your outbounds; set listener.auth, or keep it off the"
             + " firewall's allowed ports"
+          )
+      # rules/proxy-inbounds.nix guards the names of this host only where XRay leaves names
+      # unresolved, or where IP aliases catch a name that resolves here first.
+      ++
+        lib.optional
+          (
+            proxyInboundsEnabled
+            && !derived.proxyInboundsResolveInSingBox
+            # Only a listener whose traffic is not direct anyway loses anything by it.
+            && lib.any (
+              ib:
+              !builtins.elem ib.via [
+                "direct"
+                "block"
+              ]
+            ) derived.proxyInbounds
+            && (cfg.inbounds.serverAddress != null || cfg.inbounds.serverAliases != [ ])
+            && lib.all (a: lib.hasPrefix "domain:" a || builtins.match "[0-9.]+|.*:.*" a == null) (
+              lib.optional (cfg.inbounds.serverAddress != null) cfg.inbounds.serverAddress
+              ++ cfg.inbounds.serverAliases
+            )
+          )
+          (
+            "proxy-suite: with a direct listener or the XRay backend, list this host's IPs in"
+            + " inbounds.serverAliases: without them a client can name this host in its TLS handshake"
+            + " while connecting to any other address, which XRay then dials direct, from this host"
           );
   }
 

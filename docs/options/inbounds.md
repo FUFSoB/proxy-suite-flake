@@ -98,16 +98,6 @@ Part of the [proxy-suite options reference](./index.md).
         - [type](#services-proxy-suite-inbounds-listeners-name-transport-type)
       - [type](#services-proxy-suite-inbounds-listeners-name-type)
       - [users](#services-proxy-suite-inbounds-listeners-name-users)
-        - item
-          - [address](#services-proxy-suite-inbounds-listeners-name-users-address)
-          - [name](#services-proxy-suite-inbounds-listeners-name-users-name)
-          - [password](#services-proxy-suite-inbounds-listeners-name-users-password)
-          - [passwordFile](#services-proxy-suite-inbounds-listeners-name-users-passwordfile)
-          - [presharedKeyFile](#services-proxy-suite-inbounds-listeners-name-users-presharedkeyfile)
-          - [privateKeyFile](#services-proxy-suite-inbounds-listeners-name-users-privatekeyfile)
-          - [publicKey](#services-proxy-suite-inbounds-listeners-name-users-publickey)
-          - [uuid](#services-proxy-suite-inbounds-listeners-name-users-uuid)
-          - [uuidFile](#services-proxy-suite-inbounds-listeners-name-users-uuidfile)
       - [via](#services-proxy-suite-inbounds-listeners-name-via)
       - [xrayJson](#services-proxy-suite-inbounds-listeners-name-xrayjson)
   - [openFirewall](#services-proxy-suite-inbounds-openfirewall)
@@ -119,6 +109,10 @@ Part of the [proxy-suite options reference](./index.md).
       - [geoips](#services-proxy-suite-inbounds-routing-proxy-geoips)
       - [geosites](#services-proxy-suite-inbounds-routing-proxy-geosites)
       - [ips](#services-proxy-suite-inbounds-routing-proxy-ips)
+    - serverSource
+      - [interface](#services-proxy-suite-inbounds-routing-serversource-interface)
+      - [ipv4](#services-proxy-suite-inbounds-routing-serversource-ipv4)
+      - [ipv6](#services-proxy-suite-inbounds-routing-serversource-ipv6)
     - [via](#services-proxy-suite-inbounds-routing-via)
     - [zapretDirect](#services-proxy-suite-inbounds-routing-zapretdirect)
   - [serverAddress](#services-proxy-suite-inbounds-serveraddress)
@@ -129,6 +123,17 @@ Part of the [proxy-suite options reference](./index.md).
     - [enable](#services-proxy-suite-inbounds-subscriptions-enable)
     - [baseUrl](#services-proxy-suite-inbounds-subscriptions-baseurl)
     - [group](#services-proxy-suite-inbounds-subscriptions-group)
+  - [users](#services-proxy-suite-inbounds-users)
+    - `<name>`
+      - [address](#services-proxy-suite-inbounds-users-name-address)
+      - [order](#services-proxy-suite-inbounds-users-name-order)
+      - [password](#services-proxy-suite-inbounds-users-name-password)
+      - [passwordFile](#services-proxy-suite-inbounds-users-name-passwordfile)
+      - [presharedKeyFile](#services-proxy-suite-inbounds-users-name-presharedkeyfile)
+      - [privateKeyFile](#services-proxy-suite-inbounds-users-name-privatekeyfile)
+      - [publicKey](#services-proxy-suite-inbounds-users-name-publickey)
+      - [uuid](#services-proxy-suite-inbounds-users-name-uuid)
+      - [uuidFile](#services-proxy-suite-inbounds-users-name-uuidfile)
 
 <a id="services-proxy-suite-inbounds-enable"></a>
 ## services\.proxy-suite\.inbounds\.enable
@@ -161,7 +166,7 @@ Server listeners, by tag\.
   vless-reality = {
     type = "vless";
     port = 443;
-    users = [ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ];
+    users = [ "phone" ];
     flow = "xtls-rprx-vision";
     reality = {
       enable = true;
@@ -175,7 +180,7 @@ Server listeners, by tag\.
   home = {
     type = "amneziawg";
     port = 51820;
-    users = [ { name = "phone"; } { name = "laptop"; } ];
+    users = [ "phone" "laptop" ];
     amneziaWg.mode = "lan";
   };
 }
@@ -941,94 +946,11 @@ Protocol\. Set exactly one of ` type `, ` xrayJson ` or ` jsonFile `\.
 <a id="services-proxy-suite-inbounds-listeners-name-users"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users
 
-Accepted users\.
+Accepted users, by their names in ` inbounds.users `\.
 
-**Type:** list of (submodule)\
+**Type:** list of string matching the pattern \[^\[:space:]]+\
 **Default:** `[ ]`\
-**Example:** `[ { uuidFile = "/run/secrets/proxy-inbound-uuid"; } ]`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-address"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.address
-
-AmneziaWG tunnel IPv4 address, inside ` amneziaWg.subnet `\. ` null `: the lowest free one,
-kept for as long as the user exists\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"10.66.0.10"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-name"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.name
-
-User name, shown in share links, subscriptions and stats\.
-
-**Type:** string\
-**Default:** `""`\
-**Example:** `"phone"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-password"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.password
-
-Password (trojan, shadowsocks, socks, http)\. Ends up in the Nix store; prefer ` passwordFile `\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"hunter2"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-passwordfile"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.passwordFile
-
-File with the password\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"/run/secrets/proxy-inbound-password"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-presharedkeyfile"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.presharedKeyFile
-
-File with the AmneziaWG preshared key, instead of a generated one\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"/run/secrets/awg-phone-psk"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-privatekeyfile"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.privateKeyFile
-
-File with the AmneziaWG client private key, instead of a generated one\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"/run/secrets/awg-phone-key"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-publickey"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.publicKey
-
-AmneziaWG public key, for a client that keeps its own private key (no config or link is
-generated for it)\. ` null `: generate a key pair\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"jNXH..."`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-uuid"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.uuid
-
-UUID (vless, vmess)\. Ends up in the Nix store; prefer ` uuidFile `\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"b831381d-6324-4d53-ad4f-8cda48b30811"`
-
-<a id="services-proxy-suite-inbounds-listeners-name-users-uuidfile"></a>
-## services\.proxy-suite\.inbounds\.listeners\.\<name>\.users\.\*\.uuidFile
-
-File with the UUID\.
-
-**Type:** null or string\
-**Default:** `null`\
-**Example:** `"/run/secrets/proxy-inbound-uuid"`
+**Example:** `[ "phone" "laptop" ]`
 
 <a id="services-proxy-suite-inbounds-listeners-name-via"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.via
@@ -1108,6 +1030,40 @@ IP ranges (CIDR) that clients always reach through the local proxy, whatever the
 **Default:** `[ ]`\
 **Example:** `[ "1.1.1.0/24" ]`
 
+<a id="services-proxy-suite-inbounds-routing-serversource-interface"></a>
+## services\.proxy-suite\.inbounds\.routing\.serverSource\.interface
+
+Dummy interface the ` serverSource ` addresses are put on\.
+
+**Type:** string matching the pattern \[a-zA-Z0-9_-]{1,15}\
+**Default:** `"ps-self"`
+
+<a id="services-proxy-suite-inbounds-routing-serversource-ipv4"></a>
+## services\.proxy-suite\.inbounds\.routing\.serverSource\.ipv4
+
+Range each inbound user gets an address from, for the connections they make to this
+host itself (` serverAddress `, ` serverAliases `, ` serverPorts `)\. Otherwise those come
+from this host’s own address, and its services (mail, the web server, their rate
+limits and bans) see every user as one\. They see neither the users’ real addresses\.
+The addresses sit on a dummy interface and reach nothing but this host\. Pick a range
+nothing here routes or trusts\. Users are numbered by their ` order `, then name, from
+the range’s second address: set ` order ` to keep each user’s address as users come
+and go\.
+
+**Type:** null or string matching the pattern (\[0-9]{1,3}\\\.){3}\[0-9]{1,3}/\[0-9]{1,2}\
+**Default:** `null`\
+**Example:** `"10.78.0.0/24"`
+
+<a id="services-proxy-suite-inbounds-routing-serversource-ipv6"></a>
+## services\.proxy-suite\.inbounds\.routing\.serverSource\.ipv6
+
+The same for IPv6: a prefix written with “::”, such as a ULA /64\. Needed as well when
+` serverAliases ` lists an IPv6 address, which is otherwise dialed from this host’s own\.
+
+**Type:** null or string matching the pattern \[0-9a-fA-F:]\*::/\[0-9]{1,3}\
+**Default:** `null`\
+**Example:** `"fd78:78:78::/64"`
+
 <a id="services-proxy-suite-inbounds-routing-via"></a>
 ## services\.proxy-suite\.inbounds\.routing\.via
 
@@ -1125,7 +1081,7 @@ Where client traffic exits by default\. Each listener can override it\.
 <a id="services-proxy-suite-inbounds-routing-zapretdirect"></a>
 ## services\.proxy-suite\.inbounds\.routing\.zapretDirect
 
-Send zapret hostlist sites direct, so this host’s zapret unblocks them\. Only for the default ` via `\.
+Send zapret hostlist sites direct, so this host’s zapret unblocks them\. Only for the default ` via `\. With a direct listener or the XRay backend, only by IP: XRay matches names by what a client puts in its handshake, whatever address it connects to\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -1209,3 +1165,111 @@ Group of the web server that serves the subscription files\.
 **Type:** string\
 **Default:** `"nginx"`\
 **Example:** `"caddy"`
+
+<a id="services-proxy-suite-inbounds-users"></a>
+## services\.proxy-suite\.inbounds\.users
+
+Inbound users, by name, which listeners accept by naming them in their ` users `\. Each
+listener takes the secret its protocol wants: ` uuid `/` uuidFile ` for vless and vmess,
+` password `/` passwordFile ` for the others, the keys for AmneziaWG\.
+
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:**
+
+```nix
+{
+  phone = {
+    order = 1;
+    uuidFile = "/run/secrets/proxy-inbound-uuid";
+  };
+  laptop.order = 2;
+}
+
+```
+
+<a id="services-proxy-suite-inbounds-users-name-address"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.address
+
+AmneziaWG tunnel IPv4 address, inside ` amneziaWg.subnet `\. ` null `: the lowest free one,
+kept for as long as the user exists\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"10.66.0.10"`
+
+<a id="services-proxy-suite-inbounds-users-name-order"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.order
+
+The user’s number, for good: their ` inbounds.routing.serverSource ` addresses are
+that many past the start of each range (5: 10\.78\.0\.5 in 10\.78\.0\.0/24)\. Users
+without one follow the highest number given, by name, and move when users are
+added before them\. Unique\.
+
+**Type:** null or (positive integer, meaning >0)\
+**Default:** `null`\
+**Example:** `1`
+
+<a id="services-proxy-suite-inbounds-users-name-password"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.password
+
+Password (trojan, shadowsocks, socks, http)\. Ends up in the Nix store; prefer ` passwordFile `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"hunter2"`
+
+<a id="services-proxy-suite-inbounds-users-name-passwordfile"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.passwordFile
+
+File with the password\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-password"`
+
+<a id="services-proxy-suite-inbounds-users-name-presharedkeyfile"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.presharedKeyFile
+
+File with the AmneziaWG preshared key, instead of a generated one\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-phone-psk"`
+
+<a id="services-proxy-suite-inbounds-users-name-privatekeyfile"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.privateKeyFile
+
+File with the AmneziaWG client private key, instead of a generated one\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/awg-phone-key"`
+
+<a id="services-proxy-suite-inbounds-users-name-publickey"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.publicKey
+
+AmneziaWG public key, for a client that keeps its own private key (no config or link is
+generated for it)\. ` null `: generate a key pair\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"jNXH..."`
+
+<a id="services-proxy-suite-inbounds-users-name-uuid"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.uuid
+
+UUID (vless, vmess)\. Ends up in the Nix store; prefer ` uuidFile `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"b831381d-6324-4d53-ad4f-8cda48b30811"`
+
+<a id="services-proxy-suite-inbounds-users-name-uuidfile"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.uuidFile
+
+File with the UUID\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-uuid"`

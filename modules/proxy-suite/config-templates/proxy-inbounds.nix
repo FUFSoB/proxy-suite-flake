@@ -16,6 +16,62 @@ let
 
   localProxyAddress = derived.localProxy.host;
 
+  # Checked on the address actually dialed, so a name resolving private is caught too
+  # (routing's geoip:private sees only literal IPs under AsIs). Explicit either way:
+  # XRay's own default blocks private for vless/vmess/trojan/shadowsocks only, which
+  # left socks/http open and ignored blockPrivate = false.
+  directFinalRules =
+    if derived.proxyInboundsCfg.routing.blockPrivate then
+      [
+        {
+          action = "block";
+          ip = [ "geoip:private" ];
+        }
+      ]
+    else
+      [ { action = "allow"; } ];
+
+  # inbounds.routing.serverSource: a user's connections to this host, from the user's own
+  # address on the dummy interface. Only ever to this host: its listed IPs where there are
+  # some, and never somewhere private.
+  serverIps =
+    builtins.filter
+      (a: !lib.hasPrefix "domain:" a && (lib.hasInfix ":" a || builtins.match "[0-9.]+" a != null))
+      (
+        lib.optional (derived.proxyInboundsCfg.serverAddress != null) derived.proxyInboundsCfg.serverAddress
+        ++ derived.proxyInboundsCfg.serverAliases
+      );
+  selfFinalRules =
+    if serverIps != [ ] then
+      [
+        {
+          action = "allow";
+          ip = serverIps;
+        }
+        { action = "block"; }
+      ]
+    else
+      [
+        {
+          action = "block";
+          ip = [ "geoip:private" ];
+        }
+      ];
+  mkSelfOutbound = family: address: id: {
+    protocol = "freedom";
+    tag = "direct-self${family}-${id}";
+    sendThrough = address;
+    settings = {
+      domainStrategy = if family == "4" then "UseIPv4" else "UseIPv6";
+      finalRules = selfFinalRules;
+    };
+  };
+  selfOutbounds = lib.concatMap (
+    s:
+    lib.optional (s.ipv4 != null) (mkSelfOutbound "4" s.ipv4 s.id)
+    ++ lib.optional (s.ipv6 != null) (mkSelfOutbound "6" s.ipv6 s.id)
+  ) derived.proxyInboundsSelfSources;
+
   # The client stack's SOCKS listener; credentials are injected at start.
   localProxyOutbound = lib.optional proxyInboundsNeedLocalProxy {
     protocol = "socks";
@@ -72,31 +128,21 @@ in
     };
   };
 
-  outbounds = localProxyOutbound ++ [
-    {
-      protocol = "freedom";
-      tag = "direct";
-      # Checked on the address actually dialed, so a name resolving private is caught too
-      # (routing's geoip:private sees only literal IPs under AsIs). Explicit either way:
-      # XRay's own default blocks private for vless/vmess/trojan/shadowsocks only, which
-      # left socks/http open and ignored blockPrivate = false.
-      settings.finalRules =
-        if derived.proxyInboundsCfg.routing.blockPrivate then
-          [
-            {
-              action = "block";
-              ip = [ "geoip:private" ];
-            }
-          ]
-        else
-          [ { action = "allow"; } ];
-    }
-    {
-      protocol = "blackhole";
-      tag = "block";
-      settings = { };
-    }
-  ];
+  outbounds =
+    localProxyOutbound
+    ++ [
+      {
+        protocol = "freedom";
+        tag = "direct";
+        settings.finalRules = directFinalRules;
+      }
+      {
+        protocol = "blackhole";
+        tag = "block";
+        settings = { };
+      }
+    ]
+    ++ selfOutbounds;
 
   routing = {
     # AsIs where sing-box dials: resolving here made every new site wait on a

@@ -21,7 +21,7 @@ let
   listener = {
     type = "vless";
     port = 10443;
-    users = [ { uuidFile = "/run/secrets/uuid"; } ];
+    users = [ "user" ];
   };
 
   mkFixture =
@@ -31,6 +31,7 @@ let
         system.stateVersion = "26.05";
         services.proxy-suite = lib.recursiveUpdate {
           enable = true;
+          inbounds.users.user.uuidFile = "/run/secrets/uuid";
           tor = {
             enable = true;
             asOutbound = true;
@@ -121,6 +122,7 @@ let
     };
     inbounds = {
       enable = true;
+      users.user.uuidFile = "/run/secrets/uuid";
       serverAddress = "vpn.example.com";
       routing.via = "direct";
       listeners.plain = listener;
@@ -135,6 +137,7 @@ let
   exitInbounds = {
     inbounds = {
       enable = true;
+      users.user.uuidFile = "/run/secrets/uuid";
       serverAddress = "vpn.example.com";
       routing.via = "direct";
       listeners.plain = listener;
@@ -196,111 +199,119 @@ let
   onionInbounds = (services onion).proxy-suite-inbounds;
 
   invalidAssertions = mkFailingAssertions mkBadProxySuiteFixture (
-    map (case: { enable = true; } // case) [
-      # Enabled but used for nothing.
-      { tor.enable = true; }
-      # An outbound without a backend.
-      {
-        tor = {
+    map
+      (
+        case:
+        lib.recursiveUpdate {
           enable = true;
-          asOutbound = true;
-        };
-      }
-      # "tor" is taken.
-      {
-        tor = {
-          enable = true;
-          asOutbound = true;
-        };
-        proxy = {
-          enable = true;
-          outbounds = [
-            {
-              tag = "tor";
-              url = "http://proxy.example.com:8080";
-            }
-          ];
-        };
-      }
-      # Snowflake ignores Socks5Proxy.
-      {
-        tor = {
-          enable = true;
-          asOutbound = true;
-          upstream = "proxy";
-          bridges.lines = [ "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72" ];
-        };
-        proxy = {
-          enable = true;
-          outbounds = [
-            {
-              tag = "vps";
-              url = "http://vps.example.com:8080";
-            }
-          ];
-        };
-      }
-      # Upstream through the proxy with Tor its only outbound: Tor through itself.
-      {
-        tor = {
-          enable = true;
-          asOutbound = true;
-          upstream = "proxy";
-        };
-        proxy.enable = true;
-      }
-      # The SOCKS port on the proxy's own.
-      {
-        tor = {
-          enable = true;
-          asOutbound = true;
-          socksPort = 1080;
-        };
-        proxy = {
-          enable = true;
-          listener.port = 1080;
-        };
-      }
-      # An onion service without inbounds, and one naming a listener that is not there.
-      {
-        tor = {
-          enable = true;
-          onionService.enable = true;
-        };
-      }
-      {
-        tor = {
-          enable = true;
-          onionService = {
+          inbounds.users.user.uuidFile = "/run/secrets/uuid";
+        } case
+      )
+      [
+        # Enabled but used for nothing.
+        { tor.enable = true; }
+        # An outbound without a backend.
+        {
+          tor = {
             enable = true;
-            listeners = [ "missing" ];
+            asOutbound = true;
           };
-        };
-        inbounds = {
-          enable = true;
-          routing.via = "direct";
-          listeners.plain = listener;
-        };
-      }
-      # Two listeners on one onion port.
-      {
-        tor = {
-          enable = true;
-          onionService.enable = true;
-        };
-        inbounds = {
-          enable = true;
-          routing.via = "direct";
-          listeners.a = listener // {
-            sharePort = 443;
+        }
+        # "tor" is taken.
+        {
+          tor = {
+            enable = true;
+            asOutbound = true;
           };
-          listeners.b = listener // {
-            port = 10444;
-            sharePort = 443;
+          proxy = {
+            enable = true;
+            outbounds = [
+              {
+                tag = "tor";
+                url = "http://proxy.example.com:8080";
+              }
+            ];
           };
-        };
-      }
-    ]
+        }
+        # Snowflake ignores Socks5Proxy.
+        {
+          tor = {
+            enable = true;
+            asOutbound = true;
+            upstream = "proxy";
+            bridges.lines = [ "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72" ];
+          };
+          proxy = {
+            enable = true;
+            outbounds = [
+              {
+                tag = "vps";
+                url = "http://vps.example.com:8080";
+              }
+            ];
+          };
+        }
+        # Upstream through the proxy with Tor its only outbound: Tor through itself.
+        {
+          tor = {
+            enable = true;
+            asOutbound = true;
+            upstream = "proxy";
+          };
+          proxy.enable = true;
+        }
+        # The SOCKS port on the proxy's own.
+        {
+          tor = {
+            enable = true;
+            asOutbound = true;
+            socksPort = 1080;
+          };
+          proxy = {
+            enable = true;
+            listener.port = 1080;
+          };
+        }
+        # An onion service without inbounds, and one naming a listener that is not there.
+        {
+          tor = {
+            enable = true;
+            onionService.enable = true;
+          };
+        }
+        {
+          tor = {
+            enable = true;
+            onionService = {
+              enable = true;
+              listeners = [ "missing" ];
+            };
+          };
+          inbounds = {
+            enable = true;
+            routing.via = "direct";
+            listeners.plain = listener;
+          };
+        }
+        # Two listeners on one onion port.
+        {
+          tor = {
+            enable = true;
+            onionService.enable = true;
+          };
+          inbounds = {
+            enable = true;
+            routing.via = "direct";
+            listeners.a = listener // {
+              sharePort = 443;
+            };
+            listeners.b = listener // {
+              port = 10444;
+              sharePort = 443;
+            };
+          };
+        }
+      ]
   );
 in
 {
@@ -457,11 +468,16 @@ in
         && !(hasInfix "HiddenService" singBoxTorStart);
       true
     )
-    # userControl's group can use the control socket: that is `proxy-ctl tor status|newnym`.
+    # The control socket is Tor's alone, with userControl or without: with it the group could
+    # publish any loopback port as an onion service. `proxy-ctl tor newnym` goes through a
+    # root unit, which polkit's "services" scope may start.
     (
       assert
-        (services controlled).proxy-suite-tor.serviceConfig.Group == "proxy-suite"
-        && hasInfix "mkdir -p -m 0750" (torStartOf controlled)
+        (services controlled).proxy-suite-tor.serviceConfig.Group == "proxy-suite-daemon"
+        && hasInfix "mkdir -p -m 0700" (torStartOf controlled)
+        && !(hasInfix "ControlSocketsGroupWritable" (torStartOf controlled))
+        && (services controlled) ? proxy-suite-tor-newnym
+        && hasInfix "\"proxy-suite-tor-newnym.service\"" (controlled.config.security.polkit.extraConfig)
         && singBoxTorUnit.serviceConfig.Group == "proxy-suite-daemon"
         && !(singBoxTorUnit.serviceConfig ? ExecStartPre)
         &&

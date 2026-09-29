@@ -26,7 +26,13 @@ let
 
   inboundRules = import ./rules/proxy-inbounds.nix {
     inherit lib;
-    inherit (derived) proxyInboundsCfg proxyInbounds proxyInboundsRouteOnion;
+    inherit (derived)
+      proxyInboundsCfg
+      proxyInbounds
+      proxyInboundsRouteOnion
+      proxyInboundsResolveInSingBox
+      proxyInboundsSelfSources
+      ;
     inherit (rules) zapretDirectRules;
   };
 

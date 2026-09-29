@@ -25,6 +25,7 @@ let
     buildOutboundPy
     proxyInboundsFile
     proxyInboundsSpecFile
+    proxyInboundsSelfSources
     builders
     constants
     ;
@@ -33,6 +34,22 @@ let
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
   subsCfg = proxyInboundsCfg.subscriptions;
   xray = "${proxyInboundsCfg.package}/bin/xray";
+
+  # inbounds.routing.serverSource: the users' own addresses toward this host, on a dummy
+  # interface. Reached through lo like any local address; nothing routes out from them.
+  ip = "${pkgs.iproute2}/bin/ip";
+  selfInterface = lib.escapeShellArg proxyInboundsCfg.routing.serverSource.interface;
+  selfInterfaceDown = "${ip} link del ${selfInterface} 2>/dev/null || true";
+  selfInterfaceUp = lib.optionalString (proxyInboundsSelfSources != [ ]) ''
+    ${selfInterfaceDown}
+    ${ip} link add ${selfInterface} type dummy
+    ${ip} link set ${selfInterface} up
+    ${lib.concatMapStrings (
+      s:
+      lib.optionalString (s.ipv4 != null) "${ip} addr add ${s.ipv4}/32 dev ${selfInterface}\n"
+      + lib.optionalString (s.ipv6 != null) "${ip} -6 addr add ${s.ipv6}/128 dev ${selfInterface} nodad\n"
+    ) proxyInboundsSelfSources}
+  '';
   # Only listeners, and for AmneziaWG listeners transparent sockets (IP_TRANSPARENT).
   runXray = constants.runAsServiceUser pkgs (
     [ "net_bind_service" ] ++ lib.optional (proxyInboundsAwg != [ ]) "net_admin"
@@ -242,6 +259,7 @@ let
     ${writeLinksBlock}
     ${writeSubscriptionsBlock}
 
+    ${selfInterfaceUp}
     exec ${runXray} ${xray} run -c "$RUNTIME_DIR/config.json"
   '';
 
@@ -288,10 +306,16 @@ let
     chmod ${if userControlAllows "stats" then "640" else "600"} "$tmp"
     mv -f "$tmp" "$file"
   '';
+  stopInboundsInterface =
+    if proxyInboundsSelfSources == [ ] then
+      null
+    else
+      pkgs.writeShellScript "proxy-suite-inbounds" selfInterfaceDown;
 in
 {
   inherit
     startInbounds
+    stopInboundsInterface
     collectInboundStats
     linksFile
     subscriptionsFile

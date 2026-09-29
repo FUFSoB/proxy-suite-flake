@@ -118,6 +118,8 @@ let
         ++ lib.optional torOnionEnabled "proxy-suite-tor.service";
         wantedBy = [ "multi-user.target" ];
         execStart = scripts.startInbounds;
+        # inbounds.routing.serverSource's dummy interface.
+        execStopPost = scripts.stopInboundsInterface;
         runtimeDirectory = serviceNames.inbounds;
         # The collector's file.
         stateDirectory = "proxy-suite";

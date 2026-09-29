@@ -106,7 +106,7 @@ in
       type = types.package;
       default = proxySuiteUpstream.whitelist-bypass;
       defaultText = lib.literalMD "proxy-suite's `whitelist-bypass` (`pkgs/whitelist-bypass.nix`)";
-      description = "whitelist-bypass package.";
+      description = "whitelist-bypass package. It must take the call link and the proxy password from WB_LINK and WB_UPSTREAM_PASS, as `pkgs/whitelist-bypass.nix` patches it to.";
     };
 
     joiners = mkOption {

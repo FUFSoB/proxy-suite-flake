@@ -11,10 +11,28 @@ let
   inherit (checkLib) ok;
   inherit (pkgs) lib;
 
+  # The users every fixture's listeners name, by what they hold.
+  usersModule = {
+    services.proxy-suite.inbounds.users = {
+      user.uuidFile = "/run/secrets/uuid";
+      ws.uuidFile = "/run/secrets/ws";
+      h3.uuidFile = "/run/secrets/h3";
+      hy2.passwordFile = "/run/secrets/hy2";
+      ss.passwordFile = "/run/secrets/ss";
+      a.passwordFile = "/run/secrets/a";
+      b.passwordFile = "/run/secrets/b";
+      second = { };
+      phone = { };
+      laptop = { };
+      far.address = "10.66.1.2";
+    };
+  };
+  evalWithUsers = modules: evalProxySuite (modules ++ [ usersModule ]);
+
   realityListener = {
     type = "vless";
     port = 443;
-    users = [ { uuidFile = "/run/secrets/uuid"; } ];
+    users = [ "user" ];
     flow = "xtls-rprx-vision";
     reality = {
       enable = true;
@@ -27,7 +45,7 @@ let
 
   mkInbounds =
     inbounds:
-    evalProxySuite [
+    evalWithUsers [
       baseModule
       {
         services.proxy-suite.inbounds = {
@@ -69,7 +87,7 @@ let
   blockedConfig = mkInboundsConfig blockedFixture;
 
   # Two listeners, two different servers.
-  pinnedFixture = evalProxySuite [
+  pinnedFixture = evalWithUsers [
     {
       system.stateVersion = "26.05";
       services.proxy-suite = {
@@ -141,6 +159,58 @@ let
   };
   aliasedConfig = mkInboundsConfig aliasedFixture;
 
+  # Connections to this host from each user's own address: an order is the user's number,
+  # and users without one follow the highest, by name.
+  selfSourceInbounds = {
+    serverAddress = "vpn.example.com";
+    serverAliases = [
+      "203.0.113.10"
+      "2001:db8::10"
+    ];
+    routing.serverSource = {
+      ipv4 = "10.78.0.0/24";
+      ipv6 = "fd78:78:78::/64";
+    };
+    users = {
+      # One user, two secrets: each listener takes its protocol's.
+      bob = {
+        order = 1;
+        uuidFile = "/run/secrets/bob";
+        passwordFile = "/run/secrets/bob";
+      };
+      alice = {
+        order = 5;
+        passwordFile = "/run/secrets/alice";
+      };
+      anon.uuidFile = "/run/secrets/anon";
+    };
+    listeners.vless-in = realityListener // {
+      users = [
+        "bob"
+        "anon"
+      ];
+    };
+    listeners.hy-in = {
+      type = "hysteria2";
+      port = 8443;
+      users = [
+        "alice"
+        "bob"
+      ];
+      tls = {
+        enable = true;
+        certificateFile = "/run/secrets/cert";
+        keyFile = "/run/secrets/key";
+      };
+    };
+  };
+  selfSourceFixture = mkInbounds selfSourceInbounds;
+  selfSourceConfig = mkInboundsConfig selfSourceFixture;
+  selfSourceService = selfSourceFixture.config.systemd.services.proxy-suite-inbounds.serviceConfig;
+  badSelfSourceFixture = mkInbounds (
+    lib.recursiveUpdate selfSourceInbounds { routing.serverSource.ipv4 = "10.78.0.5/24"; }
+  );
+
   unguardedFixture = mkInbounds {
     routing = {
       blockRu = false;
@@ -155,7 +225,7 @@ let
     listeners.ss-in = {
       type = "shadowsocks";
       port = 8388;
-      users = [ { passwordFile = "/run/secrets/ss"; } ];
+      users = [ "ss" ];
     };
     # Loopback-bound: the port stays closed though the link advertises the public one.
     listeners.ws-in = {
@@ -163,7 +233,7 @@ let
       port = 10002;
       sharePort = 443;
       address = "127.0.0.53";
-      users = [ { uuidFile = "/run/secrets/ws"; } ];
+      users = [ "ws" ];
       transport = {
         type = "ws";
         path = "/vpnjantit";
@@ -178,7 +248,7 @@ let
     listeners.h3-in = {
       type = "vless";
       port = 8443;
-      users = [ { uuidFile = "/run/secrets/h3"; } ];
+      users = [ "h3" ];
       transport = {
         type = "xhttp";
         path = "/h3";
@@ -194,7 +264,7 @@ let
     listeners.hy2-in = {
       type = "hysteria2";
       port = 8444;
-      users = [ { passwordFile = "/run/secrets/hy2"; } ];
+      users = [ "hy2" ];
       tls = {
         certificateFile = "/run/acme/fullchain.pem";
         keyFile = "/run/acme/key.pem";
@@ -209,7 +279,7 @@ let
     listeners.hy2-in = {
       type = "hysteria2";
       port = 443;
-      users = [ { passwordFile = "/run/secrets/hy2"; } ];
+      users = [ "hy2" ];
       tls = {
         certificateFile = "/c";
         keyFile = "/k";
@@ -227,7 +297,7 @@ let
     type = "vless";
     port = 10002;
     address = "127.0.0.1";
-    users = [ { uuidFile = "/run/secrets/ws"; } ];
+    users = [ "ws" ];
     transport = {
       type = "ws";
       path = "/ws";
@@ -237,7 +307,7 @@ let
     front-in = {
       type = "vless";
       port = 443;
-      users = [ { uuidFile = "/run/secrets/uuid"; } ];
+      users = [ "user" ];
       tls = {
         enable = true;
         certificateFile = "/run/acme/fullchain.pem";
@@ -277,8 +347,8 @@ let
     type = "amneziawg";
     port = 51820;
     users = [
-      { name = "phone"; }
-      { name = "laptop"; }
+      "phone"
+      "laptop"
     ];
   };
   awgFixture = mkInbounds {
@@ -339,7 +409,7 @@ let
     fixture:
     (import ./read-generated.nix).readDerivation
       fixture.config.systemd.services."proxy-suite-inbound-stats".serviceConfig.ExecStart;
-  controlFixture = evalProxySuite [
+  controlFixture = evalWithUsers [
     baseModule
     {
       services.proxy-suite = {
@@ -367,7 +437,7 @@ let
   mkRejects =
     proxySuiteConfig: fragment:
     let
-      fixture = evalProxySuite [
+      fixture = evalWithUsers [
         {
           system.stateVersion = "26.05";
           services.proxy-suite = proxySuiteConfig;
@@ -395,14 +465,8 @@ let
     );
 
   ssUsers = [
-    {
-      name = "a";
-      passwordFile = "/run/secrets/a";
-    }
-    {
-      name = "b";
-      passwordFile = "/run/secrets/b";
-    }
+    "a"
+    "b"
   ];
 
   failing = [
@@ -477,9 +541,21 @@ let
     (mkRejectsListener (
       realityListener // { port = 18533; }
     ) "collides with a port proxy-suite uses internally")
+    # An order is an address: two users cannot share one.
+    (mkRejects (
+      baseProxy
+      // {
+        inbounds = {
+          enable = true;
+          users.a.order = 3;
+          users.b.order = 3;
+          listeners.bad = realityListener;
+        };
+      }
+    ) "inbounds.users must each have a distinct order")
     # Every user is checked, not only the first.
     (mkRejectsListener (
-      realityListener // { users = realityListener.users ++ [ { name = "second"; } ]; }
+      realityListener // { users = realityListener.users ++ [ "second" ]; }
     ) "users each need exactly one of uuid or uuidFile")
     (mkRejectsListener {
       type = "shadowsocks";
@@ -487,7 +563,10 @@ let
     } "needs exactly one of serverPassword or serverPasswordFile")
     (mkRejectsListener {
       type = "trojan";
-      users = map (u: u // { name = "same"; }) ssUsers;
+      users = [
+        "a"
+        "a"
+      ];
       tls = {
         certificateFile = "/c";
         keyFile = "/k";
@@ -576,7 +655,7 @@ let
           listeners.tls-in = {
             type = "vless";
             port = 8443;
-            users = [ { uuidFile = "/run/secrets/uuid"; } ];
+            users = [ "user" ];
             tls.enable = true;
           };
         };
@@ -603,7 +682,7 @@ let
           listeners.hy2-in = {
             type = "hysteria2";
             port = 8444;
-            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            users = [ "hy2" ];
             transport.type = "ws";
             tls = {
               certificateFile = "/c";
@@ -622,7 +701,7 @@ let
           listeners.hy2-in = {
             type = "hysteria2";
             port = 8444;
-            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            users = [ "hy2" ];
           };
         };
       }
@@ -637,7 +716,7 @@ let
           listeners.hy2-in = {
             type = "hysteria2";
             port = 8444;
-            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            users = [ "hy2" ];
             acceptProxyProtocol = true;
             tls = {
               certificateFile = "/c";
@@ -668,7 +747,7 @@ let
           listeners.hy2-in = {
             type = "hysteria2";
             port = 443;
-            users = [ { passwordFile = "/run/secrets/hy2"; } ];
+            users = [ "hy2" ];
             hysteria.portHopping = "30000-20000";
             tls = {
               certificateFile = "/c";
@@ -734,16 +813,10 @@ let
         };
       }
     ) "is longer than the kernel's 15 characters")
-    (mkRejectsListener (awgListener // { users = [ { } ]; }) "users each need a name")
     (mkRejectsListener (
       awgListener
       // {
-        users = [
-          {
-            name = "a";
-            address = "10.66.1.2";
-          }
-        ];
+        users = [ "far" ];
       }
     ) "must be a host address inside amneziaWg.subnet")
     (mkRejects (
@@ -802,15 +875,37 @@ let
     (ok ((ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]))
     (ok ((ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]))
     (ok (!builtins.elem "inbound-block-private" (ruleTags unguardedConfig)))
-    # serverAddress is exempt after blockPrivate, before the country blocks.
+    # serverAddress is exempt after blockPrivate, before the country blocks. Sniffing is
+    # routeOnly, so a connection to another IP naming this host in its handshake would match
+    # the name: the guard before it sends those the listener's way.
     (
       assert
-        lib.take 4 (ruleTags namedConfig) == [
+        lib.take 5 (ruleTags namedConfig) == [
           "inbound-stats-api"
           "inbound-block-private"
+          "inbound-server-address-sniffed-proxy"
           "inbound-server-address-direct"
           "inbound-block-ru-domain"
         ];
+      true
+    )
+    (
+      let
+        guard = ruleByTag aliasedConfig "inbound-server-address-sniffed-proxy";
+        tags = ruleTags aliasedConfig;
+        at = tag: lib.lists.findFirstIndex (t: t == tag) null tags;
+      in
+      assert
+        guard.ip == [
+          "0.0.0.0/0"
+          "::/0"
+        ];
+      assert guard.outboundTag == "proxy";
+      assert guard.domain == (ruleByTag aliasedConfig "inbound-server-address-direct").domain;
+      assert guard.port == (ruleByTag aliasedConfig "inbound-server-address-direct").port;
+      # This host's IPs first: a client that resolved the name itself still gets here.
+      assert at "inbound-server-address-direct-ip" < at "inbound-server-address-sniffed-proxy";
+      assert at "inbound-server-address-sniffed-proxy" < at "inbound-server-address-direct";
       true
     )
     (ok ((ruleByTag namedConfig "inbound-server-address-direct").domain == [ "full:vpn.example.ru" ]))
@@ -853,6 +948,53 @@ let
       true
     )
     # serverPorts join the listener's, ranges as they are.
+    # inbounds.routing.serverSource: bob 1 and alice 5 by their orders, anon after them (6);
+    # each family its outbound.
+    (
+      let
+        out = tag: builtins.head (builtins.filter (ob: ob.tag == tag) selfSourceConfig.outbounds);
+        tags = ruleTags selfSourceConfig;
+        at = tag: lib.lists.findFirstIndex (t: t == tag) null tags;
+        startScript = (import ./read-generated.nix).readDerivation selfSourceService.ExecStart;
+      in
+      assert (out "direct-self4-1").sendThrough == "10.78.0.1";
+      assert (out "direct-self6-5").sendThrough == "fd78:78:78::5";
+      assert (out "direct-self4-6").sendThrough == "10.78.0.6";
+      assert (out "direct-self4-1").settings.domainStrategy == "UseIPv4";
+      # Only ever this host.
+      assert
+        (out "direct-self4-1").settings.finalRules == [
+          {
+            action = "allow";
+            ip = [
+              "203.0.113.10"
+              "2001:db8::10"
+            ];
+          }
+          { action = "block"; }
+        ];
+      assert (ruleByTag selfSourceConfig "inbound-server-address-self-ip4-1").user == [ "bob" ];
+      assert (ruleByTag selfSourceConfig "inbound-server-address-self-ip4-5").user == [ "alice" ];
+      assert (ruleByTag selfSourceConfig "inbound-server-address-self-ip4-5").ip == [ "203.0.113.10" ];
+      assert
+        (ruleByTag selfSourceConfig "inbound-server-address-self-ip6-5").outboundTag == "direct-self6-5";
+      assert (ruleByTag selfSourceConfig "inbound-server-address-self-6").user == [ "anon" ];
+      assert
+        (ruleByTag selfSourceConfig "inbound-server-address-self-6").domain == [ "full:vpn.example.com" ];
+      # Users' own rules before the host's, and the names behind the sniffing guard.
+      assert at "inbound-server-address-self-ip4-1" < at "inbound-server-address-direct-ip";
+      assert at "inbound-server-address-sniffed-proxy" < at "inbound-server-address-self-1";
+      assert at "inbound-server-address-self-1" < at "inbound-server-address-direct";
+      assert lib.hasInfix "link add ps-self type dummy" startScript;
+      assert lib.hasInfix "addr add 10.78.0.5/32 dev ps-self" startScript;
+      assert lib.hasInfix "-6 addr add fd78:78:78::6/128 dev ps-self nodad" startScript;
+      assert selfSourceService ? ExecStopPost;
+      assert !(relayFixture.config.systemd.services.proxy-suite-inbounds.serviceConfig ? ExecStopPost);
+      assert builtins.any (
+        a: !a.assertion && lib.hasInfix "serverSource.ipv4 must be a network address" a.message
+      ) badSelfSourceFixture.config.assertions;
+      true
+    )
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct"))

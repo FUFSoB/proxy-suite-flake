@@ -81,6 +81,11 @@ services.proxy-suite = {
         geosites = [ ];
         ips = [ ];
       };
+      serverSource = {
+        interface = "ps-self";
+        ipv4 = null;
+        ipv6 = null;
+      };
       via = "proxy";
       zapretDirect = true;
     };
@@ -93,6 +98,7 @@ services.proxy-suite = {
       enable = false;
       group = "nginx";
     };
+    users = { };
   };
   killSwitch = {
     enable = false;

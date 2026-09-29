@@ -34,7 +34,7 @@ host serves one joiner on a censored one\.
 <a id="services-proxy-suite-whitelistbypass-package"></a>
 ## services\.proxy-suite\.whitelistBypass\.package
 
-whitelist-bypass package\.
+whitelist-bypass package\. It must take the call link and the proxy password from WB_LINK and WB_UPSTREAM_PASS, as ` pkgs/whitelist-bypass.nix ` patches it to\.
 
 **Type:** package\
 **Default:** proxy-suite’s ` whitelist-bypass ` (` pkgs/whitelist-bypass.nix `)

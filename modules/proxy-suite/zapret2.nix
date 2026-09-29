@@ -101,7 +101,12 @@ let
       Type = "notify";
       ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
       Environment = runtimeEnv;
+      # Its own part of the state only: under the sandbox below, the rest stays read-only.
+      StateDirectoryMode = if userControlAllows "zapret" then "2775" else "0755";
     }
+    # systemd gives the state directory the unit's group on every start: the group's, which
+    # edits the lists (as autoProxy's units do).
+    // lib.optionalAttrs (userControlAllows "zapret") { Group = cfg.userControl.group; }
     # nfqws2 runs as root and writes its lists in a directory the zapret scope's group
     # writes to as well.
     // constants.rootInSharedDirConfig;
@@ -136,7 +141,7 @@ in
         wantedBy = [ "multi-user.target" ];
         preStart = mkPreStart;
         runtimeDirectory = "proxy-suite-zapret";
-        stateDirectory = "proxy-suite";
+        stateDirectory = "proxy-suite/zapret2";
         execStart = "${runtime.daemonScript}";
         execStopPost = "${runtime.initScript} stop_fw";
         extraServiceConfig = daemonConfig (
@@ -156,7 +161,7 @@ in
         conflicts = perAppConflicts ++ awgServiceNames;
         preStart = mkPreStart;
         runtimeDirectory = "proxy-suite-per-app-zapret";
-        stateDirectory = "proxy-suite";
+        stateDirectory = "proxy-suite/zapret2";
         execStart = "${runtime.daemonScript}";
         execStartPre = "${perAppZapretMarkUpScript}";
         execStopPost = [

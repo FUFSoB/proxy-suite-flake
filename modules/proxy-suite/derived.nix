@@ -181,6 +181,58 @@ let
     }) proxyInboundsCfg.listeners
   );
 
+  # inbounds.routing.serverSource: an address per inbound user (by XRay's email, the user's
+  # name), which XRay sends that user's connections to this host from.
+  proxyInboundsServerSource = proxyInboundsCfg.routing.serverSource;
+  proxyInboundsSelfSources =
+    let
+      src = proxyInboundsServerSource;
+      # The users XRay's listeners accept (by name, XRay's email): numbered by their order,
+      # the rest after the highest order, by name.
+      names = lib.unique (
+        lib.concatMap (ib: map (user: user.name) ib.listener.users) (
+          builtins.filter (ib: ib.listener.type != "amneziawg") proxyInbounds
+        )
+      );
+      orderOf = name: proxyInboundsCfg.users.${name}.order;
+      ordered = builtins.filter (name: orderOf name != null) names;
+      highest = lib.foldl lib.max 0 (map orderOf ordered);
+      numbered =
+        map (name: {
+          email = name;
+          number = orderOf name;
+        }) ordered
+        ++ lib.imap1 (i: name: {
+          email = name;
+          number = highest + i;
+        }) (lib.sort lib.lessThan (builtins.filter (name: orderOf name == null) names));
+      octets =
+        cidr:
+        map lib.toInt (lib.take 4 (builtins.match "([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/[0-9]+" cidr));
+      v4Int = cidr: lib.foldl (acc: o: acc * 256 + o) 0 (octets cidr);
+      v4String =
+        n:
+        lib.concatMapStringsSep "." (shift: toString (lib.mod (n / shift) 256)) [
+          16777216
+          65536
+          256
+          1
+        ];
+      v6Prefix = cidr: builtins.head (lib.splitString "/" cidr);
+    in
+    lib.optionals (src.ipv4 != null || src.ipv6 != null) (
+      map (
+        { email, number }:
+        {
+          inherit email number;
+          id = toString number;
+          ipv4 = if src.ipv4 == null then null else v4String (v4Int src.ipv4 + number);
+          ipv6 =
+            if src.ipv6 == null then null else "${v6Prefix src.ipv6}${lib.toLower (lib.toHexString number)}";
+        }
+      ) (lib.sort (a: b: a.number < b.number) numbered)
+    );
+
   # .onion names from clients go to the local proxy, whose rule hands them to Tor, whatever
   # the listener's via. AmneziaWG listeners never pass XRay's routing.
   proxyInboundsRouteOnion =
@@ -606,6 +658,8 @@ in
     proxyInboundsRouteOnion
     proxyInboundsNeedLocalProxy
     proxyInboundsResolveInSingBox
+    proxyInboundsServerSource
+    proxyInboundsSelfSources
     proxyInboundsGuardPrivate
     proxyInboundsGuardStrategy
     proxyInboundViaTags

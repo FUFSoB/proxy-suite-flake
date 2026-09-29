@@ -6,15 +6,17 @@
     enable = true;
     serverAddress = "vpn.example.com"; # null: this host's public IPv4
     routing.via = "direct";            # clients exit straight from this host
+    # Each user once; listeners name the ones they accept, and take the secret they need.
+    users = {
+      phone.uuidFile = "/run/secrets/uuid-phone";
+      laptop.uuidFile = "/run/secrets/uuid-laptop";
+    };
     listeners = {
       vless-reality = {
         type = "vless";
         port = 443;
         flow = "xtls-rprx-vision";
-        users = [
-          { name = "phone"; uuidFile = "/run/secrets/uuid-phone"; }
-          { name = "laptop"; uuidFile = "/run/secrets/uuid-laptop"; }
-        ];
+        users = [ "phone" "laptop" ];
         reality = {
           enable = true;
           serverNames = [ "www.microsoft.com" ];
@@ -27,7 +29,7 @@
       awg = {
         type = "amneziawg";
         port = 51820;
-        users = [ { name = "phone"; } ];
+        users = [ "phone" ];
       };
     };
   };

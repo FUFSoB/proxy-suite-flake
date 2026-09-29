@@ -24,7 +24,7 @@ let
     );
   };
 
-  users = names: map (name: { inherit name; }) names;
+  users = names: names;
 
   # Each client imports what the server hands out: the .conf, or the vpn:// link.
   client =
@@ -81,6 +81,12 @@ pkgs.testers.runNixOSTest {
             inherit serverAddress;
             routing.via = "direct";
             openFirewall = true;
+            users = pkgs.lib.genAttrs [
+              "phone"
+              "laptop"
+              "tablet"
+              "watch"
+            ] (_: { });
             listeners.home = {
               type = "amneziawg";
               port = 51820;

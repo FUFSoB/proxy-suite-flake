@@ -26,14 +26,23 @@ pkgs.buildGo126Module (finalAttrs: {
     "headless/dion-joiner"
     "headless/bitrix-joiner"
   ];
-  # The local proxy's password from the environment, not argv: a creator runs for good,
-  # and every local user reads its command line.
+  # The call link (WB_LINK) and the local proxy's password (WB_UPSTREAM_PASS) from the
+  # environment, not argv: these run for good, and every local user reads a command line.
   postPatch = ''
+    envDefault() {
+      substituteInPlace "headless/$1/main.go" --replace-fail \
+        "flag.String(\"$2\", \"\"," "flag.String(\"$2\", os.Getenv(\"$3\"),"
+    }
     for p in vk telemost wbstream dion bitrix; do
-      substituteInPlace headless/$p/main.go --replace-fail \
-        'flag.String("upstream-pass", "",' \
-        'flag.String("upstream-pass", os.Getenv("WB_UPSTREAM_PASS"),'
+      envDefault $p upstream-pass WB_UPSTREAM_PASS
     done
+    for p in bitrix dion dion-joiner wbstream wbstream-joiner; do
+      envDefault $p room WB_LINK
+    done
+    envDefault bitrix-joiner link WB_LINK
+    envDefault telemost tm-link WB_LINK
+    envDefault telemost-joiner tm-link WB_LINK
+    envDefault vk vk-link WB_LINK
   '';
   ldflags = [
     "-s"

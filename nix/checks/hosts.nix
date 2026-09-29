@@ -123,10 +123,11 @@ let
       };
       inbounds = {
         enable = true;
+        users.user.uuidFile = "/run/secrets/uuid";
         listeners.vless = {
           type = "vless";
           port = 8443;
-          users = [ { uuidFile = "/run/secrets/uuid"; } ];
+          users = [ "user" ];
           tls.certificateFile = "/c";
           tls.keyFile = "/k";
         };

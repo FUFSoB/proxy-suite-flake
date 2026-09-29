@@ -5,6 +5,8 @@
   proxyInboundsCfg,
   proxyInbounds,
   proxyInboundsRouteOnion,
+  proxyInboundsResolveInSingBox,
+  proxyInboundsSelfSources,
   zapretDirectRules,
 }:
 
@@ -74,15 +76,83 @@ let
       inherit ruleTag;
       ${field} = items;
       inboundTag = exceptionInboundTags;
-      port = lib.concatMapStringsSep "," toString serverAddressPorts;
+      port = serverPortList;
       outboundTag = "direct";
     };
 
-  serverAddressRule =
-    mkServerAddressRule "inbound-server-address-direct" "domain" (
-      map (name: if isSuffix name then name else "full:${name}") serverNames
+  # Sniffing is routeOnly (proxy_inbound.py): a name rule also matches a connection to an IP
+  # whose TLS SNI or HTTP Host carries that name, and "direct" then dials the IP, from this
+  # host's own address. Any client could reach any address past routing.via that way by
+  # naming this host (or a zapret site) in its handshake. So before a name rule sends
+  # anything direct, a connection to an IP it would match goes where it would have gone
+  # without the name rule: its listener's via. Under AsIs an ip condition matches only
+  # connections to an IP. Under IPOnDemand it resolves names as well, so there it only works
+  # after the IP rules, which a name resolving to this host matches first.
+  anyIp = [
+    "0.0.0.0/0"
+    "::/0"
+  ];
+  mkSniffGuard =
+    ruleTag: domains: inbounds: extra:
+    lib.mapAttrsToList (
+      via: ibs:
+      {
+        type = "field";
+        ruleTag = "${ruleTag}-${via}";
+        domain = domains;
+        ip = anyIp;
+        inboundTag = map (ib: ib.tag) ibs;
+        outboundTag = via;
+      }
+      // extra
+    ) (lib.groupBy (ib: ib.via) inbounds);
+
+  serverNameDomains = map (name: if isSuffix name then name else "full:${name}") serverNames;
+  serverPortList = lib.concatMapStringsSep "," toString serverAddressPorts;
+
+  # inbounds.routing.serverSource: each user's connections to this host leave from the
+  # user's own address (the "direct-self" outbounds, config-templates/proxy-inbounds.nix),
+  # ahead of the rules that dial them from this host's. A name is dialed over the family the
+  # user has an address in.
+  serverIps4 = builtins.filter (ip: !lib.hasInfix ":" ip) serverIps;
+  serverIps6 = builtins.filter (lib.hasInfix ":") serverIps;
+  mkSelfRule =
+    ruleTag: field: items: source: outboundTag:
+    lib.optional (items != [ ] && exceptionInboundTags != [ ]) {
+      type = "field";
+      ruleTag = "${ruleTag}-${source.id}";
+      ${field} = items;
+      user = [ source.email ];
+      inboundTag = exceptionInboundTags;
+      port = serverPortList;
+      inherit outboundTag;
+    };
+  selfIpRules = lib.concatMap (
+    s:
+    lib.optionals (s.ipv4 != null) (
+      mkSelfRule "inbound-server-address-self-ip4" "ip" serverIps4 s "direct-self4-${s.id}"
     )
-    ++ mkServerAddressRule "inbound-server-address-direct-ip" "ip" serverIps;
+    ++ lib.optionals (s.ipv6 != null) (
+      mkSelfRule "inbound-server-address-self-ip6" "ip" serverIps6 s "direct-self6-${s.id}"
+    )
+  ) proxyInboundsSelfSources;
+  selfNameRules = lib.concatMap (
+    s:
+    mkSelfRule "inbound-server-address-self" "domain" serverNameDomains s (
+      if s.ipv4 != null then "direct-self4-${s.id}" else "direct-self6-${s.id}"
+    )
+  ) proxyInboundsSelfSources;
+  serverNameGuarded = proxyInboundsResolveInSingBox || serverIps != [ ];
+  serverAddressRule =
+    selfIpRules
+    ++ mkServerAddressRule "inbound-server-address-direct-ip" "ip" serverIps
+    ++ lib.optionals (serverNames != [ ] && serverNameGuarded && exceptionInboundTags != [ ]) (
+      mkSniffGuard "inbound-server-address-sniffed" serverNameDomains (builtins.filter (
+        ib: ib.via != "block"
+      ) proxyInbounds) { port = serverPortList; }
+    )
+    ++ lib.optionals (serverNames != [ ] && serverNameGuarded) selfNameRules
+    ++ mkServerAddressRule "inbound-server-address-direct" "domain" serverNameDomains;
 
   blockRuRules = lib.optionals proxyInboundsCfg.routing.blockRu [
     {
@@ -144,11 +214,18 @@ let
       outboundTag = "direct";
     };
 
+  zapretDomains = map (domain: "domain:${domain}") zapretDirectRules.domains;
+  # Under IPOnDemand the guard would take every zapret name too: the domain rule stays off.
   zapretRules =
-    mkZapretRule "inbound-zapret-direct-domain" "domain" (
-      map (domain: "domain:${domain}") zapretDirectRules.domains
+    mkZapretRule "inbound-zapret-direct-ip" "ip" zapretDirectRules.ips
+    ++ lib.optionals (zapretDirectEnabled && zapretDomains != [ ] && proxyInboundsResolveInSingBox) (
+      mkSniffGuard "inbound-zapret-sniffed" zapretDomains (builtins.filter (
+        ib: builtins.elem ib.tag defaultInboundTags
+      ) proxyInbounds) { }
     )
-    ++ mkZapretRule "inbound-zapret-direct-ip" "ip" zapretDirectRules.ips;
+    ++ lib.optionals proxyInboundsResolveInSingBox (
+      mkZapretRule "inbound-zapret-direct-domain" "domain" zapretDomains
+    );
 
   overrideRules = map (ib: {
     type = "field";
@@ -179,4 +256,6 @@ let
 in
 {
   inherit xrayInboundRules;
+  # Names of this host sent direct with no guard (IPOnDemand, and no IP aliases): a warning.
+  unguardedServerNames = lib.optionals (!serverNameGuarded) serverNames;
 }

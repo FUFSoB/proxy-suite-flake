@@ -66,7 +66,7 @@ in
       assert envValue zapret2Global globalService "HOSTLIST_BASE=" == "/var/lib/proxy-suite/zapret2";
       assert
         zapret2Global.config.systemd.services.${globalService}.serviceConfig.StateDirectory
-        == "proxy-suite";
+        == "proxy-suite/zapret2";
       assert envValue zapret2PerApp perAppService "HOSTLIST_BASE=" == "/var/lib/proxy-suite/zapret2";
       assert
         envValue zapret2PerApp perAppService "Z2K_STATE_DIR_OVERRIDE="
