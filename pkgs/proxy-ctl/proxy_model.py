@@ -566,14 +566,14 @@ TABS = [
             Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
             Action(
                 "n",
-                "new Tor circuits for new connections",
+                "new Tor circuits",
                 lambda r, *_: ["tor", "newnym"],
                 when=lambda r: r["unit"] == "proxy-suite-tor" and r["state"] == "active",
             ),
             # whitelist-bypass: a creator makes the call its joiner joins.
-            Action("k", "its call link", _wl_argv("link"), when=_wl_role("creator"), mode="dialog"),
-            Action("c", "copy its call link", _wl_argv("link"), when=_wl_role("creator"), mode="copy"),
-            Action("Q", "its call link as QR", _wl_argv("link", "--qr"), when=_wl_role("creator"), mode="dialog"),
+            Action("s", "call link", _wl_argv("link"), when=_wl_role("creator"), mode="dialog"),
+            Action("c", "copy call link", _wl_argv("link"), when=_wl_role("creator"), mode="copy"),
+            Action("Q", "call link as QR", _wl_argv("link", "--qr"), when=_wl_role("creator"), mode="dialog"),
             Action(
                 "N",
                 "drop its call for a new one",
@@ -618,7 +618,7 @@ TABS = [
             Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
             Action(
                 "n",
-                "add a profile (name optional)…",
+                "add a profile…",
                 lambda r, t, _: _awg_add_argv(t),
                 prompt="[name] <vpn://… or a .conf path> - e.g. home vpn://… (or paste a whole .conf onto the table)",
                 stdin=lambda r, t: _awg_add_stdin(t),
@@ -635,7 +635,7 @@ TABS = [
         route_rows,
         summary=lambda: f"Configured default: {ctl._route_mode_default()}. An override lasts until you switch back to default.",
         actions=[
-            Action("s", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"]),
+            Action("space", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"]),
             Action("i", "rule sets and when each was fetched", lambda r, *_: ["proxy", "rulesets", "list"], mode="dialog", offered=_rule_sets),
             Action("u", "fetch the rule sets now", lambda r, *_: ["proxy", "rulesets", "update"], mode="dialog", offered=_rule_sets),
         ],
@@ -649,11 +649,11 @@ TABS = [
         summary=outbound_summary,
         actions=[
             Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★" and not r["disabled"]),
-            Action("u", "unpin: let the selection pick", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
+            Action("p", "unpin it", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
             Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
-            Action("D", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=ROW, mode="dialog"),
+            Action("ctrl+t", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=ROW, mode="dialog"),
             Action(
-                "v",
+                "P",
                 "probe a domain through it…",
                 lambda r, t, _: ["proxy", "auto", "probe", t, "--via", ctl._backend_tag(r["tag"])],
                 when=_enabled("AUTOPROXY_ENABLED"),
@@ -663,14 +663,14 @@ TABS = [
             Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
             Action(
                 "n",
-                "add a runtime outbound (tag optional)…",
+                "add an outbound…",
                 lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t)],
                 prompt="[tag] <url, JSON or vpn://> - e.g. de-1 vless://… or just vless://…",
                 stdin=lambda r, t: _add_stdin(t),
             ),
             Action(
                 "h",
-                "add an outbound chained through this one (tag optional)…",
+                "add an outbound chained through this one…",
                 lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--detour", r["tag"]],
                 when=ROW,
                 prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
@@ -685,20 +685,20 @@ TABS = [
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
             Action(
                 "x",
-                "disable it (never picked, pinned or probed)",
+                "disable it",
                 lambda r, *_: ["proxy", "outbounds", "disable", r["tag"]],
                 when=lambda r: not r["disabled"],
                 confirm=True,
             ),
-            Action("e", "enable it again", lambda r, *_: ["proxy", "outbounds", "enable", r["tag"]], when=lambda r: r["disabled"]),
+            Action("x", "enable it again", lambda r, *_: ["proxy", "outbounds", "enable", r["tag"]], when=lambda r: r["disabled"]),
             # Credentials: proxy-ctl refuses these without root or the group, and the dialog says so.
-            Action("l", "its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
-            Action("c", "copy its URL", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
-            Action("Q", "its URL as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
+            Action("s", "share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
+            Action("c", "copy share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
+            Action("Q", "share link as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
             Action("J", "its JSON", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--json"], when=ROW, mode="dialog"),
-            Action("F", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=ROW, mode="dialog"),
-            Action("X", "client config with every outbound and rule", lambda r, *_: ["proxy", "config"], mode="dialog"),
-            Action("C", "the config as it runs here", lambda r, *_: ["proxy", "config", "--raw"], mode="dialog"),
+            Action("k", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=ROW, mode="dialog"),
+            Action("K", "client config with every outbound and rule", lambda r, *_: ["proxy", "config"], mode="dialog"),
+            Action("V", "the config as it runs here", lambda r, *_: ["proxy", "config", "--raw"], mode="dialog"),
         ],
     ),
     Tab(
@@ -709,18 +709,18 @@ TABS = [
         subscription_rows,
         summary=subscription_summary,
         actions=[
-            Action("u", "refetch all", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
+            Action("u", "fetch all now", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
             Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
             Action(
                 "n",
-                "add a runtime subscription (tag optional)…",
+                "add a subscription…",
                 lambda r, t, _: ["proxy", "subs", "add", *_add_args(t)],
                 prompt="[tag] <url> - e.g. work https://… or just https://…",
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
-            Action("k", "its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
-            Action("y", "copy its URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="copy"),
-            Action("Q", "its URL as QR", lambda r, *_: ["proxy", "subs", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
+            Action("s", "URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
+            Action("c", "copy URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="copy"),
+            Action("Q", "URL as QR", lambda r, *_: ["proxy", "subs", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
         ],
     ),
     Tab(
@@ -732,13 +732,13 @@ TABS = [
         summary=ctl._status_autoproxy,
         actions=[
             Action("w", "how is it routed", lambda r, *_: ["where", r["domain"]], when=ROW, mode="dialog"),
-            Action("e", "learn it now", lambda r, *_: ["proxy", "auto", "learn", r["domain"]], when=_kind("queued"), mode="dialog"),
+            Action("u", "learn it now", lambda r, *_: ["proxy", "auto", "learn", r["domain"]], when=_kind("queued"), mode="dialog"),
             Action("p", "probe it through every exit", lambda r, *_: ["proxy", "auto", "probe", r["domain"], "--keep-going"], when=ROW, mode="dialog"),
             Action("P", "probe a domain…", lambda r, t, _: ["proxy", "auto", "probe", t], prompt="<domain>[/path]", mode="dialog"),
-            Action("E", "learn a domain…", lambda r, t, _: ["proxy", "auto", "learn", t], prompt="<domain>", mode="dialog"),
-            Action("f", "forget it (direct until learned again)", lambda r, *_: ["proxy", "auto", "forget", r["domain"]], when=_kind("routed"), confirm=True),
-            Action("R", "relearn it from the host it was learned from", lambda r, *_: ["proxy", "auto", "relearn", r["domain"]], when=_kind("routed"), mode="dialog"),
-            Action("C", "forget everything learned", lambda r, *_: ["proxy", "auto", "clear"], confirm=True),
+            Action("n", "learn a domain…", lambda r, t, _: ["proxy", "auto", "learn", t], prompt="<domain>", mode="dialog"),
+            Action("f", "forget it", lambda r, *_: ["proxy", "auto", "forget", r["domain"]], when=_kind("routed"), confirm=True),
+            Action("u", "relearn it from the host it was learned from", lambda r, *_: ["proxy", "auto", "relearn", r["domain"]], when=_kind("routed"), mode="dialog"),
+            Action("F", "forget everything learned", lambda r, *_: ["proxy", "auto", "clear"], confirm=True),
             Action("i", "routed, judged and bad exits", lambda r, *_: ["proxy", "auto", "list"], mode="dialog"),
         ],
     ),
@@ -750,16 +750,17 @@ TABS = [
         zapret_rows,
         summary=zapret_summary,
         actions=[
-            Action("f", "forget it (may be learned again)", lambda r, *_: ["zapret", "auto", "forget", r["host"]], when=_kind("learned")),
-            Action("x", "exclude it (never touch or learn it)", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
-            Action("u", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),
-            Action("i", "include it (zapret may touch or learn it again)", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
-            Action("a", "pin a host (treat it as blocked)…", lambda r, t, _: ["zapret", "auto", "add", t.strip()], prompt="<domain>", offered=_zapret_auto),
-            Action("X", "exclude a host (never touch or learn it)…", lambda r, t, _: ["zapret", "auto", "exclude", t.strip()], prompt="<domain>", offered=_zapret_auto),
-            Action("C", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True, offered=_zapret_auto),
+            Action("f", "forget it", lambda r, *_: ["zapret", "auto", "forget", r["host"]], when=_kind("learned")),
+            Action("p", "pin it", lambda r, *_: ["zapret", "auto", "add", r["host"]], when=_kind("learned")),
+            Action("p", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),
+            Action("x", "exclude it", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
+            Action("x", "include it again", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
+            Action("n", "pin a host as blocked…", lambda r, t, _: ["zapret", "auto", "add", t.strip()], prompt="<domain>", offered=_zapret_auto),
+            Action("X", "exclude a host…", lambda r, t, _: ["zapret", "auto", "exclude", t.strip()], prompt="<domain>", offered=_zapret_auto),
+            Action("F", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True, offered=_zapret_auto),
             Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog", offered=lambda: ctl.env("ZAPRET_CUTOFF_ENABLED") == "1"),
-            Action("z", "start / stop zapret", _zapret_toggle),
-            Action("Z", "restart zapret", lambda *_: ["zapret", "restart"]),
+            Action("space", "start / stop zapret", _zapret_toggle),
+            Action("ctrl+r", "restart zapret", lambda *_: ["zapret", "restart"]),
         ],
     ),
     Tab(
@@ -770,32 +771,31 @@ TABS = [
         inbound_rows,
         summary=lambda: f"proxy-suite-inbounds: {ctl.svc_state('proxy-suite-inbounds') or 'unknown'}",
         actions=[
-            Action("l", "share link", lambda r, *_: _link(r), when=ROW, mode="dialog"),
+            Action("s", "share link", lambda r, *_: _link(r), when=ROW, mode="dialog"),
             Action("c", "copy share link", lambda r, *_: _link(r), when=ROW, mode="copy"),
             Action("Q", "share link as QR", lambda r, *_: _link(r, "--qr"), when=ROW, mode="dialog"),
-            Action("s", "subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="dialog"),
+            Action("S", "subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=lambda r: bool(r["user"]), mode="dialog"),
             # Without subscriptions.baseUrl there is only a file path, with a hint after it: nothing to encode or copy.
-            Action("S", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
-            Action("y", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
+            Action("U", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["user"], "--qr"], when=_sub_url, mode="dialog"),
+            Action("C", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["user"]], when=_sub_url, mode="copy"),
             Action("J", "client's outbound JSON", lambda r, *_: _link(r, "--json"), when=lambda r: not _amneziawg(r), mode="dialog"),
-            # Not w/W or o: those are the screen's where and last output.
             Action("k", "client config", lambda r, *_: _link(r, "--config"), when=_amneziawg, mode="dialog"),
             Action("K", "client config as QR", lambda r, *_: _link(r, "--config", "--qr"), when=_amneziawg, mode="dialog"),
             Action("V", "server's inbound JSON", lambda r, *_: ["inbounds", "link", r["tag"], "--server-json"], when=ROW, mode="dialog"),
-            Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
-            Action("I", "traffic per inbound", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),
-            Action("O", "traffic per exit", lambda r, *_: ["inbounds", "stats", "--by", "outbound"], mode="dialog"),
-            Action("n", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
+            Action("i", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
+            Action("I", "traffic per listener", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),
+            Action("E", "traffic per exit", lambda r, *_: ["inbounds", "stats", "--by", "outbound"], mode="dialog"),
+            Action("O", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
             Action(
-                "a",
+                "n",
                 "add a listener…",
                 lambda r, t, _: ["inbounds", "add", *shlex.split(t)],
                 prompt="<tag> <type> [--port N] [--reality SNI] [--tls <cert>] [--user U]... - e.g. friends vless --port 20001 --reality www.microsoft.com",
                 offered=_inbounds_runtime,
             ),
-            Action("d", "remove this listener", lambda r, *_: ["inbounds", "rm", r["tag"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
+            Action("d", "remove it", lambda r, *_: ["inbounds", "rm", r["tag"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
             Action("b", "bind a user to it…", lambda r, t, _: ["inbounds", "bind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
-            Action("u", "unbind a user from it…", lambda r, t, _: ["inbounds", "unbind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
+            Action("x", "unbind a user from it…", lambda r, t, _: ["inbounds", "unbind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
         ],
     ),
     Tab(
@@ -811,11 +811,11 @@ TABS = [
         ),
         actions=[
             Action("n", "add a user…", lambda r, t, _: _user_add_argv(t), prompt="<name> [order] [listener]... - e.g. alice 7 vless-in", offered=_inbounds_runtime),
-            Action("d", "remove this user", lambda r, *_: ["inbounds", "users", "rm", r["name"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
+            Action("d", "remove it", lambda r, *_: ["inbounds", "users", "rm", r["name"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
             Action("e", "set its order…", lambda r, t, _: ["inbounds", "users", "order", r["name"], t.strip()], when=_runtime_row, prompt="<order>", offered=_inbounds_runtime),
             Action("b", "bind it to a listener…", lambda r, t, _: ["inbounds", "bind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
-            Action("u", "unbind it from a listener…", lambda r, t, _: ["inbounds", "unbind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
-            Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
+            Action("x", "unbind it from a listener…", lambda r, t, _: ["inbounds", "unbind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
+            Action("i", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
         ],
     ),
     Tab(
@@ -826,7 +826,7 @@ TABS = [
         [("profile", "Profile"), ("route", "Route")],
         app_rows,
         actions=[
-            Action("x", "run a command through it…", lambda r, t, _: ["apps", "run", r["profile"], "--", *shlex.split(t)], when=ROW, prompt="<command> [args]", mode="pause"),
+            Action("space", "run a command through it…", lambda r, t, _: ["apps", "run", r["profile"], "--", *shlex.split(t)], when=ROW, prompt="<command> [args]", mode="pause"),
         ],
     ),
 ]
@@ -897,7 +897,7 @@ def load_tab(tab, states):
     except (Exception, SystemExit) as e:
         return [], f"✗ {str(e) or type(e).__name__}" + (f"\n{summary}" if summary else "")
     if not rows:
-        hints = "   ".join(f"{a.key}: {short(a.label)}" for a in tab.actions if a.prompt and a.when is None and offered(a))
+        hints = "   ".join(f"{display_key(a.key)}: {short(a.label)}" for a in tab.actions if a.prompt and a.when is None and offered(a))
         summary = "Nothing here yet." + (f"   {hints}" if hints else "") + (f"\n{summary}" if summary else "")
     return rows, summary
 
@@ -914,6 +914,19 @@ def unique_keys(rows):
         seen.add(key)
         out.append(r if key == r.get("key") else {**r, "key": key})
     return out
+
+
+def display_key(key):
+    """A key as the front ends show it: N reads shift+n, the way ctrl+r does."""
+    return f"shift+{key.lower()}" if len(key) == 1 and key.isupper() else key
+
+
+def key_labels(actions):
+    """(key, label) per key: the actions that toggle on one key read as one line, "pin it / unpin it"."""
+    labels = {}
+    for a in actions:
+        labels.setdefault(a.key, []).append(a.label)
+    return [(key, " / ".join(dict.fromkeys(names))) for key, names in labels.items()]
 
 
 def short(label):

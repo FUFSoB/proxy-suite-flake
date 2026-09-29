@@ -62,18 +62,18 @@ STATUS_ICONS = {"ok": "emblem-ok-symbolic", "warn": "dialog-warning-symbolic", "
 TOAST_LINES = 4  # a toast says this much of what ran; the Output button, and `o`, have the whole of it
 
 GLOBAL_SHORTCUTS = [
-    ("<Control>f slash", "Filter the rows (list:learned for one column)"),
+    ("<Control>f slash", "Filter the rows, e.g. list:learned"),
     ("Escape", "Clear the filter"),
-    ("Menu <Shift>F10", "Actions for the selected row (or right-click it)"),
+    ("Menu <Shift>F10", "Actions for the selected row; a right-click opens them too"),
     ("<Alt>1...<Alt>8", "Jump to a tab"),
     ("<Control>v", "Paste a link: it is added to this tab"),
     ("w", "How is a domain routed"),
     ("<Shift>l", "Follow all logs"),
     ("o", "Output of the last command"),
-    ("<Control>e", "Read and run as root (pkexec)"),
+    ("<Control>e", "Read and run as root"),
     ("F5 r", "Refresh now"),
     ("<Control>question", "Keyboard shortcuts"),
-    ("<Control>w", "Close the window (the tray keeps running)"),
+    ("<Control>w", "Close the window; the tray keeps running"),
     ("<Control>q", "Quit"),
 ]
 
@@ -175,7 +175,8 @@ def accelerator(key):
 
 
 def display_key(key):
-    return key.replace("ctrl+", "Ctrl+").replace("space", "Space")
+    """Ctrl+r, Shift+n, Space: modifiers and named keys capitalized, a letter as it is typed."""
+    return "+".join(part.capitalize() if len(part) > 1 else part for part in model.display_key(key).split("+"))
 
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
@@ -400,11 +401,10 @@ class Page(Gtk.Box):
 
     def shortcuts(self):
         controller = Gtk.ShortcutController(propagation_phase=Gtk.PropagationPhase.CAPTURE)
-        for i, action in enumerate(self.tab.actions):
-            trigger = accelerator(action.key)
+        for trigger, indices in self.triggers().items():
             controller.add_shortcut(Gtk.Shortcut(
                 trigger=Gtk.ShortcutTrigger.parse_string(trigger),
-                action=Gtk.CallbackAction.new(self.keyed(trigger, lambda i=i: self.act(i, from_key=True))),
+                action=Gtk.CallbackAction.new(self.keyed(trigger, lambda indices=indices: self.act_any(indices))),
             ))
         for trigger, callback in (
             ("slash", lambda *_: self.focus_search()),
@@ -414,9 +414,20 @@ class Page(Gtk.Box):
             ("r", lambda *_: self.win.app.reload()),
             ("Menu|<Shift>F10", lambda *_: self.open_menu(None)),
         ):
-            if not any(accelerator(a.key) == trigger for a in self.tab.actions):
+            if trigger not in self.triggers():
                 controller.add_shortcut(Gtk.Shortcut(trigger=Gtk.ShortcutTrigger.parse_string(trigger), action=Gtk.CallbackAction.new(self.keyed(trigger, callback))))
         return controller
+
+    def triggers(self):
+        """Accelerator -> indices of the tab's actions on it: a toggle is two actions on one key."""
+        out = {}
+        for i, action in enumerate(self.tab.actions):
+            out.setdefault(accelerator(action.key), []).append(i)
+        return out
+
+    def act_any(self, indices):
+        """The first of these actions that applies to the selected row; none: the key falls through."""
+        return any(self.act(i, from_key=True) for i in indices)
 
     def keyed(self, trigger, callback):
         """A key for this tab only while it shows, and never one meant for a text field, a dialog or a focused button."""
@@ -1041,8 +1052,8 @@ class Window(Adw.ApplicationWindow):
         page = self.page()
         if page and (actions := [a for a in page.tab.actions if model.offered(a)]):
             section = Adw.ShortcutsSection(title=page.tab.title)
-            for action in actions:
-                section.add(Adw.ShortcutsItem(title=cap(action.label), accelerator=accelerator(action.key)))
+            for key, label in model.key_labels(actions):
+                section.add(Adw.ShortcutsItem(title=cap(label), accelerator=accelerator(key)))
             dialog.add(section)
         section = Adw.ShortcutsSection(title="Everywhere")
         for accel, title in GLOBAL_SHORTCUTS:
@@ -1210,7 +1221,7 @@ class ProxySuiteGui(Adw.Application):
         if not model.needs_root(summary.splitlines(), 1):
             return rows, summary
         if not elevated:
-            return rows, summary + "\nCtrl+E: read and run as root (pkexec)"
+            return rows, summary + "\nCtrl+E: read and run as root"
         if self.root_read_refused:
             return rows, summary + "\nRoot read cancelled: Ctrl+E twice to ask again."
         root_rows, why = model.load_tab_as_root(tab, "pkexec")

@@ -50,15 +50,15 @@ def pack(items, width, gap="   "):
 
 
 GLOBAL_KEYS = [
-    ("enter", "actions for the selected row (or click it)"),
+    ("enter", "actions for the selected row; a click opens them too"),
     ("← → ⇥", "switch tab; 1-8 jump to one"),
-    ("/", "filter the rows (list:learned for one column); esc clears"),
+    ("/", "filter the rows, e.g. list:learned; esc clears"),
     ("click", "a column heading sorts by it, again reverses, a third time unsorts"),
     ("paste", "a link in the clipboard is added to this tab"),
     ("w", "how is a domain routed"),
-    ("L", "follow all logs"),
+    ("shift+l", "follow all logs"),
     ("o", "output of the last command"),
-    ("!", "retry what just failed as root (sudo)"),
+    ("!", "retry what just failed with sudo"),
     ("#", "switch to root: proxy-tui again under sudo"),
     ("r", "refresh now"),
     ("?", "keys"),
@@ -171,7 +171,7 @@ def detail(tab, row, actions):
         text.append("\n")
     text.append("Actions\n" if actions else "No actions here.\n", style="bold")
     for a in actions:
-        text.append(f"  {a.key:<7}", style=ACCENT)
+        text.append(f"  {model.display_key(a.key):<8}", style=ACCENT)
         text.append(f"{a.label}\n")
     return text
 
@@ -252,7 +252,7 @@ class Menu(Dialog):
         with Vertical(classes="dialog menu"):
             yield Label(self.heading, classes="dialog-title", markup=False)
             yield Choices(
-                *(Option(Text.assemble((f"{a.key:<7}", ACCENT), a.label), id=str(i)) for i, a in enumerate(self.actions))
+                *(Option(Text.assemble((f"{model.display_key(a.key):<8}", ACCENT), a.label), id=str(i)) for i, a in enumerate(self.actions))
             )
             yield hint("↑↓ or click to choose", ("esc close", "dismiss"))
 
@@ -494,7 +494,7 @@ class ProxyTui(App):
         _update(self.main.query_one(f"#{tab_id}-detail", Static), detail(tab, row, actions))
         width, height = self.size
         # The detail panel lists the row's actions when it shows; the key line need not repeat them.
-        shown = [] if width >= WIDE or height >= TALL else [(f"act({tab.actions.index(a)})", a.key, model.short(a.label)) for a in actions]
+        shown = [] if width >= WIDE or height >= TALL else [(f"act({tab.actions.index(a)})", model.display_key(a.key), model.short(a.label)) for a in actions]
         # The key keeps its color outside the link: a link's own color would cover it.
         items = [f"[b ansi_cyan]{escape(k)}[/] [@click=app.{action}]{escape(label)}[/]" for action, k, label in shown + KEY_LINE]
         _update(self.main.query_one("#keys", Static), pack(items, width - 2))
@@ -552,7 +552,7 @@ class ProxyTui(App):
         self.states, self.status = states, status
         # A read root could do: ! retries runs, not reads, so the way out is the whole TUI under sudo.
         if model.needs_root(summary.splitlines(), 1):
-            summary += "\n#: run proxy-tui as root (sudo)"
+            summary += "\n#: run proxy-tui as root with sudo"
         self.show_status()
         if visible != self.shown:
             self.show_tabs(visible)
@@ -674,7 +674,7 @@ class ProxyTui(App):
             self.filters[tab_id] = text
             self.refill(tab_id)
 
-        self.push_screen(Prompt("Filter rows", "words in any column, or column:value (list:learned); empty clears", self.filters.get(tab_id, "")), apply)
+        self.push_screen(Prompt("Filter rows", "words in any column, or column:value like list:learned; empty clears", self.filters.get(tab_id, "")), apply)
 
     def action_clear_filter(self):
         if self.filters.pop(self.active_tab(), ""):
@@ -692,10 +692,10 @@ class ProxyTui(App):
     def action_help(self):
         tab = self.tabs[self.active_tab()]
         text = Text()
-        for heading, keys in ((tab.title, [(a.key, a.label) for a in tab.actions if model.offered(a)]), ("Everywhere", GLOBAL_KEYS)):
+        for heading, keys in ((tab.title, model.key_labels(a for a in tab.actions if model.offered(a))), ("Everywhere", GLOBAL_KEYS)):
             text.append(f"{heading}\n", style="bold")
             for key, label in keys:
-                text.append(f"  {key:<9}", style=ACCENT)
+                text.append(f"  {model.display_key(key):<9}", style=ACCENT)
                 text.append(f"{label}\n")
             text.append("\n")
         text.append(f"Stuck? kill -USR1 {os.getpid()} writes where it is to {trace_path()}\n", style="dim")

@@ -61,10 +61,25 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(gui.accelerator("R"), "<Shift>r")
         self.assertEqual(gui.accelerator("ctrl+r"), "<Control>r")
         self.assertEqual(gui.display_key("ctrl+space"), "Ctrl+Space")
+        self.assertEqual([gui.display_key(k) for k in ("N", "ctrl+t", "l")], ["Shift+n", "Ctrl+t", "l"])
         for tab in model.TABS:
             for action in tab.actions:
                 if action.key:
                     self.assertTrue(gui.accelerator(action.key))
+
+    def test_a_toggle_is_one_shortcut(self):
+        """Two actions on one key are one GTK shortcut, which runs the one that applies to the row."""
+        zapret = next(t for t in model.TABS if t.id == "zapret")
+        page = types.SimpleNamespace(tab=zapret)
+        triggers = gui.Page.triggers(page)
+        pin, unpin = triggers["p"]
+        self.assertEqual([zapret.actions[i].label for i in (pin, unpin)], ["pin it", "unpin it"])
+        ran = []
+        page.act = lambda i, from_key: i == unpin and not ran.append(i)
+        self.assertTrue(gui.Page.act_any(page, triggers["p"]))
+        self.assertEqual(ran, [unpin])
+        page.act = lambda i, from_key: False
+        self.assertFalse(gui.Page.act_any(page, triggers["p"]))  # nothing applies: the key falls through
 
     def test_action_looks(self):
         for tab in model.TABS:
@@ -72,7 +87,7 @@ class GuiTest(unittest.TestCase):
                 self.assertTrue(gui.action_icon(action).endswith("-symbolic"))
         self.assertFalse(gui.is_destructive(model.Action("R", "restart everything running", lambda *_: [], confirm=True)))
         self.assertTrue(gui.is_destructive(model.Action("d", "remove it", lambda *_: [], confirm=True)))
-        self.assertTrue(gui.is_destructive(model.Action("C", "forget all learned hosts", lambda *_: [], confirm=True)))
+        self.assertTrue(gui.is_destructive(model.Action("F", "forget all learned hosts", lambda *_: [], confirm=True)))
         self.assertTrue(gui.is_badge("state", "active"))
         self.assertTrue(gui.is_badge("status", "ok"))
         self.assertFalse(gui.is_badge("mark", "★"))

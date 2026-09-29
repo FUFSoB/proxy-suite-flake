@@ -255,7 +255,7 @@ class TuiTest(unittest.TestCase):
             await pilot.pause()
             self.assertEqual(self.ran.pop(), ["proxy", "mode", "whitelist"])
 
-            # Outbounds: letter shortcuts; the pinned row offers no pin, and nothing removes a declared one.
+            # Outbounds: letter shortcuts; p pins, and on the pinned row unpins; nothing removes a declared one.
             await pilot.press("right")
             await self.settle(app, pilot)
             # One load asks the backend what it dials once, however many readers need it.
@@ -265,16 +265,15 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(self.current.call_count, 1)
             # The footer offers only what applies to the selected row.
             self.assertIn("p", app.screen.active_bindings)
-            self.assertNotIn("u", app.screen.active_bindings)
-            await pilot.press("p", "t", "u")
+            self.assertNotIn("d", app.screen.active_bindings)
+            await pilot.press("p", "t", "d")
             self.assertEqual(self.ran, [["proxy", "pin", "a"], ["proxy", "outbounds", "test", "a"]])
-            await pilot.press("down")
-            self.assertNotIn("p", app.screen.active_bindings)
-            await pilot.press("p", "d", "u")
+            await pilot.press("down", "p", "d")
             self.assertEqual(self.ran.pop(), ["proxy", "unpin"])
             self.ran.clear()
             await pilot.press("enter")
             await pilot.pause()
+            self.assertIn("unpin it", self.menu_labels(app))
             self.assertNotIn("pin it", self.menu_labels(app))
             self.assertNotIn("remove it", self.menu_labels(app))
             # Hovering an option selects it: one cursor for mouse and keys.
@@ -295,7 +294,7 @@ class TuiTest(unittest.TestCase):
             # An empty tab says how to fill it.
             await pilot.press("5")
             await self.settle(app, pilot)
-            self.assertIn("Nothing here yet.   n: add a runtime subscription", str(app.main.query_one("#subs-summary").content))
+            self.assertIn("Nothing here yet.   n: add a subscription", str(app.main.query_one("#subs-summary").content))
 
             # A tab that cannot read its state says so instead, and how to get the rights for it.
             with mock.patch.object(ctl, "_runtime_hidden", lambda kind: "/var/lib/proxy-suite/subscriptions.d"), \
@@ -306,7 +305,7 @@ class TuiTest(unittest.TestCase):
             self.assertIn("✗ Cannot read /var/lib/proxy-suite/subscriptions.d", summary)
             self.assertIn("#: run proxy-tui as root", summary)
 
-            # zapret: an excluded host can be included again, not forgotten.
+            # zapret: x includes an excluded host again; it cannot be forgotten.
             # Brackets in a summary are text, not markup.
             self.env["ZAPRET_CUTOFF_ENABLED"] = "1"
             self.capture = "Probed:  [b] from [/x]\nCutoff:  none on this line\n"
@@ -317,21 +316,21 @@ class TuiTest(unittest.TestCase):
             await pilot.press("down", "enter")
             await pilot.pause()
             labels = self.menu_labels(app)
-            self.assertIn("include it (zapret may touch or learn it again)", labels)
-            self.assertNotIn("forget it (may be learned again)", labels)
-            await pilot.press("escape", "i")
+            self.assertIn("include it again", labels)
+            self.assertNotIn("forget it", labels)
+            await pilot.press("escape", "x")
             self.assertEqual(self.ran.pop(), ["zapret", "auto", "include", "kept.example"])
 
             # Confirmed actions run only on yes; a click beside a dialog closes it.
-            await pilot.press("C")
+            await pilot.press("F")
             await pilot.pause()
             await pilot.click(offset=(0, 0))
             await pilot.pause()
             self.assertIs(app.screen, app.main)
-            await pilot.press("C", "n")
+            await pilot.press("F", "n")
             await pilot.pause()
             self.assertEqual(self.ran, [])
-            await pilot.press("C", "y")
+            await pilot.press("F", "y")
             await pilot.pause()
             self.assertEqual(self.ran.pop(), ["zapret", "auto", "clear"])
 
