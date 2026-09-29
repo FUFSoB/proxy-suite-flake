@@ -28,7 +28,7 @@ def _die(message, status=1):
 
 
 # Clash API calls and systemctl spawns that several readers repeat within one load.
-MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_timer_next_run", "svc_state", "_wl")
+MEMOIZED = ("_outbound_current", "_outbound_inventory", "_autoproxy_state", "_timer_next_run", "svc_state", "_wl", "_inbound_runtime_rows")
 # proxy_ctl as the CLI has it, before the patching below: its own tests put these back.
 CLI_FUNCTIONS = {name: getattr(ctl, name) for name in ("die", *MEMOIZED)}
 
@@ -396,15 +396,48 @@ def inbound_rows(_):
     # so a per-listener row could only repeat the same verdict once per listener. The
     # "who is online" action shows it once per user, which is the shape the data has.
     # A listener behind the onion service has a second row, for its .onion link.
+    sources = ctl._inbound_runtime_names("listeners")
     return [
         {
             # The TUI titles its menu with the key: no trailing "/" for the plain link.
             "key": "/".join(ctl._s(x.get(k)) for k in ("tag", "user", "variant") if x.get(k)),
             **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port", "variant")},
             **({"type": f"{ctl._s(x.get('type') or '')} (onion)"} if x.get("variant") == "onion" else {}),
+            "source": sources.get(ctl._s(x.get("tag")), "nix"),
         }
         for x in ctl._inbound_links()
     ]
+
+
+def inbound_user_rows(_):
+    """Inbound users as `inbounds users` lists them: the declared ones, and with
+    inbounds.runtime the runtime ones too."""
+    return [
+        {
+            "key": ctl._s(u.get("name")),
+            "name": ctl._s(u.get("name")),
+            "order": ctl._s(u.get("order") if u.get("order") is not None else ""),
+            "address": ctl._s(u.get("address") or ""),
+            "source": ctl._s(u.get("source") or ""),
+            "listeners": ",".join(ctl._s(t) for t in u.get("listeners") or []),
+            "problems": "; ".join(ctl._s(p) for p in u.get("problems") or []),
+        }
+        for u in ctl._inbound_runtime_rows("users")
+    ]
+
+
+def _inbounds_runtime():
+    return ctl.env("INBOUNDS_RUNTIME_ENABLED") == "1"
+
+
+def _runtime_row(row):
+    return row.get("source") == "runtime"
+
+
+def _user_add_argv(text):
+    words = shlex.split(text)
+    order = ["--order", words[1]] if len(words) > 1 else []
+    return ["inbounds", "users", "add", *words[:1], *order, *(a for t in words[2:] for a in ("--listener", t))]
 
 
 def app_rows(_):
@@ -753,6 +786,36 @@ TABS = [
             Action("I", "traffic per inbound", lambda r, *_: ["inbounds", "stats", "--by", "inbound"], mode="dialog"),
             Action("O", "traffic per exit", lambda r, *_: ["inbounds", "stats", "--by", "outbound"], mode="dialog"),
             Action("n", "who is online", lambda r, *_: ["inbounds", "online"], mode="dialog"),
+            Action(
+                "a",
+                "add a listener…",
+                lambda r, t, _: ["inbounds", "add", *shlex.split(t)],
+                prompt="<tag> <type> [--port N] [--reality SNI] [--tls <cert>] [--user U]... - e.g. friends vless --port 20001 --reality www.microsoft.com",
+                offered=_inbounds_runtime,
+            ),
+            Action("d", "remove this listener", lambda r, *_: ["inbounds", "rm", r["tag"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
+            Action("b", "bind a user to it…", lambda r, t, _: ["inbounds", "bind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
+            Action("u", "unbind a user from it…", lambda r, t, _: ["inbounds", "unbind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
+        ],
+    ),
+    Tab(
+        "inbound-users",
+        "Users",
+        _enabled("INBOUNDS_ENABLED"),
+        [("name", "User"), ("order", "Order"), ("address", "Address"), ("source", "Source"), ("listeners", "Listeners"), ("problems", "Problems")],
+        inbound_user_rows,
+        summary=lambda: (
+            "Runtime users get generated secrets; a change restarts the inbounds, which drops every connection once."
+            if _inbounds_runtime()
+            else "Users from the configuration. inbounds.runtime would let you add and bind them here."
+        ),
+        actions=[
+            Action("n", "add a user…", lambda r, t, _: _user_add_argv(t), prompt="<name> [order] [listener]... - e.g. alice 7 vless-in", offered=_inbounds_runtime),
+            Action("d", "remove this user", lambda r, *_: ["inbounds", "users", "rm", r["name"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
+            Action("e", "set its order…", lambda r, t, _: ["inbounds", "users", "order", r["name"], t.strip()], when=_runtime_row, prompt="<order>", offered=_inbounds_runtime),
+            Action("b", "bind it to a listener…", lambda r, t, _: ["inbounds", "bind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
+            Action("u", "unbind it from a listener…", lambda r, t, _: ["inbounds", "unbind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
+            Action("t", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
         ],
     ),
     Tab(

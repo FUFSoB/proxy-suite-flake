@@ -74,6 +74,9 @@ in
     firewall = {
       allowedTCPPorts = internalOption (types.listOf types.port) [ ];
       allowedUDPPorts = internalOption (types.listOf types.port) [ ];
+      # { from; to; }, as networking.firewall takes them.
+      allowedTCPPortRanges = internalOption (types.listOf (types.attrsOf types.port)) [ ];
+      allowedUDPPortRanges = internalOption (types.listOf (types.attrsOf types.port)) [ ];
       extraReversePathFilterRules = internalOption types.lines "";
       # nftables firewall only: iptables has no such hook.
       extraInputRules = internalOption types.lines "";

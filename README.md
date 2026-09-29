@@ -219,6 +219,21 @@ Changes and secrets need root or the userControl group.
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
                                          traffic by user, listener or exit
+  inbounds users [list]                  users: order, serverSource address, listeners
+                                         (the rest below needs inbounds.runtime)
+  inbounds users add <name> [--order N] [--listener <tag>]...
+                                         add a user at runtime, with generated secrets
+  inbounds users rm <name>               remove a runtime user
+  inbounds users order <name> <N>        a runtime user's order (serverSource number)
+  inbounds bind|unbind <user> <tag>      put a user on a listener, or take it off
+                                         (a runtime user, or a runtime listener)
+  inbounds add <tag> <type> [--port N] [--via V] [--transport T] [--path P] [--host H]
+      [--reality SNI[,SNI]] [--tls <cert>] [--alpn a,b] [--flow vision] [--method M]
+      [--listen A] [--user U]... [more: see inbounds add --help]
+                                         add a listener at runtime
+  inbounds add <tag> <file.json|->       add one from JSON shaped like inbounds.listeners.<tag>
+  inbounds rm <tag>                      remove a runtime listener
+  inbounds show <tag>                    a runtime listener's JSON
   inbounds online                        who is online, and when others were last seen
 ```
 <!-- proxy-ctl-help:end -->

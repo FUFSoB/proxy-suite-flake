@@ -89,6 +89,13 @@ services.proxy-suite = {
       via = "proxy";
       zapretDirect = true;
     };
+    runtime = {
+      enable = false;
+      fallbackDests = [ ];
+      ports = [ ];
+      tlsCertificates = { };
+      vias = [ ];
+    };
     serverAddress = null;
     serverAliases = [ ];
     serverPorts = [ ];

@@ -210,7 +210,19 @@ let
       cfg.inbounds.routing.serverSource.ipv6 == null
       || lib.toInt (lib.last (lib.splitString "/" cfg.inbounds.routing.serverSource.ipv6)) <= 112
     ) "proxy-suite: inbounds.routing.serverSource.ipv6 must be a prefix of /112 or shorter")
-    (mkAssertion (derived.proxyInboundsSelfSources == [ ] || cfg.host.privileged)
+    (mkAssertion
+      (
+        (
+          derived.proxyInboundsSelfSources == [ ]
+          && !(
+            derived.proxyInboundsRuntimeEnabled
+            && (
+              cfg.inbounds.routing.serverSource.ipv4 != null || cfg.inbounds.routing.serverSource.ipv6 != null
+            )
+          )
+        )
+        || cfg.host.privileged
+      )
       "proxy-suite: inbounds.routing.serverSource needs a system install: it puts addresses on a dummy interface"
     )
     # Daemon configs are readable by the service group; users must not share it.
@@ -447,6 +459,11 @@ let
     builtins.filter (ob: ob.singBoxJson != null) derived.proxyInboundViaOutbounds
   );
 
+  inRuntimePorts =
+    port:
+    builtins.elem port derived.proxyInboundRuntimeSinglePorts
+    || lib.any (range: range.from <= port && port <= range.to) derived.proxyInboundRuntimePortRanges;
+
   proxyInboundAssertions = [
     (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
       "proxy-suite: inbounds via targets, or the hops they chain through, are not defined in proxy.outbounds: ${lib.concatStringsSep ", " derived.invalidInboundViaTargets}. Subscription proxies, warp, tor, ssh-proxy and AmneziaWG outbounds cannot be named here because the inbound service does not run them; use via = \"proxy\" to reach those."
@@ -457,9 +474,40 @@ let
     (requireEnabled (proxyInboundsEnabled && derived.proxyInboundViaTags != [ ]) proxyEnabled
       "proxy-suite: inbounds pins a listener to a proxy.outbounds tag, which requires proxy.enable = true"
     )
-    (requireEnabled proxyInboundsEnabled (
-      proxyInbounds != [ ]
-    ) "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners")
+    (requireEnabled proxyInboundsEnabled (proxyInbounds != [ ] || derived.proxyInboundsRuntimeEnabled)
+      "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners, or inbounds.runtime.enable"
+    )
+    # Runtime listeners bind only there: clear of what is bound here already.
+    (mkAssertion
+      (
+        !derived.proxyInboundsRuntimeEnabled
+        || !lib.any inRuntimePorts (
+          derived.proxyInboundPorts
+          ++ reservedLoopbackPorts
+          ++ lib.optional proxyEnabled proxyCfg.listener.port
+          ++ lib.optional globalTproxy.enable globalTproxy.port
+        )
+      )
+      "proxy-suite: inbounds.runtime.ports cover a port a declared listener or proxy-suite itself uses (${
+        lib.concatMapStringsSep ", " toString (
+          builtins.filter inRuntimePorts (
+            derived.proxyInboundPorts
+            ++ reservedLoopbackPorts
+            ++ lib.optional proxyEnabled proxyCfg.listener.port
+            ++ lib.optional globalTproxy.enable globalTproxy.port
+          )
+        )
+      })"
+    )
+    (mkAssertion (
+      !derived.proxyInboundsRuntimeEnabled
+      || lib.all (
+        range: range.from >= 1 && range.from <= range.to && range.to <= 65535
+      ) derived.proxyInboundRuntimePortRanges
+    ) "proxy-suite: inbounds.runtime.ports ranges must be \"from-to\" within 1-65535, from <= to")
+    (mkAssertion (!derived.proxyInboundsRuntimeEnabled || derived.proxyInboundRuntimePorts != [ ])
+      "proxy-suite: inbounds.runtime.enable needs inbounds.runtime.ports, the ports runtime listeners may use"
+    )
     (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
       "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
     )
@@ -553,8 +601,8 @@ let
         !proxyInboundsEnabled || !(l.tls.enable && l.reality.enable)
       ) "${prefix}: tls.enable and reality.enable are mutually exclusive")
       (mkAssertion (
-        !proxyInboundsEnabled || l.type == null || l.users != [ ]
-      ) "${prefix}: at least one entry in users is required")
+        !proxyInboundsEnabled || l.type == null || l.users != [ ] || derived.proxyInboundsRuntimeEnabled
+      ) "${prefix}: at least one entry in users is required (or inbounds.runtime, to add them there)")
       # XRay refuses to start on a repeated email, which is the user's name.
       (uniqueValues (proxyInboundsEnabled && l.type != null) (builtins.filter (n: n != "") (
         map (user: user.name) l.users

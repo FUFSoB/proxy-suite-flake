@@ -26,6 +26,7 @@ let
     proxyInboundsFile
     proxyInboundsSpecFile
     proxyInboundsSelfSources
+    proxyInboundsRuntimeEnabled
     builders
     constants
     ;
@@ -40,7 +41,12 @@ let
   ip = "${pkgs.iproute2}/bin/ip";
   selfInterface = lib.escapeShellArg proxyInboundsCfg.routing.serverSource.interface;
   selfInterfaceDown = "${ip} link del ${selfInterface} 2>/dev/null || true";
-  selfInterfaceUp = lib.optionalString (proxyInboundsSelfSources != [ ]) ''
+  serverSource = proxyInboundsCfg.routing.serverSource;
+  # With inbounds.runtime, runtime users may get addresses too, whatever the declared have.
+  selfInterfaceWanted =
+    proxyInboundsSelfSources != [ ]
+    || (proxyInboundsRuntimeEnabled && (serverSource.ipv4 != null || serverSource.ipv6 != null));
+  selfInterfaceUp = lib.optionalString selfInterfaceWanted ''
     ${selfInterfaceDown}
     ${ip} link add ${selfInterface} type dummy
     ${ip} link set ${selfInterface} up
@@ -49,6 +55,14 @@ let
       lib.optionalString (s.ipv4 != null) "${ip} addr add ${s.ipv4}/32 dev ${selfInterface}\n"
       + lib.optionalString (s.ipv6 != null) "${ip} -6 addr add ${s.ipv6}/128 dev ${selfInterface} nodad\n"
     ) proxyInboundsSelfSources}
+    ${lib.optionalString proxyInboundsRuntimeEnabled ''
+      while IFS=$'\t' read -r family address; do
+        case "$family" in
+          4) ${ip} addr add "$address/32" dev ${selfInterface} ;;
+          6) ${ip} -6 addr add "$address/128" dev ${selfInterface} nodad ;;
+        esac
+      done < <(${jq} -r '.selfAddresses[]? | (select(.ipv4) | "4\t\(.ipv4)"), (select(.ipv6) | "6\t\(.ipv6)")' <<< "$RENDERED")
+    ''}
   '';
   # Only listeners, and for AmneziaWG listeners transparent sockets (IP_TRANSPARENT).
   runXray = constants.runAsServiceUser pkgs (
@@ -173,7 +187,7 @@ let
     RENDERED=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildInboundPy} \
       --spec ${proxyInboundsSpecFile} \
       --server-address "$SERVER_ADDRESS" \
-      --onion-address "$ONION_ADDRESS")
+      --onion-address "$ONION_ADDRESS"${lib.optionalString proxyInboundsRuntimeEnabled " \\\n      --template ${proxyInboundsFile}"})
 
     INBOUNDS_JSON=$(${jq} -c '.inbounds' <<< "$RENDERED")
 
@@ -184,6 +198,8 @@ let
       LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
     ''}
 
+    # With inbounds.runtime, the routing rules are build-inbound.py's: the template's with the
+    # runtime listeners and users in. Their serverSource outbounds come with them.
     ${jq} \
       --slurpfile ibs <(printf '%s' "$INBOUNDS_JSON") \
       --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
@@ -195,8 +211,14 @@ let
         else
           "--arg password ''"
       } \
+      --argjson runtime ${if proxyInboundsRuntimeEnabled then "true" else "false"} \
+      --slurpfile rendered <(printf '%s' "$RENDERED") \
       '.inbounds += $ibs[0]
        | .outbounds = $obs[0] + .outbounds
+       | if $runtime then
+           .routing.rules = $rendered[0].rules
+           | .outbounds += $rendered[0].selfOutbounds
+         else . end
        | if $auth_enabled then
            (.outbounds[] | select(.tag == "proxy") | .settings.servers[0].users)
              = [{user:$user,pass:$password}]
@@ -306,8 +328,22 @@ let
     chmod ${if userControlAllows "stats" then "640" else "600"} "$tmp"
     mv -f "$tmp" "$file"
   '';
+  # inbounds.runtime: after proxy-ctl changes the spool. The AmneziaWG interfaces only when
+  # their peers changed: restarting them cuts off every one of their clients for a moment.
+  reloadInbounds = pkgs.writeShellScript "proxy-suite-inbounds" ''
+    set -euo pipefail
+    restart=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${parserScriptsPythonPath}/inbound_runtime.py \
+      --spec ${proxyInboundsSpecFile} check${
+        lib.optionalString (
+          proxyInboundsAwg != [ ]
+        ) " --awg-users ${constants.runtimeDir}/proxy-suite-inbounds-awg/users.json"
+      })
+    # shellcheck disable=SC2086
+    ${constants.systemctl} try-restart $restart proxy-suite-inbounds.service
+  '';
+
   stopInboundsInterface =
-    if proxyInboundsSelfSources == [ ] then
+    if !selfInterfaceWanted then
       null
     else
       pkgs.writeShellScript "proxy-suite-inbounds" selfInterfaceDown;
@@ -317,6 +353,7 @@ in
     startInbounds
     stopInboundsInterface
     collectInboundStats
+    reloadInbounds
     linksFile
     subscriptionsFile
     ;

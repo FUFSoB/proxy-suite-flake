@@ -24,6 +24,7 @@ in
           "autoProxy"
           "zapret"
           "stats"
+          "inbounds"
           "whitelistBypass"
           "amneziaWg"
         ]
@@ -39,6 +40,8 @@ in
         - "autoProxy": see and change what autoProxy learned.
         - "zapret": change zapret2's learned sites, and `zapret cutoff probe`.
         - "stats": `inbounds stats`.
+        - "inbounds": add, remove and bind runtime inbound users and listeners
+          (`inbounds.runtime`), and read the secrets they are given.
         - "whitelistBypass": everything under `proxy-ctl wl`.
         - "amneziaWg": add and remove global AmneziaWG profiles (`proxy-ctl awg add`, `awg rm`).
           A global profile takes over the host's routes and DNS. Starting and stopping one is

@@ -16,7 +16,7 @@ let
           The user's number, for good: their `inbounds.routing.serverSource` addresses are
           that many past the start of each range (5: 10.78.0.5 in 10.78.0.0/24). Users
           without one follow the highest number given, by name, and move when users are
-          added before them. Unique.
+          added before them. Unique. Runtime users (`inbounds.runtime`) go around these numbers.
         '';
         example = 1;
       };

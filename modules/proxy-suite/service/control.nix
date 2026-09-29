@@ -21,6 +21,8 @@ let
     userControlCfg
     proxyInboundsCfg
     proxyInboundsEnabled
+    proxyInboundsRuntimeEnabled
+    proxyInboundsSpecFile
     amneziaWgProfileNamesFile
     awgRuntimeGlobal
     awgRuntimeOutbounds
@@ -111,6 +113,11 @@ in
       INBOUNDS_SUBS_FILE = proxyInboundsSubscriptionsFile;
       INBOUNDS_SUB_BASE_URL =
         if proxyInboundsSubscriptionsBaseUrl == null then "" else proxyInboundsSubscriptionsBaseUrl;
+      # inbounds.runtime: the users and listeners proxy-ctl adds go through this tool, which
+      # reads what it may use from the spec.
+      INBOUNDS_RUNTIME_ENABLED = flag proxyInboundsRuntimeEnabled;
+      INBOUNDS_RUNTIME_TOOL = "${proxySuiteScriptsDir}/inbound_runtime.py";
+      INBOUNDS_SPEC_FILE = "${proxyInboundsSpecFile}";
       # Only the system-wide instance reads the site lists; per-app zapret handles all traffic.
       ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2" && zapretGlobalEnabled);
       ZAPRET_STATE_DIR = constants.zapret2StateDir;

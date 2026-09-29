@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import inbound_runtime
 from amneziawg_config import (
     ConfigError,
     _apply_awg3_mtu_default,
@@ -359,7 +360,19 @@ def prepare(spec: dict, awg_binary: str, runtime_dir: str) -> list[dict]:
                 "implementation": transport_implementation(config),
             }
         )
+    # Who is on which interface now: inbound_runtime.py's check tells from it whether a
+    # runtime change needs these interfaces restarted too.
+    write_private(os.path.join(runtime_dir, "users.json"), json.dumps(awg_users(spec)) + "\n")
     return prepared
+
+
+def awg_users(spec: dict) -> dict[str, list[str]]:
+    """Each AmneziaWG listener's users, by tag."""
+    return {
+        listener["tag"]: sorted(user["name"] for user in listener["users"])
+        for listener in spec["listeners"]
+        if listener.get("type") == "amneziawg"
+    }
 
 
 def peer_names(spec: dict) -> dict[str, dict]:
@@ -431,6 +444,8 @@ def main() -> int:
     with open(args.spec, encoding="utf-8") as handle:
         spec = json.load(handle)
     try:
+        # Runtime users on AmneziaWG listeners are peers like the declared ones.
+        spec, _, _ = inbound_runtime.merge(spec)
         if args.command == "prepare":
             # One line per listener, for the start script to read.
             for entry in prepare(spec, args.awg, args.runtime_dir):

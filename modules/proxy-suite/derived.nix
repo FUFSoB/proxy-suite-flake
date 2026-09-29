@@ -181,6 +181,15 @@ let
     }) proxyInboundsCfg.listeners
   );
 
+  # inbounds.runtime: listeners added with proxy-ctl may exit by these, so everything built
+  # per exit (rules, outbounds, the local proxy, name resolution) is there for them too.
+  proxyInboundsRuntimeEnabled = proxyInboundsEnabled && proxyInboundsCfg.runtime.enable;
+  proxyInboundsRuntimeVias = lib.optionals proxyInboundsRuntimeEnabled (
+    lib.unique ([ proxyInboundsCfg.routing.via ] ++ proxyInboundsCfg.runtime.vias ++ [ "block" ])
+  );
+  # Every exit a listener has or may get.
+  proxyInboundsVias = map (ib: ib.via) proxyInbounds ++ proxyInboundsRuntimeVias;
+
   # inbounds.routing.serverSource: an address per inbound user (by XRay's email, the user's
   # name), which XRay sends that user's connections to this host from.
   proxyInboundsServerSource = proxyInboundsCfg.routing.serverSource;
@@ -236,12 +245,16 @@ let
   # .onion names from clients go to the local proxy, whose rule hands them to Tor, whatever
   # the listener's via. AmneziaWG listeners never pass XRay's routing.
   proxyInboundsRouteOnion =
-    torRouteOnion && lib.any (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds;
+    torRouteOnion
+    && (
+      lib.any (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds
+      || proxyInboundsRuntimeEnabled
+    );
 
   # Whether any listener or inbounds.routing.proxy exception relays through the local SOCKS
   # listener.
   proxyInboundsNeedLocalProxy =
-    lib.any (ib: ib.via == "proxy") proxyInbounds
+    builtins.elem "proxy" proxyInboundsVias
     || proxyInboundsRouteOnion
     || lib.any (field: proxyInboundsCfg.routing.proxy.${field} != [ ]) [
       "domains"
@@ -251,7 +264,7 @@ let
     ];
 
   # Names pass unresolved unless XRay dials itself (a direct listener, or pure XRay).
-  proxyInboundsResolveInSingBox = !pureXrayEnabled && !lib.any (ib: ib.via == "direct") proxyInbounds;
+  proxyInboundsResolveInSingBox = !pureXrayEnabled && !builtins.elem "direct" proxyInboundsVias;
 
   # Even when XRay resolves (a direct listener), it hands sing-box the name, which sing-box
   # looks up again: guard there too.
@@ -269,7 +282,7 @@ let
 
   # Other vias name static outbounds, rendered into the inbound service's own config.
   proxyInboundViaTags = lib.unique (
-    builtins.filter (via: !builtins.elem via builtinTags) (map (ib: ib.via) proxyInbounds)
+    builtins.filter (via: !builtins.elem via builtinTags) proxyInboundsVias
   );
   # The pinned outbounds and every hop they chain through, which the inbound service renders
   # too. A hop that is not a static outbound (a subscription entry, warp) has no tag here.
@@ -351,6 +364,19 @@ let
       ) proxyInboundsPublic
     )
   );
+  # inbounds.runtime.ports, both protocols: what a runtime listener serves is not known here.
+  proxyInboundRuntimePorts = lib.optionals (proxyInboundsRuntimeEnabled) proxyInboundsCfg.runtime.ports;
+  proxyInboundRuntimeSinglePorts = builtins.filter builtins.isInt proxyInboundRuntimePorts;
+  proxyInboundRuntimePortRanges = map (
+    range:
+    let
+      bounds = map lib.toInt (lib.splitString "-" range);
+    in
+    {
+      from = builtins.elemAt bounds 0;
+      to = builtins.elemAt bounds 1;
+    }
+  ) (builtins.filter builtins.isString proxyInboundRuntimePorts);
   # A raw-JSON listener could serve anything, so open both protocols for it.
   proxyInboundFirewallUdpPorts = lib.unique (
     map (ib: ib.listener.port) (
@@ -492,6 +518,8 @@ let
     pinnedOutboundFile = "${stateDir}/pinned-outbound";
     runtimeOutboundsDir = "${stateDir}/outbounds.d";
     runtimeSubscriptionsDir = "${stateDir}/subscriptions.d";
+    # inbounds.runtime: users/<name>.json and listeners/<tag>.json (scripts/inbound_runtime.py).
+    runtimeInboundsDir = "${stateDir}/inbounds.d";
     # Shell function for the scripts that read those spools as root. $1 a file: in a spool,
     # a regular file only, and never through a symlink, which would hand over any file root
     # can read (a share link or an error message then shows it), nor a FIFO, which would
@@ -653,6 +681,11 @@ in
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds
+    proxyInboundsRuntimeEnabled
+    proxyInboundsRuntimeVias
+    proxyInboundRuntimePorts
+    proxyInboundRuntimeSinglePorts
+    proxyInboundRuntimePortRanges
     proxyInboundsAwg
     proxyInboundIsUdpOnly
     proxyInboundsRouteOnion

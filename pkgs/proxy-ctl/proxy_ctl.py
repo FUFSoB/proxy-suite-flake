@@ -138,6 +138,21 @@ Changes and secrets need root or the userControl group.
   inbounds sub [user] [--qr]             subscription users, or one user's URL
   inbounds stats [days] [--by user|inbound|outbound]
                                          traffic by user, listener or exit
+  inbounds users [list]                  users: order, serverSource address, listeners
+                                         (the rest below needs inbounds.runtime)
+  inbounds users add <name> [--order N] [--listener <tag>]...
+                                         add a user at runtime, with generated secrets
+  inbounds users rm <name>               remove a runtime user
+  inbounds users order <name> <N>        a runtime user's order (serverSource number)
+  inbounds bind|unbind <user> <tag>      put a user on a listener, or take it off
+                                         (a runtime user, or a runtime listener)
+  inbounds add <tag> <type> [--port N] [--via V] [--transport T] [--path P] [--host H]
+      [--reality SNI[,SNI]] [--tls <cert>] [--alpn a,b] [--flow vision] [--method M]
+      [--listen A] [--user U]... [more: see inbounds add --help]
+                                         add a listener at runtime
+  inbounds add <tag> <file.json|->       add one from JSON shaped like inbounds.listeners.<tag>
+  inbounds rm <tag>                      remove a runtime listener
+  inbounds show <tag>                    a runtime listener's JSON
   inbounds online                        who is online, and when others were last seen
 """
 
@@ -147,6 +162,33 @@ ROUTE_MODE_LABELS = {
     "blacklist": "Blacklist (proxy by default)",
     "all-proxy": "All Proxy (override)",
     "all-bypass": "All Bypass (override)",
+}
+
+# `inbounds add`: the listener types and flags scripts/inbound_runtime.py takes.
+INBOUND_TYPES = ("vless", "vmess", "trojan", "hysteria2", "shadowsocks", "socks", "http")
+INBOUND_ADD_FLAGS = {
+    "--port": "port, from inbounds.runtime.ports",
+    "--listen": "listening address (default ::)",
+    "--via": "where its traffic exits",
+    "--transport": "raw, ws, grpc, httpupgrade or xhttp",
+    "--path": "ws, httpupgrade or xhttp path",
+    "--host": "expected Host header",
+    "--mode": "xhttp mode",
+    "--service-name": "gRPC service name",
+    "--reality": "REALITY server names, comma-separated",
+    "--reality-dest": "REALITY dest host:port",
+    "--short-id": "REALITY short ID",
+    "--tls": "a certificate from inbounds.runtime.tlsCertificates",
+    "--alpn": "ALPN, comma-separated",
+    "--sni": "SNI in share links",
+    "--flow": "vless flow (vision)",
+    "--method": "shadowsocks cipher",
+    "--share-port": "port in share links",
+    "--share-address": "address in share links",
+    "--order": "position in links and subscriptions",
+    "--masquerade": "hysteria2: site shown to anything else",
+    "--salamander": "hysteria2: Salamander obfuscation",
+    "--user": "a user it accepts",
 }
 
 # A hostname: it lands in root-owned files and then in URLs.
@@ -690,9 +732,31 @@ COMPLETE = {
             "sub": "subscription users, or one user's URL",
             "stats": "traffic per user, listener or exit",
             "online": "who is connected now",
+            "users": "users, and adding them at runtime",
+            "bind": "put a user on a listener",
+            "unbind": "take a user off a listener",
+            "add": "add a listener at runtime",
+            "rm": "remove a runtime listener",
+            "show": "a runtime listener's JSON",
         }
     },
     "inbounds stats": {"flags": {"--by": "user, inbound or outbound"}},
+    "inbounds users": {
+        "words": {
+            "list": "users, their order, address and listeners",
+            "add": "add a user at runtime",
+            "rm": "remove a runtime user",
+            "order": "set a runtime user's order",
+        }
+    },
+    "inbounds users add": {"flags": {"--order": "its serverSource number", "--listener": "a listener to put it on"}},
+    "inbounds users rm": {"args": lambda: _inbound_runtime_names("users", "runtime")},
+    "inbounds users order": {"args": lambda: _inbound_runtime_names("users", "runtime")},
+    "inbounds bind": {"args": lambda: {**_inbound_runtime_names("users"), **_inbound_runtime_names("listeners")}, "repeat": True},
+    "inbounds unbind": {"args": lambda: {**_inbound_runtime_names("users"), **_inbound_runtime_names("listeners")}, "repeat": True},
+    "inbounds add": {"args": lambda: {t: "" for t in INBOUND_TYPES}, "repeat": True, "flags": INBOUND_ADD_FLAGS},
+    "inbounds rm": {"args": lambda: _inbound_runtime_names("listeners", "runtime")},
+    "inbounds show": {"args": lambda: _inbound_runtime_names("listeners", "runtime")},
     "inbounds link": {
         "args": _inbound_link_choices,
         "flags": {
@@ -3720,15 +3784,115 @@ def _inbound_subscriptions(*args):
         print("Set inbounds.subscriptions.baseUrl to get a URL instead of a path.", file=sys.stderr)
 
 
+# --- runtime inbound users and listeners ---------------------------------------
+#
+# inbounds.runtime: users/<name>.json and listeners/<tag>.json in a spool the "inbounds" scope
+# may write. scripts/inbound_runtime.py checks and writes them, with what the spec allows;
+# the reload unit restarts the inbounds, which merge them in when they start.
+
+def _inbound_runtime(*args, stdin=None, quiet=False, listing=False):
+    """scripts/inbound_runtime.py with the spec: its output, or its complaint as ours.
+
+    listing: a read, which works without inbounds.runtime (the declared users and listeners).
+    """
+    if not (listing and env("INBOUNDS_ENABLED") == "1") and env("INBOUNDS_RUNTIME_ENABLED") != "1":
+        die("Runtime inbound users and listeners are not enabled in this configuration (inbounds.runtime.enable).")
+    argv = [sys.executable, env("INBOUNDS_RUNTIME_TOOL"), "--spec", env("INBOUNDS_SPEC_FILE"), "--xray", env("INBOUNDS_XRAY", "xray"), *args]
+    try:
+        p = subprocess.run(argv, input=stdin, capture_output=True, text=True)
+    except OSError as e:
+        die(f"Cannot run {argv[1]}: {e}")
+    if p.returncode and not quiet:
+        message = p.stderr.strip() or f"{argv[1]} exited with {p.returncode}"
+        die(f"{message} - {ask_group()}." if p.returncode == 77 else message)
+    if not quiet and p.stderr:
+        sys.stderr.write(p.stderr)
+    return p.returncode, p.stdout
+
+
+def _inbound_runtime_rows(kind):
+    """Users or listeners, declared and runtime, as the tool lists them; [] when it cannot."""
+    if env("INBOUNDS_ENABLED") != "1":
+        return []
+    status, out = _inbound_runtime(kind, "--json", quiet=True, listing=True)
+    try:
+        rows = json.loads(out) if not status else []
+    except ValueError:
+        rows = []
+    return rows if isinstance(rows, list) else []
+
+
+def _inbound_runtime_names(kind, source=""):
+    key = "name" if kind == "users" else "tag"
+    return {_s(r[key]): _s(r.get("source") or "") for r in _inbound_runtime_rows(kind) if not source or r.get("source") == source}
+
+
+def _inbound_runtime_change(*args, stdin=None):
+    """A change to the spool, then the reload that applies it, then what it left out."""
+    _, out = _inbound_runtime(*args, stdin=stdin)
+    sys.stdout.write(out)
+    if systemctl("start", "proxy-suite-inbounds-reload.service")[0]:
+        die("Saved, but applying it failed - see: proxy-ctl logs proxy-suite-inbounds-reload")
+    p = subprocess.run(
+        [sys.executable, env("INBOUNDS_RUNTIME_TOOL"), "--spec", env("INBOUNDS_SPEC_FILE"), "check"],
+        capture_output=True,
+        text=True,
+    )
+    for line in lines(p.stderr):
+        print(f"warning: {line}", file=sys.stderr)
+
+
+def _inbound_users(verb="list", *args):
+    if verb in ("list", "--json"):
+        sys.stdout.write(_inbound_runtime("users", *(["--json"] if "--json" in (verb, *args) else []), listing=True)[1])
+    elif verb == "add" and args:
+        _inbound_runtime_change("users", "add", *args)
+    elif verb == "rm" and len(args) == 1:
+        _inbound_runtime_change("users", "rm", *args)
+    elif verb == "order" and len(args) == 2:
+        _inbound_runtime_change("users", "order", *args)
+    else:
+        usage("inbounds users [list] | add <name> [--order N] [--listener <tag>]... | rm <name> | order <name> <N>")
+
+
 def cmd_inbounds(verb="list", *args):
     require_enabled("INBOUNDS_ENABLED", "inbounds")
+    if verb == "users":
+        _inbound_users(*args)
+        return
+    if verb in ("bind", "unbind"):
+        if len(args) != 2:
+            usage(f"inbounds {verb} <user> <tag>")
+        _inbound_runtime_change(verb, *args)
+        return
+    if verb == "add":
+        if "--help" in args or "-h" in args:
+            sys.stdout.write(_inbound_runtime("add", "--help")[1])
+            return
+        if len(args) < 2:
+            usage("inbounds add <tag> <type> [flags] | <tag> <file.json|->")
+        _inbound_runtime_change("add", *args, stdin=sys.stdin.read() if args[1:2] == ("-",) else None)
+        return
+    if verb == "rm":
+        if len(args) != 1:
+            usage("inbounds rm <tag>")
+        _inbound_runtime_change("rm", *args)
+        return
+    if verb == "show":
+        if len(args) != 1:
+            usage("inbounds show <tag>")
+        sys.stdout.write(_inbound_runtime("show", *args)[1])
+        return
     if verb == "list":
         state = svc_state("proxy-suite-inbounds")
-        row = "  {:<24} {:<16} {:<14} {:<8} {}"
-        print(row.format("TAG", "USER", "TYPE", "PORT", "STATE"))
+        # Which listeners were added at runtime, when they can be.
+        sources = _inbound_runtime_names("listeners") if env("INBOUNDS_RUNTIME_ENABLED") == "1" else {}
+        row = "  {:<24} {:<16} {:<14} {:<8} {:<8}" + (" {}" if sources else "")
+        print(row.format("TAG", "USER", "TYPE", "PORT", "STATE", "SOURCE").rstrip())
         for x in _inbound_links():
             kind = _s(x.get("type")) + (" (onion)" if x.get("variant") == "onion" else "")
-            print(row.format(_s(x.get("tag")), _s(x.get("user")), kind, _s(x.get("port")), state))
+            tag = _s(x.get("tag"))
+            print(row.format(tag, _s(x.get("user")), kind, _s(x.get("port")), state, sources.get(tag, "nix")).rstrip())
     elif verb in ("link", "qr"):
         rest = [a for a in args if not a.startswith("--")]
         if not rest:

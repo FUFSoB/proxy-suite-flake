@@ -7,11 +7,25 @@
   proxyInboundsRouteOnion,
   proxyInboundsResolveInSingBox,
   proxyInboundsSelfSources,
+  proxyInboundsRuntimeEnabled,
+  proxyInboundsRuntimeVias,
+  proxyInboundRuntimePorts,
   zapretDirectRules,
 }:
 
 let
   defaultVia = proxyInboundsCfg.routing.via;
+
+  # inbounds.runtime: the start script (inbound_runtime.py) adds the runtime listeners' tags
+  # to every rule marked with the listeners it is for, by their via, and drops the marked
+  # rules no listener is left in. So with runtime listeners possible, a rule stays even
+  # while no declared listener is in it. "_anchor" rules are where the runtime users'
+  # serverSource rules go; they are replaced whether or not there are any.
+  runtime = proxyInboundsRuntimeEnabled;
+  mark = members: rule: rule // lib.optionalAttrs runtime { _members = members; };
+  forException = mark { notVia = [ "block" ]; };
+  forDefault = mark { via = [ defaultVia ]; };
+  any = tags: tags != [ ] || runtime;
 
   # Listeners on the default egress are covered by the final rule.
   overrideInbounds = builtins.filter (ib: ib.via != defaultVia) proxyInbounds;
@@ -22,7 +36,7 @@ let
 
   # Only Tor reaches .onion: to the local proxy, whose own rule sends it there. First, so no
   # IP rule before it has XRay look the name up, which would leak it to a resolver.
-  onionRule = lib.optional proxyInboundsRouteOnion {
+  onionRule = lib.optional proxyInboundsRouteOnion (forException {
     type = "field";
     ruleTag = "inbound-tor-onion";
     domain = [ "domain:onion" ];
@@ -30,7 +44,7 @@ let
       builtins.filter (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds
     );
     outboundTag = "proxy";
-  };
+  });
 
   blockPrivateRule = lib.optional proxyInboundsCfg.routing.blockPrivate {
     type = "field";
@@ -66,19 +80,20 @@ let
       443
     ]
     ++ proxyInboundsCfg.serverPorts
+    ++ proxyInboundRuntimePorts
   );
 
   # Names and IPs in rules of their own: XRay ANDs the fields of one rule.
   mkServerAddressRule =
     ruleTag: field: items:
-    lib.optional (items != [ ] && exceptionInboundTags != [ ]) {
+    lib.optional (items != [ ] && any exceptionInboundTags) (forException {
       type = "field";
       inherit ruleTag;
       ${field} = items;
       inboundTag = exceptionInboundTags;
       port = serverPortList;
       outboundTag = "direct";
-    };
+    });
 
   # Sniffing is routeOnly (proxy_inbound.py): a name rule also matches a connection to an IP
   # whose TLS SNI or HTTP Host carries that name, and "direct" then dials the IP, from this
@@ -92,20 +107,25 @@ let
     "0.0.0.0/0"
     "::/0"
   ];
+  # One rule per via; runtimeVias get theirs even with no declared listener on them.
   mkSniffGuard =
-    ruleTag: domains: inbounds: extra:
+    ruleTag: domains: inbounds: runtimeVias: extra:
     lib.mapAttrsToList (
       via: ibs:
-      {
-        type = "field";
-        ruleTag = "${ruleTag}-${via}";
-        domain = domains;
-        ip = anyIp;
-        inboundTag = map (ib: ib.tag) ibs;
-        outboundTag = via;
-      }
-      // extra
-    ) (lib.groupBy (ib: ib.via) inbounds);
+      mark { via = [ via ]; } (
+        {
+          type = "field";
+          ruleTag = "${ruleTag}-${via}";
+          domain = domains;
+          ip = anyIp;
+          inboundTag = map (ib: ib.tag) ibs;
+          outboundTag = via;
+        }
+        // extra
+      )
+    ) (lib.genAttrs (lib.optionals runtime runtimeVias) (_: [ ]) // lib.groupBy (ib: ib.via) inbounds);
+  # Where a runtime listener that is not blocked may exit.
+  runtimeOpenVias = builtins.filter (via: via != "block") proxyInboundsRuntimeVias;
 
   serverNameDomains = map (name: if isSuffix name then name else "full:${name}") serverNames;
   serverPortList = lib.concatMapStringsSep "," toString serverAddressPorts;
@@ -118,7 +138,7 @@ let
   serverIps6 = builtins.filter (lib.hasInfix ":") serverIps;
   mkSelfRule =
     ruleTag: field: items: source: outboundTag:
-    lib.optional (items != [ ] && exceptionInboundTags != [ ]) {
+    lib.optional (items != [ ] && any exceptionInboundTags) (forException {
       type = "field";
       ruleTag = "${ruleTag}-${source.id}";
       ${field} = items;
@@ -126,7 +146,7 @@ let
       inboundTag = exceptionInboundTags;
       port = serverPortList;
       inherit outboundTag;
-    };
+    });
   selfIpRules = lib.concatMap (
     s:
     lib.optionals (s.ipv4 != null) (
@@ -142,16 +162,40 @@ let
       if s.ipv4 != null then "direct-self4-${s.id}" else "direct-self6-${s.id}"
     )
   ) proxyInboundsSelfSources;
+  # The runtime users' rules, as the declared users' are made: inbound_runtime.py numbers
+  # them and makes one of each per user from these.
+  serverSourceOn =
+    proxyInboundsCfg.routing.serverSource.ipv4 != null
+    || proxyInboundsCfg.routing.serverSource.ipv6 != null;
+  mkSelfAnchor =
+    anchor: fields:
+    lib.optional (runtime && serverSourceOn) (
+      forException (
+        {
+          _anchor = anchor;
+          ruleTag = "inbound-runtime-anchor-${anchor}";
+          inboundTag = exceptionInboundTags;
+          port = serverPortList;
+        }
+        // fields
+      )
+    );
   serverNameGuarded = proxyInboundsResolveInSingBox || serverIps != [ ];
   serverAddressRule =
     selfIpRules
+    ++ mkSelfAnchor "selfIp" {
+      ip4 = serverIps4;
+      ip6 = serverIps6;
+    }
     ++ mkServerAddressRule "inbound-server-address-direct-ip" "ip" serverIps
-    ++ lib.optionals (serverNames != [ ] && serverNameGuarded && exceptionInboundTags != [ ]) (
+    ++ lib.optionals (serverNames != [ ] && serverNameGuarded && any exceptionInboundTags) (
       mkSniffGuard "inbound-server-address-sniffed" serverNameDomains (builtins.filter (
         ib: ib.via != "block"
-      ) proxyInbounds) { port = serverPortList; }
+      ) proxyInbounds) runtimeOpenVias { port = serverPortList; }
     )
-    ++ lib.optionals (serverNames != [ ] && serverNameGuarded) selfNameRules
+    ++ lib.optionals (serverNames != [ ] && serverNameGuarded) (
+      selfNameRules ++ mkSelfAnchor "selfName" { domain = serverNameDomains; }
+    )
     ++ mkServerAddressRule "inbound-server-address-direct" "domain" serverNameDomains;
 
   blockRuRules = lib.optionals proxyInboundsCfg.routing.blockRu [
@@ -173,8 +217,8 @@ let
 
   proxyDomainRule =
     lib.optional
-      (exceptionInboundTags != [ ] && (inboundProxy.domains != [ ] || inboundProxy.geosites != [ ]))
-      {
+      (any exceptionInboundTags && (inboundProxy.domains != [ ] || inboundProxy.geosites != [ ]))
+      (forException {
         type = "field";
         ruleTag = "inbound-proxy-domain";
         domain =
@@ -182,23 +226,22 @@ let
           ++ map (name: "geosite:${name}") inboundProxy.geosites;
         inboundTag = exceptionInboundTags;
         outboundTag = "proxy";
-      };
+      });
 
   proxyIpRule =
-    lib.optional
-      (exceptionInboundTags != [ ] && (inboundProxy.ips != [ ] || inboundProxy.geoips != [ ]))
-      {
+    lib.optional (any exceptionInboundTags && (inboundProxy.ips != [ ] || inboundProxy.geoips != [ ]))
+      (forException {
         type = "field";
         ruleTag = "inbound-proxy-ip";
         ip = inboundProxy.ips ++ map (name: "geoip:${name}") inboundProxy.geoips;
         inboundTag = exceptionInboundTags;
         outboundTag = "proxy";
-      };
+      });
 
   # Only when the default egress is a proxy, and only for its listeners.
   zapretDirectEnabled =
     proxyInboundsCfg.routing.zapretDirect
-    && defaultInboundTags != [ ]
+    && any defaultInboundTags
     && !builtins.elem defaultVia [
       "direct"
       "block"
@@ -206,13 +249,13 @@ let
 
   mkZapretRule =
     ruleTag: field: items:
-    lib.optional (zapretDirectEnabled && items != [ ]) {
+    lib.optional (zapretDirectEnabled && items != [ ]) (forDefault {
       type = "field";
       inherit ruleTag;
       ${field} = items;
       inboundTag = defaultInboundTags;
       outboundTag = "direct";
-    };
+    });
 
   zapretDomains = map (domain: "domain:${domain}") zapretDirectRules.domains;
   # Under IPOnDemand the guard would take every zapret name too: the domain rule stays off.
@@ -221,7 +264,7 @@ let
     ++ lib.optionals (zapretDirectEnabled && zapretDomains != [ ] && proxyInboundsResolveInSingBox) (
       mkSniffGuard "inbound-zapret-sniffed" zapretDomains (builtins.filter (
         ib: builtins.elem ib.tag defaultInboundTags
-      ) proxyInbounds) { }
+      ) proxyInbounds) [ defaultVia ] { }
     )
     ++ lib.optionals proxyInboundsResolveInSingBox (
       mkZapretRule "inbound-zapret-direct-domain" "domain" zapretDomains
@@ -253,9 +296,27 @@ let
     ++ zapretRules
     ++ overrideRules
     ++ [ finalRule ];
+  # The serverSource outbounds' own last word: only ever to this host, its listed IPs where
+  # there are some, and never somewhere private.
+  selfFinalRules =
+    if serverIps != [ ] then
+      [
+        {
+          action = "allow";
+          ip = serverIps;
+        }
+        { action = "block"; }
+      ]
+    else
+      [
+        {
+          action = "block";
+          ip = [ "geoip:private" ];
+        }
+      ];
 in
 {
-  inherit xrayInboundRules;
+  inherit xrayInboundRules selfFinalRules;
   # Names of this host sent direct with no guard (IPOnDemand, and no IP aliases): a warning.
   unguardedServerNames = lib.optionals (!serverNameGuarded) serverNames;
 }

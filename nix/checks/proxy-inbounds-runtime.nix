@@ -63,6 +63,11 @@ pkgs.testers.runNixOSTest {
               method = "2022-blake3-aes-128-gcm";
               users = [ "ss-user" ];
             };
+            # Users and listeners proxy-ctl adds below.
+            runtime = {
+              enable = true;
+              ports = [ "9000-9010" ];
+            };
           };
         };
 
@@ -159,5 +164,38 @@ pkgs.testers.runNixOSTest {
     with subtest("a listener keeps serving after a restart"):
         server.succeed("systemctl restart proxy-suite-inbounds.service")
         server.wait_for_open_port(8443)
+
+    with subtest("runtime users and listeners"):
+        cfg = "/run/proxy-suite-inbounds/config.json"
+        server.succeed("proxy-ctl inbounds users add friend --listener vless-in")
+        server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\", \"friend\"]' {cfg}")
+        server.succeed("proxy-ctl inbounds add rt vless --port 9001 --user friend --user tester")
+        server.wait_for_open_port(9001)
+        server.succeed("proxy-ctl inbounds users | grep friend | grep -q rt")
+        # Refused, and nothing else disturbed.
+        server.fail("proxy-ctl inbounds add far vless --port 30000 --user friend")
+        server.fail("proxy-ctl inbounds bind tester vless-in")
+        server.succeed("test ! -e /var/lib/proxy-suite/inbounds.d/listeners/far.json")
+        # The runtime user's link works from the client, as a runtime outbound there. XRay
+        # refuses plain VLESS to a public IP, so it dials the private one.
+        link = server.succeed("proxy-ctl inbounds link rt friend").strip()
+        assert link.startswith("vless://") and ":9001" in link, link
+        link = link.replace("${serverAddress}", "${serverPrivateAddress}")
+        client.succeed(f"proxy-ctl proxy outbounds add rt-out '{link}'")
+        client.succeed("proxy-ctl proxy pin rt-out")
+        client.wait_until_succeeds(
+            "curl -sS --fail --max-time 20 --proxy socks5h://127.0.0.1:1080"
+            f" http://{'${serverAddress}'}/ | grep -q served-from-origin",
+            timeout=60,
+        )
+        # A spool file that no longer holds up is left out; the declared listeners stay.
+        server.succeed("echo '{' > /var/lib/proxy-suite/inbounds.d/listeners/rt.json")
+        server.succeed("systemctl start proxy-suite-inbounds-reload.service")
+        server.wait_for_open_port(8443)
+        server.succeed(f"jq -e '[.inbounds[].tag] | index(\"rt\") == null' {cfg}")
+        server.succeed("journalctl -u proxy-suite-inbounds | grep -q \"ignoring runtime listener 'rt'\"")
+        server.succeed("rm /var/lib/proxy-suite/inbounds.d/listeners/rt.json")
+        server.succeed("proxy-ctl inbounds users rm friend")
+        server.succeed(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\"]' {cfg}")
   '';
 }

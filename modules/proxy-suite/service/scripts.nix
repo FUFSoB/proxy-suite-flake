@@ -168,7 +168,12 @@ let
   inherit (startScripts) startSocks startTun startPerAppTun;
 
   proxyInboundsScripts = import ./proxy-inbounds-scripts.nix { ctx = sctx; };
-  inherit (proxyInboundsScripts) startInbounds stopInboundsInterface collectInboundStats;
+  inherit (proxyInboundsScripts)
+    startInbounds
+    stopInboundsInterface
+    collectInboundStats
+    reloadInbounds
+    ;
   proxyInboundsLinksFile = proxyInboundsScripts.linksFile;
   proxyInboundsSubscriptionsFile = proxyInboundsScripts.subscriptionsFile;
 
@@ -206,6 +211,7 @@ in
     startInbounds
     stopInboundsInterface
     collectInboundStats
+    reloadInbounds
     ;
   inherit
     proxyInboundsLinksFile

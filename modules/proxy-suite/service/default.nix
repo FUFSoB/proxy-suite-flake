@@ -117,9 +117,17 @@ lib.mkMerge [
       # Inbound listeners are reached from outside, so their ports have to be open.
       firewall = lib.mkMerge [
         (lib.mkIf (proxyInboundsEnabled && cfg.inbounds.openFirewall) {
-          allowedTCPPorts = proxyInboundFirewallPorts;
-          allowedUDPPorts = proxyInboundFirewallUdpPorts;
+          allowedTCPPorts = proxyInboundFirewallPorts ++ derived.proxyInboundRuntimeSinglePorts;
+          allowedUDPPorts = proxyInboundFirewallUdpPorts ++ derived.proxyInboundRuntimeSinglePorts;
         })
+        # Only the NixOS adapter forwards ranges.
+        (lib.mkIf
+          (proxyInboundsEnabled && cfg.inbounds.openFirewall && derived.proxyInboundRuntimePortRanges != [ ])
+          {
+            allowedTCPPortRanges = derived.proxyInboundRuntimePortRanges;
+            allowedUDPPortRanges = derived.proxyInboundRuntimePortRanges;
+          }
+        )
         # Gateway clients' diverted packets reach input with their original destination, and
         # carry a mark whose table has no route back. Only those: the LAN is not trusted.
         (lib.mkIf (tproxyLanSysctl != { }) (
@@ -192,6 +200,27 @@ lib.mkMerge [
             [
               constants.runtimeOutboundsDir
               constants.runtimeSubscriptionsDir
+            ]
+        ))
+        # inbounds.runtime: the users' and listeners' files hold their secrets, so the dir is
+        # as closed as outbounds.d, and group-writable only with the inbounds scope.
+        (lib.mkIf (cfg.enable && derived.proxyInboundsRuntimeEnabled) (
+          map
+            (
+              dir:
+              "d ${dir} ${
+                if userControlAllows "inbounds" then
+                  "2770 root ${userControlCfg.group}"
+                else if constants.privileged then
+                  "0700 root root"
+                else
+                  "0700 - -"
+              } -"
+            )
+            [
+              constants.runtimeInboundsDir
+              "${constants.runtimeInboundsDir}/users"
+              "${constants.runtimeInboundsDir}/listeners"
             ]
         ))
         # Global AmneziaWG profiles added at runtime. Listable, so the tray and TUI show

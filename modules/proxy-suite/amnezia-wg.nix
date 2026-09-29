@@ -225,7 +225,9 @@ let
   # the main table by rule instead, which the kernel checks before it picks the source.
   repliesTable = profile: "proxy-suite-awg-${profile.interfaceName}";
   serverUdpPorts = lib.unique (
-    map toString (awgCfg.serverUdpPorts ++ derived.proxyInboundFirewallUdpPorts)
+    map toString (
+      awgCfg.serverUdpPorts ++ derived.proxyInboundFirewallUdpPorts ++ derived.proxyInboundRuntimePorts
+    )
     ++ cfg.host.openUdpPorts
   );
   serverUdpRulesDown = ''

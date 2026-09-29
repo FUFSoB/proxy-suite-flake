@@ -22,6 +22,7 @@ let
     torOnionEnabled
     whitelistBypassJoiners
     proxyInboundsEnabled
+    proxyInboundsRuntimeEnabled
     proxyInboundsNeedLocalProxy
     scripts
     perAppRouting
@@ -127,6 +128,16 @@ let
         extraServiceConfig = xrayAssetEnv // {
           ExecStop = scripts.collectInboundStats;
         };
+      };
+    }
+    {
+      enable = proxyInboundsRuntimeEnabled;
+      name = "proxy-suite-inbounds-reload";
+      value = mkOneshotService {
+        description = "Apply proxy-suite inbound users and listeners added at runtime";
+        execStart = scripts.reloadInbounds;
+        stateDirectory = "proxy-suite";
+        extraServiceConfig.RemainAfterExit = false;
       };
     }
     {

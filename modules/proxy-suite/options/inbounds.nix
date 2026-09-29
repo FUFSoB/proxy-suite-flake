@@ -150,6 +150,91 @@ in
       };
     };
 
+    # Consumed by scripts/inbound_runtime.py, which merges the spool into the spec at start,
+    # and by proxy-ctl, which writes the spool.
+    runtime = {
+      enable = mkEnableOption "" // {
+        description = ''
+          Users and listeners added at runtime with `proxy-ctl inbounds users add` and
+          `inbounds add`, kept in `inbounds.d` in the state directory. Runtime users can be
+          bound to any listener; declared users to runtime listeners only. A change restarts
+          the inbounds, which drops every connection once. Anything a runtime listener could
+          reach beyond its port is declared here: its ports, certificates, exits and
+          fallbacks. Members of `userControl.group` need the "inbounds" scope.
+        '';
+      };
+
+      ports = mkOption {
+        type = types.listOf (types.either types.port (types.strMatching "[0-9]+-[0-9]+"));
+        default = [ ];
+        description = ''
+          Ports runtime listeners may use, on any address: single ports and "from-to" ranges.
+          Opened in the firewall (TCP and UDP) with `openFirewall`, and reachable through the
+          tunnel like the listeners' own. Keep them clear of the declared listeners and of
+          other services here.
+        '';
+        example = [
+          8443
+          "20000-20099"
+        ];
+      };
+
+      vias = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          Exits a runtime listener may pick with `via`, besides `routing.via` and "block":
+          "proxy", "direct" or a `proxy.outbounds` tag, as in `routing.via`.
+        '';
+        example = [ "direct" ];
+      };
+
+      tlsCertificates = mkOption {
+        type = types.attrsOf (
+          types.submodule {
+            options = {
+              certificateFile = mkOption {
+                type = types.str;
+                description = "File with the PEM certificate chain.";
+              };
+              keyFile = mkOption {
+                type = types.str;
+                description = "File with the PEM private key.";
+              };
+              serverName = mkOption {
+                type = types.nullOr types.str;
+                default = null;
+                description = "SNI in share links. `null`: `serverAddress`.";
+              };
+            };
+          }
+        );
+        default = { };
+        description = ''
+          Certificates a runtime listener with TLS (trojan, hysteria2, `tls.enable`) may use,
+          by name: it names one in `tls.certificate` (`--tls <name>`), never a file.
+        '';
+        example = literalExpression ''
+          {
+            main = {
+              certificateFile = "/var/lib/acme/vpn.example.com/fullchain.pem";
+              keyFile = "/var/lib/acme/vpn.example.com/key.pem";
+            };
+          }
+        '';
+      };
+
+      fallbackDests = mkOption {
+        type = types.listOf (types.either types.port types.str);
+        default = [ ];
+        description = ''
+          `dest` values a runtime listener's fallbacks may use, such as a decoy site. A
+          fallback to a `listener` must name another runtime listener.
+        '';
+        example = [ "127.0.0.1:8080" ];
+      };
+    };
+
     users = mkOption {
       type = types.attrsOf (types.submodule t.userModule);
       default = { };

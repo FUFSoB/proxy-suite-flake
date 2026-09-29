@@ -103,6 +103,37 @@ class ModelTest(unittest.TestCase):
         self.assertTrue(actions["k"].when(awg) and actions["K"].when(awg) and actions["J"].when(vless))
         self.assertFalse(actions["k"].when(vless) or actions["K"].when(vless) or actions["J"].when(awg))
 
+    def test_runtime_inbound_users_and_listeners(self):
+        users = next(t for t in model.TABS if t.id == "inbound-users")
+        inbounds = next(t for t in model.TABS if t.id == "inbounds")
+        with mock.patch.dict(os.environ, {"INBOUNDS_ENABLED": "1", "INBOUNDS_RUNTIME_ENABLED": "0"}):
+            # Listed from the configuration; nothing to change them with.
+            self.assertTrue(users.available({}))
+            self.assertEqual([a.key for a in users.actions if model.offered(a)], ["t"])
+            self.assertNotIn("a", [a.key for a in inbounds.actions if model.offered(a)])
+        with mock.patch.dict(os.environ, {"INBOUNDS_ENABLED": "0"}):
+            self.assertFalse(users.available({}))
+        with mock.patch.dict(os.environ, {"INBOUNDS_ENABLED": "1", "INBOUNDS_RUNTIME_ENABLED": "1"}):
+            self.assertTrue(users.available({}))
+            rows = [{"name": "bob", "source": "nix", "order": 1, "address": "10.78.0.1", "listeners": ["in"], "problems": []},
+                    {"name": "alice", "source": "runtime", "order": 4, "address": "", "listeners": [], "problems": ["no listeners"]}]
+            with mock.patch.object(ctl, "_inbound_runtime_rows", lambda kind: rows):
+                bob, alice = model.inbound_user_rows({})
+            self.assertEqual((bob["listeners"], alice["problems"]), ("in", "no listeners"))
+            actions = {a.key: a for a in users.actions}
+            self.assertEqual(actions["n"].argv(None, "carol 7 in ws", {}),
+                             ["inbounds", "users", "add", "carol", "--order", "7", "--listener", "in", "--listener", "ws"])
+            self.assertEqual(actions["n"].argv(None, "carol", {}), ["inbounds", "users", "add", "carol"])
+            self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "u", "t"])
+            self.assertEqual(actions["e"].argv(alice, " 9 ", {}), ["inbounds", "users", "order", "alice", "9"])
+            self.assertEqual(actions["b"].argv(alice, "in", {}), ["inbounds", "bind", "alice", "in"])
+            actions = {a.key: a for a in inbounds.actions}
+            row = {"key": "friends/alice", "tag": "friends", "user": "alice", "type": "vless", "port": "20001", "source": "runtime"}
+            self.assertEqual(actions["a"].argv(None, "friends vless --port 20001", {}), ["inbounds", "add", "friends", "vless", "--port", "20001"])
+            self.assertEqual(actions["d"].argv(row), ["inbounds", "rm", "friends"])
+            self.assertFalse(actions["d"].when({**row, "source": "nix"}))
+            self.assertEqual(actions["b"].argv(row, "bob", {}), ["inbounds", "bind", "bob", "friends"])
+
     def test_inbound_rows_carry_no_presence(self):
         """XRay keys the online map by user, not by inbound, so a per-listener row
         could only repeat one verdict per listener; it must not claim to have one."""

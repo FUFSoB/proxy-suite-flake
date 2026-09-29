@@ -29,6 +29,7 @@ let
     "proxy-suite-autoproxy-learn." = "autoProxy";
     "proxy-suite-zapret2-cutoff." = "zapret";
     "proxy-suite-inbound-stats." = "stats";
+    "proxy-suite-inbounds-reload." = "inbounds";
     "proxy-suite-wb-" = "whitelistBypass";
   };
   templates = lib.filter (lib.hasSuffix "@") unitNames;

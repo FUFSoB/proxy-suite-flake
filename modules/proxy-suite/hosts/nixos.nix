@@ -66,6 +66,8 @@ in
           networking.firewall = {
             allowedTCPPorts = forward internal.firewall.allowedTCPPorts;
             allowedUDPPorts = forward internal.firewall.allowedUDPPorts;
+            allowedTCPPortRanges = forward internal.firewall.allowedTCPPortRanges;
+            allowedUDPPortRanges = forward internal.firewall.allowedUDPPortRanges;
             extraReversePathFilterRules = forward internal.firewall.extraReversePathFilterRules;
             extraInputRules = forward internal.firewall.extraInputRules;
             trustedInterfaces = forward internal.firewall.trustedInterfaces;

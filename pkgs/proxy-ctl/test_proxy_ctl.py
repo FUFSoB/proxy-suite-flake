@@ -1157,6 +1157,103 @@ class OutboundTestTest(EnvTest):
         self.assertIn("proxy-suite group, or re-run with sudo", err)
 
 
+class InboundRuntimeTest(EnvTest):
+    """inbounds.runtime through proxy-ctl: the tool does the work, proxy-ctl reloads after."""
+
+    def setUp(self):
+        super().setUp()
+        tool = os.environ.get("INBOUNDS_RUNTIME_TOOL")
+        if not tool:
+            self.skipTest("INBOUNDS_RUNTIME_TOOL is not set")
+        spool = self.path("inbounds.d")
+        os.makedirs(spool)
+        spec = {
+            "serverAddress": "vpn.example.com",
+            "shareLinks": True,
+            "users": {"bob": {"order": 1, "uuid": "11111111-1111-4111-8111-111111111111"}, "idle": {"order": None}},
+            "serverSource": {"ipv4": None, "ipv6": None, "declared": []},
+            "listeners": [
+                {"tag": "vless-in", "type": "vless", "port": 443, "order": 1000, "via": "proxy", "listen": "::",
+                 "users": [{"name": "bob", "uuid": "11111111-1111-4111-8111-111111111111"}]},
+            ],
+            "runtime": {
+                "spool": spool,
+                "ports": ["20000-20010"],
+                "vias": ["proxy", "block"],
+                "defaultVia": "proxy",
+                "fallbackDests": [],
+                "tlsCertificates": {},
+                "listenerDefaults": {
+                    "address": "::", "acceptProxyProtocol": False, "fallbacks": [], "flow": None, "order": 1000, "port": 443,
+                    "method": "2022-blake3-aes-128-gcm", "serverPassword": None, "sharePort": None, "shareAddress": None,
+                    "hysteria": {"masquerade": None, "salamander": {"enable": False, "password": None}},
+                    "reality": {"enable": False, "dest": "www.microsoft.com:443", "serverNames": [], "privateKey": None,
+                                "publicKey": None, "shortIds": [""], "xver": 0},
+                    "tls": {"enable": False, "alpn": None, "serverName": None},
+                    "transport": {"type": "raw", "path": "/", "host": None, "mode": None, "serviceName": "", "trustedXForwardedFor": []},
+                },
+            },
+        }
+        os.environ.update(
+            INBOUNDS_ENABLED="1",
+            INBOUNDS_RUNTIME_ENABLED="1",
+            INBOUNDS_SPEC_FILE=self.write("spec.json", spec),
+        )
+        self.started = []
+
+        def systemctl(*args, **kw):
+            self.started.append(args)
+            return 0, ""
+
+        self.patch("systemctl", systemctl)
+
+    def test_users_and_listeners(self):
+        out = ok(ctl.cmd_inbounds, "users", "add", "alice", "--listener", "vless-in")
+        self.assertEqual(out, "Added user alice (order 2) on vless-in\n")
+        self.assertEqual(self.started, [("start", "proxy-suite-inbounds-reload.service")])
+        out = ok(ctl.cmd_inbounds, "add", "friends", "vless", "--port", "20001", "--user", "alice")
+        self.assertIn("Added listener friends", out)
+        rows = {r["name"]: r for r in json.loads(ok(ctl.cmd_inbounds, "users", "--json"))}
+        self.assertEqual(rows["alice"]["listeners"], ["friends", "vless-in"])
+        self.assertEqual(rows["bob"]["source"], "nix")
+        self.assertEqual(ctl._inbound_runtime_names("listeners", "runtime"), {"friends": "runtime"})
+        status, _, err = run(ctl.cmd_inbounds, "bind", "bob", "vless-in")
+        self.assertEqual(status, 1)
+        self.assertIn("declared in the configuration", err)
+        # A refusal changes nothing, so nothing is reloaded.
+        self.assertEqual(len(self.started), 2)
+        ok(ctl.cmd_inbounds, "rm", "friends")
+        self.assertIn("vless-in", ok(ctl.cmd_inbounds, "users"))
+
+    def test_bad_listener_is_refused(self):
+        status, _, err = run(ctl.cmd_inbounds, "add", "far", "vless", "--port", "30000")
+        self.assertEqual(status, 1)
+        self.assertIn("not in inbounds.runtime.ports", err)
+        self.assertEqual(self.started, [])
+
+    def test_off(self):
+        os.environ["INBOUNDS_RUNTIME_ENABLED"] = "0"
+        spec = ctl.read_json(os.environ["INBOUNDS_SPEC_FILE"])
+        spec["runtime"] = None
+        os.environ["INBOUNDS_SPEC_FILE"] = self.write("spec-off.json", spec)
+        status, _, err = run(ctl.cmd_inbounds, "users", "add", "alice")
+        self.assertEqual(status, 1)
+        self.assertIn("inbounds.runtime.enable", err)
+        # The declared users are still listed, on a listener or not.
+        rows = {r["name"]: r for r in ctl._inbound_runtime_rows("users")}
+        self.assertEqual(rows["bob"]["listeners"], ["vless-in"])
+        self.assertEqual(rows["idle"]["listeners"], [])
+        self.assertIn("idle", ok(ctl.cmd_inbounds, "users"))
+        os.environ["INBOUNDS_ENABLED"] = "0"
+        self.assertEqual(ctl._inbound_runtime_rows("users"), [])
+
+    def test_completion(self):
+        ok(ctl.cmd_inbounds, "users", "add", "alice")
+        self.assertIn("alice", ctl._complete_tree("inbounds", "users", "rm", ""))
+        self.assertNotIn("bob", ctl._complete_tree("inbounds", "users", "rm", ""))
+        self.assertIn("--reality", ctl._complete_tree("inbounds", "add", "x", "vless", ""))
+
+
 class ShareTest(EnvTest):
     def setUp(self):
         super().setUp()

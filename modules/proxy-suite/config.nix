@@ -32,6 +32,9 @@ let
       proxyInboundsRouteOnion
       proxyInboundsResolveInSingBox
       proxyInboundsSelfSources
+      proxyInboundsRuntimeEnabled
+      proxyInboundsRuntimeVias
+      proxyInboundRuntimePorts
       ;
     inherit (rules) zapretDirectRules;
   };
@@ -67,9 +70,57 @@ let
         }
     );
 
+  # A listener with nothing set: what inbound_runtime.py fills a runtime listener's JSON in
+  # with, so its defaults are the option's. Not the AmneziaWG part, which runtime listeners
+  # cannot have, nor what the JSON must not set.
+  listenerDefaults =
+    builtins.removeAttrs
+      (lib.evalModules {
+        modules = [
+          {
+            options.listener = lib.mkOption {
+              type = (import ./options/types.nix { inherit lib; }).inboundType;
+              default = { };
+            };
+          }
+        ];
+      }).config.listener
+      [
+        "amneziaWg"
+        "users"
+        "xrayJson"
+        "jsonFile"
+      ];
+
+  # inbounds.runtime, for inbound_runtime.py: where the spool is and what it may use.
+  runtimeSpec =
+    let
+      rt = derived.proxyInboundsCfg.runtime;
+    in
+    {
+      spool = derived.constants.runtimeInboundsDir;
+      inherit (rt) ports fallbackDests tlsCertificates;
+      vias = derived.proxyInboundsRuntimeVias;
+      defaultVia = derived.proxyInboundsCfg.routing.via;
+      inherit (inboundRules) selfFinalRules;
+      salamanderStateDir = "${cfg.host.stateDir}/inbounds";
+      inherit listenerDefaults;
+    };
+
   # Listener specification handed to build-inbound.py at service start. Secrets
   # appear here only as paths; the script reads them at runtime.
   proxyInboundsSpec = {
+    runtime = if derived.proxyInboundsRuntimeEnabled then runtimeSpec else null;
+    # Every declared user, on a listener or not, and their serverSource numbers: what
+    # `proxy-ctl inbounds users` lists, and what runtime users go around. Secrets as paths.
+    users = derived.proxyInboundsCfg.users;
+    serverSource = {
+      inherit (derived.proxyInboundsCfg.routing.serverSource) ipv4 ipv6;
+      declared = map (s: {
+        name = s.email;
+        inherit (s) number;
+      }) derived.proxyInboundsSelfSources;
+    };
     serverAddress = derived.proxyInboundsCfg.serverAddress;
     shareLinks = derived.proxyInboundsCfg.shareLinks;
     # Listeners the onion service carries, which get a second set of links to it.
@@ -77,8 +128,9 @@ let
     listeners = map (
       ib:
       {
-        inherit (ib) tag;
+        inherit (ib) tag via;
         inherit (ib.listener)
+          order
           type
           port
           sharePort

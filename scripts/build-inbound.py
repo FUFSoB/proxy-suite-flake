@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 
+import inbound_runtime
 from proxy_inbound import build_inbounds
 
 
@@ -25,6 +26,11 @@ def main() -> None:
         dest="onion_address",
         help="the onion service's address, for a second set of links to its listeners",
     )
+    ap.add_argument(
+        "--template",
+        help="the XRay config template: with inbounds.runtime, the result also carries its "
+        "routing rules with the runtime listeners and users in",
+    )
     args = ap.parse_args()
 
     with open(args.spec, encoding="utf-8") as handle:
@@ -36,7 +42,14 @@ def main() -> None:
         sys.exit(1)
 
     try:
+        spec, runtime, warnings = inbound_runtime.merge(spec, check_ports=True)
+        for warning in warnings:
+            print(f"proxy-suite: warning: {warning}", file=sys.stderr)
         result = build_inbounds(spec, server_address, args.onion_address)
+        if args.template and spec.get("runtime"):
+            with open(args.template, encoding="utf-8") as handle:
+                template = json.load(handle)
+            result.update(inbound_runtime.routing(spec, runtime, template["routing"]["rules"]))
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -88,6 +88,7 @@ hysteria2, vmess, …) and transports (ws, grpc, xhttp) are set per listener; se
 proxy-ctl inbounds                               # listeners
 proxy-ctl inbounds link vless-reality phone --qr # link as a QR code for the phone
 proxy-ctl inbounds link awg phone --config       # AmneziaWG .conf
+proxy-ctl inbounds users                         # users: order, address, listeners
 proxy-ctl inbounds stats                         # traffic per user
 proxy-ctl inbounds online                        # who is connected
 ```
@@ -106,6 +107,43 @@ services.nginx.virtualHosts."vpn.example.com".locations."/sub/".alias =
 
 Then `proxy-ctl inbounds sub phone --qr` prints that user's subscription.
 
+## Add users and listeners at runtime
+
+With `inbounds.runtime`, users and listeners can be added with `proxy-ctl`, the TUI or the app,
+without a rebuild. The config says what they may use: ports, exits and certificates.
+
+```nix
+services.proxy-suite.inbounds.runtime = {
+  enable = true;
+  ports = [ "20000-20099" ];   # runtime listeners bind only here; opened in the firewall
+  vias = [ "direct" ];         # exits besides routing.via and "block"
+  tlsCertificates.main = {     # named, so a runtime listener never points at a file
+    certificateFile = "/var/lib/acme/vpn.example.com/fullchain.pem";
+    keyFile = "/var/lib/acme/vpn.example.com/key.pem";
+  };
+};
+```
+
+```sh
+proxy-ctl inbounds users add alice --listener vless-reality   # secrets are generated
+proxy-ctl inbounds add friends vless --port 20001 --reality www.microsoft.com --user alice
+proxy-ctl inbounds bind phone friends                          # a declared user on it too
+proxy-ctl inbounds users                                       # order, address, listeners
+proxy-ctl inbounds link friends alice --qr
+```
+
+A runtime user can join any listener; a declared user only a runtime one (bind two declared
+ones in the config). Each user's `order` is its `routing.serverSource` number, as in the
+config: given with `--order` or the lowest free one, and kept. A listener takes JSON too,
+shaped like an [`inbounds.listeners`](../options/inbounds.md#services-proxy-suite-inbounds-listeners)
+entry: `proxy-ctl inbounds add friends listener.json`. It cannot name files, raw XRay JSON,
+AmneziaWG or port hopping; REALITY keys and Shadowsocks 2022 server keys are generated.
+
+Every change restarts the inbounds, which drops the connections once. One that does not hold
+up is refused, and anything that stops working later (a certificate removed from the config,
+say) is left out with a warning in `proxy-ctl logs proxy-suite-inbounds` while the rest runs.
+Without root, members of `userControl.group` need the `inbounds` scope.
+
 ## Good to know
 
 - Clients cannot reach this host's LAN or Russian sites by default
@@ -120,5 +158,6 @@ Then `proxy-ctl inbounds sub phone --qr` prints that user's subscription.
 
 - [`inbounds.listeners`](../options/inbounds.md#services-proxy-suite-inbounds-listeners)
 - [`inbounds.routing.via`](../options/inbounds.md#services-proxy-suite-inbounds-routing-via)
+- [`inbounds.runtime`](../options/inbounds.md#services-proxy-suite-inbounds-runtime-enable)
 - [`inbounds.subscriptions`](../options/inbounds.md#services-proxy-suite-inbounds-subscriptions-enable)
 - [`tor.onionService`](../options/tor.md#services-proxy-suite-tor-onionservice-enable)

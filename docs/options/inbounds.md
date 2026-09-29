@@ -115,6 +115,16 @@ Part of the [proxy-suite options reference](./index.md).
       - [ipv6](#services-proxy-suite-inbounds-routing-serversource-ipv6)
     - [via](#services-proxy-suite-inbounds-routing-via)
     - [zapretDirect](#services-proxy-suite-inbounds-routing-zapretdirect)
+  - runtime
+    - [enable](#services-proxy-suite-inbounds-runtime-enable)
+    - [fallbackDests](#services-proxy-suite-inbounds-runtime-fallbackdests)
+    - [ports](#services-proxy-suite-inbounds-runtime-ports)
+    - [tlsCertificates](#services-proxy-suite-inbounds-runtime-tlscertificates)
+      - `<name>`
+        - [certificateFile](#services-proxy-suite-inbounds-runtime-tlscertificates-name-certificatefile)
+        - [keyFile](#services-proxy-suite-inbounds-runtime-tlscertificates-name-keyfile)
+        - [serverName](#services-proxy-suite-inbounds-runtime-tlscertificates-name-servername)
+    - [vias](#services-proxy-suite-inbounds-runtime-vias)
   - [serverAddress](#services-proxy-suite-inbounds-serveraddress)
   - [serverAliases](#services-proxy-suite-inbounds-serveraliases)
   - [serverPorts](#services-proxy-suite-inbounds-serverports)
@@ -1086,6 +1096,93 @@ Send zapret hostlist sites direct, so this host’s zapret unblocks them\. Only 
 **Type:** boolean\
 **Default:** `true`
 
+<a id="services-proxy-suite-inbounds-runtime-enable"></a>
+## services\.proxy-suite\.inbounds\.runtime\.enable
+
+Users and listeners added at runtime with ` proxy-ctl inbounds users add ` and
+` inbounds add `, kept in ` inbounds.d ` in the state directory\. Runtime users can be
+bound to any listener; declared users to runtime listeners only\. A change restarts
+the inbounds, which drops every connection once\. Anything a runtime listener could
+reach beyond its port is declared here: its ports, certificates, exits and
+fallbacks\. Members of ` userControl.group ` need the “inbounds” scope\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-inbounds-runtime-fallbackdests"></a>
+## services\.proxy-suite\.inbounds\.runtime\.fallbackDests
+
+` dest ` values a runtime listener’s fallbacks may use, such as a decoy site\. A
+fallback to a ` listener ` must name another runtime listener\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string)\
+**Default:** `[ ]`\
+**Example:** `[ "127.0.0.1:8080" ]`
+
+<a id="services-proxy-suite-inbounds-runtime-ports"></a>
+## services\.proxy-suite\.inbounds\.runtime\.ports
+
+Ports runtime listeners may use, on any address: single ports and “from-to” ranges\.
+Opened in the firewall (TCP and UDP) with ` openFirewall `, and reachable through the
+tunnel like the listeners’ own\. Keep them clear of the declared listeners and of
+other services here\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]±\[0-9]+)\
+**Default:** `[ ]`\
+**Example:** `[ 8443 "20000-20099" ]`
+
+<a id="services-proxy-suite-inbounds-runtime-tlscertificates"></a>
+## services\.proxy-suite\.inbounds\.runtime\.tlsCertificates
+
+Certificates a runtime listener with TLS (trojan, hysteria2, ` tls.enable `) may use,
+by name: it names one in ` tls.certificate ` (` --tls <name> `), never a file\.
+
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:**
+
+```nix
+{
+  main = {
+    certificateFile = "/var/lib/acme/vpn.example.com/fullchain.pem";
+    keyFile = "/var/lib/acme/vpn.example.com/key.pem";
+  };
+}
+
+```
+
+<a id="services-proxy-suite-inbounds-runtime-tlscertificates-name-certificatefile"></a>
+## services\.proxy-suite\.inbounds\.runtime\.tlsCertificates\.\<name>\.certificateFile
+
+File with the PEM certificate chain\.
+
+**Type:** string
+
+<a id="services-proxy-suite-inbounds-runtime-tlscertificates-name-keyfile"></a>
+## services\.proxy-suite\.inbounds\.runtime\.tlsCertificates\.\<name>\.keyFile
+
+File with the PEM private key\.
+
+**Type:** string
+
+<a id="services-proxy-suite-inbounds-runtime-tlscertificates-name-servername"></a>
+## services\.proxy-suite\.inbounds\.runtime\.tlsCertificates\.\<name>\.serverName
+
+SNI in share links\. ` null `: ` serverAddress `\.
+
+**Type:** null or string\
+**Default:** `null`
+
+<a id="services-proxy-suite-inbounds-runtime-vias"></a>
+## services\.proxy-suite\.inbounds\.runtime\.vias
+
+Exits a runtime listener may pick with ` via `, besides ` routing.via ` and “block”:
+“proxy”, “direct” or a ` proxy.outbounds ` tag, as in ` routing.via `\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "direct" ]`
+
 <a id="services-proxy-suite-inbounds-serveraddress"></a>
 ## services\.proxy-suite\.inbounds\.serverAddress
 
@@ -1204,7 +1301,7 @@ kept for as long as the user exists\.
 The user’s number, for good: their ` inbounds.routing.serverSource ` addresses are
 that many past the start of each range (5: 10\.78\.0\.5 in 10\.78\.0\.0/24)\. Users
 without one follow the highest number given, by name, and move when users are
-added before them\. Unique\.
+added before them\. Unique\. Runtime users (` inbounds.runtime `) go around these numbers\.
 
 **Type:** null or (positive integer, meaning >0)\
 **Default:** `null`\

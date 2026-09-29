@@ -32,38 +32,14 @@ let
       [ { action = "allow"; } ];
 
   # inbounds.routing.serverSource: a user's connections to this host, from the user's own
-  # address on the dummy interface. Only ever to this host: its listed IPs where there are
-  # some, and never somewhere private.
-  serverIps =
-    builtins.filter
-      (a: !lib.hasPrefix "domain:" a && (lib.hasInfix ":" a || builtins.match "[0-9.]+" a != null))
-      (
-        lib.optional (derived.proxyInboundsCfg.serverAddress != null) derived.proxyInboundsCfg.serverAddress
-        ++ derived.proxyInboundsCfg.serverAliases
-      );
-  selfFinalRules =
-    if serverIps != [ ] then
-      [
-        {
-          action = "allow";
-          ip = serverIps;
-        }
-        { action = "block"; }
-      ]
-    else
-      [
-        {
-          action = "block";
-          ip = [ "geoip:private" ];
-        }
-      ];
+  # address on the dummy interface. inbound_runtime.py makes the runtime users' the same way.
   mkSelfOutbound = family: address: id: {
     protocol = "freedom";
     tag = "direct-self${family}-${id}";
     sendThrough = address;
     settings = {
       domainStrategy = if family == "4" then "UseIPv4" else "UseIPv6";
-      finalRules = selfFinalRules;
+      finalRules = inboundRules.selfFinalRules;
     };
   };
   selfOutbounds = lib.concatMap (

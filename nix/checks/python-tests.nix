@@ -62,6 +62,11 @@ pkgs.lib.mapAttrs mkPythonCheck {
     file = "${scripts}/test-awg-inbound.py";
     env = withPath scripts;
   };
+  # inbounds.runtime: the spool, its fences, the merge and the rules it expands.
+  inbound-runtime = {
+    file = "${scripts}/test-inbound-runtime.py";
+    env = withPath scripts;
+  };
   # The NFQWS_OPT rewrites the zapret v1 package build applies.
   patch-zapret-config = {
     file = "${scripts}/test-patch-zapret-config.py";
@@ -76,6 +81,7 @@ pkgs.lib.mapAttrs mkPythonCheck {
     # `awg add` and AmneziaWG outbounds hand their configs to it.
     env = singBox // {
       AWG_CONFIG_TOOL = "${scripts}/amneziawg_config.py";
+      INBOUNDS_RUNTIME_TOOL = "${scripts}/inbound_runtime.py";
     };
   };
   # proxy-suitectl, nix-on-droid's service manager: real processes restarted, timed and stopped.

@@ -41,6 +41,7 @@ Members of the group get the listed scopes. An empty `scopes` list grants all of
 | `amneziaWg` | `awg add` and `awg rm`: global AmneziaWG profiles, which take over the host's routes and DNS |
 | `perApp` | `apps run` with `tun`, `tproxy` and `zapret` profiles |
 | `secrets` | reading share links, subscription URLs and running configs |
+| `inbounds` | adding, removing and binding runtime inbound users and listeners, and their secrets |
 | `autoProxy`, `zapret`, `stats`, `whitelistBypass` | the matching `proxy-ctl` groups |
 
 Log out and back in after joining the group. Without `userControl`, a change asks for an
@@ -52,6 +53,7 @@ admin password, or you run `proxy-ctl` with sudo.
 |---|---|
 | `proxy outbounds add`, `proxy subs add`, `awg add` | until removed with `rm`; kept across reboots |
 | `proxy outbounds disable` | until `enable`; works on outbounds from Nix too |
+| `inbounds users add`, `inbounds add`, `inbounds bind` | until removed; kept across reboots |
 | `proxy pin` | until `unpin`; kept across reboots |
 | `proxy mode` | until the next reboot |
 | `… on` / `… off` | until the next reboot; boot state comes from the config |

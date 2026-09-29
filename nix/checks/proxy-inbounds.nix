@@ -211,6 +211,46 @@ let
     lib.recursiveUpdate selfSourceInbounds { routing.serverSource.ipv4 = "10.78.0.5/24"; }
   );
 
+  # inbounds.runtime: the rules runtime listeners join are marked, the runtime users'
+  # serverSource rules have their anchors, and the rest of the system is ready for them.
+  runtimeInbounds = selfSourceInbounds // {
+    runtime = {
+      enable = true;
+      ports = [
+        9443
+        "20000-20010"
+      ];
+      vias = [ "direct" ];
+    };
+  };
+  runtimeFixture = mkInbounds runtimeInbounds;
+  runtimeConfig = mkInboundsConfig runtimeFixture;
+  runtimeSpec = mkInboundsSpec runtimeFixture;
+  hasFailed =
+    fixture: message:
+    builtins.any (a: !a.assertion && lib.hasInfix message a.message) fixture.config.assertions;
+  # Only this module's: a fixture has no root file system or boot loader.
+  failedMessages =
+    fixture:
+    builtins.filter (lib.hasPrefix "proxy-suite:") (
+      map (a: a.message) (builtins.filter (a: !a.assertion) fixture.config.assertions)
+    );
+  # A listener meant only for runtime users, and nothing but runtime listeners.
+  runtimeOnlyFixture = mkInbounds {
+    serverAddress = "vpn.example.com";
+    runtime = {
+      enable = true;
+      ports = [ "20000-20010" ];
+    };
+    listeners.waiting = realityListener // {
+      users = [ ];
+    };
+  };
+  runtimeClashFixture = mkInbounds (
+    lib.recursiveUpdate runtimeInbounds { runtime.ports = [ "400-500" ]; }
+  );
+  runtimeNoPortsFixture = mkInbounds (runtimeInbounds // { runtime.enable = true; });
+
   unguardedFixture = mkInbounds {
     routing = {
       blockRu = false;
@@ -995,6 +1035,118 @@ let
       ) badSelfSourceFixture.config.assertions;
       true
     )
+    # The declared users are in the spec without inbounds.runtime too, for `inbounds users`.
+    (
+      let
+        spec = mkInboundsSpec selfSourceFixture;
+      in
+      assert spec.runtime == null;
+      assert
+        builtins.attrNames spec.users == [
+          "a"
+          "alice"
+          "anon"
+          "b"
+          "bob"
+          "far"
+          "h3"
+          "hy2"
+          "laptop"
+          "phone"
+          "second"
+          "ss"
+          "user"
+          "ws"
+        ];
+      assert
+        (builtins.head spec.serverSource.declared) == {
+          name = "bob";
+          number = 1;
+        };
+      true
+    )
+    # Without inbounds.runtime nothing is marked for it.
+    (ok (!builtins.any (rule: rule ? _members || rule ? _anchor) selfSourceConfig.routing.rules))
+    (
+      let
+        rules = runtimeConfig.routing.rules;
+        anchors = builtins.filter (rule: rule ? _anchor) rules;
+        tags = ruleTags runtimeConfig;
+        at = tag: lib.lists.findFirstIndex (t: t == tag) null tags;
+        anchorAt = name: lib.lists.findFirstIndex (rule: (rule._anchor or null) == name) null rules;
+        startScript = (import ./read-generated.nix).readDerivation (service runtimeFixture)
+          .serviceConfig.ExecStart;
+        fw = runtimeFixture.config.networking.firewall;
+      in
+      assert
+        map (rule: rule._anchor) anchors == [
+          "selfIp"
+          "selfName"
+        ];
+      # Each after the declared users' own, before the host's.
+      assert anchorAt "selfIp" > at "inbound-server-address-self-ip4-6";
+      assert anchorAt "selfIp" < at "inbound-server-address-direct-ip";
+      assert anchorAt "selfName" > at "inbound-server-address-self-6";
+      assert anchorAt "selfName" < at "inbound-server-address-direct";
+      assert (builtins.head anchors).ip4 == [ "203.0.113.10" ];
+      assert (builtins.head anchors).port == "8443,443,9443,20000-20010";
+      assert
+        (ruleByTag runtimeConfig "inbound-server-address-direct")._members == { notVia = [ "block" ]; };
+      # A guard for every exit a runtime listener may take, even with nobody on it yet.
+      assert (ruleByTag runtimeConfig "inbound-server-address-sniffed-direct").inboundTag == [ ];
+      assert
+        (ruleByTag runtimeConfig "inbound-server-address-sniffed-direct")._members == {
+          via = [ "direct" ];
+        };
+      assert !builtins.elem "inbound-server-address-sniffed-block" tags;
+      assert
+        runtimeSpec.runtime.vias == [
+          "proxy"
+          "direct"
+          "block"
+        ];
+      assert
+        runtimeSpec.serverSource.declared == [
+          {
+            name = "bob";
+            number = 1;
+          }
+          {
+            name = "alice";
+            number = 5;
+          }
+          {
+            name = "anon";
+            number = 6;
+          }
+        ];
+      assert runtimeSpec.runtime.spool == "/var/lib/proxy-suite/inbounds.d";
+      assert !(runtimeSpec.runtime.listenerDefaults ? users);
+      assert runtimeSpec.runtime.listenerDefaults.port == 443;
+      assert
+        runtimeSpec.runtime.selfFinalRules
+        == (builtins.head (builtins.filter (ob: ob.tag == "direct-self4-1") runtimeConfig.outbounds))
+        .settings.finalRules;
+      assert builtins.elem 9443 fw.allowedTCPPorts && builtins.elem 9443 fw.allowedUDPPorts;
+      assert
+        fw.allowedTCPPortRanges == [
+          {
+            from = 20000;
+            to = 20010;
+          }
+        ];
+      assert lib.hasInfix "--template" startScript;
+      assert runtimeFixture.config.systemd.services ? proxy-suite-inbounds-reload;
+      assert builtins.elem "d /var/lib/proxy-suite/inbounds.d 0700 root root -"
+        runtimeFixture.config.systemd.tmpfiles.rules;
+      assert !(selfSourceFixture.config.systemd.services ? proxy-suite-inbounds-reload);
+      true
+    )
+    (ok (failedMessages runtimeOnlyFixture == [ ]))
+    (ok (
+      hasFailed runtimeClashFixture "inbounds.runtime.ports cover a port a declared listener or proxy-suite itself uses (443)"
+    ))
+    (ok (hasFailed runtimeNoPortsFixture "inbounds.runtime.enable needs inbounds.runtime.ports"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct"))

@@ -112,6 +112,11 @@ pkgs.testers.runNixOSTest {
                 dns = [ ];
               };
             };
+            # A peer added with proxy-ctl.
+            runtime = {
+              enable = true;
+              ports = [ "9000-9001" ];
+            };
           };
         };
         environment.systemPackages = [ pkgs.jq ];
@@ -215,5 +220,18 @@ pkgs.testers.runNixOSTest {
         server.wait_for_unit("proxy-suite-inbounds.service")
         assert server.succeed("jq -S .users /var/lib/proxy-suite/awg-inbounds/roam/state.json") == before
         through_server(alice, timeout=90)
+
+    with subtest("a runtime user becomes a peer, and only its listener's interfaces restart"):
+        server.succeed("proxy-ctl inbounds users add ring --listener roam")
+        server.wait_until_succeeds("awg show awgi-roam peers | wc -l | grep -qx 3", timeout=30)
+        server.succeed("jq -e '.users.ring.publicKey' /var/lib/proxy-suite/awg-inbounds/roam/state.json")
+        server.succeed("proxy-ctl inbounds link roam ring --config | grep -q '^PrivateKey'")
+        # A change that leaves the peers alone restarts only XRay.
+        since = server.succeed("systemctl show -p ActiveEnterTimestampMonotonic --value proxy-suite-inbounds-awg.service").strip()
+        server.succeed("proxy-ctl inbounds users order ring 9")
+        assert server.succeed("systemctl show -p ActiveEnterTimestampMonotonic --value proxy-suite-inbounds-awg.service").strip() == since
+        server.succeed("proxy-ctl inbounds users rm ring")
+        server.wait_until_succeeds("awg show awgi-roam peers | wc -l | grep -qx 2", timeout=30)
+        server.succeed("jq -e '.users.ring == null' /var/lib/proxy-suite/awg-inbounds/roam/state.json")
   '';
 }
