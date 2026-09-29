@@ -53,18 +53,116 @@ in
         "first"
         "selector"
         "urltest"
+        "failover"
       ];
       default = "first";
       description = ''
-        How to pick an outbound:
+        How to pick an outbound among the top-level ones: groups and outbounds in no group.
         - "first": the pinned one, or else the first available.
         - "selector": pick by hand.
         - "urltest": the fastest, unless one is pinned.
+        - "failover": the first one that works, in `priority` order; moves on within seconds
+          of a failure and comes back once the earlier one works again. sing-box and hybrid only.
 
-        `proxy-ctl proxy pin` works in every mode and survives restarts. On sing-box, "selector"
-        and "urltest" switch without restarting the backend.
+        `proxy-ctl proxy pin` works in every mode and survives restarts. On sing-box, "selector",
+        "urltest" and "failover" switch without restarting the backend.
       '';
-      example = "urltest";
+      example = "failover";
+    };
+
+    groups = mkOption {
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            outbounds = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = "Member tags, in order: the failover order. Any outbound or group tag.";
+              example = [
+                "warp-1"
+                "warp-2"
+              ];
+            };
+            subscriptions = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = "Subscriptions whose every entry is a member, as the subscription holds them at start.";
+              example = [ "community-list" ];
+            };
+            match = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = "Glob patterns (`*`, `?`) over outbound tags; every match is a member.";
+              example = [ "de-*" ];
+            };
+            strategy = mkOption {
+              type = types.enum [
+                "failover"
+                "urltest"
+                "selector"
+              ];
+              default = "failover";
+              description = ''
+                How the group picks a member:
+                - "failover": the first member that works, in order; moves on within seconds of a
+                  failure.
+                - "urltest": the fastest; `proxy.urlTest.tolerance` keeps it from switching over
+                  small differences.
+                - "selector": the first member, or the one picked by hand.
+              '';
+            };
+            failback = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                With "failover": go back to an earlier member once it has worked three checks in a
+                row. Off: stay on the member it moved to until that one fails.
+              '';
+            };
+            interval = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                How often members are tested (Go duration). `null`: `proxy.urlTest.interval` for
+                "urltest", 30s for "failover". Health checks of their own, such as the AmneziaWG
+                watchdog's, trigger a test at once.
+              '';
+              example = "15s";
+            };
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Outbound groups: one tag standing for several outbounds, which picks among them. A group
+        works wherever an outbound tag does: routing rules, `detour`, pins, other groups. Its
+        members are no longer picked on their own at the top level, only through the group.
+        sing-box and hybrid only.
+      '';
+      example = lib.literalExpression ''
+        {
+          warp-pool.outbounds = [ "warp-1" "warp-2" ];
+          eu = {
+            subscriptions = [ "community-list" ];
+            match = [ "de-*" ];
+            strategy = "urltest";
+          };
+        }
+      '';
+    };
+
+    priority = mkOption {
+      type = types.attrsOf types.int;
+      default = { };
+      description = ''
+        Order of outbounds and groups, lower first: which one "first" and "failover" take, and the
+        order of group members pulled in by `subscriptions` or `match`. Tags not listed come after,
+        in their usual order. `proxy-ctl proxy priority` changes it at runtime.
+      '';
+      example = {
+        warp-pool = 10;
+        de-vps = 20;
+      };
     };
 
     selectionExclude = mkOption {

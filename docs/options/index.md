@@ -180,6 +180,7 @@ services.proxy-suite = {
       strategy = null;
     };
     enable = false;
+    groups = { };
     ipv6 = config.networking.enableIPv6;
     listener = {
       address = "127.0.0.1";
@@ -191,6 +192,7 @@ services.proxy-suite = {
       port = 1080;
     };
     outbounds = [ ];
+    priority = { };
     routing = {
       block = {
         domains = [ ];
@@ -335,10 +337,16 @@ services.proxy-suite = {
     asOutbound = null;
     autostart = false;
     configFile = null;
+    devices = { };
     domainStrategy = if config.networking.enableIPv6 then "prefer_ipv6" else "prefer_ipv4";
     enable = false;
     endpoint = null;
     generatorUrl = null;
+    group = {
+      failback = true;
+      strategy = "failover";
+    };
+    instances = null;
   };
   whitelistBypass = {
     creators = { };

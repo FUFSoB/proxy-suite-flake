@@ -12,9 +12,17 @@ Part of the [proxy-suite options reference](./index.md).
   - [asOutbound](#services-proxy-suite-warp-asoutbound)
   - [autostart](#services-proxy-suite-warp-autostart)
   - [configFile](#services-proxy-suite-warp-configfile)
+  - [devices](#services-proxy-suite-warp-devices)
+    - `<name>`
+      - [configFile](#services-proxy-suite-warp-devices-name-configfile)
+      - [endpoint](#services-proxy-suite-warp-devices-name-endpoint)
   - [domainStrategy](#services-proxy-suite-warp-domainstrategy)
   - [endpoint](#services-proxy-suite-warp-endpoint)
   - [generatorUrl](#services-proxy-suite-warp-generatorurl)
+  - group
+    - [failback](#services-proxy-suite-warp-group-failback)
+    - [strategy](#services-proxy-suite-warp-group-strategy)
+  - [instances](#services-proxy-suite-warp-instances)
 
 <a id="services-proxy-suite-warp-enable"></a>
 ## services\.proxy-suite\.warp\.enable
@@ -68,6 +76,38 @@ through the local proxy if enabled\. WARP does not work until that succeeds\.
 **Default:** `null`\
 **Example:** `"/run/secrets/wgcf-profile.conf"`
 
+<a id="services-proxy-suite-warp-devices"></a>
+## services\.proxy-suite\.warp\.devices
+
+Several WARP devices, each registered on its own and each an outbound with its tag\. With
+two or more, the tag “warp” names a group of them (` warp.group `), so rules, pins and
+chains naming “warp” fail over between them\. A device cannot be named “warp” then\.
+With “interface”, a tag holds at most 11 characters (its interface is awg-\<tag>)\.
+
+Empty: one device, “warp”, as ` configFile ` and ` endpoint ` above say\.
+
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:** `{ warp-a = { }; warp-b.endpoint = "162.159.193.10:500"; } `
+
+<a id="services-proxy-suite-warp-devices-name-configfile"></a>
+## services\.proxy-suite\.warp\.devices\.\<name>\.configFile
+
+This device’s WireGuard profile, as ` warp.configFile `\. ` null `: registered with wgcf\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/warp-b.conf"`
+
+<a id="services-proxy-suite-warp-devices-name-endpoint"></a>
+## services\.proxy-suite\.warp\.devices\.\<name>\.endpoint
+
+This device’s endpoint, as ` warp.endpoint ` (which it defaults to)\.
+
+**Type:** null or string matching the pattern (\\\[\[0-9A-Fa-f:\.]+]|\[^]:\[]+):\[0-9]+\
+**Default:** `null`\
+**Example:** `"162.159.192.1:500"`
+
 <a id="services-proxy-suite-warp-domainstrategy"></a>
 ## services\.proxy-suite\.warp\.domainStrategy
 
@@ -101,3 +141,29 @@ Its operator sees your private key\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"https://valokda-amnezia.vercel.app/api/warp?mode=awg2"`
+
+<a id="services-proxy-suite-warp-group-failback"></a>
+## services\.proxy-suite\.warp\.group\.failback
+
+With “failover”: go back to an earlier device once it works again\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-warp-group-strategy"></a>
+## services\.proxy-suite\.warp\.group\.strategy
+
+How the “warp” group of several devices picks one; see ` proxy.groups `\.
+
+**Type:** one of “failover”, “urltest”, “selector”\
+**Default:** `"failover"`
+
+<a id="services-proxy-suite-warp-instances"></a>
+## services\.proxy-suite\.warp\.instances
+
+Shorthand for ` devices `: this many WARP devices, warp-1 to warp-N, each registered with
+wgcf\. warp-1 keeps the registration a single “warp” device made\. Not with ` devices `\.
+
+**Type:** null or (positive integer, meaning >0)\
+**Default:** `null`\
+**Example:** `2`

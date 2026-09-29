@@ -70,10 +70,12 @@ let
     builtins.attrValues constants.xrayDnsBridgePorts
     ++ [ constants.outboundTestPort ]
     ++ lib.optionals hybridEnabled (builtins.attrValues constants.xraySidecarPorts)
-    ++ lib.optionals derived.warpOutboundEnabled [
-      derived.warpCfg.tunnelPort
-      derived.warpCfg.directPort
-    ]
+    ++ lib.optionals derived.warpOutboundEnabled (
+      lib.concatMap (d: [
+        d.tunnelPort
+        d.directPort
+      ]) derived.warpCfg.devices
+    )
     ++ lib.concatMap (ob: [
       ob.tunnelPort
       ob.directPort
@@ -185,6 +187,15 @@ let
     (mkAssertion (!(cfg.warp.enable && cfg.warp.asOutbound != null && cfg.warp.asAmneziaWg))
       "proxy-suite: warp.asOutbound and warp.asAmneziaWg share one WARP key and would knock each other off; enable one"
     )
+    (mkAssertion (
+      !(cfg.warp.instances != null && cfg.warp.devices != { })
+    ) "proxy-suite: warp.instances is a shorthand for warp.devices; set one of them")
+    (mkAssertion (!(derived.warpCfg.grouped && builtins.elem "warp" derived.warpDeviceNames))
+      "proxy-suite: with several WARP devices, \"warp\" names their group; call the device something else"
+    )
+    (mkAssertion (
+      !(cfg.warp.enable && derived.warpCfg.grouped && cfg.warp.asAmneziaWg)
+    ) "proxy-suite: warp.asAmneziaWg is one global profile, so it takes a single WARP device")
     # inbounds.routing.serverSource: a dummy interface, and an address per user in each range.
     (
       let
@@ -281,6 +292,41 @@ let
     (mkAssertion (
       !(pureXrayEnabled && proxyCfg.selection == "selector")
     ) "proxy-suite: proxy.selection = \"selector\" requires proxy.backend = \"sing-box\" or \"hybrid\"")
+    (mkAssertion (
+      !(pureXrayEnabled && proxyCfg.selection == "failover")
+    ) "proxy-suite: proxy.selection = \"failover\" requires proxy.backend = \"sing-box\" or \"hybrid\"")
+    (mkAssertion (
+      !(pureXrayEnabled && proxyCfg.groups != { })
+    ) "proxy-suite: proxy.groups requires proxy.backend = \"sing-box\" or \"hybrid\"")
+    (
+      let
+        clashing = builtins.filter (
+          g: builtins.elem g (builtinTags ++ effectiveOutboundTags ++ subscriptionTags)
+        ) derived.groupTags;
+      in
+      mkAssertion (!proxyEnabled || clashing == [ ])
+        "proxy-suite: proxy.groups names must differ from outbound and subscription tags and from proxy, direct, block: ${lib.concatStringsSep ", " clashing}"
+    )
+    (
+      let
+        bad = builtins.filter (g: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" g == null) derived.groupTags;
+      in
+      mkAssertion (bad == [ ])
+        "proxy-suite: proxy.groups names may hold only letters, digits, '.', '_' and '-', starting with a letter or digit: ${lib.concatStringsSep ", " bad}"
+    )
+    (
+      let
+        empty = builtins.filter (
+          g:
+          let
+            grp = proxyCfg.groups.${g};
+          in
+          grp.outbounds == [ ] && grp.subscriptions == [ ] && grp.match == [ ]
+        ) derived.groupTags;
+      in
+      mkAssertion (empty == [ ])
+        "proxy-suite: proxy.groups need members in outbounds, subscriptions or match: ${lib.concatStringsSep ", " empty}"
+    )
     (mkAssertion
       (!(pureXrayEnabled && (proxyCfg.dns.local.type == "tls" || proxyCfg.dns.remote.type == "tls")))
       "proxy-suite: proxy.dns.*.type = \"tls\" is not supported with proxy.backend = \"xray\"; use udp/tcp DNS for XRay"

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.parse
 from unittest import mock
 
 import proxy_ctl as ctl
@@ -105,6 +106,150 @@ class ClashApiTest(EnvTest):
             with self.subTest(api=value), mock.patch.dict(os.environ, {"CLASH_API": value}):
                 self.assertEqual(ctl._clash("GET", "/proxies/proxy", timeout=1), (0, None))
                 self.assertEqual(ctl._outbound_current(), "")
+
+
+class WarpDevicesTest(EnvTest):
+    def test_every_device_or_the_one_named(self):
+        os.environ["WARP_DEVICES"] = json.dumps([{"tag": "warp-1", "unit": "proxy-suite-awg-warp-1"}, {"tag": "warp-2", "unit": "proxy-suite-awg-warp-2"}])
+        calls = []
+        self.patch("svc_exists", lambda unit: True)
+        self.patch("systemctl", lambda *a, **kw: calls.append(a) or (0, "active\n"))
+        status, out, _ = run(ctl.cmd_warp)
+        self.assertEqual(status, 0)
+        self.assertEqual(out.split(), ["warp-1", "active", "warp-2", "active"])
+        calls.clear()
+        run(ctl.cmd_warp, "restart", "warp-2")
+        self.assertEqual(calls, [("restart", "proxy-suite-awg-warp-2")])
+        calls.clear()
+        run(ctl.cmd_warp, "off")
+        self.assertEqual(calls, [("stop", "proxy-suite-awg-warp-1"), ("stop", "proxy-suite-awg-warp-2")])
+        # Both are WARP's: `awg add` leaves their names alone.
+        self.patch("_awg_profiles", lambda: [])
+        os.environ["AWG_RUNTIME_GLOBAL"] = "1"
+        self.assertIn("reserved for WARP", run(ctl.cmd_awg, "add", "warp-2", "vpn://x")[2])
+
+
+class GroupWatchTest(EnvTest):
+    """Failover groups, through a Clash API that answers from a table."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["RUNTIME_DIR"] = self.dir
+        self.working = {"warp-1": True, "warp-2": True, "de": True}
+        self.nows = {"warp": "warp-1", "proxy": "warp"}
+        self.calls = []
+        self.clock = [0.0]
+        self.patch("_group_nows", lambda: dict(self.nows))
+        self.watch = ctl.GroupWatch(clash=self.clash, clock=lambda: self.clock[0], wall=lambda: 1000.0)
+        self.inventory = {
+            "url": "https://t",
+            "selection": "first",
+            "disabled": [],
+            "groups": {"warp": {"strategy": "failover", "failback": True, "interval": "30s", "members": ["warp-1", "warp-2"], "pinned": ""}},
+        }
+
+    def clash(self, method, path, body=None, timeout=10):
+        self.calls.append((method, path))
+        if method == "GET" and path.startswith("/proxies/") and "/delay" in path:
+            tag = urllib.parse.unquote(path.split("/")[2])
+            return (200, {"delay": 50}) if self.working.get(tag, True) else (504, None)
+        if method == "PUT":
+            self.nows[urllib.parse.unquote(path.split("/")[2])] = body["name"]
+            return 204, None
+        return 200, {}
+
+    def step(self, seconds=30, hinted=()):
+        self.clock[0] += seconds
+        return self.watch.step(self.inventory, hinted)
+
+    def test_moves_after_two_misses_and_comes_back_after_three_passes(self):
+        self.assertEqual(self.step(0), [])
+        self.working["warp-1"] = False
+        self.assertEqual(self.step(), [])  # one miss is not an outage
+        self.assertEqual(self.step(), [("warp", "warp-2")])
+        self.working["warp-1"] = True
+        self.assertEqual(self.step(), [])
+        self.assertEqual(self.step(), [])
+        self.assertEqual(self.step(), [("warp", "warp-1")])
+
+    def test_a_hint_moves_at_once(self):
+        self.step(0)
+        self.working["warp-1"] = False
+        # Not due yet, but a watchdog saw it fail.
+        self.assertEqual(self.step(1, hinted=["warp-1"]), [("warp", "warp-2")])
+        # A hint about a member that still works changes nothing.
+        self.assertEqual(self.step(1, hinted=["warp-2"]), [])
+
+    def test_without_failback_it_stays(self):
+        self.inventory["groups"]["warp"]["failback"] = False
+        self.step(0)
+        self.working["warp-1"] = False
+        self.step(1, hinted=["warp-1"])
+        self.working["warp-1"] = True
+        for _ in range(4):
+            self.assertEqual(self.step(), [])
+        self.assertEqual(self.nows["warp"], "warp-2")
+
+    def test_pins_and_dead_ends_stay_put(self):
+        self.inventory["groups"]["warp"]["pinned"] = "warp-1"
+        self.working["warp-1"] = False
+        self.step(0, hinted=["warp-1"])
+        self.assertEqual(self.nows["warp"], "warp-1")
+        self.inventory["groups"]["warp"]["pinned"] = ""
+        self.working["warp-2"] = False
+        self.step(1, hinted=["warp-2"])
+        self.assertEqual(self.nows["warp"], "warp-1")  # nothing works: no flapping
+
+    def test_failover_selection_and_nested_groups(self):
+        self.inventory.update(selection="failover", top=["warp", "de", "tor"], excluded=["tor"])
+        self.assertEqual(list(ctl.GroupWatch.watched(self.inventory)), ["warp", "proxy"])
+        self.assertEqual(ctl.GroupWatch.inner_first({"proxy": {"members": ["warp", "de"]}, "warp": {"members": ["warp-1"]}}), ["warp", "proxy"])
+        self.working["warp"] = False
+        self.step(0, hinted=["warp"])
+        self.assertEqual(self.nows["proxy"], "de")
+
+    def test_urltest_groups_are_only_asked_to_test_again(self):
+        self.inventory["groups"]["warp"]["strategy"] = "urltest"
+        self.step(0)
+        self.assertEqual(self.calls, [])
+        self.step(1, hinted=["warp-1"])
+        self.assertTrue(any(p.startswith("/group/warp/delay") for _, p in self.calls))
+        self.assertFalse(any(m == "PUT" for m, _ in self.calls))
+
+    def test_hint_files(self):
+        health = self.path("proxy-suite-outbound-groups/health")
+        os.makedirs(health)
+        self.assertEqual(self.watch.hints(), [])
+        open(os.path.join(health, "warp-1"), "w").close()
+        self.assertEqual(self.watch.hints(), [])  # first sight: there already
+        os.utime(os.path.join(health, "warp-1"), (5, 5))
+        self.assertEqual(self.watch.hints(), ["warp-1"])
+        self.assertEqual(self.watch.hints(), [])
+
+    def test_group_files_and_priority(self):
+        os.environ["RUNTIME_OUTBOUNDS_DIR"] = self.path("obd")
+        os.makedirs(self.path("obd"))
+        inventory = {"tags": ["a", "b", "c"], "top": ["g", "c"], "groups": {"g": {"members": ["a", "b"], "runtime": True}}}
+        self.patch("_outbound_inventory", lambda: inventory)
+        self.patch("_runtime_reload", lambda: None)
+
+        def saved(name):
+            with open(self.path(f"obd/{name}")) as f:
+                return json.load(f)
+
+        run(ctl.cmd_groups, "add", "h", "c", "--strategy", "urltest", "--no-failback")
+        self.assertEqual(saved("h.group"), {"outbounds": ["c"], "subscriptions": [], "match": [], "strategy": "urltest", "failback": False})
+        self.assertIn("cannot hold itself", run(ctl.cmd_groups, "add", "x", "x")[2])
+        # h holds g (as the start script would list it): g cannot take h in.
+        inventory["groups"]["h"] = {"members": ["g"]}
+        self.write("obd/g.group", {"outbounds": ["a", "b"]})
+        self.assertIn("contains 'g'", run(ctl.cmd_groups, "members", "g", "add", "h")[2])
+        # A group's name is taken for outbounds too.
+        self.assertIn("A group named 'g' already exists", run(ctl._check_runtime_tag, "outbound", "g")[2])
+        run(ctl.cmd_priority, "c", "up")
+        self.assertEqual(saved("priority.json"), {"c": 10, "g": 20})
+        run(ctl.cmd_priority, "c", "--clear")
+        self.assertEqual(saved("priority.json"), {"g": 20})
 
 
 # The verdict table, fed tuples measured on a real censored network.

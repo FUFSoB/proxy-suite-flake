@@ -18,6 +18,8 @@
 
 let
   curl = "${pkgs.curl}/bin/curl";
+  # As the start script reads them (script-blocks/outbounds.nix).
+  groupPinsDir = "${dirOf pinnedOutboundFile}/group-pins";
 
   restartActiveBlock = lib.concatMapStrings (svc: ''
     if ${systemctl} is-active --quiet ${svc}; then
@@ -76,6 +78,70 @@ let
   pinOutboundScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
     tag="''${1:-}"
+
+    # group/member pins inside a group, group/ unpins it (`proxy-ctl proxy pin --in`).
+    case "$tag" in
+      */*)
+        group="''${tag%%/*}"
+        member="''${tag#*/}"
+        case "$group/$member" in
+          /* | */*/* | . | .. | ./* | ../* | */. | */..)
+            echo "proxy-suite: not a group and member: $tag" >&2
+            exit 1
+            ;;
+        esac
+        if [ -r "${outboundInventoryFile}" ] \
+          && ! ${jq} -e --arg g "$group" '.groups // {} | has($g)' "${outboundInventoryFile}" >/dev/null; then
+          echo "proxy-suite: unknown group '$group'" >&2
+          exit 1
+        fi
+        STRATEGY=$(${jq} -r --arg g "$group" '.groups[$g].strategy // ""' "${outboundInventoryFile}" 2>/dev/null || true)
+        if [ -z "$member" ]; then
+          rm -f "${groupPinsDir}/$group"
+          # A failover group is picked again by the watcher, a selector stays where it is; a
+          # urltest group only becomes one again with a restart.
+          if [ "$STRATEGY" = urltest ]; then
+            ${restartActiveConfigConsumersBlock}
+          elif [ -f "${outboundInventoryFile}" ]; then
+            INVENTORY_TMP=$(mktemp "${outboundInventoryFile}.XXXXXX")
+            ${jq} --arg g "$group" '.groups[$g].pinned = ""' "${outboundInventoryFile}" > "$INVENTORY_TMP"
+            chmod 644 "$INVENTORY_TMP"
+            mv -f "$INVENTORY_TMP" "${outboundInventoryFile}"
+          fi
+          ${restartActiveBlock tunConsumers}
+          exit 0
+        fi
+        if [ -r "${outboundInventoryFile}" ] \
+          && ! ${jq} -e --arg g "$group" --arg t "$member" '.groups[$g].members | index([$t]) != null' "${outboundInventoryFile}" >/dev/null; then
+          echo "proxy-suite: '$member' is not in group '$group'" >&2
+          exit 1
+        fi
+        if [ -e "${runtimeOutboundsDir}/$member.disabled" ]; then
+          echo "proxy-suite: outbound '$member' is disabled; enable it first: proxy-ctl proxy outbounds enable $member" >&2
+          exit 1
+        fi
+        mkdir -p "${groupPinsDir}"
+        printf '%s\n' "$member" > "${groupPinsDir}/$group"
+        CLASH_SECRET_FILE="$(dirname "${outboundInventoryFile}")/clash-secret"
+        CLASH_SECRET=""
+        [ ! -r "$CLASH_SECRET_FILE" ] || CLASH_SECRET=$(${pkgs.coreutils}/bin/tr -d '\r\n' < "$CLASH_SECRET_FILE")
+        if [ "$STRATEGY" != urltest ] && ${curl} -sf -X PUT "${clashApi}/proxies/$group" \
+          -H "Content-Type: application/json" \
+          -H @<(printf 'Authorization: Bearer %s\n' "$CLASH_SECRET") \
+          -d "$(${jq} -cn --arg name "$member" '{name:$name}')" >/dev/null 2>&1; then
+          if [ -f "${outboundInventoryFile}" ]; then
+            INVENTORY_TMP=$(mktemp "${outboundInventoryFile}.XXXXXX")
+            ${jq} --arg g "$group" --arg t "$member" '.groups[$g].pinned = $t' "${outboundInventoryFile}" > "$INVENTORY_TMP"
+            chmod 644 "$INVENTORY_TMP"
+            mv -f "$INVENTORY_TMP" "${outboundInventoryFile}"
+          fi
+          ${restartActiveBlock tunConsumers}
+          exit 0
+        fi
+        ${restartActiveConfigConsumersBlock}
+        exit 0
+        ;;
+    esac
 
     if [ -z "$tag" ]; then
       rm -f "${pinnedOutboundFile}"

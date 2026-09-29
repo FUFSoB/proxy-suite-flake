@@ -17,6 +17,7 @@ examples follow below.
 | [Control it day to day](./control.md) | Switching things without editing Nix or typing sudo |
 | [Use an AmneziaWG config](./amneziawg.md) | You have an AmneziaWG `.conf` or an Amnezia `vpn://` export |
 | [Chain proxies and add exits](./chains.md) | WARP, Tor, SSH, or reaching a server through another one |
+| [Group outbounds and fail over](./groups.md) | Several exits for one job, moving off one that stops working |
 | [Other Linux and Android](./other-hosts.md) | You are not on NixOS |
 | [Get past mobile whitelists](./whitelist-bypass.md) | Mobile internet lets only whitelisted services through |
 

@@ -89,7 +89,7 @@ in
         ]);
       in
       assert pkgs.lib.hasInfix ''--argjson ex '["primary"]' '' script;
-      assert pkgs.lib.hasInfix "excluded: ($tags - $selectable)" script;
+      assert pkgs.lib.hasInfix "excluded: ($top - $selectable)" script;
       true
     )
 

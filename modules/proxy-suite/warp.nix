@@ -89,69 +89,91 @@ let
     "userspace"
     "interface"
   ];
+  deviceTags = map (d: d.tag) w.devices;
 in
 {
-  services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
+  # One AmneziaWG profile per device, named after it.
+  services.proxy-suite.amneziaWg.profiles = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) (
+    lib.listToAttrs (
+      map (
+        d:
+        lib.nameValuePair d.tag {
+          configFile = d.profilePath;
+          inherit (d) endpoint;
+          inherit (w) domainStrategy;
+          asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
+          autostart = lib.mkIf w.autostart true;
+        }
+      ) w.devices
+    )
+  );
+
+  # Several devices: "warp" picks among them, so whatever names "warp" fails over.
+  services.proxy-suite.proxy.groups = lib.mkIf (w.grouped && w.asOutbound != null) {
     warp = {
-      configFile = w.profilePath;
-      inherit (w) endpoint domainStrategy;
-      asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
-      autostart = lib.mkIf w.autostart true;
+      outbounds = lib.mkDefault deviceTags;
+      strategy = lib.mkDefault w.group.strategy;
+      failback = lib.mkDefault w.group.failback;
     };
   };
 
-  services.proxy-suite.internal.services = lib.mkMerge [
-    (lib.mkIf (w.asOutbound == "singBox") {
-      proxy-suite-warp-tunnel = mkTunnel {
-        description = "proxy-suite - Cloudflare WARP tunnel behind the warp outbound";
-        unit = "proxy-suite-warp-tunnel";
-        tag = "warp";
-        profile = ''
-          profile=${lib.escapeShellArg w.profilePath}
-          if [ ! -s "$profile" ]; then
-            echo "proxy-suite: waiting for the WARP profile at $profile" >&2
-            until [ -s "$profile" ]; do sleep 5; done
-          fi
-        '';
-        inherit (w)
-          tunnelPort
-          directPort
-          endpoint
-          domainStrategy
-          ;
-      };
-    })
+  services.proxy-suite.internal.services = lib.mkMerge (
+    map (
+      d:
+      lib.mkMerge [
+        (lib.mkIf (w.asOutbound == "singBox") {
+          ${d.tunnelUnit} = mkTunnel {
+            description = "proxy-suite - Cloudflare WARP tunnel behind the ${d.tag} outbound";
+            unit = d.tunnelUnit;
+            inherit (d) tag;
+            profile = ''
+              profile=${lib.escapeShellArg d.profilePath}
+              if [ ! -s "$profile" ]; then
+                echo "proxy-suite: waiting for the WARP profile at $profile" >&2
+                until [ -s "$profile" ]; do sleep 5; done
+              fi
+            '';
+            inherit (d)
+              tunnelPort
+              directPort
+              endpoint
+              ;
+            inherit (w) domainStrategy;
+          };
+        })
 
-    (lib.mkIf w.autoRegister {
-      proxy-suite-warp = {
-        description = "proxy-suite - register a Cloudflare WARP device with wgcf";
-        after = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
-        wants = [ "network-online.target" ];
-        wantedBy = [ "multi-user.target" ];
-        path = [ pkgs.wgcf ];
-        # Retried until it registers. Not a oneshot: a slow or failed registration must not
-        # hold up or fail a switch.
-        startLimitIntervalSec = 0;
-        serviceConfig = unprivilegedServiceConfig [ ] // {
-          Type = "simple";
-          RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 30;
-          StateDirectory = "proxy-suite/warp";
-          StateDirectoryMode = "0700";
-          WorkingDirectory = "${derived.constants.stateDir}/warp";
-          UMask = "0077";
-          LoadCredential = lib.optional (
-            cfg.proxy.enable && withProxyAuth
-          ) "proxy-password:${passwordSource}";
-          ExecStart = registerScript;
-        };
-      };
+        (lib.mkIf d.autoRegister {
+          ${d.registerUnit} = {
+            description = "proxy-suite - register the Cloudflare WARP device ${d.tag} with wgcf";
+            after = [ "network-online.target" ] ++ lib.optional cfg.proxy.enable "proxy-suite-socks.service";
+            wants = [ "network-online.target" ];
+            wantedBy = [ "multi-user.target" ];
+            path = [ pkgs.wgcf ];
+            # Retried until it registers. Not a oneshot: a slow or failed registration must not
+            # hold up or fail a switch.
+            startLimitIntervalSec = 0;
+            serviceConfig = unprivilegedServiceConfig [ ] // {
+              Type = "simple";
+              RemainAfterExit = true;
+              Restart = "on-failure";
+              RestartSec = 30;
+              StateDirectory = "proxy-suite/${d.stateSubdir}";
+              StateDirectoryMode = "0700";
+              WorkingDirectory = "${derived.constants.stateDir}/${d.stateSubdir}";
+              UMask = "0077";
+              LoadCredential = lib.optional (
+                cfg.proxy.enable && withProxyAuth
+              ) "proxy-password:${passwordSource}";
+              ExecStart = registerScript;
+            };
+          };
 
-      # Only pulls registration in: a simple unit gives the profile no ordering guarantee.
-      proxy-suite-awg-warp = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
-        wants = [ "proxy-suite-warp.service" ];
-      };
-    })
-  ];
+          # Only pulls registration in: a simple unit gives the profile no ordering guarantee.
+          "proxy-suite-awg-${d.tag}" = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
+            wants = [ "${d.registerUnit}.service" ];
+          };
+        })
+      ]
+    ) w.devices
+  );
 }

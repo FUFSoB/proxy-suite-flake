@@ -83,6 +83,64 @@ in
       example = "prefer_ipv4";
     };
 
+    devices = mkOption {
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            configFile = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "This device's WireGuard profile, as `warp.configFile`. `null`: registered with wgcf.";
+              example = "/run/secrets/warp-b.conf";
+            };
+            endpoint = endpoint "This device's endpoint, as `warp.endpoint` (which it defaults to).";
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Several WARP devices, each registered on its own and each an outbound with its tag. With
+        two or more, the tag "warp" names a group of them (`warp.group`), so rules, pins and
+        chains naming "warp" fail over between them. A device cannot be named "warp" then.
+        With "interface", a tag holds at most 11 characters (its interface is awg-<tag>).
+
+        Empty: one device, "warp", as `configFile` and `endpoint` above say.
+      '';
+      example = lib.literalExpression ''
+        {
+          warp-a = { };
+          warp-b.endpoint = "162.159.193.10:500";
+        }
+      '';
+    };
+
+    instances = mkOption {
+      type = types.nullOr types.ints.positive;
+      default = null;
+      description = ''
+        Shorthand for `devices`: this many WARP devices, warp-1 to warp-N, each registered with
+        wgcf. warp-1 keeps the registration a single "warp" device made. Not with `devices`.
+      '';
+      example = 2;
+    };
+
+    group = {
+      strategy = mkOption {
+        type = types.enum [
+          "failover"
+          "urltest"
+          "selector"
+        ];
+        default = "failover";
+        description = "How the \"warp\" group of several devices picks one; see `proxy.groups`.";
+      };
+      failback = mkOption {
+        type = types.bool;
+        default = true;
+        description = "With \"failover\": go back to an earlier device once it works again.";
+      };
+    };
+
     asAmneziaWg = mkOption {
       type = types.bool;
       default = false;

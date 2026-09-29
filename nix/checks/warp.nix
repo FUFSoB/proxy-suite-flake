@@ -105,6 +105,27 @@ let
     };
   };
 
+  # Several devices: one registration and one profile each, and "warp" is their group.
+  instances = mkProxySuite {
+    enable = true;
+    amneziaWg.enable = true;
+    proxy.enable = true;
+    warp = {
+      enable = true;
+      asOutbound = "interface";
+      instances = 2;
+    };
+  };
+  instancesCfg = instances.config.services.proxy-suite;
+  devices = mkFixture "sing-box" {
+    asOutbound = "singBox";
+    devices = {
+      a = { };
+      b.endpoint = "162.159.193.10:500";
+    };
+  };
+  devicesStart = startOf devices;
+
   invalidAssertions = mkFailingAssertions mkBadProxySuiteFixture [
     # An IPv6 endpoint without brackets.
     {
@@ -116,6 +137,42 @@ let
         endpoint = "2606:4700:d0::a29f:c001:500";
       };
       proxy.enable = true;
+    }
+    # instances is devices' shorthand, not an addition.
+    {
+      enable = true;
+      amneziaWg.enable = true;
+      proxy.enable = true;
+      warp = {
+        enable = true;
+        asOutbound = "interface";
+        instances = 2;
+        devices.extra = { };
+      };
+    }
+    # With two devices, "warp" is their group's name.
+    {
+      enable = true;
+      amneziaWg.enable = true;
+      proxy.enable = true;
+      warp = {
+        enable = true;
+        asOutbound = "interface";
+        devices = {
+          warp = { };
+          other = { };
+        };
+      };
+    }
+    # One global profile, one key.
+    {
+      enable = true;
+      amneziaWg.enable = true;
+      warp = {
+        enable = true;
+        asAmneziaWg = true;
+        instances = 2;
+      };
     }
     # Enabled but used for nothing.
     {
@@ -311,6 +368,45 @@ in
         amneziaWgEndpoint.config.services.proxy-suite.amneziaWg.profiles.warp.endpoint
         == "162.159.192.1:500"
         && amneziaWg.config.services.proxy-suite.amneziaWg.profiles.warp.endpoint == null;
+      true
+    )
+    (
+      assert
+        builtins.attrNames (
+          pkgs.lib.filterAttrs (n: _: pkgs.lib.hasPrefix "warp" n) instancesCfg.amneziaWg.profiles
+        ) == [
+          "warp-1"
+          "warp-2"
+        ];
+      # warp-1 keeps the state dir a single device had; warp-2 gets one of its own.
+      assert pkgs.lib.hasSuffix "/warp/wgcf-profile.conf"
+        instancesCfg.amneziaWg.profiles.warp-1.configFile;
+      assert pkgs.lib.hasSuffix "/warp/warp-2/wgcf-profile.conf"
+        instancesCfg.amneziaWg.profiles.warp-2.configFile;
+      assert instances.config.systemd.services ? proxy-suite-warp;
+      assert
+        instances.config.systemd.services.proxy-suite-warp-register-warp-2.serviceConfig.StateDirectory
+        == "proxy-suite/warp/warp-2";
+      assert builtins.elem "proxy-suite-warp-register-warp-2.service"
+        instances.config.systemd.services.proxy-suite-awg-warp-2.wants;
+      assert
+        instancesCfg.proxy.groups.warp.outbounds == [
+          "warp-1"
+          "warp-2"
+        ];
+      assert instancesCfg.proxy.groups.warp.strategy == "failover";
+      true
+    )
+    # sing-box tunnels: the first on the usual ports, the next on its own, with its endpoint.
+    (
+      assert hasInfix ''"server":"127.0.0.1","server_port":18538,"tag":"a","type":"socks"'' devicesStart;
+      assert hasInfix ''"server":"127.0.0.1","server_port":18900,"tag":"b","type":"socks"'' devicesStart;
+      assert hasInfix "--endpoint 162.159.193.10:500" (
+        generated.readDerivation devices.config.systemd.services.proxy-suite-warp-tunnel-b.serviceConfig.ExecStart
+      );
+      # a has the configFile, so only b registers.
+      assert !(devices.config.systemd.services ? proxy-suite-warp);
+      assert devices.config.systemd.services ? proxy-suite-warp-register-b;
       true
     )
   ]

@@ -10,6 +10,7 @@
 
 let
   inherit (derived.constants) serviceUser runAsServiceUser ifPrivileged;
+  hintDir = "${derived.constants.runtimeDir}/proxy-suite-outbound-groups/health";
   scriptsDir = import ./lib/scripts-dir.nix { inherit lib; };
 
   # sing-box's "local" server has no upstream on hosts behind systemd-resolved, so the tunnel
@@ -68,6 +69,10 @@ let
           fi
         ''}
         uplink_down=0
+        # proxy-suite-outbound-groups hears of the first miss: a failover group moves off it now.
+        if (( healthy && failures == 0 )) && [[ -d ${hintDir} ]]; then
+          ${pkgs.coreutils}/bin/touch ${hintDir}/${lib.escapeShellArg tag} 2>/dev/null || true
+        fi
         if (( healthy ? ++failures >= 3 : SECONDS - since >= 15 )); then
           echo "proxy-suite: ${tag} is not answering; restarting the tunnel on a new source port" >&2
           kill "$tunnel"

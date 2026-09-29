@@ -216,6 +216,8 @@ let
 
       ${routeModeCaseBlock}
 
+      # Only this instance's Clash API is what proxy-suite-outbound-groups drives.
+      GROUPS_WATCHED=${if enableOutboundTest then "true" else "false"}
       ${mkOutboundScript routingMark}
       ${lib.optionalString hybridEnabled "_proxy_suite_write_xray_sidecar_config"}
 

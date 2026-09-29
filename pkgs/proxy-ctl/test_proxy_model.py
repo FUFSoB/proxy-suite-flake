@@ -197,7 +197,13 @@ class ModelTest(unittest.TestCase):
     def test_a_shared_key_is_a_toggle(self):
         """Actions on one key take turns: each needs a row, and no row gets two of them."""
         rows = {
-            "outbounds": [{"mark": m, "disabled": d} for m in ("", "★") for d in (False, True)],
+            "outbounds": [
+                {"mark": m, "disabled": d, "tag": "a", "group": g, "runtime": rt, "parent": "", "parent_runtime": False}
+                for m in ("", "★")
+                for d in (False, True)
+                for g in (False, True)
+                for rt in (False, True)
+            ],
             "zapret": [{"kind": k} for k in ("learned", "pinned", "excluded")],
             "autoproxy": [{"kind": k} for k in ("routed", "queued")],
         }
@@ -372,7 +378,7 @@ class ModelTest(unittest.TestCase):
         self.assertEqual([(r["tag"], r["mark"], r["notes"]) for r in rows], [("a", "▸", "via b"), ("b", "★", "never picked")])
         self.assertIn("Pinned: b", summary)
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
-            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["p", "t", "ctrl+t", "T", "n", "h", "H", "x", "s", "c", "Q", "J", "k", "K", "V"])
+            self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["p", "t", "ctrl+t", "T", "n", "g", "y", "plus", "minus", "h", "H", "x", "s", "c", "Q", "J", "k", "K", "V"])
         chain = next(a for a in tab.actions if a.key == "h")
         self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
         # Probe exits go by the backend's tag.
@@ -387,6 +393,52 @@ class ModelTest(unittest.TestCase):
         with mock.patch.object(ctl, "_outbound_current", lambda: ""), mock.patch.object(ctl, "_reputation_by_tag", lambda: {}), mock.patch.object(ctl, "_runtime_tags", lambda kind: []), mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
             rows, _ = model.load_tab(tab, {})
         self.assertEqual([(r["source"], r["runtime"]) for r in rows], [("runtime", True), ("-", False)])
+
+    def test_outbound_groups_tree(self):
+        """Members sit under their group, pins inside a group go --in it, and a group folds away."""
+        tab = next(t for t in model.TABS if t.id == "outbounds")
+        inventory = {
+            "tags": ["tor", "warp-1", "warp-2"],
+            "top": ["warp", "tor"],
+            "pinned": "",
+            "excluded": ["tor"],
+            "groups": {"warp": {"strategy": "failover", "members": ["warp-1", "warp-2"], "pinned": "", "runtime": True}},
+        }
+        with (
+            mock.patch.object(ctl, "_outbound_current", lambda: "warp"),
+            mock.patch.object(ctl, "_group_nows", lambda: {"proxy": "warp", "warp": "warp-2"}),
+            mock.patch.object(ctl, "_group_state", lambda: {"members": {"warp-1": {"up": False}}}),
+            mock.patch.object(ctl, "_reputation_by_tag", lambda: {}),
+            mock.patch.object(ctl, "_runtime_tags", lambda kind: []),
+            mock.patch.object(ctl, "_outbound_inventory", lambda: inventory),
+            mock.patch.object(ctl, "env", lambda name, default="": ""),
+        ):
+            rows, _ = model.load_tab(tab, {})
+            self.assertEqual(
+                [(r["key"], r["name"], r["mark"], r["source"], r["notes"]) for r in rows],
+                [
+                    ("warp", "warp", "▸", "group: failover", "using warp-2"),
+                    ("warp/warp-1", "  warp-1", "", "-", "down"),
+                    ("warp/warp-2", "  warp-2", "▸", "-", ""),
+                    ("tor", "tor", "", "-", "never picked"),
+                ],
+            )
+            member = rows[1]
+            pin = next(a for a in model.applicable(tab, member) if a.key == "p")
+            self.assertEqual(pin.argv(member, "", {}), ["proxy", "pin", "warp-1", "--in", "warp"])
+            keys = [a.key for a in model.applicable(tab, member)]
+            self.assertIn("M", keys)  # its group was added at runtime: it can be taken out
+            self.assertNotIn("plus", keys)  # a group orders its own members
+            group_keys = [a.key for a in model.applicable(tab, rows[0])]
+            for key in ("space", "m", "S", "d", "plus"):
+                self.assertIn(key, group_keys)
+            for key in ("t", "s", "x", "h"):
+                self.assertNotIn(key, group_keys)  # an outbound's, not a group's
+        folded = model.fold_rows(rows, {"warp"})
+        self.assertEqual([r["name"] for r in folded], ["▸ warp", "tor"])
+        self.assertEqual([r["name"] for r in model.fold_rows(rows, set())][0], "▾ warp")
+        # A match keeps the group it sits in.
+        self.assertEqual([r["key"] for r in model.filter_rows(rows, tab.columns, "warp-2")], ["warp", "warp/warp-2"])
 
     def test_disabled_outbound(self):
         """Disabled: marked, never offered a pin, and enabled again rather than disabled twice."""

@@ -78,6 +78,15 @@ in
       ROUTE_MODE_STATE_FILE = routeModeStateFile;
       DEFAULT_ROUTE_MODE = if proxyCfg.routing.default == "proxy" then "blacklist" else "whitelist";
       AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
+      # The WARP devices behind outbounds, each with the unit that carries it.
+      WARP_DEVICES = builtins.toJSON (
+        lib.optionals (ctx.warpCfg.enable && ctx.warpCfg.asOutbound != null) (
+          map (d: {
+            inherit (d) tag;
+            unit = if ctx.warpCfg.asOutbound == "singBox" then d.tunnelUnit else "proxy-suite-awg-${d.tag}";
+          }) ctx.warpCfg.devices
+        )
+      );
       # Profiles and outbounds added with `awg add` and `proxy outbounds add`.
       AWG_RUNTIME_GLOBAL = flag awgRuntimeGlobal;
       AWG_RUNTIME_OUTBOUNDS = flag awgRuntimeOutbounds;

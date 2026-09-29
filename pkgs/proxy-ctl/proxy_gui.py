@@ -298,6 +298,7 @@ class Page(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.win, self.tab = win, tab
         self.rows = []  # the last load, unfiltered
+        self.collapsed = set()  # a tree tab's groups folded away, by row key
         self.summary_text = ""
         self.detail_shape = None
         self.loaded = False  # whether a load has landed here: before that the tab is not empty, it is unread
@@ -328,7 +329,9 @@ class Page(Gtk.Box):
             column.set_expand(i == len(tab.columns) - 1)
             sorter = Gtk.CustomSorter.new(lambda a, b, name: self.compare(a, b, name), name)
             self.sorters.append(sorter)
-            column.set_sorter(sorter)
+            # A tree keeps its order: it is the order its groups pick in.
+            if not tab.tree:
+                column.set_sorter(sorter)
             self.view.append_column(column)
         self.view.connect("activate", lambda view, pos: self.open_menu(None))
 
@@ -467,6 +470,8 @@ class Page(Gtk.Box):
             rows = model.filter_rows(rows, self.tab.columns, text)
             self.count.set_text(f"{len(rows)} of {len(self.rows)}")
         else:
+            if self.tab.tree:
+                rows = model.fold_rows(rows, self.collapsed)
             self.count.set_text(f"{len(rows)} row{'' if len(rows) == 1 else 's'}")
         self.summary.set_text(summary)
         keys = [r["key"] for r in rows]
@@ -985,6 +990,13 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def perform(self, action, row):
+        if action.mode == "fold":
+            page = self.page()
+            if page is not None and row is not None:
+                page.collapsed.symmetric_difference_update({row["key"]})
+                page.refill()
+            return
+
         def with_text(text=""):
             try:
                 argv = action.argv(row, text, self.app.states)

@@ -428,6 +428,7 @@ class ProxyTui(App):
         self.rows = {}  # tab id -> {row key: row}
         self.filters = {}  # tab id -> text
         self.sorts = {}  # tab id -> (column, descending)
+        self.collapsed = {}  # tree tab id -> keys of the groups folded away
         self.loaded = {}  # tab id -> the last load, refilled at once when sorting or filtering changes
         self.status = []
         self.typed = {}  # prompt title -> what was last typed there
@@ -561,6 +562,8 @@ class ProxyTui(App):
         if text := self.filters.get(tab_id):
             rows = filter_rows(rows, self.tabs[tab_id].columns, text)
             summary = f"filter: {text} ({len(rows)} rows) · esc clears" + (f"\n{summary}" if summary else "")
+        elif self.tabs[tab_id].tree:
+            rows = model.fold_rows(rows, self.collapsed.get(tab_id, set()))
         if sort := self.sorts.get(tab_id):
             rows = sorted(rows, key=lambda r: _natural(r.get(sort[0])), reverse=sort[1])
         widget = self.main.query_one(f"#{tab_id}-summary", Static)
@@ -652,6 +655,9 @@ class ProxyTui(App):
 
     def on_data_table_header_selected(self, event):
         tab_id, name = self.active_tab(), event.column_key.value
+        if self.tabs[tab_id].tree:
+            self.feedback("This list keeps its order: it is the order groups and the top level pick in.")
+            return
         sort = self.sorts.pop(tab_id, None)
         if not sort or sort[0] != name:
             self.sorts[tab_id] = (name, False)
@@ -702,6 +708,12 @@ class ProxyTui(App):
         self.push_screen(Output("Keys", text))
 
     def perform(self, action, row):
+        if action.mode == "fold":
+            folded = self.collapsed.setdefault(self.active_tab(), set())
+            folded.symmetric_difference_update({row["key"]})
+            self.refill(self.active_tab())
+            return
+
         def with_text(text=""):
             try:
                 argv = action.argv(row, text, self.states)

@@ -78,9 +78,41 @@ let
       inherit userControlAllows;
     }
   );
+  # `proxy-ctl proxy groups watch`: failover groups and "failover" selection, through the Clash API.
+  outboundGroupsUnit = lib.mkIf derived.outboundGroupsWatch {
+    services.proxy-suite.internal.services.proxy-suite-outbound-groups = {
+      description = "proxy-suite - move failover groups off outbounds that stop working";
+      after = [ "proxy-suite-socks.service" ];
+      bindsTo = [ "proxy-suite-socks.service" ];
+      wantedBy = [ "proxy-suite-socks.service" ];
+      serviceConfig = {
+        ExecStart = "${control.proxyCtl}/bin/proxy-ctl proxy groups watch";
+        Restart = "on-failure";
+        RestartSec = 5;
+        # health/ takes hints from watchdogs; groups-state.json is for the front ends.
+        RuntimeDirectory = "proxy-suite-outbound-groups";
+        RuntimeDirectoryMode = "0755";
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        CapabilityBoundingSet = [ "" ];
+      };
+    };
+  };
 in
 lib.mkMerge [
   autoProxyUnits
+  outboundGroupsUnit
   {
     services.proxy-suite.internal = {
       # The GUI's pkexec needs its setuid wrapper.

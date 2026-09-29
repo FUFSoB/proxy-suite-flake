@@ -36,6 +36,14 @@ Part of the [proxy-suite options reference](./index.md).
       - [rules](#services-proxy-suite-proxy-dns-singbox-rules)
       - [servers](#services-proxy-suite-proxy-dns-singbox-servers)
     - [strategy](#services-proxy-suite-proxy-dns-strategy)
+  - [groups](#services-proxy-suite-proxy-groups)
+    - `<name>`
+      - [failback](#services-proxy-suite-proxy-groups-name-failback)
+      - [interval](#services-proxy-suite-proxy-groups-name-interval)
+      - [match](#services-proxy-suite-proxy-groups-name-match)
+      - [outbounds](#services-proxy-suite-proxy-groups-name-outbounds)
+      - [strategy](#services-proxy-suite-proxy-groups-name-strategy)
+      - [subscriptions](#services-proxy-suite-proxy-groups-name-subscriptions)
   - [ipv6](#services-proxy-suite-proxy-ipv6)
   - listener
     - [address](#services-proxy-suite-proxy-listener-address)
@@ -59,6 +67,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [url](#services-proxy-suite-proxy-outbounds-url)
       - [urlFile](#services-proxy-suite-proxy-outbounds-urlfile)
       - [xrayJson](#services-proxy-suite-proxy-outbounds-xrayjson)
+  - [priority](#services-proxy-suite-proxy-priority)
   - routing
     - block
       - [domains](#services-proxy-suite-proxy-routing-block-domains)
@@ -352,6 +361,91 @@ Which IP versions to resolve\. Use ` ipv4_only ` if the uplink has no IPv6\. sin
 **Default:** `null`\
 **Example:** `"ipv4_only"`
 
+<a id="services-proxy-suite-proxy-groups"></a>
+## services\.proxy-suite\.proxy\.groups
+
+Outbound groups: one tag standing for several outbounds, which picks among them\. A group
+works wherever an outbound tag does: routing rules, ` detour `, pins, other groups\. Its
+members are no longer picked on their own at the top level, only through the group\.
+sing-box and hybrid only\.
+
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:**
+
+```nix
+{
+  warp-pool.outbounds = [ "warp-1" "warp-2" ];
+  eu = {
+    subscriptions = [ "community-list" ];
+    match = [ "de-*" ];
+    strategy = "urltest";
+  };
+}
+
+```
+
+<a id="services-proxy-suite-proxy-groups-name-failback"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.failback
+
+With “failover”: go back to an earlier member once it has worked three checks in a
+row\. Off: stay on the member it moved to until that one fails\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-proxy-groups-name-interval"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.interval
+
+How often members are tested (Go duration)\. ` null `: ` proxy.urlTest.interval ` for
+“urltest”, 30s for “failover”\. Health checks of their own, such as the AmneziaWG
+watchdog’s, trigger a test at once\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"15s"`
+
+<a id="services-proxy-suite-proxy-groups-name-match"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.match
+
+Glob patterns (` * `, ` ? `) over outbound tags; every match is a member\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "de-*" ]`
+
+<a id="services-proxy-suite-proxy-groups-name-outbounds"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.outbounds
+
+Member tags, in order: the failover order\. Any outbound or group tag\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "warp-1" "warp-2" ]`
+
+<a id="services-proxy-suite-proxy-groups-name-strategy"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.strategy
+
+How the group picks a member:
+
+ - “failover”: the first member that works, in order; moves on within seconds of a
+   failure\.
+ - “urltest”: the fastest; ` proxy.urlTest.tolerance ` keeps it from switching over
+   small differences\.
+ - “selector”: the first member, or the one picked by hand\.
+
+**Type:** one of “failover”, “urltest”, “selector”\
+**Default:** `"failover"`
+
+<a id="services-proxy-suite-proxy-groups-name-subscriptions"></a>
+## services\.proxy-suite\.proxy\.groups\.\<name>\.subscriptions
+
+Subscriptions whose every entry is a member, as the subscription holds them at start\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "community-list" ]`
+
 <a id="services-proxy-suite-proxy-ipv6"></a>
 ## services\.proxy-suite\.proxy\.ipv6
 
@@ -540,6 +634,17 @@ Raw XRay outbound JSON, instead of ` url ` (XRay backend)\. Its tag is replaced\
 **Type:** null or (attribute set)\
 **Default:** `null`\
 **Example:** `{ protocol = "vless"; settings = { address = "example.com"; }; }`
+
+<a id="services-proxy-suite-proxy-priority"></a>
+## services\.proxy-suite\.proxy\.priority
+
+Order of outbounds and groups, lower first: which one “first” and “failover” take, and the
+order of group members pulled in by ` subscriptions ` or ` match `\. Tags not listed come after,
+in their usual order\. ` proxy-ctl proxy priority ` changes it at runtime\.
+
+**Type:** attribute set of signed integer\
+**Default:** `{ }`\
+**Example:** `{ de-vps = 20; warp-pool = 10; }`
 
 <a id="services-proxy-suite-proxy-routing-block-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.domains
@@ -819,18 +924,20 @@ Rule sets from ` proxy.routing.ruleSets ` that this rule matches (sing-box and h
 <a id="services-proxy-suite-proxy-selection"></a>
 ## services\.proxy-suite\.proxy\.selection
 
-How to pick an outbound:
+How to pick an outbound among the top-level ones: groups and outbounds in no group\.
 
  - “first”: the pinned one, or else the first available\.
  - “selector”: pick by hand\.
  - “urltest”: the fastest, unless one is pinned\.
+ - “failover”: the first one that works, in ` priority ` order; moves on within seconds
+   of a failure and comes back once the earlier one works again\. sing-box and hybrid only\.
 
-` proxy-ctl proxy pin ` works in every mode and survives restarts\. On sing-box, “selector”
-and “urltest” switch without restarting the backend\.
+` proxy-ctl proxy pin ` works in every mode and survives restarts\. On sing-box, “selector”,
+“urltest” and “failover” switch without restarting the backend\.
 
-**Type:** one of “first”, “selector”, “urltest”\
+**Type:** one of “first”, “selector”, “urltest”, “failover”\
 **Default:** `"first"`\
-**Example:** `"urltest"`
+**Example:** `"failover"`
 
 <a id="services-proxy-suite-proxy-selectionexclude"></a>
 ## services\.proxy-suite\.proxy\.selectionExclude

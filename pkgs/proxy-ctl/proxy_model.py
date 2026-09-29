@@ -78,6 +78,7 @@ class Tab:
     rows: Callable  # unit states -> [row dict with a unique "key"]
     summary: Callable = None  # () -> text above the table, read with every load
     actions: list = field(default_factory=list)
+    tree: bool = False  # rows carry "ancestors" (row keys) and "group": the order means something, so no sorting
 
 
 def ROW(_):
@@ -235,27 +236,58 @@ def outbound_rows(_):
     detours = inventory.get("detours") or {}
     excluded = set(inventory.get("excluded") or [])
     disabled = set(ctl._outbound_disabled())
+    groups = inventory.get("groups") or {}
+    # One Clash API read for every group's pick, only when there are groups.
+    nows = ctl._group_nows() if groups else {}
     current = ctl._outbound_current()
+    down = {t for t, m in (ctl._group_state().get("members") or {}).items() if isinstance(m, dict) and m.get("up") is False}
     reputation = ctl._reputation_by_tag()
     # outbounds.d is root-only; the inventory says "runtime" for what the backend loaded from it.
     runtime = set(ctl._runtime_tags("outbound")) | {t for t, s in sources.items() if s == "runtime"}
-    return [
-        {
-            "key": t,
-            "mark": "★" if t == pinned else "▸" if t == current else "✕" if t in disabled else "",
-            "tag": t,
-            "reputation": reputation.get(t, "-"),
-            "source": "runtime" if t in runtime else ctl._s(sources.get(t) or "-"),
-            # As `proxy-ctl proxy outbounds` prints them.
-            "notes": ", ".join(
-                ([f"via {ctl._s(detours[t])}"] if t in detours else [])
-                + (["disabled"] if t in disabled else ["never picked"] if t in excluded else [])
-            ),
-            "runtime": t in runtime,
-            "disabled": t in disabled,
-        }
-        for t in ctl._outbound_tags()
-    ]
+    rows, path = [], []
+    # As `proxy-ctl proxy outbounds` prints them: a group's members under it, in its order.
+    for depth, t, parent in ctl._outbound_tree(inventory):
+        path = path[:depth]
+        key = "/".join([*path, t])
+        chosen, live = (ctl._s(groups[parent].get("pinned") or ""), nows.get(parent, "")) if parent else (pinned, current)
+        group = groups.get(t)
+        if group is not None:
+            source = f"group: {ctl._s(group.get('strategy') or 'failover')}"
+            notes = [f"pinned {ctl._s(group['pinned'])}"] if group.get("pinned") else [f"using {nows[t]}"] if nows.get(t) else []
+        else:
+            source = "runtime" if t in runtime else ctl._s(sources.get(t) or "-")
+            notes = [f"via {ctl._s(detours[t])}"] if t in detours else []
+        notes += ["disabled"] if t in disabled else ["down"] if t in down else ["never picked"] if not parent and t in excluded else []
+        rows.append(
+            {
+                "key": key,
+                "ancestors": ["/".join(path[: i + 1]) for i in range(len(path))],
+                "depth": depth,
+                "parent": parent,
+                "group": group is not None,
+                "mark": "★" if t == chosen else "▸" if t == live else "✕" if t in disabled else "",
+                "tag": t,
+                "name": "  " * depth + t,
+                "reputation": "-" if group is not None else reputation.get(t, "-"),
+                "source": source,
+                "notes": ", ".join(notes),
+                "runtime": t in runtime or bool(group and group.get("runtime")),
+                "parent_runtime": bool(parent and (groups.get(parent) or {}).get("runtime")),
+                "disabled": t in disabled,
+            }
+        )
+        path = [*path, t]
+    return rows
+
+
+def _in_group(row):
+    """A pin on a group member holds its group, not the top level."""
+    return ["--in", row["parent"]] if row.get("parent") else []
+
+
+def _exit(row):
+    """An outbound rather than a group: what tests, links and chains take."""
+    return row is not None and not row.get("group") and row.get("tag") != "block"
 
 
 def outbound_summary():
@@ -481,7 +513,25 @@ def filter_rows(rows, columns, text):
             return value in str(row.get(names[column], "")).lower()
         return any(term.lower() in str(row.get(name, "")).lower() for name, _ in columns)
 
-    return [r for r in rows if all(matches(r, t) for t in text.split())]
+    kept = [r for r in rows if all(matches(r, t) for t in text.split())]
+    # In a tree, a match keeps the rows above it, so it still reads as where it sits.
+    wanted = {k for r in kept for k in r.get("ancestors") or []}
+    if not wanted:
+        return kept
+    keys = {r["key"] for r in kept} | wanted
+    return [r for r in rows if r["key"] in keys]
+
+
+def fold_rows(rows, collapsed):
+    """A tree tab's rows without those under a collapsed group, each group's name showing whether it is."""
+    out = []
+    for r in rows:
+        if any(k in collapsed for k in r.get("ancestors") or []):
+            continue
+        if r.get("group"):
+            r = {**r, "name": "  " * r.get("depth", 0) + ("▸ " if r["key"] in collapsed else "▾ ") + r["tag"]}
+        out.append(r)
+    return out
 
 
 def _natural(value):
@@ -644,19 +694,26 @@ TABS = [
         "outbounds",
         "Outbounds",
         _socks,
-        [("mark", ""), ("tag", "Tag"), ("reputation", "Reputation"), ("source", "Source"), ("notes", "Notes")],
+        [("mark", ""), ("name", "Tag"), ("reputation", "Reputation"), ("source", "Source"), ("notes", "Notes")],
         outbound_rows,
         summary=outbound_summary,
+        tree=True,
         actions=[
-            Action("p", "pin it", lambda r, *_: ["proxy", "pin", r["tag"]], when=lambda r: r["mark"] != "★" and not r["disabled"]),
-            Action("p", "unpin it", lambda r, *_: ["proxy", "unpin"], when=lambda r: r["mark"] == "★"),
-            Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=ROW, mode="dialog"),
-            Action("ctrl+t", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=ROW, mode="dialog"),
+            Action("space", "fold / unfold the group", lambda r, *_: [], when=lambda r: r["group"], mode="fold"),
+            Action(
+                "p",
+                "pin it",
+                lambda r, *_: ["proxy", "pin", r["tag"], *_in_group(r)],
+                when=lambda r: r["mark"] != "★" and not r["disabled"] and r["tag"] != "block",
+            ),
+            Action("p", "unpin it", lambda r, *_: ["proxy", "unpin", *_in_group(r)], when=lambda r: r["mark"] == "★"),
+            Action("t", "test it", lambda r, *_: ["proxy", "outbounds", "test", r["tag"]], when=_exit, mode="dialog"),
+            Action("ctrl+t", "test its download speed", lambda r, *_: ["proxy", "outbounds", "test", r["tag"], "--download"], when=_exit, mode="dialog"),
             Action(
                 "P",
                 "probe a domain through it…",
                 lambda r, t, _: ["proxy", "auto", "probe", t, "--via", ctl._backend_tag(r["tag"])],
-                when=_enabled("AUTOPROXY_ENABLED"),
+                when=lambda r: _exit(r) and _enabled("AUTOPROXY_ENABLED")(r),
                 prompt="<domain>[/path]",
                 mode="dialog",
             ),
@@ -669,34 +726,71 @@ TABS = [
                 stdin=lambda r, t: _add_stdin(t),
             ),
             Action(
+                "g",
+                "add a group…",
+                lambda r, t, _: ["proxy", "groups", "add", *shlex.split(t)],
+                prompt="<tag> <member…> [--sub <subscription>] [--match <pattern>] [--strategy failover|urltest|selector]",
+            ),
+            Action(
+                "m",
+                "add members to the group…",
+                lambda r, t, _: ["proxy", "groups", "members", r["tag"], "add", *t.split()],
+                when=lambda r: r["group"] and r["runtime"],
+                prompt="<member…>",
+            ),
+            Action(
+                "M",
+                "take it out of the group",
+                lambda r, *_: ["proxy", "groups", "members", r["parent"], "rm", r["tag"]],
+                when=lambda r: r["parent_runtime"],
+                confirm=True,
+            ),
+            Action(
+                "S",
+                "change the group's strategy…",
+                lambda r, t, _: ["proxy", "groups", "strategy", r["tag"], t.strip()],
+                when=lambda r: r["group"] and r["runtime"],
+                prompt="failover, urltest or selector",
+            ),
+            Action(
+                "y",
+                "set its priority…",
+                lambda r, t, _: ["proxy", "priority", r["tag"], t.strip() or "--clear"],
+                when=lambda r: not r["parent"],
+                prompt="<number> - lower goes first; empty: back to the default order",
+            ),
+            Action("plus", "move it up", lambda r, *_: ["proxy", "priority", r["tag"], "up"], when=lambda r: not r["parent"]),
+            Action("minus", "move it down", lambda r, *_: ["proxy", "priority", r["tag"], "down"], when=lambda r: not r["parent"]),
+            Action(
                 "h",
                 "add an outbound chained through this one…",
                 lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--detour", r["tag"]],
-                when=ROW,
+                when=_exit,
                 prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
             ),
             Action(
                 "H",
                 "chain it through another outbound…",
                 lambda r, t, _: ["proxy", "outbounds", "chain", r["tag"], *t.split()],
-                when=ROW,
+                when=_exit,
                 prompt="<hop tag> [new tag] - a copy of this one dialing through the hop",
             ),
-            Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"], confirm=True),
+            Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"] and not r["group"], confirm=True),
+            Action("d", "remove the group", lambda r, *_: ["proxy", "groups", "rm", r["tag"]], when=lambda r: r["runtime"] and r["group"], confirm=True),
             Action(
                 "x",
                 "disable it",
                 lambda r, *_: ["proxy", "outbounds", "disable", r["tag"]],
-                when=lambda r: not r["disabled"],
+                when=lambda r: _exit(r) and not r["disabled"],
                 confirm=True,
             ),
             Action("x", "enable it again", lambda r, *_: ["proxy", "outbounds", "enable", r["tag"]], when=lambda r: r["disabled"]),
             # Credentials: proxy-ctl refuses these without root or the group, and the dialog says so.
-            Action("s", "share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="dialog"),
-            Action("c", "copy share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=ROW, mode="copy"),
-            Action("Q", "share link as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=ROW, mode="dialog"),
-            Action("J", "its JSON", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--json"], when=ROW, mode="dialog"),
-            Action("k", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=ROW, mode="dialog"),
+            Action("s", "share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=_exit, mode="dialog"),
+            Action("c", "copy share link", lambda r, *_: ["proxy", "outbounds", "link", r["tag"]], when=_exit, mode="copy"),
+            Action("Q", "share link as QR", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--qr"], when=_exit, mode="dialog"),
+            Action("J", "its JSON", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--json"], when=_exit, mode="dialog"),
+            Action("k", "client config for it alone", lambda r, *_: ["proxy", "outbounds", "link", r["tag"], "--config"], when=_exit, mode="dialog"),
             Action("K", "client config with every outbound and rule", lambda r, *_: ["proxy", "config"], mode="dialog"),
             Action("V", "the config as it runs here", lambda r, *_: ["proxy", "config", "--raw"], mode="dialog"),
         ],

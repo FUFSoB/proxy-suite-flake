@@ -197,6 +197,16 @@ let
       ;
   };
 
+  outboundGroupsChecks = import ./outbound-groups.nix {
+    inherit
+      pkgs
+      checkLib
+      evalProxySuite
+      baseModule
+      rejects
+      ;
+  };
+
   amneziaWgChecks = import ./amnezia-wg.nix {
     inherit checkLib;
     inherit
@@ -317,6 +327,7 @@ let
     ++ xrayBackendChecks.assertions
     ++ outboundValidationChecks.assertions
     ++ chainingDnsChecks.assertions
+    ++ outboundGroupsChecks.assertions
     ++ amneziaWgChecks.assertions
     ++ amneziaWgOutboundChecks.assertions
     ++ zapretChecks.assertions

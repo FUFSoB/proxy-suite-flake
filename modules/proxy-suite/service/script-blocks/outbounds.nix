@@ -31,6 +31,12 @@
 let
   sshProxyTag = "ssh-proxy";
   torOutboundEnabled = torCfg != null && torCfg.enable && torCfg.asOutbound;
+  groupsJq = builtins.path {
+    name = "proxy-suite-outbound-groups";
+    path = ../../outbound-groups.jq;
+  };
+  # `proxy-ctl proxy pin <tag> --in <group>`: one file per group, next to the top-level pin.
+  groupPinsDir = "${dirOf pinnedOutboundFile}/group-pins";
 
   # sing-box domain strategies in XRay's names (UseIPv4v6 = prefer IPv4).
   xrayDomainStrategies = {
@@ -549,7 +555,7 @@ let
   # The pin names a user-facing tag, so it is resolved before the wrapper block
   # renames anything. A pin that no longer matches any outbound - a subscription
   # entry that went away, say - is dropped rather than left to break the config.
-  pinBlock = ''
+  tagsBlock = ''
     OUTBOUND_TAGS_JSON=$(${jq} -c '[.[].tag]' <<< "$OUTBOUNDS_JSON")
 
     # `proxy-ctl proxy outbounds disable` leaves <tag>.disabled next to the runtime entries:
@@ -564,13 +570,101 @@ let
       done
     fi
     DISABLED_TAGS_JSON=$(${jq} -c --argjson tags "$OUTBOUND_TAGS_JSON" 'map(select(. as $t | $tags | index([$t]))) | unique' <<< "$DISABLED_TAGS_JSON")
+  '';
 
+  # proxy.groups and those `proxy-ctl proxy groups add` left as <tag>.group next to the runtime
+  # outbounds (a declared one wins), resolved against the outbounds this start has: members
+  # from subscriptions and patterns only exist now. The group outbounds join the rest; what
+  # the top level picks among is ungrouped outbounds and outermost groups, by priority.
+  groupsBlock =
+    let
+      declared = lib.mapAttrs (_: g: {
+        inherit (g)
+          outbounds
+          subscriptions
+          match
+          strategy
+          failback
+          interval
+          ;
+      }) proxyCfg.groups;
+    in
+    ''
+      GROUPS_CONFIG_JSON=${lib.escapeShellArg (builtins.toJSON declared)}
+      PRIORITY_JSON=${lib.escapeShellArg (builtins.toJSON proxyCfg.priority)}
+      GROUP_PINS_JSON='{}'
+      ${lib.optionalString (!pureXrayEnabled) ''
+        if [ -d "${runtimeOutboundsDir}" ]; then
+          for GROUP_FILE in "${runtimeOutboundsDir}"/*.group; do
+            [ -e "$GROUP_FILE" ] || continue
+            GROUP_NAME="''${GROUP_FILE##*/}"
+            GROUP_NAME="''${GROUP_NAME%.group}"
+            if ${jq} -e --arg g "$GROUP_NAME" 'has($g)' <<< "$GROUPS_CONFIG_JSON" >/dev/null; then
+              echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': proxy.groups declares it" >&2
+              continue
+            fi
+            if ! GROUP_JSON=$(_proxy_suite_read_source "$GROUP_FILE" | ${jq} -ce '
+              {outbounds: (.outbounds // []), subscriptions: (.subscriptions // []), match: (.match // []),
+               strategy: (.strategy // "failover"), failback: (.failback != false), interval: (.interval // null),
+               runtime: true}
+              | select(.strategy | IN("failover", "urltest", "selector"))
+              | select([.outbounds, .subscriptions, .match] | all(type == "array" and all(type == "string")))'); then
+              echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': not a valid group" >&2
+              continue
+            fi
+            GROUPS_CONFIG_JSON=$(${jq} -c --arg g "$GROUP_NAME" --argjson v "$GROUP_JSON" '.[$g] = $v' <<< "$GROUPS_CONFIG_JSON")
+          done
+          if [ -f "${runtimeOutboundsDir}/priority.json" ]; then
+            if RUNTIME_PRIORITY_JSON=$(_proxy_suite_read_source "${runtimeOutboundsDir}/priority.json" \
+              | ${jq} -ce 'select(type == "object" and all(.[]; type == "number")) | map_values(floor)'); then
+              PRIORITY_JSON=$(${jq} -c --argjson r "$RUNTIME_PRIORITY_JSON" '. + $r' <<< "$PRIORITY_JSON")
+            else
+              echo "proxy-suite: warning: ignoring ${runtimeOutboundsDir}/priority.json: not {tag: number}" >&2
+            fi
+          fi
+        fi
+        if [ -d "${groupPinsDir}" ]; then
+          for GROUP_PIN_FILE in "${groupPinsDir}"/*; do
+            [ -f "$GROUP_PIN_FILE" ] || continue
+            GROUP_PINS_JSON=$(${jq} -c --arg g "''${GROUP_PIN_FILE##*/}" \
+              --arg t "$(tr -d '\r\n[:space:]' < "$GROUP_PIN_FILE" 2>/dev/null || true)" '.[$g] = $t' <<< "$GROUP_PINS_JSON")
+          done
+        fi
+      ''}
+      # A runtime outbound may have taken a group's name: the outbound stays.
+      for GROUP_NAME in $(${jq} -r --argjson tags "$OUTBOUND_TAGS_JSON" 'keys[] | select(. as $g | $tags | index([$g]))' <<< "$GROUPS_CONFIG_JSON"); do
+        echo "proxy-suite: warning: ignoring group '$GROUP_NAME': an outbound has that tag" >&2
+        GROUPS_CONFIG_JSON=$(${jq} -c --arg g "$GROUP_NAME" 'del(.[$g])' <<< "$GROUPS_CONFIG_JSON")
+      done
+      GROUPS_RESULT=$(${jq} -nc --argjson tags "$OUTBOUND_TAGS_JSON" --argjson sources "''${OUTBOUND_SOURCES_JSON:-{\}}" \
+        '{tags: $tags, sources: $sources}' \
+        | ${jq} -c -f ${groupsJq} \
+          --argjson groups "$GROUPS_CONFIG_JSON" \
+          --argjson priority "$PRIORITY_JSON" \
+          --argjson disabled "$DISABLED_TAGS_JSON" \
+          --argjson pins "$GROUP_PINS_JSON" \
+          --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
+          --arg interval ${lib.escapeShellArg proxyCfg.urlTest.interval} \
+          --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
+          --argjson watched "''${GROUPS_WATCHED:-true}")
+      ${jq} -r '.warnings[] | "proxy-suite: warning: " + .' <<< "$GROUPS_RESULT" >&2
+      if ${jq} -e '.errors != []' <<< "$GROUPS_RESULT" >/dev/null; then
+        ${jq} -r '.errors[] | "proxy-suite: " + .' <<< "$GROUPS_RESULT" >&2
+        exit 1
+      fi
+      GROUP_TAGS_JSON=$(${jq} -c '.groups | keys_unsorted' <<< "$GROUPS_RESULT")
+      GROUPS_INFO_JSON=$(${jq} -c '.groups' <<< "$GROUPS_RESULT")
+      TOP_TAGS_JSON=$(${jq} -c '.top' <<< "$GROUPS_RESULT")
+      OUTBOUNDS_JSON=$(${jq} -c --argjson g "$(${jq} -c '.outbounds' <<< "$GROUPS_RESULT")" '. + $g' <<< "$OUTBOUNDS_JSON")
+    '';
+
+  pinBlock = ''
     PINNED_OUTBOUND=""
     if [ -r "${pinnedOutboundFile}" ]; then
       PINNED_OUTBOUND="$(tr -d '\r\n[:space:]' < "${pinnedOutboundFile}" 2>/dev/null || true)"
     fi
     if [ -n "$PINNED_OUTBOUND" ] \
-      && ! ${jq} -e --arg t "$PINNED_OUTBOUND" 'index($t) != null' <<< "$OUTBOUND_TAGS_JSON" >/dev/null; then
+      && ! ${jq} -e --arg t "$PINNED_OUTBOUND" --argjson groups "$GROUP_TAGS_JSON" '. + $groups | index([$t]) != null' <<< "$OUTBOUND_TAGS_JSON" >/dev/null; then
       echo "proxy-suite: warning: pinned outbound '$PINNED_OUTBOUND' is not available; picking automatically" >&2
       PINNED_OUTBOUND=""
     fi
@@ -587,7 +681,7 @@ let
   selectableBlock = ''
     SELECTABLE_TAGS_JSON=$(${jq} -c --argjson ex ${lib.escapeShellArg (builtins.toJSON proxyCfg.selectionExclude)} \
       --argjson disabled "$DISABLED_TAGS_JSON" \
-      '${lib.optionalString torOutboundEnabled "(if length > 1 then [\"tor\"] else [] end) as $tor | "}map(select(. as $t | ($ex + $disabled${lib.optionalString torOutboundEnabled " + $tor"}) | index([$t]) | not))' <<< "$OUTBOUND_TAGS_JSON")
+      '${lib.optionalString torOutboundEnabled "(if length > 1 then [\"tor\"] else [] end) as $tor | "}map(select(. as $t | ($ex + $disabled${lib.optionalString torOutboundEnabled " + $tor"}) | index([$t]) | not))' <<< "$TOP_TAGS_JSON")
     if [ -z "$PINNED_OUTBOUND" ] && [ "$(${jq} 'length' <<< "$SELECTABLE_TAGS_JSON")" -eq 0 ]; then
       echo "proxy-suite: every outbound is in proxy.selectionExclude or disabled, so there is nothing to select; pin one, enable one (proxy-ctl proxy outbounds enable), or exclude fewer" >&2
       exit 1
@@ -606,10 +700,15 @@ let
       --slurpfile xobs <(printf '%s' "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}") \
       --argjson selectable "$SELECTABLE_TAGS_JSON" \
       --argjson disabled "$DISABLED_TAGS_JSON" \
+      --argjson groups "$GROUPS_INFO_JSON" \
+      --argjson top "$TOP_TAGS_JSON" \
+      --argjson priority "$PRIORITY_JSON" \
+      --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
       '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
         detours: ([($xobs[0] + $obs[0])[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
           | select($h != null) | {key: .tag, value: $h}] | from_entries),
-        excluded: ($tags - $selectable), disabled: $disabled}' \
+        excluded: ($top - $selectable), disabled: $disabled,
+        groups: $groups, top: $top, priority: $priority, url: $url}' \
       > "$RUNTIME_DIR/outbounds.json"
     chmod 644 "$RUNTIME_DIR/outbounds.json"
   '';
@@ -627,7 +726,9 @@ let
 
       sshProxyBlock = lib.optionalString sshProxyCfg.asOutbound (mkSshProxyOutboundBlock routingMark);
       warpBlock = lib.optionalString (warpCfg.enable && warpCfg.asOutbound == "singBox") (
-        mkTunnelOutboundBlock "proxy-suite-warp-tunnel" "warp" "warp" warpCfg.tunnelPort
+        lib.concatMapStrings (
+          d: mkTunnelOutboundBlock d.tunnelUnit "warp" d.tag d.tunnelPort
+        ) warpCfg.devices
       );
       torBlock = lib.optionalString torOutboundEnabled (
         mkTunnelOutboundBlock "proxy-suite-tor" "tor" "tor" torCfg.socksPort
@@ -664,6 +765,30 @@ let
               else
                 ''OUTBOUNDS_JSON=$(${jq} --arg t "$PROXY_TAG" '[{type:"selector",tag:"proxy",outbounds:[$t],default:$t}] + .' <<< "$OUTBOUNDS_JSON")''
             }
+          ''
+        else if selectionMode == "failover" then
+          ''
+            # Every tag, so a pin reaches any of them live; proxy-suite-outbound-groups moves
+            # it along the selectable ones, cutting what the failed one still carried.
+            TAGS=$(${jq} '[.[].tag]' <<< "$OUTBOUNDS_JSON")
+            DEFAULT_TAG="$PINNED_OUTBOUND"
+            if [ -z "$DEFAULT_TAG" ]; then
+              DEFAULT_TAG=$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")
+            fi
+            if [ -z "$PINNED_OUTBOUND" ] && [ "''${GROUPS_WATCHED:-true}" != true ]; then
+              # No Clash API here for the watcher to drive: sing-box's own urltest instead.
+              WRAPPER=$(${jq} -n \
+                --argjson tags "$SELECTABLE_TAGS_JSON" \
+                --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
+                --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
+                '{type:"urltest",tag:"proxy",outbounds:$tags,url:$url,interval:"30s",tolerance:$tolerance}')
+            else
+              WRAPPER=$(${jq} -n \
+                --argjson tags "$TAGS" \
+                --arg default "$DEFAULT_TAG" \
+                '{type:"selector",tag:"proxy",outbounds:$tags,default:$default,interrupt_exist_connections:true}')
+            fi
+            OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
           ''
         else if selectionMode == "selector" then
           ''
@@ -717,6 +842,8 @@ let
     + awgBlocks
     + detourBlock
     + requireOutboundsBlock
+    + tagsBlock
+    + groupsBlock
     + pinBlock
     + selectableBlock
     + inventoryBlock
@@ -725,6 +852,6 @@ let
 in
 {
   inherit mkOutboundScript rawOutboundJson;
-  # For the checks: which outbounds a pin and selection may take.
-  selectionBlocks = pinBlock + selectableBlock + inventoryBlock;
+  # For the checks: groups, and which outbounds a pin and selection may take.
+  selectionBlocks = tagsBlock + groupsBlock + pinBlock + selectableBlock + inventoryBlock;
 }

@@ -21,6 +21,7 @@ let
     awgRuntimeTunnelBasePort
     awgRuntimeTunnelSlots
     systemctl
+    runtimeDir
     ;
   killSwitchUnit = "proxy-suite-killswitch.service";
   # Profiles behind a loopback SOCKS hop, in a tunnel unit rather than awg-quick.
@@ -646,6 +647,12 @@ let
           exec ${pkgs.coreutils}/bin/sleep infinity
         fi
         ${mkHandshakeHelpers profile}
+        # Tells proxy-suite-outbound-groups at once, so a failover group this outbound is in
+        # moves off it now rather than at its next test.
+        hint() {
+          local health="${runtimeDir}/proxy-suite-outbound-groups/health"
+          [[ -d $health ]] && ${pkgs.coreutils}/bin/touch "$health/$profile_name" 2>/dev/null || true
+        }
         ${lib.optionalString egressProbe ''
           new_session() {
             local peers
@@ -670,6 +677,7 @@ let
             stale=0
           elif (( ++stale >= 2 )); then
             echo "proxy-suite: AmneziaWG profile '$profile_name' is not rekeying; moving to a new source port" >&2
+            hint
             new_source_port
             stale=0
             ${lib.optionalString egressProbe "continue"}
@@ -678,7 +686,9 @@ let
             if (( !probe_egress )) || ${pkgs.curl}/bin/curl -4 -s --noproxy "*" --interface "$interface" -m 5 -o /dev/null \
               ${lib.escapeShellArg cfg.proxy.urlTest.url}; then
               misses=0
-            elif (( ++misses >= 3 && SECONDS - last_session >= 300 )); then
+            elif (( ++misses == 1 )); then
+              hint
+            elif (( misses >= 3 && SECONDS - last_session >= 300 )); then
               echo "proxy-suite: AmneziaWG profile '$profile_name' carries no IPv4 past its peer; starting a new session" >&2
               new_session
               misses=0

@@ -846,46 +846,100 @@ in
   # `proxy-ctl proxy outbounds disable` markers, as the start script reads them.
   outbound-disabled =
     let
-      inherit
-        (import ../../modules/proxy-suite/service/script-blocks/outbounds.nix {
-          lib = pkgs.lib;
-          inherit pkgs;
-          jq = "${pkgs.jq}/bin/jq";
-          proxyCfg.selectionExclude = [ "ex" ];
-          selectionMode = "urltest";
-          hybridEnabled = false;
-          # Relative: the build directory.
-          pinnedOutboundFile = "pinned";
-          runtimeOutboundsDir = "obd";
-          singBoxCfg = null;
-          sshProxyCfg = null;
-          warpCfg = null;
-          torCfg = null;
-          whitelistBypassJoiners = [ ];
-          awgOutbounds = null;
-          constants = null;
-          pureXrayEnabled = null;
-          collapseNamedOutbounds = null;
-          backend = null;
-          backendArg = null;
-          xraySidecarRoutingMark = null;
-          python3 = null;
-          parserScriptsPythonPath = null;
-          buildOutboundPy = null;
-          mkSubscriptionBlock = null;
-          mkSubscriptionLoadHelperBlock = null;
-          runtimeSubscriptionsBlock = null;
-        })
-        selectionBlocks
-        ;
-      selection = pkgs.writeShellScript "outbound-selection" ''
-        set -euo pipefail
-        ${selectionBlocks}
-      '';
+      mkSelection =
+        groups:
+        let
+          inherit
+            (import ../../modules/proxy-suite/service/script-blocks/outbounds.nix {
+              lib = pkgs.lib;
+              inherit pkgs;
+              jq = "${pkgs.jq}/bin/jq";
+              proxyCfg = {
+                selectionExclude = [ "ex" ];
+                inherit groups;
+                priority = { };
+                urlTest = {
+                  url = "https://t";
+                  interval = "3m";
+                };
+              };
+              selectionMode = "urltest";
+              hybridEnabled = false;
+              # Relative: the build directory.
+              pinnedOutboundFile = "pinned";
+              runtimeOutboundsDir = "obd";
+              singBoxCfg.urlTest.tolerance = 50;
+              sshProxyCfg = null;
+              warpCfg = null;
+              torCfg = null;
+              whitelistBypassJoiners = [ ];
+              awgOutbounds = null;
+              constants = null;
+              pureXrayEnabled = false;
+              collapseNamedOutbounds = null;
+              backend = null;
+              backendArg = null;
+              xraySidecarRoutingMark = null;
+              python3 = null;
+              parserScriptsPythonPath = null;
+              buildOutboundPy = null;
+              mkSubscriptionBlock = null;
+              mkSubscriptionLoadHelperBlock = null;
+              runtimeSubscriptionsBlock = null;
+            })
+            selectionBlocks
+            ;
+        in
+        pkgs.writeShellScript "outbound-selection" ''
+          set -euo pipefail
+          ${selectionBlocks}
+        '';
+      selection = mkSelection { };
+      # Resolved at start as the runtime ones are; `g` holds b and a, in that order.
+      grouped = mkSelection {
+        g = {
+          outbounds = [
+            "b"
+            "a"
+          ];
+          subscriptions = [ ];
+          match = [ ];
+          strategy = "failover";
+          failback = true;
+          interval = null;
+        };
+      };
     in
     pkgs.runCommand "proxy-suite-outbound-disabled-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
       mkdir obd
       export RUNTIME_DIR="$PWD" OUTBOUND_SOURCES_JSON='{}'
+      # No group here: `g` names members that are not running, so it blocks, with a warning.
+      export OUTBOUNDS_JSON='[{"tag":"x"}]'
+      ${grouped} 2> err
+      grep -q "group 'g': member 'b' is not available" err
+      grep -q "group 'g' has no available member" err
+      jq -e '.top == ["x", "g"] and .groups.g.members == ["block"]' outbounds.json > /dev/null
+
+      # With its members: they leave the top level, the group takes their place and order.
+      export OUTBOUNDS_JSON='[{"tag":"x"},{"tag":"a"},{"tag":"b"}]'
+      ${grouped}
+      jq -e '.top == ["x", "g"] and .groups.g.members == ["b", "a"] and .groups.g.strategy == "failover"' outbounds.json > /dev/null
+      # A group pin, a runtime group, and a runtime priority putting it first.
+      mkdir group-pins
+      echo a > group-pins/g
+      echo '{"outbounds": ["x"], "strategy": "urltest"}' > obd/h.group
+      echo '{"h": 1}' > obd/priority.json
+      _proxy_suite_read_source() { cat -- "$1"; }
+      export -f _proxy_suite_read_source
+      ${grouped}
+      jq -e '.top == ["h", "g"] and .groups.g.pinned == "a" and .groups.h.runtime and .priority.h == 1' outbounds.json > /dev/null
+      # A group inside itself stops the start.
+      echo '{"outbounds": ["h3"]}' > obd/h2.group
+      echo '{"outbounds": ["h2"]}' > obd/h3.group
+      ! ${grouped} 2> err
+      grep -q "group 'h2' contains itself" err
+      rm -r obd/h.group obd/h2.group obd/h3.group obd/priority.json group-pins
+
       export OUTBOUNDS_JSON='[{"tag":"a"},{"tag":"b"},{"tag":"ex"}]'
 
       # A marker takes its outbound out of selection and drops a pin on it; stale markers do nothing.

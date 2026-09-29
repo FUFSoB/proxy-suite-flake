@@ -95,16 +95,63 @@ let
       authEnabled = auth.username != null && (auth.password != null || auth.passwordFile != null);
     };
 
-  warpCfg = cfg.warp // {
-    # Without a configFile, proxy-suite-warp registers with wgcf into its state dir.
-    autoRegister = cfg.warp.enable && cfg.warp.configFile == null;
-    profilePath =
-      if cfg.warp.configFile != null then cfg.warp.configFile else "${stateDir}/warp/wgcf-profile.conf";
-    # Loopback SOCKS listener of proxy-suite-warp-tunnel, which the "warp" outbound dials.
-    tunnelPort = 18538;
-    # Its "direct-in" listener, which tells a blocked WARP from a dead uplink.
-    directPort = 18539;
-  };
+  # WARP devices: one "warp" unless warp.devices or warp.instances name more. The first keeps
+  # what a single device had (its registration unit, state dir and ports), so a registration
+  # made before carries over.
+  warpDeviceNames =
+    if cfg.warp.instances != null then
+      map (i: "warp-${toString i}") (lib.range 1 cfg.warp.instances)
+    else if cfg.warp.devices != { } then
+      builtins.attrNames cfg.warp.devices
+    else
+      [ "warp" ];
+  warpDevices = lib.imap0 (
+    index: tag:
+    let
+      device =
+        cfg.warp.devices.${tag} or {
+          configFile = null;
+          endpoint = null;
+        };
+      first = index == 0;
+      configFile =
+        if device.configFile != null then
+          device.configFile
+        else if first then
+          cfg.warp.configFile
+        else
+          null;
+      stateSubdir = if first then "warp" else "warp/${tag}";
+    in
+    {
+      inherit
+        tag
+        first
+        configFile
+        stateSubdir
+        ;
+      endpoint = if device.endpoint != null then device.endpoint else cfg.warp.endpoint;
+      # Without a configFile, its registration unit registers with wgcf into its state dir.
+      autoRegister = cfg.warp.enable && configFile == null;
+      profilePath =
+        if configFile != null then configFile else "${stateDir}/${stateSubdir}/wgcf-profile.conf";
+      registerUnit = if first then "proxy-suite-warp" else "proxy-suite-warp-register-${tag}";
+      tunnelUnit = if first then "proxy-suite-warp-tunnel" else "proxy-suite-warp-tunnel-${tag}";
+      # Loopback SOCKS listener of the sing-box tunnel, which the outbound dials, and its
+      # "direct-in" listener, which tells a blocked WARP from a dead uplink.
+      tunnelPort = if first then 18538 else 18900 + 2 * (index - 1);
+      directPort = if first then 18539 else 18901 + 2 * (index - 1);
+    }
+  ) warpDeviceNames;
+  warpCfg =
+    cfg.warp
+    // (builtins.head warpDevices)
+    // {
+      devices = warpDevices;
+      autoRegister = builtins.any (d: d.autoRegister) warpDevices;
+      # Two or more: "warp" is a group of them (warp.nix).
+      grouped = builtins.length warpDevices > 1;
+    };
   warpOutboundTag = "warp";
   # The sing-box tunnel; "userspace" and "interface" come in through the AmneziaWG profile list.
   warpOutboundEnabled = warpCfg.enable && warpCfg.asOutbound == "singBox";
@@ -399,11 +446,15 @@ let
   effectiveOutboundTags =
     outboundTags
     ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
-    ++ lib.optional warpOutboundEnabled warpOutboundTag
+    ++ lib.optionals warpOutboundEnabled (map (d: d.tag) warpDevices)
     ++ lib.optional torOutboundEnabled torOutboundTag
     ++ map (j: j.tag) whitelistBypassJoiners
     ++ map (ob: ob.tag) awgOutbounds;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
+  groupTags = builtins.attrNames proxyCfg.groups;
+  # proxy-suite-outbound-groups moves failover groups, and "failover" selection, along. Runtime
+  # groups can be failover too, so it runs with every Clash API; with nothing to watch it idles.
+  outboundGroupsWatch = proxyEnabled && clashApiEnabled;
 
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
@@ -620,7 +671,7 @@ let
   invalidRoutingTargets = lib.unique (
     map (rule: rule.outbound) (
       builtins.filter (
-        rule: !builtins.elem rule.outbound (builtinTags ++ effectiveOutboundTags)
+        rule: !builtins.elem rule.outbound (builtinTags ++ effectiveOutboundTags ++ groupTags)
       ) proxyCfg.routing.rules
     )
   );
@@ -662,6 +713,7 @@ in
     sshProxyUnitEnabled
     warpCfg
     warpOutboundEnabled
+    warpDeviceNames
     torCfg
     torOutboundTag
     torOutboundEnabled
@@ -707,6 +759,8 @@ in
     outboundTags
     effectiveOutboundTags
     subscriptionTags
+    groupTags
+    outboundGroupsWatch
     hasSubscriptions
     hasAvailableOutbounds
     collapseNamedOutbounds

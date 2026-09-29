@@ -77,8 +77,19 @@ Changes and secrets need root or the userControl group.
                                          test ping, delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
                                          its link, QR code, JSON, or client config
-  proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
-  proxy unpin                            go back to automatic selection
+  proxy pin [tag] [--in <group>]         always use this outbound (no tag: pick from a menu);
+                                         --in: hold a group on one of its members
+  proxy unpin [--in <group>]             go back to automatic selection
+  proxy groups [list]                    outbound groups, their members, and what each uses
+  proxy groups add <tag> [member...] [--sub <sub>]... [--match <pattern>]...
+               [--strategy failover|urltest|selector] [--no-failback] [--interval <d>]
+                                         add a group (failover by default)
+  proxy groups rm <tag>                  remove a group added with groups add
+  proxy groups members <tag> add|rm <member...>
+  proxy groups strategy <tag> failover|urltest|selector
+  proxy priority [list]                  the top level in the order it is picked in
+  proxy priority <tag> <n>|up|down|--clear
+                                         lower goes first; up/down renumbers the top level
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscriptions; update refetches them
@@ -117,7 +128,7 @@ Changes and secrets need root or the userControl group.
                                          stays on until turned off here or with the tunnel
 
   ssh [status|on|off]                    SSH tunnel
-  warp [status|on|off]                   WARP tunnel
+  warp [status|on|off] [device]          WARP tunnel (every device, or the one named)
   tor [status|on|off]                    Tor
   tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram proxy
@@ -394,15 +405,46 @@ def _toggle(unit, name, verb="status", *_):
         usage(f"{name} [status|on|off|toggle|restart]")
 
 
-def _warp_unit():
-    """The unit behind the warp outbound: its sing-box tunnel, or an outbound AmneziaWG profile.
+def _warp_devices():
+    """[(tag, unit)] of the WARP devices behind outbounds: their sing-box tunnels or AmneziaWG profiles.
 
     A global "warp" profile belongs to `awg on warp`, not here.
     """
+    try:
+        devices = json.loads(env("WARP_DEVICES", "[]"))
+    except ValueError:
+        devices = []
+    listed = [(_s(d["tag"]), _s(d["unit"])) for d in devices if isinstance(d, dict) and d.get("tag") and d.get("unit")]
+    if listed:
+        return listed
+    # A wrapper from before WARP_DEVICES: the one device there was.
     awg = _awg_service("warp")
     if "warp" not in _awg_profiles() and svc_exists(awg):
-        return awg
-    return "proxy-suite-warp-tunnel"
+        return [("warp", awg)]
+    return [("warp", "proxy-suite-warp-tunnel")]
+
+
+def cmd_warp(*args):
+    """warp [status|on|off|toggle|restart] [device]: every device, or the one named."""
+    devices = _warp_devices()
+    tags = [t for t, _ in devices]
+    args = list(args)
+    if args and args[-1] in tags and args[-1] not in ("status", "on", "off", "toggle", "restart"):
+        tag = args.pop()
+        devices = [(t, u) for t, u in devices if t == tag]
+    if len(args) > 1:
+        usage(f"warp [status|on|off|toggle|restart] [{'|'.join(tags)}]")
+    if len(devices) == 1:
+        _toggle(devices[0][1], "warp", *args)
+        return
+    verb = args[0] if args else "status"
+    for tag, unit in devices:
+        if verb == "status":
+            state = systemctl("is-active", unit, capture=True, quiet=True)[1].strip() or "inactive"
+            print(f"{tag:<16} {state}")
+        else:
+            print(f"{tag}:", flush=True)
+            _toggle(unit, tag, verb)
 
 
 def _tor_control(*commands):
@@ -546,6 +588,10 @@ def _outbound_choices():
     return {tag: _s(sources.get(tag) or "") for tag in _outbound_tags()}
 
 
+def _group_choices():
+    return {g: f"group: {_s(i.get('strategy') or 'failover')}" for g, i in _outbound_groups().items()}
+
+
 def _inbound_link_choices():
     links = read_json(env("INBOUNDS_LINKS_FILE"))
     return dict(sorted((_s(x["tag"]), f"{_s(x.get('type', ''))} {_s(x.get('port', ''))}".strip()) for x in links))
@@ -590,6 +636,8 @@ COMPLETE = {
             "outbounds": "outbounds, where each came from, and the pick",
             "pin": "always use this outbound",
             "unpin": "let the configured selection pick again",
+            "groups": "outbound groups",
+            "priority": "the order the top level picks in",
             "mode": "show or override the routing mode",
             "subs": "subscription caches",
             "rulesets": "routing rule sets",
@@ -631,7 +679,35 @@ COMPLETE = {
             "--download": "timed download through each outbound",
         },
     },
-    "proxy pin": {"args": lambda: {t: d for t, d in _outbound_choices().items() if t not in _outbound_disabled()}},
+    "proxy pin": {
+        "args": lambda: {t: d for t, d in {**_outbound_choices(), **_group_choices()}.items() if t not in _outbound_disabled()},
+        "flags": {"--in": "hold a group on one of its members"},
+    },
+    "proxy unpin": {"flags": {"--in": "let a group pick again"}},
+    "proxy groups": {
+        "words": {
+            "list": "groups, their members, and what each uses",
+            "add": "add a group: <tag> [member...]",
+            "rm": "remove a group added with groups add",
+            "members": "add or remove a group's members",
+            "strategy": "how a group picks: failover, urltest or selector",
+        }
+    },
+    "proxy groups add": {
+        "args": lambda: {**_outbound_choices(), **_group_choices()},
+        "repeat": True,
+        "flags": {
+            "--sub": "every entry of a subscription",
+            "--match": "every outbound whose tag matches a pattern",
+            "--strategy": "failover, urltest or selector",
+            "--no-failback": "stay on a member until it fails",
+            "--interval": "how often members are tested",
+        },
+    },
+    "proxy groups rm": {"args": lambda: {g: "" for g, i in _outbound_groups().items() if i.get("runtime")}},
+    "proxy groups members": {"args": lambda: {g: "" for g, i in _outbound_groups().items() if i.get("runtime")}},
+    "proxy groups strategy": {"args": lambda: {g: "" for g, i in _outbound_groups().items() if i.get("runtime")}},
+    "proxy priority": {"args": lambda: {"list": "the top level in order", **{_s(t): "" for t in _outbound_inventory().get("top") or []}}},
     "proxy mode": {"args": lambda: {"default": f"config default ({_route_mode_default()})", **ROUTE_MODE_LABELS}},
     "proxy subs": {
         "words": {
@@ -703,7 +779,7 @@ COMPLETE = {
     "awg toggle": {"args": lambda: _names(_awg_profiles())},
     "awg restart": {"args": lambda: _names(_awg_profiles())},
     "ssh": {"words": TOGGLE},
-    "warp": {"words": TOGGLE},
+    "warp": {"words": TOGGLE, "args": lambda: {t: u for t, u in _warp_devices()} if len(_warp_devices()) > 1 else {}},
     "killswitch": {"words": TOGGLE},
     "tor": {"words": {**TOGGLE, "newnym": "new circuits for new connections"}},
     "tg": {"words": TOGGLE},
@@ -785,6 +861,12 @@ def _complete_tree(*words):
         return _outbound_choices()
     if rest[-1:] == ["--by"]:
         return _names(STATS_KINDS)
+    if rest[-1:] == ["--in"]:
+        return _group_choices()
+    if rest[-1:] == ["--strategy"]:
+        return _names(GROUP_STRATEGIES)
+    if rest[-1:] == ["--sub"]:
+        return _names(_sub_tags())
     candidates = {}
     if node.get("repeat") or not [w for w in rest if not w.startswith("-")]:
         candidates.update(node.get("words", {}))
@@ -859,8 +941,12 @@ BUSY_STATES = ("activating", "deactivating", "reloading")
 
 def _snapshot_units():
     profiles = _awg_profiles()
-    # WARP as an AmneziaWG outbound has no profile to toggle, but it is a unit that can fail (_warp_unit).
-    warp = [] if "warp" in profiles else [_awg_service("warp")]
+    # WARP devices have no profile to toggle, but their units can fail (_warp_devices). A wrapper
+    # from before WARP_DEVICES: the AmneziaWG unit of the one device there was, if it runs.
+    if env("WARP_DEVICES"):
+        warp = [u for _, u in _warp_devices() if u not in ALL_SERVICES and u not in map(_awg_service, profiles)]
+    else:
+        warp = [] if "warp" in profiles else [_awg_service("warp")]
     return [*ALL_SERVICES, SUBSCRIPTION_UPDATE, *map(_awg_service, profiles), *warp, *map(_wl_unit, _wl())]
 
 
@@ -1080,7 +1166,11 @@ def cmd_proxy(verb="status", *args):
     elif verb == "pin":
         cmd_pin(*args)
     elif verb == "unpin":
-        cmd_unpin()
+        cmd_unpin(*args)
+    elif verb == "groups":
+        cmd_groups(*args)
+    elif verb == "priority":
+        cmd_priority(*args)
     elif verb == "mode":
         cmd_route_mode(*args)
     elif verb == "subs":
@@ -1098,7 +1188,7 @@ def cmd_proxy(verb="status", *args):
     elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|toggle|restart|outbounds|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
+        usage("proxy [status|on|off|toggle|restart|outbounds|groups|priority|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -1363,6 +1453,25 @@ def cmd_outbounds_test(*args):
         print(note, file=sys.stderr)
 
 
+def _outbound_tree(inventory):
+    """[(depth, tag, parent group or "")] in display order: the top level, each group's members under it.
+
+    An inventory from before groups has no "top": every tag is top level then.
+    """
+    groups = inventory.get("groups") or {}
+    rows = []
+
+    def walk(tag, depth, parent, path):
+        rows.append((depth, tag, parent))
+        if tag in groups and tag not in path:
+            for member in groups[tag].get("members") or []:
+                walk(_s(member), depth + 1, tag, (*path, tag))
+
+    for tag in inventory.get("top") or inventory.get("tags") or []:
+        walk(_s(tag), 0, "", ())
+    return rows
+
+
 def _outbounds_list():
     _require_outbound_inventory()
     inventory = _outbound_inventory()
@@ -1371,7 +1480,11 @@ def _outbounds_list():
     detours = inventory.get("detours") or {}
     excluded = set(inventory.get("excluded") or [])
     disabled = set(_outbound_disabled())
+    groups = inventory.get("groups") or {}
+    # One Clash API read for every group's pick, only when there are groups.
+    nows = _group_nows() if groups else {}
     current = _outbound_current()
+    down = {t for t, m in (_group_state().get("members") or {}).items() if isinstance(m, dict) and m.get("up") is False}
     reputation = _reputation_by_tag()
 
     print(f"Selection: {_s(inventory.get('selection') or 'first')}")
@@ -1382,17 +1495,34 @@ def _outbounds_list():
     # The reputation column only once the autoProxy prober has checked some exit.
     rep = (lambda tag: f"{reputation.get(tag, '-'):<16} ") if reputation else (lambda tag: "")
     print(f"  {'TAG':<34} {'REPUTATION':<16} SOURCE" if reputation else f"  {'TAG':<34} SOURCE")
-    for tag in _outbound_tags():
+    for depth, tag, parent in _outbound_tree(inventory):
+        if parent:
+            info = groups.get(parent) or {}
+            chosen, live = _s(info.get("pinned") or ""), nows.get(parent, "")
+        else:
+            chosen, live = pinned, current
         mark = " "
-        if tag == pinned:
+        if tag == chosen:
             mark = "*"
-        elif not pinned and tag == current:
+        elif not chosen and tag == live:
             mark = ">"
         elif tag in disabled:
             mark = "-"
-        notes = [f"via {_s(detours[tag])}"] if tag in detours else []
-        notes += ["disabled"] if tag in disabled else ["never picked"] if tag in excluded else []
-        print(f" {mark}{tag:<34} {rep(tag)}{', '.join([_s(sources.get(tag) or '-'), *notes])}")
+        if tag in groups:
+            info = groups[tag]
+            source = f"group: {_s(info.get('strategy') or 'failover')}"
+            notes = [f"pinned {_s(info['pinned'])}"] if info.get("pinned") else [f"using {nows[tag]}"] if nows.get(tag) else []
+        else:
+            source = _s(sources.get(tag) or "-")
+            notes = [f"via {_s(detours[tag])}"] if tag in detours else []
+        if tag in disabled:
+            notes.append("disabled")
+        elif tag in down:
+            notes.append("down")
+        elif not parent and tag in excluded:
+            notes.append("never picked")
+        name = "  " * depth + tag
+        print(f" {mark}{name:<34} {rep(tag)}{', '.join([source, *notes])}")
 
 
 # --- sharing ------------------------------------------------------------------
@@ -1489,37 +1619,557 @@ def _config_export(*args, only=None):
         print(f"warning: {warning}", file=sys.stderr)
 
 
-def cmd_pin(tag="", *_):
-    if not tag:
-        if not (os.isatty(0) and os.isatty(1)):
-            usage("proxy pin <tag>")
-        _require_outbound_inventory()
-        pinned = _s(_outbound_inventory().get("pinned") or "") or "(none)"
-        status, tag = _run(
-            ["fzf", "--prompt=pin> ", "--height=40%", "--reverse", f"--header=pinned: {pinned}"],
-            capture=True,
-            stdin="".join(f"{t}\n" for t in _outbound_tags() if t not in _outbound_disabled()),
-        )
-        tag = tag.strip("\n")
-        # Dismissed.
-        if status or not tag:
-            return
-    # The inventory too: the marker sits in a dir only root and the group can look into.
-    if os.path.exists(_outbound_disabled_marker(tag)) or tag in _outbound_disabled():
-        die(f"Outbound '{tag}' is disabled; enable it first: proxy-ctl proxy outbounds enable {tag}")
-    status, escaped = _run(["systemd-escape", "--", tag], capture=True)
+def _pin_args(args, verb):
+    """(tag, group) from `pin [tag] [--in <group>]` or `unpin [--in <group>]`."""
+    args = list(args)
+    group = ""
+    if "--in" in args:
+        i = args.index("--in")
+        group = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        if not group:
+            usage(f"proxy {verb} {'[tag] ' if verb == 'pin' else ''}--in <group>")
+        if group not in _outbound_groups():
+            die(f"Unknown group: {group}")
+    for arg in args:
+        if arg.startswith("-"):
+            die(f"Unknown option: {arg}")
+    if verb == "unpin" and args:
+        usage("proxy unpin [--in <group>]")
+    if len(args) > 1:
+        usage("proxy pin [tag] [--in <group>]")
+    return (args[0] if args else ""), group
+
+
+def _pick_pin(choices, header):
+    status, tag = _run(
+        ["fzf", "--prompt=pin> ", "--height=40%", "--reverse", f"--header={header}"],
+        capture=True,
+        stdin="".join(f"{t}\n" for t in choices),
+    )
+    tag = tag.strip("\n")
+    # Dismissed.
+    return "" if status else tag
+
+
+def _start_pin_unit(instance):
+    status, escaped = _run(["systemd-escape", "--", instance], capture=True)
     if status:
         sys.exit(status)
     unit = "proxy-suite-outbound-pin@" + escaped.rstrip("\n")
     if systemctl("start", f"{unit}.service")[0]:
         die(f"Failed - see: proxy-ctl logs {unit}")
+
+
+def cmd_pin(*args):
+    tag, group = _pin_args(args, "pin")
+    if not tag:
+        if not (os.isatty(0) and os.isatty(1)):
+            usage("proxy pin <tag> [--in <group>]")
+        _require_outbound_inventory()
+        disabled = _outbound_disabled()
+        if group:
+            info = _outbound_groups()[group]
+            choices = [m for m in info.get("members") or [] if m not in disabled and m != "block"]
+            header = f"{group} pinned: {_s(info.get('pinned') or '') or '(none)'}"
+        else:
+            choices = [t for t in _outbound_tags() + list(_outbound_groups()) if t not in disabled]
+            header = f"pinned: {_s(_outbound_inventory().get('pinned') or '') or '(none)'}"
+        tag = _pick_pin(choices, header)
+        if not tag:
+            return
+    # The inventory too: the marker sits in a dir only root and the group can look into.
+    if os.path.exists(_outbound_disabled_marker(tag)) or tag in _outbound_disabled():
+        die(f"Outbound '{tag}' is disabled; enable it first: proxy-ctl proxy outbounds enable {tag}")
+    if group:
+        if tag not in (_outbound_groups()[group].get("members") or []):
+            die(f"'{tag}' is not in group '{group}'. See: proxy-ctl proxy groups")
+        _start_pin_unit(f"{group}/{tag}")
+        print(f"Pinned in {group}: {tag}")
+        return
+    _start_pin_unit(tag)
     print(f"Pinned: {tag}")
 
 
-def cmd_unpin(*_):
+def cmd_unpin(*args):
+    _, group = _pin_args(args, "unpin")
+    if group:
+        _start_pin_unit(f"{group}/")
+        print(f"Unpinned in {group}: it picks again.")
+        return
     if systemctl("start", "proxy-suite-outbound-unpin.service")[0]:
         die("Failed - see: proxy-ctl logs proxy-suite-outbound-unpin")
     print("Unpinned: the configured selection picks again.")
+
+
+# --- outbound groups ----------------------------------------------------------
+#
+# proxy.groups and runtime <tag>.group files (in the runtime outbound dir) are resolved by the
+# start script, which lists them in the inventory: strategy, members in order, and the pin.
+# proxy-suite-outbound-groups runs `proxy groups watch` for the failover ones.
+
+GROUP_STRATEGIES = ("failover", "urltest", "selector")
+# A member is down after this many failed tests in a row, or after one that follows a hint.
+GROUP_MISSES_DOWN = 2
+# A member that was down is up again after this many passes in a row.
+GROUP_PASSES_UP = 3
+GROUP_TEST_TIMEOUT_MS = 5000
+
+
+def _outbound_groups():
+    """{group: {strategy, failback, interval, members, pinned, runtime}}, as the running backend took them."""
+    groups = _outbound_inventory().get("groups") or {}
+    return groups if isinstance(groups, dict) else {}
+
+
+def _groups_dir():
+    """proxy-suite-outbound-groups' runtime dir: health/ for hints, groups-state.json for the front ends."""
+    return os.path.join(runtime_dir(), "proxy-suite-outbound-groups")
+
+
+def _group_state():
+    """What the watcher last saw: {"groups": {group: {"now"}}, "members": {tag: {"up", "since"}}}."""
+    state = read_json_or(os.path.join(_groups_dir(), "groups-state.json"), {})
+    return state if isinstance(state, dict) else {}
+
+
+def _group_nows():
+    """{group: the member it uses now} for every sing-box group, the top-level "proxy" included."""
+    status, body = _clash("GET", "/proxies", timeout=5)
+    proxies = body.get("proxies") if status == 200 and isinstance(body, dict) else None
+    if not isinstance(proxies, dict):
+        return {}
+    return {_s(name): _s(p["now"]) for name, p in proxies.items() if isinstance(p, dict) and p.get("now")}
+
+
+def _duration(text, fallback=30.0):
+    """Seconds in a Go duration ("30s", "3m", "1h30m")."""
+    total = 0.0
+    for number, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", str(text or "")):
+        total += float(number) * {"ms": 0.001, "s": 1, "m": 60, "h": 3600}[unit]
+    return total or fallback
+
+
+class GroupWatch:
+    """Moves failover groups, and "failover" selection, to the first member that works.
+
+    Every group is tested on its interval; a hint (a file a watchdog touches in health/, named
+    after the outbound it saw fail) tests that outbound at once. A member is down after
+    GROUP_MISSES_DOWN failed tests in a row, or one failed test right after a hint; one that was
+    down is up again after GROUP_PASSES_UP passes. With failback the group goes back to an
+    earlier member once it is up; without, it stays until its member goes down. Pinned groups
+    are left alone. urltest groups are sing-box's to move; a hint only makes them test now.
+    """
+
+    def __init__(self, clash=None, clock=time.monotonic, wall=time.time):
+        self.clash = clash or _clash
+        self.clock = clock
+        self.wall = wall
+        self.health = {}  # tag -> {"up", "misses", "passes", "since"}
+        self.due = {}  # group -> clock time of its next test
+        self.seen_hints = {}  # tag -> hint file mtime already acted on
+
+    @staticmethod
+    def watched(inventory):
+        """{group: info} to watch, with "proxy" standing for the top level when its selection is failover."""
+        groups = {g: dict(v) for g, v in (inventory.get("groups") or {}).items() if isinstance(v, dict)}
+        if inventory.get("selection") == "failover":
+            skip = set(inventory.get("excluded") or []) | set(inventory.get("disabled") or [])
+            groups["proxy"] = {
+                "strategy": "failover",
+                "failback": True,
+                "interval": "30s",
+                "members": [t for t in inventory.get("top") or [] if t not in skip],
+                "pinned": _s(inventory.get("pinned") or ""),
+            }
+        return groups
+
+    @staticmethod
+    def inner_first(groups):
+        """Group names with every group they contain before them."""
+        order = []
+
+        def visit(name, path):
+            if name in order or name in path:
+                return
+            for member in groups[name].get("members") or []:
+                if member in groups:
+                    visit(member, path + [name])
+            order.append(name)
+
+        for name in groups:
+            visit(name, [])
+        return order
+
+    def test(self, tag, url):
+        query = urllib.parse.urlencode({"url": url, "timeout": GROUP_TEST_TIMEOUT_MS})
+        status, body = self.clash("GET", f"/proxies/{urllib.parse.quote(tag, safe='')}/delay?{query}", timeout=GROUP_TEST_TIMEOUT_MS / 1000 + 3)
+        return status == 200 and isinstance(body, dict) and "delay" in body
+
+    def record(self, tag, ok, hinted=False):
+        h = self.health.setdefault(tag, {"up": True, "misses": 0, "passes": 0, "since": self.wall()})
+        if ok:
+            h["misses"], h["passes"] = 0, h["passes"] + 1
+            if not h["up"] and h["passes"] >= GROUP_PASSES_UP:
+                h["up"], h["since"] = True, self.wall()
+        else:
+            h["passes"], h["misses"] = 0, h["misses"] + 1
+            if h["up"] and (hinted or h["misses"] >= GROUP_MISSES_DOWN):
+                h["up"], h["since"] = False, self.wall()
+
+    def up(self, tag):
+        return self.health.get(tag, {}).get("up", True)
+
+    def pick(self, info, now, disabled):
+        """The member the group should use, or None to leave it where it is."""
+        if info.get("pinned"):
+            return None
+        members = [m for m in info.get("members") or [] if m != "block" and m not in disabled]
+        working = [m for m in members if self.up(m)]
+        if not working:
+            return None  # nothing works: moving would only flap
+        if not info.get("failback", True) and now in working:
+            return None
+        return working[0] if working[0] != now else None
+
+    def hints(self):
+        """Tags whose hint file changed since the last look."""
+        directory = os.path.join(_groups_dir(), "health")
+        fresh = []
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return fresh
+        for name in names:
+            try:
+                mtime = os.stat(os.path.join(directory, name)).st_mtime
+            except OSError:
+                continue
+            if self.seen_hints.get(name) != mtime:
+                if name in self.seen_hints:
+                    fresh.append(name)
+                self.seen_hints[name] = mtime
+        return fresh
+
+    def step(self, inventory, hinted=()):
+        """One pass: test what is due or hinted, move what should move. The switches made, as (group, member)."""
+        groups = self.watched(inventory)
+        if not groups:
+            return []
+        url = _s(inventory.get("url") or "https://www.gstatic.com/generate_204")
+        disabled = set(inventory.get("disabled") or [])
+        now_clock = self.clock()
+        hinted = set(hinted)
+        results = {}
+        # A hinted tag is tested at once, and so is everything around it.
+        for tag in hinted:
+            if tag not in results:
+                results[tag] = self.test(tag, url)
+                self.record(tag, results[tag], hinted=True)
+        switches = []
+        nows = None
+        for name in self.inner_first(groups):
+            info = groups[name]
+            members = [m for m in info.get("members") or [] if m != "block"]
+            touched = bool(hinted & set(members))
+            if info.get("strategy") == "urltest":
+                if touched:
+                    query = urllib.parse.urlencode({"url": url, "timeout": GROUP_TEST_TIMEOUT_MS})
+                    self.clash("GET", f"/group/{urllib.parse.quote(name, safe='')}/delay?{query}", timeout=GROUP_TEST_TIMEOUT_MS / 1000 + 3)
+                continue
+            if info.get("strategy") != "failover":
+                continue
+            if not touched and self.due.get(name, 0) > now_clock:
+                continue
+            self.due[name] = now_clock + _duration(info.get("interval"))
+            for tag in members:
+                if tag in disabled:
+                    continue
+                if tag not in results:
+                    results[tag] = self.test(tag, url)
+                    self.record(tag, results[tag])
+            if nows is None:
+                nows = _group_nows()
+            target = self.pick(info, nows.get(name, ""), disabled)
+            if target is None:
+                continue
+            status, _ = self.clash("PUT", f"/proxies/{urllib.parse.quote(name, safe='')}", {"name": target})
+            if 200 <= status < 300:
+                print(f"{name}: {nows.get(name) or '-'} -> {target}", file=sys.stderr)
+                nows[name] = target
+                switches.append((name, target))
+        return switches
+
+    def state(self, nows):
+        return {
+            "updated": self.wall(),
+            "groups": {g: {"now": n} for g, n in nows.items()},
+            "members": {t: {"up": h["up"], "since": h["since"]} for t, h in self.health.items()},
+        }
+
+    def write_state(self):
+        path = os.path.join(_groups_dir(), "groups-state.json")
+        try:
+            fd, tmp = tempfile.mkstemp(dir=_groups_dir(), prefix=".groups-state.")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.state(_group_nows()), f)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    def run(self):
+        health = os.path.join(_groups_dir(), "health")
+        os.makedirs(health, exist_ok=True)
+        # Watchdogs run as other users (the WARP tunnel as the service user). A hint only makes
+        # this test sooner, so anyone may leave one; nobody may list or remove another's.
+        os.chmod(health, 0o1733)
+        self.hints()  # what is there already is no news
+        last_state = 0.0
+        while True:
+            inventory = _outbound_inventory()
+            fresh = self.hints()
+            if inventory:
+                self.step(inventory, fresh)
+                if fresh or self.clock() - last_state >= 10:
+                    self.write_state()
+                    last_state = self.clock()
+            time.sleep(1)
+
+
+def _group_file(tag):
+    return os.path.join(_runtime_dir("outbound"), f"{tag}.group")
+
+
+def _read_group_file(tag):
+    try:
+        with open(_group_file(tag), encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        die(f"'{tag}' is not a group added with proxy-ctl; declared groups change in the configuration.")
+    except (OSError, ValueError):
+        denied(_group_file(tag))
+    return data if isinstance(data, dict) else {}
+
+
+def _write_group_file(tag, data):
+    path = _group_file(tag)
+    old = os.umask(0o027)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    except OSError:
+        denied(path, "write")
+    finally:
+        os.umask(old)
+
+
+def _group_contains(groups, outer, tag, seen=()):
+    """Whether group outer holds tag, however deep."""
+    for member in (groups.get(outer) or {}).get("members") or []:
+        if member == tag or (member in groups and member not in seen and _group_contains(groups, member, tag, (*seen, outer))):
+            return True
+    return False
+
+
+def _group_check_members(tag, members):
+    groups = _outbound_groups()
+    for member in members:
+        if member == tag or (member in groups and _group_contains(groups, member, tag)):
+            die(f"'{member}' contains '{tag}': a group cannot hold itself.")
+        if member not in _outbound_tags() and member not in groups:
+            print(f"warning: '{member}' is not an outbound or group right now; the group leaves it out until it is.", file=sys.stderr)
+
+
+def _group_options(args, shape):
+    """(positional, {strategy, failback, interval, subscriptions, match}) from group add flags."""
+    rest, opts = [], {"subscriptions": [], "match": []}
+    it = iter(args)
+    for arg in it:
+        if arg == "--strategy":
+            opts["strategy"] = next(it, "")
+            if opts["strategy"] not in GROUP_STRATEGIES:
+                die(f"--strategy is one of: {', '.join(GROUP_STRATEGIES)}")
+        elif arg == "--no-failback":
+            opts["failback"] = False
+        elif arg == "--interval":
+            opts["interval"] = next(it, "")
+            if not re.fullmatch(r"(\d+(\.\d+)?(ms|s|m|h))+", opts["interval"]):
+                die("--interval is a Go duration: 30s, 1m, 1m30s.")
+        elif arg == "--sub":
+            opts["subscriptions"].append(next(it, ""))
+        elif arg == "--match":
+            opts["match"].append(next(it, ""))
+        elif arg.startswith("-"):
+            die(f"Unknown option: {arg}")
+        else:
+            rest.append(arg)
+    if "" in opts["subscriptions"] + opts["match"]:
+        usage(shape)
+    return rest, opts
+
+
+GROUP_ADD_SHAPE = "proxy groups add <tag> [member...] [--sub <subscription>]... [--match <pattern>]... [--strategy failover|urltest|selector] [--no-failback] [--interval <duration>]"
+
+
+def _groups_list():
+    _require_outbound_inventory()
+    groups = _outbound_groups()
+    if not groups:
+        print("No groups. Add one: proxy-ctl proxy groups add <tag> <member...>")
+        return
+    nows = _group_nows()
+    members_state = _group_state().get("members") or {}
+    disabled = set(_outbound_disabled())
+    for name, info in groups.items():
+        strategy = _s(info.get("strategy") or "failover")
+        notes = [strategy]
+        if strategy == "failover" and info.get("failback") is False:
+            notes.append("no failback")
+        if info.get("pinned"):
+            notes.append(f"pinned: {_s(info['pinned'])}")
+        elif nows.get(name):
+            notes.append(f"using {nows[name]}")
+        if info.get("runtime"):
+            notes.append("runtime")
+        print(f"{name}  ({', '.join(notes)})")
+        for member in info.get("members") or []:
+            mark = "*" if member == info.get("pinned") else ">" if member == nows.get(name) else " "
+            state = []
+            if member in disabled:
+                state.append("disabled")
+            elif (members_state.get(member) or {}).get("up") is False:
+                state.append("down")
+            print(f" {mark} {member}{'  (' + ', '.join(state) + ')' if state else ''}")
+
+
+def cmd_groups(verb="list", *args):
+    if verb == "list":
+        _groups_list()
+    elif verb == "watch":
+        # proxy-suite-outbound-groups' ExecStart.
+        GroupWatch().run()
+    elif verb == "add":
+        rest, opts = _group_options(args, GROUP_ADD_SHAPE)
+        if not rest:
+            usage(GROUP_ADD_SHAPE)
+        tag, members = rest[0], rest[1:]
+        _check_runtime_tag("outbound", tag)
+        if tag in _outbound_groups() or os.path.exists(_group_file(tag)):
+            die(f"A group named '{tag}' already exists.")
+        if not members and not opts["subscriptions"] and not opts["match"]:
+            die("A group needs members, a --sub or a --match.")
+        _group_check_members(tag, members)
+        _write_group_file(tag, {"outbounds": members, **opts})
+        _runtime_reload()
+        print(f"Added group: {tag}")
+    elif verb == "rm":
+        if len(args) != 1:
+            usage("proxy groups rm <tag>")
+        tag = args[0]
+        _read_group_file(tag)
+        try:
+            os.unlink(_group_file(tag))
+        except OSError:
+            denied(_group_file(tag), "remove")
+        _runtime_reload()
+        print(f"Removed group: {tag}")
+    elif verb == "members":
+        if len(args) < 3 or args[1] not in ("add", "rm"):
+            usage("proxy groups members <tag> add|rm <member...>")
+        tag, action, names = args[0], args[1], list(args[2:])
+        data = _read_group_file(tag)
+        members = [m for m in data.get("outbounds") or [] if isinstance(m, str)]
+        if action == "add":
+            _group_check_members(tag, names)
+            members += [n for n in names if n not in members]
+        else:
+            missing = [n for n in names if n not in members]
+            if missing:
+                die(f"Not listed in '{tag}': {', '.join(missing)}")
+            members = [m for m in members if m not in names]
+            if not members and not data.get("subscriptions") and not data.get("match"):
+                die(f"That would leave '{tag}' empty; remove the group instead: proxy-ctl proxy groups rm {tag}")
+        data["outbounds"] = members
+        _write_group_file(tag, data)
+        _runtime_reload()
+        print(f"{tag}: {', '.join(members) or '(members from --sub/--match only)'}")
+    elif verb == "strategy":
+        if len(args) != 2 or args[1] not in GROUP_STRATEGIES:
+            usage(f"proxy groups strategy <tag> {'|'.join(GROUP_STRATEGIES)}")
+        tag, strategy = args
+        data = _read_group_file(tag)
+        data["strategy"] = strategy
+        _write_group_file(tag, data)
+        _runtime_reload()
+        print(f"{tag}: {strategy}")
+    else:
+        usage("proxy groups [list|add|rm|members|strategy]")
+
+
+# --- priority -----------------------------------------------------------------
+#
+# proxy.priority, and runtime overrides in priority.json in the runtime outbound dir: lower
+# goes first, for the top level and for group members pulled in by --sub or --match.
+
+
+def _priority_file():
+    return os.path.join(_runtime_dir("outbound"), "priority.json")
+
+
+def _runtime_priority():
+    data = read_json_or(_priority_file(), {})
+    return {k: v for k, v in data.items() if isinstance(v, int)} if isinstance(data, dict) else {}
+
+
+def cmd_priority(*args):
+    if not args or args[0] == "list":
+        _require_outbound_inventory()
+        inventory = _outbound_inventory()
+        priority = inventory.get("priority") or {}
+        print("Top level, in order:")
+        # An inventory from before groups has no "top": every tag is top level then.
+        for tag in inventory.get("top") or inventory.get("tags") or []:
+            rank = priority.get(tag)
+            print(f"  {'-' if rank is None else rank:>6}  {tag}")
+        return
+    if len(args) != 2:
+        usage("proxy priority [list] | <tag> <number>|up|down|--clear")
+    tag, value = args
+    if tag not in _outbound_tags() and tag not in _outbound_groups():
+        die(f"Unknown outbound or group: {tag}")
+    data = _runtime_priority()
+    if value == "--clear":
+        data.pop(tag, None)
+    elif value in ("up", "down"):
+        # Every top-level entry numbered in the new order, 10 apart: room to slot one in by hand.
+        top = [_s(t) for t in _outbound_inventory().get("top") or []]
+        if tag not in top:
+            die(f"'{tag}' is not at the top level; a group orders its members itself.")
+        i = top.index(tag)
+        j = i - 1 if value == "up" else i + 1
+        if not 0 <= j < len(top):
+            print(f"{tag} is already {'first' if value == 'up' else 'last'}.")
+            return
+        top[i], top[j] = top[j], top[i]
+        data.update({t: 10 * (n + 1) for n, t in enumerate(top)})
+    elif re.fullmatch(r"-?\d+", value):
+        data[tag] = int(value)
+    else:
+        usage("proxy priority <tag> <number>|up|down|--clear")
+    path = _priority_file()
+    old = os.umask(0o027)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except OSError:
+        denied(path, "write")
+    finally:
+        os.umask(old)
+    _runtime_reload()
+    print(f"{tag}: {'default order' if value == '--clear' else 'moved ' + value if value in ('up', 'down') else value}")
 
 
 # --- runtime outbounds and subscriptions --------------------------------------
@@ -1585,6 +2235,8 @@ def _check_runtime_tag(kind, tag):
     if kind == "outbound":
         if tag in _outbound_tags():
             die(f"An outbound named '{tag}' already exists.")
+        if tag in _outbound_groups() or os.path.exists(os.path.join(_runtime_dir(kind), f"{tag}.group")):
+            die(f"A group named '{tag}' already exists.")
     elif tag in _sub_tags():
         die(f"A subscription named '{tag}' is declared in the configuration.")
 
@@ -3164,10 +3816,11 @@ def _awg_add(*args):
         name, source = args
     else:
         usage(shape)
-    # "warp" names WARP's own AmneziaWG unit (_warp_unit).
-    taken = {*_awg_profiles(), "warp"}
-    if name == "warp":
-        die("'warp' is reserved for WARP; pick another name.")
+    # "warp" and the WARP devices name WARP's own AmneziaWG units (_warp_devices).
+    reserved = {"warp", *(t for t, _ in _warp_devices())}
+    taken = {*_awg_profiles(), *reserved}
+    if name in reserved:
+        die(f"'{name}' is reserved for WARP; pick another name.")
     if name:
         if not AWG_NAME.fullmatch(name):
             die(f"Invalid profile name '{name}': up to 32 letters, digits, dashes and underscores, starting with a letter or digit.")
@@ -3989,7 +4642,7 @@ COMMANDS = {
     "awg": cmd_awg,
     "killswitch": lambda *args: _toggle(KILL_SWITCH, "killswitch", *args),
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
-    "warp": lambda *args: _toggle(_warp_unit(), "warp", *args),
+    "warp": cmd_warp,
     "tor": cmd_tor,
     "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
     "wl": cmd_wl,

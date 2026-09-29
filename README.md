@@ -157,8 +157,19 @@ Changes and secrets need root or the userControl group.
                                          test ping, delay, download speed (default: ping, delay)
   proxy outbounds link <tag> [--qr|--json|--config]
                                          its link, QR code, JSON, or client config
-  proxy pin [tag]                        always use this outbound (no tag: pick from a menu)
-  proxy unpin                            go back to automatic selection
+  proxy pin [tag] [--in <group>]         always use this outbound (no tag: pick from a menu);
+                                         --in: hold a group on one of its members
+  proxy unpin [--in <group>]             go back to automatic selection
+  proxy groups [list]                    outbound groups, their members, and what each uses
+  proxy groups add <tag> [member...] [--sub <sub>]... [--match <pattern>]...
+               [--strategy failover|urltest|selector] [--no-failback] [--interval <d>]
+                                         add a group (failover by default)
+  proxy groups rm <tag>                  remove a group added with groups add
+  proxy groups members <tag> add|rm <member...>
+  proxy groups strategy <tag> failover|urltest|selector
+  proxy priority [list]                  the top level in the order it is picked in
+  proxy priority <tag> <n>|up|down|--clear
+                                         lower goes first; up/down renumbers the top level
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscriptions; update refetches them
@@ -197,7 +208,7 @@ Changes and secrets need root or the userControl group.
                                          stays on until turned off here or with the tunnel
 
   ssh [status|on|off]                    SSH tunnel
-  warp [status|on|off]                   WARP tunnel
+  warp [status|on|off] [device]          WARP tunnel (every device, or the one named)
   tor [status|on|off]                    Tor
   tor newnym                             new circuits for new connections
   tg [status|on|off]                     Telegram proxy
