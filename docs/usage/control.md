@@ -71,9 +71,12 @@ becomes a global profile, or an outbound when pasted onto the Outbounds tab. See
 ```sh
 proxy-ctl status          # everything at a glance
 proxy-ctl status --json   # the same, for scripts
-proxy-ctl logs            # follow the logs of every proxy-suite service
+proxy-ctl logs            # follow the logs of every proxy-suite service, with the last 1000 lines
 proxy-ctl restart         # restart what is running
 ```
+
+In a terminal, `proxy-ctl logs` follows in `less`: Ctrl-C stops following so you can scroll
+back, `F` follows again and `q` quits.
 
 ## See also
 

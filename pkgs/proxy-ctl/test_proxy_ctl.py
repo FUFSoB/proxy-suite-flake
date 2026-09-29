@@ -353,6 +353,27 @@ class ServiceManagerTest(EnvTest):
         self.assertEqual(seen, [["systemctl", "--user", "start", "anchor.service"], ["systemctl", "start", "proxy-suite-socks"]])
         self.assertEqual(ctl.journal_hint("proxy-suite-autoproxy-learn", 20), "journalctl -u proxy-suite-autoproxy-learn -n 20")
 
+    def test_logs(self):
+        ran = []
+
+        def exec_(argv):
+            ran.append(("exec", argv))
+            raise SystemExit(0)
+
+        self.patch("_exec", exec_)
+        self.patch("_follow_in_pager", lambda argv, pager: ran.append(("less", argv)) or 0)
+        self.patch("shutil", mock.Mock(which=lambda name: f"/bin/{name}"))
+        # Piped (run() captures stdout): journalctl itself, with a backlog.
+        run(ctl.cmd_logs)
+        self.assertEqual(ran[-1], ("exec", ["journalctl", "-f", "-n", "1000", "--unit=proxy-suite-*"]))
+        # In a terminal: through less, one --unit per named unit.
+        terminal = mock.Mock(isatty=lambda: True)
+        with mock.patch.object(ctl.sys, "stdin", terminal), mock.patch.object(ctl.sys, "stdout", terminal):
+            with self.assertRaises(SystemExit) as done:
+                ctl.cmd_logs("a", "b")
+        self.assertEqual(done.exception.code, 0)
+        self.assertEqual(ran[-1], ("less", ["journalctl", "-f", "-n", "1000", "--unit=a", "--unit=b"]))
+
     def test_kill_switch_lifts_only_on_purpose(self):
         seen = self.calls()
         stops = lambda: [argv[2] for argv in seen if argv[1] == "stop"]

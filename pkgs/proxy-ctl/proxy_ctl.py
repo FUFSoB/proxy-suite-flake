@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -57,7 +58,8 @@ Changes and secrets need root or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated)
   restart                                restart running services
-  logs [unit]                            follow logs (default: all proxy-suite units)
+  logs [unit...]                         follow logs (default: all proxy-suite units); in a
+                                         terminal, in less: Ctrl-C scrolls back, F follows
   where <domain>                         how a domain is routed right now
 
   proxy [status|on|off]                  local proxy
@@ -3930,12 +3932,49 @@ ALIASES = {
 }
 
 
+LOGS_BACKLOG = 1000
+
+
 def cmd_logs(*units):
-    if units:
-        # One -u per unit: a bare second name would be taken as a journal match.
-        _exec(_manager_argv("journalctl", ["-f", *(f"--unit={u}" for u in units)]))
-    # journalctl takes unit globs, so the default needs no unit list of its own.
-    _exec(_manager_argv("journalctl", ["-f", "-u", "proxy-suite-*"]))
+    # One --unit per unit: a bare second name would be taken as a journal match. journalctl
+    # takes unit globs, so the default needs no unit list of its own.
+    argv = _manager_argv(
+        "journalctl",
+        ["-f", "-n", str(LOGS_BACKLOG), *(f"--unit={u}" for u in units or ["proxy-suite-*"])],
+    )
+    pager = shutil.which("less")
+    if not (pager and sys.stdin.isatty() and sys.stdout.isatty()):
+        _exec(argv)
+    sys.exit(_follow_in_pager(argv, pager))
+
+
+def _follow_in_pager(argv, pager):
+    """argv's output in less, following it: Ctrl-C stops to scroll back, F follows again, q quits.
+
+    argv runs in a session of its own, so Ctrl-C reaches less alone.
+    """
+    sys.stdout.flush()
+    old = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        source = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            # journalctl colors only a terminal; less -R shows them.
+            env={**os.environ, "SYSTEMD_COLORS": "1"},
+        )
+    except OSError as e:
+        signal.signal(signal.SIGINT, old)
+        die(f"proxy-ctl: {argv[0]}: {e.strerror}", 127)
+    try:
+        return subprocess.call([pager, "-R", "-S", "-M", "+F"], stdin=source.stdout)
+    finally:
+        source.stdout.close()
+        source.terminate()
+        source.wait()
+        signal.signal(signal.SIGINT, old)
 
 
 COMMANDS = {
