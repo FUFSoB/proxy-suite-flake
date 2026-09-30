@@ -45,6 +45,14 @@ def ok(fn, *args):
     return out
 
 
+class TerminalSafeTest(unittest.TestCase):
+    def test_control_characters_are_shown_not_obeyed(self):
+        """A share link a subscription served may carry escapes: OSC 52 would set the clipboard."""
+        out = io.StringIO()
+        ctl._TerminalSafe(out).write("vless://u@h:1#\x1b]52;c;cm0gLXJmIH4=\x07name\r\tok\n\x9b2J")
+        self.assertEqual(out.getvalue(), "vless://u@h:1#\\x1b]52;c;cm0gLXJmIH4=\\x07name\\x0d\tok\n\\x9b2J")
+
+
 class StubResolverTest(unittest.TestCase):
     def resolv(self, content):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
@@ -859,6 +867,36 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         self.assertIn("Tag: socks", ok(ctl.cmd_outbounds, "add", '{"type": "socks", "server": "127.0.0.1", "server_port": 1080}'))
         self.assertTrue(os.path.exists(self.path("outbounds.d/socks.json")))
         self.assertNotEqual(run(ctl.cmd_subscription, "add", "-")[0], 0)
+
+    def test_json_naming_local_files_is_refused(self):
+        """The backend holds CAP_NET_ADMIN: a tor outbound runs a program, *_path and *File are read."""
+        for tag, ob in (
+            ("t", {"type": "tor", "executable_path": "/tmp/x"}),
+            ("s", {"type": "ssh", "server": "h", "private_key_path": "/root/.ssh/id_ed25519"}),
+            ("x", {"protocol": "vless", "streamSettings": {"tlsSettings": {"masterKeyLog": "/etc/x"}}}),
+        ):
+            status, _, err = run(ctl.cmd_outbounds, "add", tag, json.dumps(ob))
+            self.assertNotEqual(status, 0)
+            self.assertIn("cannot name local files or programs", err)
+            self.assertFalse(os.path.exists(self.path(f"outbounds.d/{tag}.json")))
+        # A transport's path is a URL path, not a file.
+        ok(ctl.cmd_outbounds, "add", "ws", '{"type": "vless", "transport": {"type": "ws", "path": "/x"}}')
+
+    def test_symlinks_in_the_spool_are_replaced_not_followed(self):
+        """proxy-ctl may run as root in a dir the group writes to: a planted link leads nowhere."""
+        victim = self.write("victim", "untouched\n")
+        os.symlink(victim, self.path("outbounds.d/priority.json"))
+        # Dangling: followed, the write would create a file wherever they point.
+        for name in ("new.detour", "primary.disabled"):
+            os.symlink(self.path(f"created-{name}"), self.path(f"outbounds.d/{name}"))
+        ok(ctl.cmd_outbounds, "add", "new", "vless://u@new.test:443", "--detour", "primary")
+        ok(ctl.cmd_outbounds, "disable", "primary")
+        ok(ctl.cmd_priority, "primary", "5")
+        self.assertEqual(ctl.read_text(victim), "untouched\n")
+        for name in ("new.detour", "primary.disabled", "priority.json"):
+            self.assertFalse(os.path.islink(self.path(f"outbounds.d/{name}")), name)
+            self.assertFalse(os.path.exists(self.path(f"created-{name}")), name)
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/new.detour")), "primary\n")
 
     def test_disable_enable(self):
         self.pinned = "primary"

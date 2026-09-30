@@ -7,7 +7,8 @@
 # its Clash API. Without it (the TUN instances) a failover group is sing-box's own urltest.
 #
 # Output: {groups: {name: {strategy, failback, interval, members, pinned}}, outbounds: [the
-# sing-box group outbounds], top: [what the top level picks among, in order], warnings, errors}.
+# sing-box group outbounds], top: [what the top level picks among, in order], loops: [groups
+# inside themselves], warnings, errors}.
 # Errors mean the config cannot be built (a group inside itself); warnings are dropped members
 # and pins.
 
@@ -90,4 +91,6 @@ def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\
    outbounds: ($built.outbounds | sort_by(.tag as $t | [$names[] | select(reach(.; [.]) | index([$t]))] | -length)),
    top: $top,
    warnings: ($resolved.warnings + $built.warnings),
+   # The start script drops a runtime group in a loop and tries again; a declared one is fatal.
+   loops: $loops,
    errors: [$loops[] | "group '\(.)' contains itself"]}

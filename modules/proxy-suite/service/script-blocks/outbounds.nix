@@ -38,6 +38,17 @@ let
   # `proxy-ctl proxy pin <tag> --in <group>`: one file per group, next to the top-level pin.
   groupPinsDir = "${dirOf pinnedOutboundFile}/group-pins";
 
+  # The keys of an outbound that point the backend at a local file or program, comma-joined;
+  # a sing-box tor outbound as "type: tor". proxy_url_parsers.local_file_keys and proxy-ctl's
+  # _local_file_keys apply the same rule.
+  localFileKeysJq = ''
+    [(if .type == "tor" then "type: tor" else empty end),
+     (.. | objects | keys[] | ascii_downcase
+      | select(endswith("file") or (endswith("path") and . != "path") or endswith("directory")
+          or IN("masterkeylog", "torrc", "extra_args")))]
+    | unique | join(", ")
+  '';
+
   # sing-box domain strategies in XRay's names (UseIPv4v6 = prefer IPv4).
   xrayDomainStrategies = {
     prefer_ipv4 = "UseIPv4v6";
@@ -148,6 +159,12 @@ let
       # only known at runtime (an AmneziaWG outbound added with proxy-ctl).
       _proxy_suite_add_socks_hop() {
         local ob
+        # A runtime one's port comes from the group-writable spool: any other JSON would
+        # reach the config as it is.
+        case "$2" in
+          "" | *[!0-9]*) return 1 ;;
+        esac
+        [ "$2" -ge 1 ] && [ "$2" -le 65535 ] || return 1
         ob=$(${jq} -nc --arg t "$1" --argjson p "$2" ${
           lib.escapeShellArg (
             if pureXrayEnabled then
@@ -218,8 +235,19 @@ let
 
       # $1 tag, $2 file holding one sing-box or XRay outbound, $3 source label.
       _proxy_suite_add_json_outbound() {
-        local tag="$1" source="$3" ob kind
+        local tag="$1" source="$3" ob kind unsafe
         ob=$(${jq} -ce --arg t "$tag" 'select(type == "object") | .tag = $t' <(_proxy_suite_read_source "$2") 2>/dev/null) || return 1
+        # The runtime spool is group-writable, and the backend holds CAP_NET_ADMIN and the
+        # daemon user's files: a sing-box tor outbound's executable_path is a program it runs
+        # with them, a *_path or *File one it reads, XRay's masterKeyLog one it writes. Only a
+        # declared outbound may name those.
+        if [ "$source" = runtime ]; then
+          unsafe=$(${jq} -r ${lib.escapeShellArg localFileKeysJq} <<< "$ob")
+          if [ -n "$unsafe" ]; then
+            echo "proxy-suite: runtime outbound '$tag' names local files or programs ($unsafe); declare it in proxy.outbounds instead" >&2
+            return 1
+          fi
+        fi
         kind=$(${jq} -r 'if has("protocol") then "xray" elif has("type") then "sing-box" else "" end' <<< "$ob")
         ${jsonAddBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
@@ -599,6 +627,14 @@ let
             [ -e "$GROUP_FILE" ] || continue
             GROUP_NAME="''${GROUP_FILE##*/}"
             GROUP_NAME="''${GROUP_NAME%.group}"
+            # As proxy-ctl names them; the spool is group-writable, and a group tagged "proxy"
+            # would shadow the real selector.
+            case "$GROUP_NAME" in
+              proxy | direct | block${lib.optionalString torOutboundEnabled " | tor"} | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*)
+                echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': reserved or invalid name" >&2
+                continue
+                ;;
+            esac
             if ${jq} -e --arg g "$GROUP_NAME" 'has($g)' <<< "$GROUPS_CONFIG_JSON" >/dev/null; then
               echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': proxy.groups declares it" >&2
               continue
@@ -608,7 +644,8 @@ let
                strategy: (.strategy // "failover"), failback: (.failback != false), interval: (.interval // null),
                runtime: true}
               | select(.strategy | IN("failover", "urltest", "selector"))
-              | select([.outbounds, .subscriptions, .match] | all(type == "array" and all(type == "string")))'); then
+              | select([.outbounds, .subscriptions, .match] | all(type == "array" and all(type == "string")))
+              | select(.interval == null or (.interval | type == "string" and test("^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$")))'); then
               echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': not a valid group" >&2
               continue
             fi
@@ -632,21 +669,29 @@ let
         fi
       ''}
       # A runtime outbound may have taken a group's name: the outbound stays.
-      for GROUP_NAME in $(${jq} -r --argjson tags "$OUTBOUND_TAGS_JSON" 'keys[] | select(. as $g | $tags | index([$g]))' <<< "$GROUPS_CONFIG_JSON"); do
+      while IFS= read -r GROUP_NAME; do
         echo "proxy-suite: warning: ignoring group '$GROUP_NAME': an outbound has that tag" >&2
         GROUPS_CONFIG_JSON=$(${jq} -c --arg g "$GROUP_NAME" 'del(.[$g])' <<< "$GROUPS_CONFIG_JSON")
+      done < <(${jq} -r --argjson tags "$OUTBOUND_TAGS_JSON" 'keys[] | select(. as $g | $tags | index([$g]))' <<< "$GROUPS_CONFIG_JSON")
+      # A runtime group inside itself is left out, like any runtime outbound that cannot be
+      # built; only a loop among declared groups fails the start.
+      while :; do
+        GROUPS_RESULT=$(${jq} -nc --argjson tags "$OUTBOUND_TAGS_JSON" --argjson sources "''${OUTBOUND_SOURCES_JSON:-{\}}" \
+          '{tags: $tags, sources: $sources}' \
+          | ${jq} -c -f ${groupsJq} \
+            --argjson groups "$GROUPS_CONFIG_JSON" \
+            --argjson priority "$PRIORITY_JSON" \
+            --argjson disabled "$DISABLED_TAGS_JSON" \
+            --argjson pins "$GROUP_PINS_JSON" \
+            --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
+            --arg interval ${lib.escapeShellArg proxyCfg.urlTest.interval} \
+            --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
+            --argjson watched "''${GROUPS_WATCHED:-true}")
+        GROUPS_LOOP_DROP=$(${jq} -c --argjson g "$GROUPS_CONFIG_JSON" '[.loops[] | select($g[.].runtime == true)]' <<< "$GROUPS_RESULT")
+        [ "$GROUPS_LOOP_DROP" != '[]' ] || break
+        ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime group '"'"'\(.)'"'"': it contains itself"' <<< "$GROUPS_LOOP_DROP" >&2
+        GROUPS_CONFIG_JSON=$(${jq} -c --argjson drop "$GROUPS_LOOP_DROP" 'with_entries(select(.key as $k | $drop | index([$k]) | not))' <<< "$GROUPS_CONFIG_JSON")
       done
-      GROUPS_RESULT=$(${jq} -nc --argjson tags "$OUTBOUND_TAGS_JSON" --argjson sources "''${OUTBOUND_SOURCES_JSON:-{\}}" \
-        '{tags: $tags, sources: $sources}' \
-        | ${jq} -c -f ${groupsJq} \
-          --argjson groups "$GROUPS_CONFIG_JSON" \
-          --argjson priority "$PRIORITY_JSON" \
-          --argjson disabled "$DISABLED_TAGS_JSON" \
-          --argjson pins "$GROUP_PINS_JSON" \
-          --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
-          --arg interval ${lib.escapeShellArg proxyCfg.urlTest.interval} \
-          --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
-          --argjson watched "''${GROUPS_WATCHED:-true}")
       ${jq} -r '.warnings[] | "proxy-suite: warning: " + .' <<< "$GROUPS_RESULT" >&2
       if ${jq} -e '.errors != []' <<< "$GROUPS_RESULT" >/dev/null; then
         ${jq} -r '.errors[] | "proxy-suite: " + .' <<< "$GROUPS_RESULT" >&2
@@ -854,4 +899,6 @@ in
   inherit mkOutboundScript rawOutboundJson;
   # For the checks: groups, and which outbounds a pin and selection may take.
   selectionBlocks = tagsBlock + groupsBlock + pinBlock + selectableBlock + inventoryBlock;
+  # And what the runtime spool is read into.
+  runtimeOutboundBlocks = mkUrlOutboundHelpersBlock null + runtimeOutboundsBlock;
 }

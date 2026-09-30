@@ -34,10 +34,14 @@ jobs:
           set -euo pipefail
           scripts/check-nixpkgs-relevance.sh >> "$GITHUB_OUTPUT"
 
+      # Step outputs and inputs reach scripts through the environment, never spliced into them.
       - name: Update flake inputs
+        env:
+          SHOULD_UPDATE_NIXPKGS: ${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}
+          FORCE_NIXPKGS: ${{ inputs.force_nixpkgs }}
         run: |
           set -euo pipefail
-          if [[ "${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}" == "true" || "${{ inputs.force_nixpkgs }}" == "true" ]]; then
+          if [[ "$SHOULD_UPDATE_NIXPKGS" == "true" || "$FORCE_NIXPKGS" == "true" ]]; then
             nix flake update nixpkgs
           else
             echo "Skipping nixpkgs update: watched package versions on nixos-unstable are unchanged."
@@ -80,6 +84,9 @@ jobs:
 
       - name: Compose pull request body
         if: steps.changes.outputs.has_changes == 'true'
+        env:
+          SHOULD_UPDATE_NIXPKGS: ${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}
+          CHANGED_WATCH_ATTRS: ${{ steps.nixpkgs_gate.outputs.nixpkgs_changed_watch_attrs }}
         run: |
           set -euo pipefail
           {
@@ -95,8 +102,8 @@ jobs:
             fi
             echo
             echo "### Flake inputs"
-            echo "- nixpkgs updated: \`${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}\`"
-            echo "- changed watched attrs: \`${{ steps.nixpkgs_gate.outputs.nixpkgs_changed_watch_attrs }}\`"
+            echo "- nixpkgs updated: \`$SHOULD_UPDATE_NIXPKGS\`"
+            echo "- changed watched attrs: \`$CHANGED_WATCH_ATTRS\`"
             echo "- zapret: refreshed every run"
             echo
             echo '```'

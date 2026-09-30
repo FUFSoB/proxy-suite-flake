@@ -76,6 +76,12 @@ types.submodule {
       type = types.nullOr types.int;
       default = null;
     };
+    # NixOS's: a switch reloads the unit when it changed, rather than restarting it. Other
+    # hosts restart it as before.
+    reloadIfChanged = mkOption {
+      type = types.bool;
+      default = false;
+    };
     unitConfig = section;
     serviceConfig = section;
     timerConfig = section;

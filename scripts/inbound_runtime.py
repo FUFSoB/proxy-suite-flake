@@ -32,6 +32,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import uuid
 
 # User names and listener tags: they become file names, XRay emails and tags, and URL parts.
@@ -136,13 +137,23 @@ def write_entry(spool: str, kind: str, name: str, entry: dict) -> None:
     old = os.umask(0o027)
     try:
         os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, f"{name}.json")
-        tmp = os.path.join(directory, f".{name}.json.tmp")
-        with open(tmp, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, indent=2, sort_keys=True) + "\n")
-        os.replace(tmp, path)
     finally:
         os.umask(old)
+    path = os.path.join(directory, f"{name}.json")
+    # A new file of its own, never a fixed name: a symlink a member left there would take
+    # the write of this tool run as root wherever it points.
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}.json.", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, indent=2, sort_keys=True) + "\n")
+        os.chmod(tmp, 0o640)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def remove_entry(spool: str, kind: str, name: str) -> None:
@@ -352,6 +363,14 @@ def port_free(address: str, port: int, kinds: list[int]) -> bool:
     return True
 
 
+def _is_ip(address) -> bool:
+    try:
+        ipaddress.ip_address(address)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _loopback(address: str) -> bool:
     return address.startswith("127.") or address in ("::1", "localhost")
 
@@ -431,6 +450,8 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool) -> list[
 
     need(_port_allowed(listener["port"], runtime.get("ports") or []),
          f"port {listener['port']} is not in inbounds.runtime.ports")
+    # XRay takes a path or an @name for a Unix socket: a runtime listener binds an IP only.
+    need(_is_ip(listener["listen"]), f"address '{listener['listen']}' is not an IP address")
     need(listener["via"] in runtime.get("vias") or [],
          f"via '{listener['via']}' is not routing.via, \"block\" or in inbounds.runtime.vias")
     need(not (tls["enable"] and reality["enable"]), "tls and reality are mutually exclusive")
@@ -585,6 +606,11 @@ def number_users(spec: dict, names: list[str], state_users: dict, warnings: list
             warnings.append(f"runtime user '{name}': order {wanted} is taken; using {number} until it is free")
         if size is not None and number + 2 > size:
             warnings.append(f"runtime user '{name}': number {number} does not fit in serverSource.ipv4; no own address")
+            continue
+        # The number is the last group of the IPv6 address (the prefix is /112 or shorter):
+        # five hex digits would be no address, and the start script would fail on it.
+        if source.get("ipv6") is not None and number > 0xFFFF:
+            warnings.append(f"runtime user '{name}': number {number} does not fit in serverSource.ipv6; no own address")
             continue
         taken.add(number)
         numbered.append(

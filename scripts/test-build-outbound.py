@@ -3,6 +3,7 @@
 import base64
 import json
 import unittest
+import urllib.parse
 
 import proxy_parsing
 from proxy_parsing import build_outbound
@@ -140,6 +141,29 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["settings"]["id"], "uuid")
         self.assertEqual(ob["streamSettings"]["network"], "xhttp")
         self.assertEqual(ob["streamSettings"]["xhttpSettings"]["path"], "/x")
+
+    def test_xray_xhttp_extra_keeps_ordinary_settings(self):
+        extra = json.dumps({"xPaddingBytes": "100-1000", "downloadSettings": {"address": "dl.example.com"}})
+        ob = run_xray_parser(
+            "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&extra="
+            + urllib.parse.quote(extra)
+        )
+        self.assertEqual(ob["streamSettings"]["xhttpSettings"]["extra"]["xPaddingBytes"], "100-1000")
+
+    def test_xray_xhttp_extra_cannot_name_local_files(self):
+        # XRay holds CAP_NET_ADMIN: a subscription must not make it write masterKeyLog or read a key.
+        extra = json.dumps(
+            {
+                "downloadSettings": {
+                    "tlsSettings": {"masterKeyLog": "/etc/x", "certificates": [{"keyFile": "/root/k"}]}
+                }
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "keyfile, masterkeylog"):
+            run_xray_parser(
+                "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&extra="
+                + urllib.parse.quote(extra)
+            )
 
     def test_xray_vless_ech(self):
         ob = run_xray_parser(

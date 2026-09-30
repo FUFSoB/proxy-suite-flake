@@ -71,10 +71,15 @@ let
   };
 in
 {
+  # One nft transaction swaps the old table for the new: traffic never sees neither. Also the
+  # unit's reload, which a switch runs instead of a restart (units.nix).
   killSwitchUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
-    ${deleteKillSwitchTable}
-    ${nft} -f ${killSwitchRulesFile}
+    ${nft} -f - <<'EOF'
+    add table inet proxy_suite_killswitch
+    delete table inet proxy_suite_killswitch
+    include "${killSwitchRulesFile}"
+    EOF
   '';
 
   killSwitchDownScript = pkgs.writeShellScript "proxy-suite-routing" ''

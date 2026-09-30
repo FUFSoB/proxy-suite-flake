@@ -15,6 +15,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -295,6 +296,27 @@ def ask_group():
 
 def denied(path, what="read"):
     die(f"Cannot {what} {path} - {ask_group()}.")
+
+
+def _spool_write(path, text=""):
+    """Replaces path whole, 0640, in a directory userControl's group may write to.
+
+    Through a new file renamed over it: a symlink a member left at path is replaced rather
+    than followed, so proxy-ctl run as root never writes where it points. The file takes
+    the directory's group (the spools are setgid). Raises OSError.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, 0o640)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _run(argv, capture=False, quiet=False, stdin=None):
@@ -1954,15 +1976,10 @@ def _read_group_file(tag):
 
 def _write_group_file(tag, data):
     path = _group_file(tag)
-    old = os.umask(0o027)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
+        _spool_write(path, json.dumps(data, indent=2) + "\n")
     except OSError:
         denied(path, "write")
-    finally:
-        os.umask(old)
 
 
 def _group_contains(groups, outer, tag, seen=()):
@@ -2159,15 +2176,10 @@ def cmd_priority(*args):
     else:
         usage("proxy priority <tag> <number>|up|down|--clear")
     path = _priority_file()
-    old = os.umask(0o027)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-            f.write("\n")
+        _spool_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
     except OSError:
         denied(path, "write")
-    finally:
-        os.umask(old)
     _runtime_reload()
     print(f"{tag}: {'default order' if value == '--clear' else 'moved ' + value if value in ('up', 'down') else value}")
 
@@ -2213,6 +2225,30 @@ def _runtime_path(kind, tag):
     return os.path.join(_runtime_dir(kind), f"{tag}.url")
 
 
+def _local_file_keys(ob):
+    """What in an outbound points the root backend at a local file or program.
+
+    The start script ignores a runtime outbound that has any (localFileKeysJq there).
+    """
+    found = {"type: tor"} if ob.get("type") == "tor" else set()
+    stack = [ob]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                k = str(key).lower()
+                if (
+                    k.endswith(("file", "directory"))
+                    or (k.endswith("path") and k != "path")
+                    or k in ("masterkeylog", "torrc", "extra_args")
+                ):
+                    found.add(k)
+                stack.append(child)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return sorted(found)
+
+
 def _runtime_json_outbound(text):
     """One outbound object from `text`, the tag left to the entry's name."""
     try:
@@ -2221,6 +2257,11 @@ def _runtime_json_outbound(text):
         die(f"Not a URL, and not valid JSON: {e}")
     if not isinstance(ob, dict) or not ("type" in ob or "protocol" in ob):
         die('JSON must be one outbound object: sing-box ("type") or XRay ("protocol").')
+    if unsafe := _local_file_keys(ob):
+        die(
+            f"An outbound added at runtime cannot name local files or programs ({', '.join(unsafe)}): "
+            "the backend runs them with its privileges. Declare it in proxy.outbounds instead."
+        )
     ob.pop("tag", None)
     return json.dumps(ob, ensure_ascii=False)
 
@@ -2348,21 +2389,16 @@ def _runtime_entry_add(kind, *args, detour="", container=""):
     else:
         url = url.strip()
     path = os.path.join(_runtime_dir(kind), tag + ext)
-    old = os.umask(0o027)
     try:
         # The hop first: the entry is what the start script looks for.
         hop = os.path.join(_runtime_dir(kind), f"{tag}.detour")
         if detour:
-            with open(hop, "w", encoding="utf-8") as f:
-                f.write(f"{detour}\n")
-        elif os.path.exists(hop):
+            _spool_write(hop, f"{detour}\n")
+        elif os.path.lexists(hop):
             os.unlink(hop)  # left from an earlier entry of this name: it would chain this one too
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"{url}\n")
+        _spool_write(path, f"{url}\n")
     except OSError:
         denied(path, "write")
-    finally:
-        os.umask(old)
     _runtime_reload()
     _runtime_entry_verify(kind, tag)
 
@@ -2457,14 +2493,10 @@ def cmd_outbound_disable(tag="", *_):
     # With none left to pick the proxy would not start, pinned or not: an unpin falls back to selection.
     if [t for t in _outbound_tags() if t not in excluded] == [tag]:
         die(f"'{tag}' is the only outbound selection can pick; enable or add another first.")
-    old = os.umask(0o027)
     try:
-        with open(marker, "w", encoding="utf-8"):
-            pass
+        _spool_write(marker)
     except OSError:
         denied(marker, "write")
-    finally:
-        os.umask(old)
     # The reload drops a pin on it too.
     _runtime_reload()
     if tag in _outbound_disabled():
@@ -3182,7 +3214,12 @@ def _autoproxy_queue(name, line):
     """Appends a line for the prober's own unit, which takes it under the same lock as a timer run."""
     path = os.path.join(_autoproxy_dir(), name)
     try:
-        with open(path, "a", encoding="utf-8") as f:
+        # Appended in place, as the prober takes it, but never through a symlink or into a
+        # FIFO a member left there: proxy-ctl may run as root.
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o666)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"{path} is not a regular file")
             f.write(f"{line}\n")
     except OSError:
         denied(path, "write")
@@ -3421,7 +3458,7 @@ def cmd_zapret_cutoff(verb="status", *_):
         # requests/: the only part of the probe's directory the group writes to.
         requests = os.path.join(path, "requests")
         try:
-            open(os.path.join(requests, "force"), "w").close()
+            _spool_write(os.path.join(requests, "force"))
         except OSError:
             denied(requests, "write")
         print("Probing this line; this takes a few minutes...")
@@ -3789,18 +3826,14 @@ def _awg_outbound_add(tag, text, detour, container):
     if not os.access(directory, os.W_OK | os.X_OK):
         denied(directory, "write to")
     port = _awg_free_port()
-    old = os.umask(0o027)
     try:
         # The port first: the config is what the start script and the sync unit look for.
         for extra in (".detour", ".disabled"):
-            if os.path.exists(os.path.join(directory, tag + extra)):
+            if os.path.lexists(os.path.join(directory, tag + extra)):
                 os.unlink(os.path.join(directory, tag + extra))  # left from an earlier entry of this name
-        with open(os.path.join(directory, f"{tag}.port"), "w", encoding="utf-8") as f:
-            f.write(f"{port}\n")
+        _spool_write(os.path.join(directory, f"{tag}.port"), f"{port}\n")
     except OSError:
         denied(directory, "write to")
-    finally:
-        os.umask(old)
     _awg_write(text, os.path.join(directory, f"{tag}.awg"), container)
     _runtime_reload()
     _runtime_entry_verify("outbound", tag)
@@ -4662,9 +4695,36 @@ COMMANDS = {
 }
 
 
+# Control characters but tab and newline: C0, DEL and C1.
+_UNPRINTABLE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+class _TerminalSafe:
+    """A terminal stream that shows control characters rather than obeying them.
+
+    Much of what proxy-ctl prints comes from elsewhere: share links a subscription served,
+    entries the userControl group wrote. An escape sequence among them could set the
+    clipboard or rewrite the screen of whoever reads it, root included. proxy-ctl prints
+    none of its own.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        return self._stream.write(_UNPRINTABLE.sub(lambda m: f"\\x{ord(m.group()):02x}", text))
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def main(argv):
     # Die quietly on a closed pipe (`proxy-ctl help | head`), as a shell tool does.
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream.isatty():
+            setattr(sys, name, _TerminalSafe(stream))
     if argv and argv[0] in ALIASES:
         argv = ALIASES[argv[0]] + argv[1:]
     cmd, args = (argv[0], argv[1:]) if argv else ("status", [])

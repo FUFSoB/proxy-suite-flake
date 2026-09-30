@@ -29,6 +29,10 @@ let
     pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
       uid="$1"
+      if ! [[ $uid =~ ^[0-9]+$ ]]; then
+        echo "proxy-suite: '$uid' is not a uid" >&2
+        exit 1
+      fi
       rule_comment_prefix="proxy-suite-${name}-user-$uid"
       mark_comment="$rule_comment_prefix-mark"
       cgroup_root="/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service"
@@ -37,7 +41,11 @@ let
         exit 1
       fi
 
-      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg sliceName} | ${headBin} -n1 || true)
+      # The user owns this subtree and names its directories, quotes and semicolons included:
+      # only a path nft reads as the one quoted string below, never one that closes the quote
+      # and runs nft commands of its own as root. systemd's names never need more.
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg sliceName} \
+        | ${grepBin} -E '^[A-Za-z0-9@._:+,=\\/-]+$' | ${headBin} -n1 || true)
       if [ -z "$cgroup_dir" ]; then
         echo "proxy-suite: ${sliceLabel} slice cgroup does not exist for uid $uid under $cgroup_root" >&2
         exit 1

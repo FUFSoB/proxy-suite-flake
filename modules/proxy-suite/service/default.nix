@@ -332,6 +332,16 @@ lib.mkMerge [
             + " anyone who reaches the port uses your outbounds; set listener.auth, or keep it off the"
             + " firewall's allowed ports"
           )
+      # The prober and proxy-ctl's outbound test dial these without credentials.
+      ++
+        lib.optional
+          (proxyEnabled && localProxyAuthEnabled && proxyCfg.autoProxy.enable && !pureXrayEnabled)
+          (
+            "proxy-suite: proxy.listener.auth does not cover autoProxy's loopback listeners"
+            + " (ports ${toString proxyCfg.autoProxy.probeBasePort}-${
+               toString (proxyCfg.autoProxy.probeBasePort + proxyCfg.autoProxy.maxExits - 1)
+             } and ${toString constants.outboundTestPort}): every local user reaches your exits through them"
+          )
       # rules/proxy-inbounds.nix guards the names of this host only where XRay leaves names
       # unresolved, or where IP aliases catch a name that resolves here first.
       ++

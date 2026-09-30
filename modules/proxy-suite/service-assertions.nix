@@ -221,6 +221,14 @@ let
       cfg.inbounds.routing.serverSource.ipv6 == null
       || lib.toInt (lib.last (lib.splitString "/" cfg.inbounds.routing.serverSource.ipv6)) <= 112
     ) "proxy-suite: inbounds.routing.serverSource.ipv6 must be a prefix of /112 or shorter")
+    # A user's number is the last group of their IPv6 address.
+    (mkAssertion
+      (
+        cfg.inbounds.routing.serverSource.ipv6 == null
+        || lib.all (s: s.number <= 65535) derived.proxyInboundsSelfSources
+      )
+      "proxy-suite: with inbounds.routing.serverSource.ipv6, inbounds.users orders must be 65535 or less"
+    )
     (mkAssertion
       (
         (

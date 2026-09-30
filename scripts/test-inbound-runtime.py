@@ -149,6 +149,15 @@ class RuntimeTest(unittest.TestCase):
         rt.cmd_users_order(self.spec, self.spool, "alice", 12)
         self.assertEqual(self.state()["users"]["alice"]["order"], 12)
 
+    def test_a_number_past_the_ipv6_group_gets_no_address(self):
+        # The last group holds four hex digits: 0x10000 would be no address, and the start
+        # script would fail on it for every listener.
+        spec = {"serverSource": {"ipv4": None, "ipv6": "fd78::/64", "declared": []}, "users": {}}
+        warnings = []
+        numbered = rt.number_users(spec, ["big", "ok"], {"big": {"order": 70000}, "ok": {"order": 65535}}, warnings)
+        self.assertEqual([(n["email"], n["ipv6"]) for n in numbered], [("ok", "fd78::ffff")])
+        self.assertIn("runtime user 'big': number 70000 does not fit in serverSource.ipv6", warnings[0])
+
     def test_runtime_users_join_declared_listeners(self):
         rt.cmd_users_add(self.spec, self.spool, "alice", None, ["vless-in", "awg"])
         merged, result, warnings = rt.merge(self.spec)
@@ -255,6 +264,9 @@ class RuntimeTest(unittest.TestCase):
             ({"type": "vless", "port": 20001, "fallbacks": [{"listener": "vless-in"}]}, "must be another runtime listener"),
             ({"type": "vless", "port": 20001, "flow": "xtls-rprx-vision", "transport": {"type": "ws"}}, "flow is only valid"),
             ({"type": "vmess", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"]}}, "reality only for vless"),
+            # XRay would take these as Unix socket paths.
+            ({"type": "vless", "port": 20001, "address": "/run/x.sock"}, "not an IP address"),
+            ({"type": "vless", "port": 20001, "address": "@abstract"}, "not an IP address"),
         ]
         for entry, message in cases:
             with self.subTest(entry=entry), self.assertRaisesRegex(rt.RuntimeError_, message):

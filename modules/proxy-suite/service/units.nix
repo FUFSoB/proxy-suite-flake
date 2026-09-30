@@ -69,6 +69,21 @@ let
 
   localProxyAuthEnabled = ctx.localProxy.authEnabled;
 
+  # For the root units reading what userControl's group writes (outbounds.d,
+  # subscriptions.d): the file system read-only but for their own directories, so no
+  # mistake in reading those spools can write anywhere else. Reads are untouched, secrets
+  # under /root or /home included. `extra`: other paths they update.
+  spoolReaderSandbox =
+    extra:
+    lib.optionalAttrs ctx.constants.privileged (
+      {
+        ProtectSystem = "strict";
+      }
+      # "-": the socks unit may not have made its runtime directory yet.
+      // lib.optionalAttrs (extra != [ ]) { ReadWritePaths = map (path: "-${path}") extra; }
+    );
+  socksRuntimeDir = "${ctx.constants.runtimeDir}/${serviceNames.socks}";
+
   # XRay finds geoip.dat/geosite.dat through this; sing-box ignores it.
   xrayAssetEnv = lib.optionalAttrs (geodata.xray.assets != null) {
     Environment = [ "XRAY_LOCATION_ASSET=${geodata.xray.assets}/share/v2ray" ];
@@ -96,7 +111,7 @@ let
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
         stateDirectory = "proxy-suite";
-        extraServiceConfig = xrayAssetEnv;
+        extraServiceConfig = xrayAssetEnv // spoolReaderSandbox [ ];
       };
     }
     {
@@ -158,16 +173,23 @@ let
     {
       enable = killSwitchEnabled;
       name = serviceNames.killSwitch;
-      value = mkOneshotService {
-        description = "proxy-suite kill switch - reject traffic outside the global tunnel";
-        after = [
-          "${serviceNames.socks}.service"
-          "${serviceNames.tun}.service"
-        ]
-        ++ map (name: "proxy-suite-awg-${name}.service") (builtins.attrNames awgGlobalProfiles);
-        execStart = killSwitchUpScript;
-        execStop = killSwitchDownScript;
-      };
+      value =
+        mkOneshotService {
+          description = "proxy-suite kill switch - reject traffic outside the global tunnel";
+          after = [
+            "${serviceNames.socks}.service"
+            "${serviceNames.tun}.service"
+          ]
+          ++ map (name: "proxy-suite-awg-${name}.service") (builtins.attrNames awgGlobalProfiles);
+          execStart = killSwitchUpScript;
+          execStop = killSwitchDownScript;
+          extraServiceConfig.ExecReload = killSwitchUpScript;
+        }
+        # A restart runs ExecStop, which lifts the kill switch until ExecStart puts it back:
+        # new rules from a switch are swapped in by a reload instead, in one transaction.
+        // {
+          reloadIfChanged = true;
+        };
     }
     {
       enable = proxyEnabled && globalTproxy.enable;
@@ -283,7 +305,10 @@ let
         execStart = scripts.subscriptionUpdateScript;
         stateDirectory = "proxy-suite";
         # Run by a timer and by `proxy subs update`: a unit left "active" would never run again.
-        extraServiceConfig.RemainAfterExit = false;
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ];
       };
     }
     {
@@ -303,7 +328,11 @@ let
         description = "Pin the proxy-suite outbound to %I";
         execStart = "${scripts.pinOutboundScript} %I";
         stateDirectory = "proxy-suite";
-        extraServiceConfig.RemainAfterExit = false;
+        # It updates the pin in the running proxy's inventory.
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ socksRuntimeDir ];
       };
     }
     {
@@ -313,7 +342,10 @@ let
         description = "Unpin the proxy-suite outbound";
         execStart = "${scripts.pinOutboundScript}";
         stateDirectory = "proxy-suite";
-        extraServiceConfig.RemainAfterExit = false;
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ socksRuntimeDir ];
       };
     }
     {
@@ -323,7 +355,10 @@ let
         description = "Apply proxy-suite outbounds and subscriptions added at runtime";
         execStart = scripts.reloadOutboundsScript;
         stateDirectory = "proxy-suite";
-        extraServiceConfig.RemainAfterExit = false;
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ];
       };
     }
   ];

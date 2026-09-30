@@ -131,6 +131,10 @@ in
       assert before "ip daddr 172.19.0.1/30 accept" "th dport 53 reject";
       assert before "th dport 53 reject" "ip daddr $RESERVED_IP accept";
       assert pkgs.lib.hasInfix ''iifname { "br0" } reject'' rules;
+      # A switch reloads it: the new rules replace the old in one transaction, never a stop
+      # that lifts it first.
+      assert ks.reloadIfChanged;
+      assert ks.serviceConfig.ExecReload == ks.serviceConfig.ExecStart;
       assert !(tproxyManualFixture.config.systemd.services ? "proxy-suite-killswitch");
       true
     )

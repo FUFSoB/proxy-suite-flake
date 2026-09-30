@@ -583,7 +583,9 @@ let
               echo "proxy-suite: $1 is not a regular file" >&2
               return 1
             fi
-            ${pkgs.coreutils}/bin/dd if="$1" iflag=nofollow,nonblock status=none
+            # A MiB at most: an entry is a URL or one outbound, and the start script holds
+            # what it reads in shell variables.
+            ${pkgs.coreutils}/bin/dd if="$1" iflag=nofollow,nonblock,fullblock bs=1M count=1 status=none
             ;;
           *) ${pkgs.coreutils}/bin/cat -- "$1" ;;
         esac

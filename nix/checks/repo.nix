@@ -24,6 +24,50 @@ let
     ROUTE_MODE_STATE_FILE="$PWD/route-mode" \
     DEFAULT_ROUTE_MODE="blacklist" \
   '';
+  # The start script's outbound blocks, reading the runtime spool from obd/ in the build dir.
+  outboundScriptBlocks =
+    groups:
+    import ../../modules/proxy-suite/service/script-blocks/outbounds.nix {
+      lib = pkgs.lib;
+      inherit pkgs;
+      jq = "${pkgs.jq}/bin/jq";
+      proxyCfg = {
+        selectionExclude = [ "ex" ];
+        inherit groups;
+        priority = { };
+        urlTest = {
+          url = "https://t";
+          interval = "3m";
+        };
+      };
+      selectionMode = "urltest";
+      hybridEnabled = false;
+      # Relative: the build directory.
+      pinnedOutboundFile = "pinned";
+      runtimeOutboundsDir = "obd";
+      singBoxCfg.urlTest.tolerance = 50;
+      sshProxyCfg = null;
+      warpCfg = null;
+      torCfg = null;
+      whitelistBypassJoiners = [ ];
+      awgOutbounds = null;
+      # The start script checks for symlinks in the spool; here it is only this build's.
+      constants.readSourceFunction = _: ''
+        _proxy_suite_read_source() { cat -- "$1"; }
+      '';
+      pureXrayEnabled = false;
+      collapseNamedOutbounds = null;
+      backend = null;
+      backendArg = "--backend sing-box";
+      xraySidecarRoutingMark = null;
+      # A runtime .url outbound would need the parsers; the checks only drop JSON ones.
+      python3 = "false";
+      parserScriptsPythonPath = "";
+      buildOutboundPy = "";
+      mkSubscriptionBlock = null;
+      mkSubscriptionLoadHelperBlock = null;
+      runtimeSubscriptionsBlock = null;
+    };
 in
 {
   no-secrets = pkgs.runCommand "proxy-suite-no-secrets-check" { } ''
@@ -849,46 +893,7 @@ in
       mkSelection =
         groups:
         let
-          inherit
-            (import ../../modules/proxy-suite/service/script-blocks/outbounds.nix {
-              lib = pkgs.lib;
-              inherit pkgs;
-              jq = "${pkgs.jq}/bin/jq";
-              proxyCfg = {
-                selectionExclude = [ "ex" ];
-                inherit groups;
-                priority = { };
-                urlTest = {
-                  url = "https://t";
-                  interval = "3m";
-                };
-              };
-              selectionMode = "urltest";
-              hybridEnabled = false;
-              # Relative: the build directory.
-              pinnedOutboundFile = "pinned";
-              runtimeOutboundsDir = "obd";
-              singBoxCfg.urlTest.tolerance = 50;
-              sshProxyCfg = null;
-              warpCfg = null;
-              torCfg = null;
-              whitelistBypassJoiners = [ ];
-              awgOutbounds = null;
-              constants = null;
-              pureXrayEnabled = false;
-              collapseNamedOutbounds = null;
-              backend = null;
-              backendArg = null;
-              xraySidecarRoutingMark = null;
-              python3 = null;
-              parserScriptsPythonPath = null;
-              buildOutboundPy = null;
-              mkSubscriptionBlock = null;
-              mkSubscriptionLoadHelperBlock = null;
-              runtimeSubscriptionsBlock = null;
-            })
-            selectionBlocks
-            ;
+          inherit (outboundScriptBlocks groups) selectionBlocks;
         in
         pkgs.writeShellScript "outbound-selection" ''
           set -euo pipefail
@@ -933,12 +938,20 @@ in
       export -f _proxy_suite_read_source
       ${grouped}
       jq -e '.top == ["h", "g"] and .groups.g.pinned == "a" and .groups.h.runtime and .priority.h == 1' outbounds.json > /dev/null
-      # A group inside itself stops the start.
+      # The spool is group-writable: a runtime group inside itself, one that is not a group, and
+      # one taking a reserved name are left out, and the start goes on without them.
       echo '{"outbounds": ["h3"]}' > obd/h2.group
       echo '{"outbounds": ["h2"]}' > obd/h3.group
-      ! ${grouped} 2> err
-      grep -q "group 'h2' contains itself" err
-      rm -r obd/h.group obd/h2.group obd/h3.group obd/priority.json group-pins
+      echo '{"outbounds": ["x"], "interval": {"s": 1}}' > obd/h4.group
+      echo '{"outbounds": ["x"]}' > obd/proxy.group
+      ${grouped} 2> err
+      grep -q "ignoring runtime group 'h2': it contains itself" err
+      grep -q "ignoring runtime group 'h3': it contains itself" err
+      grep -q "ignoring runtime group 'h4': not a valid group" err
+      grep -q "ignoring runtime group 'proxy': reserved or invalid name" err
+      jq -e '.groups | (has("h2") or has("h3") or has("h4") or has("proxy")) | not' outbounds.json > /dev/null
+      jq -e '.groups.h.runtime' outbounds.json > /dev/null
+      rm -r obd/h.group obd/h2.group obd/h3.group obd/h4.group obd/proxy.group obd/priority.json group-pins
 
       export OUTBOUNDS_JSON='[{"tag":"a"},{"tag":"b"},{"tag":"ex"}]'
 
@@ -957,6 +970,33 @@ in
       echo ex > pinned
       ${selection}
       jq -e '.pinned == "ex" and .disabled == ["a", "b"]' outbounds.json > /dev/null
+      touch "$out"
+    '';
+
+  # The spool is group-writable and the backend privileged: a runtime JSON outbound naming a program
+  # or a file to read or write is left out, and a runtime AmneziaWG port must be a port.
+  runtime-outbound-spool =
+    let
+      loadRuntime = pkgs.writeShellScript "runtime-outbounds" ''
+        set -euo pipefail
+        OUTBOUNDS_JSON='[]'
+        ${(outboundScriptBlocks { }).runtimeOutboundBlocks}
+        printf '%s' "$OUTBOUNDS_JSON" > outbounds.json
+      '';
+    in
+    pkgs.runCommand "proxy-suite-runtime-outbound-spool-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
+      mkdir obd
+      echo '{"type": "socks", "server": "127.0.0.1", "server_port": 1080}' > obd/ok.json
+      echo '{"type": "vless", "server": "h", "transport": {"type": "ws", "path": "/x"}}' > obd/ws.json
+      echo '{"type": "tor", "executable_path": "/tmp/x"}' > obd/tor.json
+      echo '{"type": "ssh", "server": "h", "private_key_path": "/root/.ssh/id_ed25519"}' > obd/ssh.json
+      echo '{"type": "vless", "server": "h", "tls": {"enabled": true, "certificate_path": "/etc/shadow"}}' > obd/cert.json
+      ${loadRuntime} 2> err
+      cat err
+      jq -e '[.[].tag] == ["ok", "ws"]' outbounds.json > /dev/null
+      grep -q "runtime outbound 'tor' names local files or programs (executable_path, type: tor)" err
+      grep -q "runtime outbound 'ssh' names local files or programs (private_key_path)" err
+      grep -q "runtime outbound 'cert' names local files or programs (certificate_path)" err
       touch "$out"
     '';
 

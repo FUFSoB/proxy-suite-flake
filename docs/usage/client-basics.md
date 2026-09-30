@@ -59,6 +59,9 @@ proxy-ctl proxy subs update               # refetch subscriptions now
 - `urltest` tests each outbound by fetching `proxy.urlTest.url`. Set it to a site that is
   blocked where you are, so an outbound only passes if it really gets around the block.
 - Set `proxy.listener.auth` before exposing the port with `listener.address = "0.0.0.0"`.
+- `outbounds add` also takes one outbound as sing-box or XRay JSON. Such an outbound cannot
+  name a local file or program (a `tor` outbound, `*_path`, `*File`, `masterKeyLog`): the
+  backend would open or run it with its own privileges. Declare those in `proxy.outbounds`.
 
 ## See also
 

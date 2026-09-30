@@ -70,6 +70,33 @@ def _parse_url_parts(url: str, scheme: str) -> tuple[str, str, str, dict]:
     return userinfo, host, port, _qs(query)
 
 
+def local_file_keys(value) -> list[str]:
+    """The keys anywhere in `value` that point a backend at a local file or program.
+
+    The backends hold CAP_NET_ADMIN, and a share link is whatever a subscription serves:
+    xhttp's extra carries a whole streamSettings (downloadSettings), where
+    certificateFile is a file XRay reads and masterKeyLog one it writes. The start
+    script's localFileKeysJq applies the same rule to runtime JSON outbounds.
+    """
+    found: set[str] = set()
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                k = str(key).lower()
+                if (
+                    k.endswith(("file", "directory"))
+                    or (k.endswith("path") and k != "path")
+                    or k in ("masterkeylog", "torrc", "extra_args")
+                ):
+                    found.add(k)
+                stack.append(child)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return sorted(found)
+
+
 def _parse_json_param(value: str, name: str) -> dict:
     try:
         parsed = json.loads(value)
@@ -77,6 +104,8 @@ def _parse_json_param(value: str, name: str) -> dict:
         raise ValueError(f"invalid {name} JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ValueError(f"invalid {name} JSON: expected object")
+    if unsafe := local_file_keys(parsed):
+        raise ValueError(f"{name} JSON names local files: {', '.join(unsafe)}")
     return parsed
 
 
