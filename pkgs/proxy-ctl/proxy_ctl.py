@@ -291,7 +291,15 @@ def ask_group():
     """What lets a refused user in: root, or userControl's group with the scope for it."""
     if not privileged():
         return "check its owner and permissions"
-    return f"join the {env('USER_CONTROL_GROUP', 'proxy-suite')} group, or re-run with sudo"
+    primary = env("USER_CONTROL_GROUP", "proxy-suite")
+    # userControl.groups too, each with scopes of its own: whichever holds the one needed.
+    try:
+        groups = [primary] + sorted(g for g in json.loads(env("USER_CONTROL_GROUPS") or "{}") if g != primary)
+    except (ValueError, TypeError):
+        groups = [primary]
+    if len(groups) == 1:
+        return f"join the {primary} group, or re-run with sudo"
+    return f"join a userControl group whose scopes allow it ({', '.join(groups)}), or re-run with sudo"
 
 
 def denied(path, what="read"):
@@ -1205,6 +1213,9 @@ def cmd_proxy(verb="status", *args):
         # A mode stopped on purpose lifts the kill switch; one that fails leaves it up.
         if action == "off" and svc_exists(KILL_SWITCH):
             systemctl("stop", KILL_SWITCH)
+    elif verb == "clash-broker":
+        # proxy-suite-clash-api's ExecStart.
+        _clash_broker_serve()
     elif verb == "auto":
         cmd_proxy_auto(*args)
     elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
@@ -1298,19 +1309,43 @@ def _local_proxy_login():
     return None
 
 
-def _clash(method, path, body=None, timeout=10):
-    """(HTTP status, JSON body or None) from the backend's Clash API; status 0 when unreachable."""
-    # The API is on loopback: never through the shell's HTTP(S)_PROXY.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    data = None if body is None else json.dumps(body).encode()
-    headers = {"Content-Type": "application/json"}
-    # The socks start script's secret for this run: root and the userControl group read it.
-    # Anyone else gets 401, which reads as no API.
+def _clash_secret():
+    """The socks start script's secret for this run: root only (the broker hands the rest out)."""
     try:
         with open(_runtime_file("clash-secret"), encoding="utf-8") as f:
-            headers["Authorization"] = f"Bearer {f.read().strip()}"
+            return f.read().strip()
     except (OSError, UnicodeError):
-        pass
+        return None
+
+
+def _clash(method, path, body=None, timeout=10):
+    """(HTTP status, JSON body or None) from the backend's Clash API; status 0 when unreachable.
+
+    Root reads the secret and asks the API itself; anyone else asks proxy-suite-clash-api,
+    which lets a userControl group's member make the requests their scopes allow.
+    """
+    secret = _clash_secret()
+    broker = env("CLASH_BROKER")
+    if secret is None and broker and os.path.exists(broker):
+        return _clash_via_broker(broker, method, path, body, timeout)
+    return _clash_direct(method, path, body, timeout, secret)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The Clash API never redirects: one that did would lead the broker past its checks."""
+
+    def redirect_request(self, *_):
+        return None
+
+
+def _clash_direct(method, path, body, timeout, secret):
+    # The API is on loopback: never through the shell's HTTP(S)_PROXY.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    data = None if body is None else json.dumps(body).encode()
+    headers = {"Content-Type": "application/json"}
+    # Without the secret the API answers 401, which reads as no API.
+    if secret is not None:
+        headers["Authorization"] = f"Bearer {secret}"
     try:
         # Building the request is part of reaching the API: an unset or malformed
         # CLASH_API is "unreachable", not a traceback out of `status` or `where`.
@@ -1327,6 +1362,210 @@ def _clash(method, path, body=None, timeout=10):
         return status, json.loads(raw) if raw else None
     except ValueError:
         return status, None
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self._path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._path)
+
+
+def _clash_via_broker(broker, method, path, body, timeout):
+    conn = _UnixHTTPConnection(broker, timeout + 5)
+    try:
+        conn.request(method, path, body=None if body is None else json.dumps(body), headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        status, raw = response.status, response.read()
+    except (OSError, http.client.HTTPException):
+        return 0, None
+    finally:
+        conn.close()
+    # The broker's own "not the API": unreachable, as a direct call would read.
+    if status == 502:
+        return 0, None
+    try:
+        return status, json.loads(raw) if raw else None
+    except ValueError:
+        return status, None
+
+
+# --- the Clash API broker -------------------------------------------------------
+#
+# proxy-suite-clash-api: the Clash API's secret is root's; members of the userControl groups
+# reach the API through this, and only for what their scopes cover. A bare secret would
+# let any of them switch what everyone dials and see everyone's connections.
+
+CLASH_TEST_SELECTOR = "proxy-suite-test"
+CLASH_BROKER_MAX_BODY = 64 * 1024
+# Any local user may connect: a caller that stalls, or opens many, holds no thread for long
+# and never all of them.
+CLASH_BROKER_TIMEOUT = 15
+CLASH_BROKER_MAX_CLIENTS = 64
+
+
+def _peer_uid(sock):
+    import struct
+
+    creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    return struct.unpack("3i", creds)[1]
+
+
+def _broker_scopes(uid):
+    """The scopes a caller holds, "*" for root; None when it is in no userControl group."""
+    if uid == 0:
+        return {"*"}
+    import grp
+    import pwd
+
+    try:
+        user = pwd.getpwuid(uid)
+        gids = os.getgrouplist(user.pw_name, user.pw_gid)
+    except (KeyError, OSError):
+        return None
+    try:
+        table = json.loads(env("USER_CONTROL_GROUPS") or "{}")
+    except ValueError:
+        table = {}
+    held = None
+    for gid in gids:
+        try:
+            name = grp.getgrgid(gid).gr_name
+        except KeyError:
+            continue
+        if isinstance(table.get(name), list):
+            held = (held or set()) | set(table[name])
+    return held
+
+
+def _broker_allows(method, path, scopes):
+    """Whether a caller holding `scopes` may make this request; `path` without its query.
+
+    Only what proxy-ctl asks: reads and delay tests for any member, the download test's own
+    selector too, switching the others with `routing`, live connections with `secrets`.
+    Nothing else: not closing connections, the config, the logs or the traffic stream.
+    """
+    if "*" in scopes:
+        return True
+    parts = path.split("/")[1:] if path.startswith("/") else None
+    # Names as the API's router reads them: a "%2F" or "%2E%2E" in one must not turn
+    # /proxies/<name> into another endpoint once decoded and cleaned.
+    if not parts or any(not p or "/" in (u := urllib.parse.unquote(p)) or u in (".", "..") for p in parts):
+        return False
+    if method == "GET":
+        return (
+            parts == ["proxies"]
+            or (parts[0] == "proxies" and len(parts) == 2)
+            or (parts[0] in ("proxies", "group") and len(parts) == 3 and parts[2] == "delay")
+            or (parts == ["connections"] and "secrets" in scopes)
+        )
+    if method == "PUT" and parts[0] == "proxies" and len(parts) == 2:
+        return urllib.parse.unquote(parts[1]) == CLASH_TEST_SELECTOR or "routing" in scopes
+    return False
+
+
+def _clash_broker_serve():
+    """proxy-suite-clash-api's ExecStart: an HTTP server on a Unix socket in front of the API."""
+    path = env("CLASH_BROKER")
+    if not path:
+        die("CLASH_BROKER is not set.")
+    server = _clash_broker_server(path)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    server.serve_forever()
+
+
+def _clash_broker_server(path):
+    import http.server
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+        timeout = CLASH_BROKER_TIMEOUT
+
+        def _reply(self, status, payload):
+            raw = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _handle(self, method):
+            uid = _peer_uid(self.connection)
+            scopes = _broker_scopes(uid)
+            parts = urllib.parse.urlsplit(self.path)
+            if scopes is None or not _broker_allows(method, parts.path, scopes):
+                # repr: the path is the caller's, escape sequences and all.
+                print(f"proxy-suite-clash-api: refused uid {uid}: {method} {parts.path!r}", file=sys.stderr)
+                return self._reply(403, {"message": "not allowed for your userControl scopes"})
+            body = None
+            if method == "PUT":
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    length = -1
+                if not 0 <= length <= CLASH_BROKER_MAX_BODY:
+                    return self._reply(400, {"message": "bad request body"})
+                try:
+                    body = json.loads(self.rfile.read(length) or b"null")
+                except ValueError:
+                    return self._reply(400, {"message": "bad request body"})
+            target = parts.path + (f"?{parts.query}" if parts.query else "")
+            status, answer = _clash_direct(method, target, body, 30, _clash_secret())
+            # 502: the API itself could not be reached, which the client reads as no API.
+            self._reply(status or 502, answer)
+
+        def do_GET(self):
+            self._handle("GET")
+
+        def do_PUT(self):
+            self._handle("PUT")
+
+        def log_message(self, *_):
+            pass
+
+    class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+        slots = threading.BoundedSemaphore(CLASH_BROKER_MAX_CLIENTS)
+
+        def verify_request(self, request, client_address):
+            # Someone in no userControl group is closed on before sending a byte.
+            try:
+                return _broker_scopes(_peer_uid(request)) is not None
+            except OSError:
+                return False
+
+        def process_request(self, request, client_address):
+            # A full house holds the next one back a while (proxy-ctl alone tests 16
+            # outbounds at once), then lets it go.
+            if not self.slots.acquire(timeout=CLASH_BROKER_TIMEOUT):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, client_address)
+            except BaseException:
+                self.slots.release()
+                raise
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self.slots.release()
+
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    server = Server(path, Handler)
+    # Anyone may connect: whom the broker answers, and with what, it decides per request.
+    os.chmod(path, 0o666)
+    return server
 
 
 # --- proxy outbounds test -----------------------------------------------------

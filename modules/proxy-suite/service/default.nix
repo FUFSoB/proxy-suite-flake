@@ -56,6 +56,50 @@ let
   ) derived.proxyInbounds;
   routingScripts = import ./routing-scripts.nix { inherit (context) ctx; };
 
+  # A spool directory the groups holding `scope` write to. userControl.group owns it; with
+  # only userControl.groups holding the scope, root does, and they get it through ACLs
+  # (proxy-suite-acls), which the group bits must leave open: they are the ACL mask.
+  spoolDirMode =
+    scope:
+    if userControlAllows scope then
+      "2770 root ${userControlCfg.group}"
+    else if derived.userControlAnyAllows scope then
+      "2770 root root"
+    else if constants.privileged then
+      "0700 root root"
+    else
+      "0700 - -";
+
+  # What proxy-suite-acls opens to userControl.groups: the spools made by tmpfiles, which no
+  # unit of their own sets up.
+  aclSpools =
+    lib.optionals proxyEnabled [
+      {
+        path = constants.runtimeOutboundsDir;
+        scope = "outbounds";
+      }
+      {
+        path = constants.runtimeSubscriptionsDir;
+        scope = "outbounds";
+      }
+    ]
+    ++ lib.optional derived.proxyInboundsRuntimeEnabled {
+      path = constants.runtimeInboundsDir;
+      scope = "inbounds";
+    }
+    ++ lib.optional derived.awgRuntimeGlobal {
+      path = constants.runtimeAwgDir;
+      scope = "amneziaWg";
+    }
+    ++ lib.optional derived.zapretCutoffEnabled {
+      path = "${constants.zapret2CutoffDir}/requests";
+      scope = "zapret";
+    }
+    ++ lib.optional cfg.whitelistBypass.enable {
+      path = "${constants.stateDir}/whitelist-bypass";
+      scope = "whitelistBypass";
+    };
+
   serviceUnits = import ./units.nix {
     ctx = context.ctx // {
       inherit routingScripts;
@@ -109,10 +153,87 @@ let
       };
     };
   };
+
+  # The Clash API's secret is root's: members of the userControl groups reach the API through
+  # this, and only for what their scopes cover (proxy_ctl.py, _broker_allows).
+  clashBrokerUnit = lib.mkIf (cfg.enable && derived.clashBrokerEnabled) {
+    services.proxy-suite.internal.services.proxy-suite-clash-api = {
+      description = "proxy-suite - the Clash API for userControl's groups, as their scopes allow";
+      after = [ "proxy-suite-socks.service" ];
+      bindsTo = [ "proxy-suite-socks.service" ];
+      wantedBy = [ "proxy-suite-socks.service" ];
+      serviceConfig = {
+        ExecStart = "${control.proxyCtl}/bin/proxy-ctl proxy clash-broker";
+        Restart = "on-failure";
+        RestartSec = 5;
+        RuntimeDirectory = "proxy-suite-clash";
+        RuntimeDirectoryMode = "0755";
+        # Root for the secret's sake (its file is root's), with no capability at all.
+        CapabilityBoundingSet = [ "" ];
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+        # The API is on loopback; nothing else to reach.
+        IPAddressAllow = [ "localhost" ];
+        IPAddressDeny = [ "any" ];
+      };
+    };
+  };
+
+  # userControl.groups cannot own the spools the way userControl.group does: POSIX ACLs let
+  # them in, set again on every boot and whenever the groups change (a changed unit
+  # restarts), so a group dropped from the configuration loses what it had. With
+  # userControl off too: it then only takes away what an earlier configuration granted.
+  aclUnit = lib.mkIf (cfg.enable && constants.privileged && aclSpools != [ ]) {
+    services.proxy-suite.internal.services.proxy-suite-acls = {
+      description = "proxy-suite - give userControl.groups their access to the runtime spools";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "systemd-tmpfiles-setup.service" ];
+      script = lib.concatMapStrings (
+        spool:
+        constants.grantDirAcl pkgs (lib.escapeShellArg spool.path)
+          (derived.userControlExtraGroupsFor spool.scope)
+          "rwX"
+      ) aclSpools;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        # It walks directories the groups write to: whatever a name there comes to point
+        # at, nothing but the spools can change.
+        ProtectSystem = "strict";
+        ReadWritePaths = map (spool: "-${spool.path}") aclSpools;
+        ProtectHome = true;
+        PrivateTmp = true;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = [
+          "CAP_FOWNER"
+          "CAP_DAC_OVERRIDE"
+          "CAP_DAC_READ_SEARCH"
+        ];
+      };
+    };
+  };
 in
 lib.mkMerge [
   autoProxyUnits
   outboundGroupsUnit
+  clashBrokerUnit
+  aclUnit
   {
     services.proxy-suite.internal = {
       # The GUI's pkexec needs its setuid wrapper.
@@ -176,9 +297,9 @@ lib.mkMerge [
       ];
       sysctl = tproxyLanSysctl;
 
-      groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) [
-        userControlCfg.group
-      ];
+      groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) (
+        [ userControlCfg.group ] ++ derived.userControlExtraGroups
+      );
 
       polkit.enable = lib.mkIf (cfg.enable && (userControlEnabled || cfg.gui.enable)) true;
       # The GUI's "Retry as Root" and root toggle run proxy-ctl through pkexec: one
@@ -195,7 +316,7 @@ lib.mkMerge [
         '')
         (lib.mkIf (cfg.enable && userControlEnabled) ''
           polkit.addRule(function(action, subject) {
-            if (!subject.isInGroup("${userControlCfg.group}")) {
+            if (!(${polkit.userControlPolkitMember})) {
               return null;
             }
 
@@ -217,49 +338,30 @@ lib.mkMerge [
       # outbound before the proxy has ever run.
       tmpfiles = lib.mkMerge [
         (lib.mkIf (cfg.enable && proxyEnabled) (
-          map
-            (
-              dir:
-              "d ${dir} ${
-                if userControlAllows "outbounds" then
-                  "2770 root ${userControlCfg.group}"
-                else if constants.privileged then
-                  "0700 root root"
-                else
-                  "0700 - -"
-              } -"
-            )
-            [
-              constants.runtimeOutboundsDir
-              constants.runtimeSubscriptionsDir
-            ]
+          map (dir: "d ${dir} ${spoolDirMode "outbounds"} -") [
+            constants.runtimeOutboundsDir
+            constants.runtimeSubscriptionsDir
+          ]
         ))
         # inbounds.runtime: the users' and listeners' files hold their secrets, so the dir is
         # as closed as outbounds.d, and group-writable only with the inbounds scope.
         (lib.mkIf (cfg.enable && derived.proxyInboundsRuntimeEnabled) (
-          map
-            (
-              dir:
-              "d ${dir} ${
-                if userControlAllows "inbounds" then
-                  "2770 root ${userControlCfg.group}"
-                else if constants.privileged then
-                  "0700 root root"
-                else
-                  "0700 - -"
-              } -"
-            )
-            [
-              constants.runtimeInboundsDir
-              "${constants.runtimeInboundsDir}/users"
-              "${constants.runtimeInboundsDir}/listeners"
-            ]
+          map (dir: "d ${dir} ${spoolDirMode "inbounds"} -") [
+            constants.runtimeInboundsDir
+            "${constants.runtimeInboundsDir}/users"
+            "${constants.runtimeInboundsDir}/listeners"
+          ]
         ))
         # Global AmneziaWG profiles added at runtime. Listable, so the tray and TUI show
         # their names to everyone; each file is 0600 (amneziawg_config.py writes it so).
         (lib.mkIf (cfg.enable && derived.awgRuntimeGlobal) [
           "d ${constants.runtimeAwgDir} ${
-            if userControlAllows "amneziaWg" then "2775 root ${userControlCfg.group}" else "0755 root root"
+            if userControlAllows "amneziaWg" then
+              "2775 root ${userControlCfg.group}"
+            else if derived.userControlAnyAllows "amneziaWg" then
+              "2775 root root"
+            else
+              "0755 root root"
           } -"
         ])
       ];

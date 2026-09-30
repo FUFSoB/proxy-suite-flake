@@ -93,6 +93,18 @@ in
       true
     )
 
+    # listener.auth alone: the Clash API's secret stays root's, and the group that reads the
+    # login only reads through proxy-suite-clash-api (no scopes).
+    (
+      let
+        env = (mkProxyCtlDerived localProxyAuthFixture).proxyCtl.proxySuiteCheck.wrapperEnv;
+      in
+      assert localProxyAuthFixture.config.systemd.services ? proxy-suite-clash-api;
+      assert builtins.fromJSON env.USER_CONTROL_GROUPS == { proxy-suite = [ ]; };
+      assert pkgs.lib.hasInfix "chmod 600 \"$RUNTIME_DIR/clash-secret.tmp\"" localProxyAuthStartScript;
+      true
+    )
+
     # Authenticated mixed inbound is injected at runtime.
     (
       assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat "'' localProxyAuthStartScript;

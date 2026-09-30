@@ -15,6 +15,7 @@ let
     proxyInboundViaOutbounds
     userControlCfg
     userControlAllows
+    userControlExtraGroupsFor
     localProxyAuth
     localProxyAuthEnabled
     localProxyAuthPasswordSource
@@ -150,6 +151,7 @@ let
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${linksFile}"
     ''}
     chmod ${if userControlAllows "secrets" then "640" else "600"} "${linksFile}"
+    ${constants.grantFileAcl pkgs ''"${linksFile}"'' (userControlExtraGroupsFor "secrets") "r"}
   '';
 
   # One file per user for the web server, plus a token index for proxy-ctl. Filled aside
@@ -173,6 +175,7 @@ let
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${subscriptionsFile}"
     ''}
     chmod ${if userControlAllows "secrets" then "640" else "600"} "${subscriptionsFile}"
+    ${constants.grantFileAcl pkgs ''"${subscriptionsFile}"'' (userControlExtraGroupsFor "secrets") "r"}
   '';
 
   startInbounds = pkgs.writeShellScript "proxy-suite-inbounds" ''
@@ -262,6 +265,10 @@ let
           chmod 640 "$RUNTIME_DIR/config.json.tmp"
         ''
     }
+    ${constants.grantFileAcl pkgs ''"$RUNTIME_DIR/config.json.tmp"''
+      (userControlExtraGroupsFor "secrets")
+      "r"
+    }
     mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
 
     # The stats API's socket takes this setgid directory's group: XRay cannot chown it.
@@ -277,6 +284,13 @@ let
       else
         ''install -d -m 2750 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
     }
+    # userControl.groups with the stats scope: into the directory, and onto the socket XRay
+    # makes in it as its own group is (a default entry; the socket's mode caps it).
+    ${lib.optionalString (constants.privileged && userControlExtraGroupsFor "stats" != [ ]) ''
+      ${pkgs.acl}/bin/setfacl -m ${
+        lib.concatMapStringsSep "," (g: "g:${g}:rx,d:g:${g}:rwx") (userControlExtraGroupsFor "stats")
+      } -- "$API_DIR"
+    ''}
 
     ${writeLinksBlock}
     ${writeSubscriptionsBlock}
@@ -326,6 +340,7 @@ let
         echo "proxy-suite: group ${userControlCfg.group} cannot read the stats; they stay root-only" >&2
     ''}
     chmod ${if userControlAllows "stats" then "640" else "600"} "$tmp"
+    ${constants.grantFileAcl pkgs ''"$tmp"'' (userControlExtraGroupsFor "stats") "r"}
     mv -f "$tmp" "$file"
   '';
   # inbounds.runtime: after proxy-ctl changes the spool. The AmneziaWG interfaces only when

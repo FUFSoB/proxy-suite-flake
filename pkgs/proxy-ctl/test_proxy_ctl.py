@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import sys
 import tempfile
 import threading
@@ -114,6 +115,107 @@ class ClashApiTest(EnvTest):
             with self.subTest(api=value), mock.patch.dict(os.environ, {"CLASH_API": value}):
                 self.assertEqual(ctl._clash("GET", "/proxies/proxy", timeout=1), (0, None))
                 self.assertEqual(ctl._outbound_current(), "")
+
+
+class ClashBrokerTest(EnvTest):
+    def test_what_each_scope_may_ask(self):
+        allows = ctl._broker_allows
+        member, routing, secrets = set(), {"routing"}, {"secrets"}
+        for method, path, scopes, expected in (
+            ("GET", "/proxies", member, True),
+            ("GET", "/proxies/proxy", member, True),
+            ("GET", "/proxies/DE%20one/delay", member, True),
+            ("GET", "/group/g/delay", member, True),
+            ("PUT", "/proxies/proxy-suite-test", member, True),
+            ("PUT", "/proxies/proxy", member, False),
+            ("PUT", "/proxies/proxy", routing, True),
+            ("GET", "/connections", member, False),
+            ("GET", "/connections", secrets, True),
+            ("DELETE", "/connections", secrets, False),
+            ("PATCH", "/configs", routing, False),
+            ("GET", "/logs", secrets, False),
+            ("GET", "/proxies/a/b/c", member, False),
+            ("GET", "/proxies/", member, False),
+            # Decoded and cleaned by the API's router, these name another endpoint.
+            ("GET", "/proxies/%2E%2E%2Fconnections", member, False),
+            ("GET", "/proxies/..", member, False),
+            ("PUT", "/proxies/%2E%2E", routing, False),
+            ("GET", "/anything", {"*"}, True),
+        ):
+            with self.subTest(method=method, path=path, scopes=scopes):
+                self.assertEqual(allows(method, path, scopes), expected)
+
+    def test_root_reads_the_secret_everyone_else_asks_the_broker(self):
+        os.environ["CLASH_BROKER"] = self.write("api.sock", "")
+        self.patch("_clash_via_broker", lambda *a: (200, {"via": "broker"}))
+        self.patch("_clash_direct", lambda *a: (200, {"via": "direct"}))
+        self.patch("_clash_secret", lambda: None)
+        self.assertEqual(ctl._clash("GET", "/proxies"), (200, {"via": "broker"}))
+        self.patch("_clash_secret", lambda: "s")
+        self.assertEqual(ctl._clash("GET", "/proxies"), (200, {"via": "direct"}))
+
+    @unittest.skipIf(os.geteuid() == 0, "root holds every scope")
+    def test_end_to_end(self):
+        import grp
+        import http.server
+
+        try:
+            group = grp.getgrgid(os.getgid()).gr_name
+        except KeyError:
+            self.skipTest("no name for this group")
+        seen = []
+
+        class Api(http.server.BaseHTTPRequestHandler):
+            def _answer(self):
+                seen.append((self.command, self.path, self.headers.get("Authorization")))
+                raw = json.dumps({"path": self.path}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            do_GET = do_PUT = _answer
+
+            def log_message(self, *_):
+                pass
+
+        api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
+        self.addCleanup(api.server_close)
+        threading.Thread(target=api.serve_forever, daemon=True).start()
+        self.addCleanup(api.shutdown)
+        self.write("clash-secret", "s3cret\n")
+        sock = self.path("api.sock")
+        os.environ.update(
+            CLASH_API=f"http://127.0.0.1:{api.server_address[1]}",
+            OUTBOUND_INVENTORY_FILE=self.path("outbounds.json"),
+            USER_CONTROL_GROUPS=json.dumps({group: ["routing"]}),
+        )
+        self.patch("CLASH_BROKER_TIMEOUT", 1)
+        broker = ctl._clash_broker_server(sock)
+        self.addCleanup(broker.server_close)
+        threading.Thread(target=broker.serve_forever, daemon=True).start()
+        self.addCleanup(broker.shutdown)
+        self.assertEqual(stat.S_IMODE(os.stat(sock).st_mode), 0o666)
+
+        ask = lambda method, path, body=None: ctl._clash_via_broker(sock, method, path, body, 5)  # noqa: E731
+        self.assertEqual(ask("GET", "/proxies/proxy/delay?url=x&timeout=1"), (200, {"path": "/proxies/proxy/delay?url=x&timeout=1"}))
+        self.assertEqual(ask("PUT", "/proxies/proxy", {"name": "de"})[0], 200)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ask("GET", "/connections")[0], 403)
+        # The secret reaches the API, never the caller; the refused request never left.
+        self.assertEqual([s[2] for s in seen], ["Bearer s3cret", "Bearer s3cret"])
+        self.assertNotIn("/connections", [s[1] for s in seen])
+        # One that connects and says nothing holds up no one else, and not for long.
+        stalled = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(stalled.close)
+        stalled.connect(sock)
+        self.assertEqual(ask("GET", "/proxies")[0], 200)
+        stalled.settimeout(5)
+        self.assertEqual(stalled.recv(1), b"")
+        # In no group at all: closed on unheard, which reads as no API.
+        os.environ["USER_CONTROL_GROUPS"] = json.dumps({"someone-else": []})
+        self.assertEqual(ask("GET", "/proxies"), (0, None))
+        self.assertEqual(len(seen), 3)
 
 
 class WarpDevicesTest(EnvTest):
@@ -684,6 +786,12 @@ class ServiceManagerTest(EnvTest):
         self.assertIn("sudo", ctl.ask_group())
         os.environ["PRIVILEGED"] = "0"
         self.assertNotIn("sudo", ctl.ask_group())
+
+    def test_names_every_user_control_group(self):
+        os.environ.update(USER_CONTROL_GROUP="proxy-suite", USER_CONTROL_GROUPS=json.dumps({"proxy-suite": [], "users": ["perApp"]}))
+        self.assertIn("(proxy-suite, users)", ctl.ask_group())
+        os.environ["USER_CONTROL_GROUPS"] = json.dumps({"proxy-suite": []})
+        self.assertIn("join the proxy-suite group", ctl.ask_group())
 
 
 class AutoProxyTest(EnvTest):

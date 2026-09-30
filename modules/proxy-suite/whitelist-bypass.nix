@@ -28,10 +28,16 @@ let
   # Logins, calls and the links joiners take at runtime (`proxy-ctl wl auth|join|new`); the
   # whitelistBypass scope's group writes them too. tmpfiles makes it before any unit has run,
   # so a creator or joiner that waits on a file there can be given one.
-  groupAccess = privileged && derived.userControlAllows "whitelistBypass";
+  # Groups in userControl.groups get it through ACLs (proxy-suite-acls), which the mode must
+  # leave open: systemd applies it on every start.
+  groupAccess = privileged && derived.userControlAnyAllows "whitelistBypass";
   stateDir = "${derived.constants.stateDir}/whitelist-bypass";
   stateMode = if groupAccess then "0770" else "0700";
-  stateGroup = if groupAccess then cfg.userControl.group else serviceUser;
+  stateGroup =
+    if privileged && derived.userControlAllows "whitelistBypass" then
+      cfg.userControl.group
+    else
+      serviceUser;
   # A runtime file the unit cannot start without, when nothing in the configuration stands in.
   waitFor = file: {
     unitConfig.ConditionPathExists = "%S/proxy-suite/whitelist-bypass/${file}";

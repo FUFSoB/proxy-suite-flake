@@ -2,6 +2,8 @@
 
 let
   inherit (lib) mkOption types;
+
+  scopeType = types.enum (import ./user-control-scopes.nix);
 in
 {
   options.services.proxy-suite.userControl = {
@@ -14,21 +16,7 @@ in
     };
 
     scopes = mkOption {
-      type = types.listOf (
-        types.enum [
-          "services"
-          "perApp"
-          "routing"
-          "outbounds"
-          "secrets"
-          "autoProxy"
-          "zapret"
-          "stats"
-          "inbounds"
-          "whitelistBypass"
-          "amneziaWg"
-        ]
-      );
+      type = types.listOf scopeType;
       default = [ ];
       description = ''
         What the group may do. Empty allows everything.
@@ -51,6 +39,31 @@ in
         "services"
         "routing"
       ];
+    };
+
+    groups = mkOption {
+      type = types.attrsOf (
+        types.submodule {
+          options.scopes = mkOption {
+            type = types.listOf scopeType;
+            default = [ ];
+            description = "What this group may do, as in `userControl.scopes`. Empty allows everything.";
+          };
+        }
+      );
+      default = { };
+      description = ''
+        More groups, each with scopes of its own, alongside `userControl.group`. A member gets
+        what all of their groups allow. `group` stays the one that owns proxy-suite's files;
+        these are given access to them through POSIX ACLs, so the file systems of
+        `/var/lib/proxy-suite` and `/run` must support them (the defaults do).
+      '';
+      example = lib.literalExpression ''
+        {
+          proxy-admins.scopes = [ ];
+          proxy-users.scopes = [ "perApp" "routing" ];
+        }
+      '';
     };
   };
 }

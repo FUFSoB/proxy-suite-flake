@@ -62,6 +62,7 @@ let
       pkgs
       evalProxySuite
       baseModule
+      mkProxyCtlDerived
       ;
   };
   proxychainsChecks = import ./per-app-routing-proxychains.nix {

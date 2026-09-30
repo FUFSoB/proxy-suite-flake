@@ -15,6 +15,7 @@ let
   inherit (import ../derived.nix { inherit lib cfg; })
     constants
     userControlAllows
+    userControlAnyAllows
     zapretGlobalEnabled
     ;
   z2k = zapret2Sources.z2k;
@@ -180,7 +181,13 @@ in
 
   tmpfiles = [
     "d ${dir}/requests ${
-      if userControlAllows "zapret" then "2770 root ${cfg.userControl.group}" else "0700 root root"
+      if userControlAllows "zapret" then
+        "2770 root ${cfg.userControl.group}"
+      # userControl.groups only, through ACLs (proxy-suite-acls): the mode keeps them open.
+      else if userControlAnyAllows "zapret" then
+        "2770 root root"
+      else
+        "0700 root root"
     } -"
   ];
 

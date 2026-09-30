@@ -8,7 +8,8 @@
 {
   lib,
   pkgs,
-  userControlCfg,
+  # {group: [scopes]}, every scope spelled out (derived.nix).
+  userControlGroupScopes,
   # Declared system units, "name.service" or "name.timer"; templates as "name@".
   unitNames,
 }:
@@ -88,10 +89,16 @@ in
         break;
       }
     }
-    // No scopes listed means all of them.
-    var scopes = ${builtins.toJSON userControlCfg.scopes};
-    if (scopes.length === 0 || scopes.indexOf(scope) !== -1) {
-      return polkit.Result.YES;
+    // Any of the subject's groups that holds the scope.
+    var groupScopes = ${builtins.toJSON userControlGroupScopes};
+    for (var group in groupScopes) {
+      if (groupScopes[group].indexOf(scope) !== -1 && subject.isInGroup(group)) {
+        return polkit.Result.YES;
+      }
     }
   '';
+  # Whether the subject is in any userControl group at all: the rule's first test.
+  userControlPolkitMember = lib.concatMapStringsSep " || " (
+    group: "subject.isInGroup(${builtins.toJSON group})"
+  ) (builtins.attrNames userControlGroupScopes);
 }

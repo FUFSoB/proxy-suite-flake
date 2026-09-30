@@ -47,6 +47,40 @@ Members of the group get the listed scopes. An empty `scopes` list grants all of
 Log out and back in after joining the group. Without `userControl`, a change asks for an
 admin password, or you run `proxy-ctl` with sudo.
 
+### Several groups
+
+`userControl.groups` adds more groups, each with scopes of its own. A member gets what all
+of their groups allow:
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  proxy = {
+    enable = true;
+    outbounds = [ { tag = "my-vps"; urlFile = "/run/secrets/my-vps-url"; } ];
+  };
+  userControl = {
+    enable = true;
+    scopes = [ "routing" ];
+    groups = {
+      proxy-admins.scopes = [ ];
+      proxy-users.scopes = [ "perApp" "outbounds" ];
+    };
+  };
+};
+users.users.alice.extraGroups = [ "proxy-admins" ];
+users.users.bob.extraGroups = [ "proxy-users" ];
+```
+
+`userControl.group` still owns proxy-suite's files. The other groups reach them through
+POSIX ACLs, so `/var/lib/proxy-suite` and `/run` need a file system that supports ACLs. ext4,
+btrfs, xfs and tmpfs all do.
+
+The sing-box Clash API's secret stays readable by root only. Other users reach the API
+through `proxy-suite-clash-api`, which decides per request. Any member can read the
+outbounds and test them. Switching a selector through the API needs `routing`, and live
+connections (`proxy-ctl where`) need `secrets`. Nothing else in the API is open to them.
+
 ## Runtime changes and the Nix config
 
 | Change | Lasts |
@@ -81,6 +115,7 @@ back, `F` follows again and `q` quits.
 ## See also
 
 - [`userControl.scopes`](../options/userControl.md#services-proxy-suite-usercontrol-scopes)
+- [`userControl.groups`](../options/userControl.md#services-proxy-suite-usercontrol-groups)
 - [`gui.enable`](../options/gui.md#services-proxy-suite-gui-enable)
 - [`tui.enable`](../options/tui.md#services-proxy-suite-tui-enable)
 - [The full `proxy-ctl help`](../../README.md), at the end of the README

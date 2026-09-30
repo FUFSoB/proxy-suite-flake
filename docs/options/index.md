@@ -330,6 +330,7 @@ services.proxy-suite = {
   userControl = {
     enable = false;
     group = "proxy-suite";
+    groups = { };
     scopes = [ ];
   };
   warp = {

@@ -14,9 +14,16 @@
 
 let
   apCfg = cfg.proxy.autoProxy;
-  inherit ((import ./derived.nix { inherit lib cfg; }).constants) rootInSharedDirConfig;
-  # The autoProxy scope's group writes the directory: `proxy auto learn` queues there.
-  stateDirMode = if userControlAllows "autoProxy" then "0771" else "0751";
+  derived = import ./derived.nix { inherit lib cfg; };
+  inherit (derived.constants) rootInSharedDirConfig;
+  # The autoProxy scope's groups write the directory: `proxy auto learn` queues there. Those
+  # in userControl.groups through ACLs, which the group bits (the ACL mask) leave open.
+  stateDirMode = if derived.userControlAnyAllows "autoProxy" then "0771" else "0751";
+  grantAcl = pkgs.writeShellScript "proxy-suite-autoproxy-acl" (
+    derived.constants.grantDirAcl pkgs (lib.escapeShellArg autoProxyStateDir)
+      (derived.userControlExtraGroupsFor "autoProxy")
+      "rwX"
+  );
   render = import ./autoproxy-render.nix {
     inherit pkgs;
     inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser ifPrivileged;
@@ -47,7 +54,8 @@ let
   clashApiBlock = ''
     socks_config="$(dirname "$index")/config.json"
     clash_api=$(jq -r '.experimental.clash_api.external_controller // empty' "$socks_config" 2>/dev/null || true)
-    clash_secret=$(jq -r '.experimental.clash_api.secret // empty' "$socks_config" 2>/dev/null || true)
+    # Root's copy: config.json no longer holds it (start-scripts.nix).
+    clash_secret=$(tr -d '\r\n' 2>/dev/null < "$(dirname "$index")/clash-secret" || true)
     clash_auth_header() { printf 'Authorization: Bearer %s\n' "$clash_secret"; }
   '';
 
@@ -470,6 +478,9 @@ let
     # rules/, which its group reads (autoproxy-render.nix), and nothing else.
     StateDirectoryMode = stateDirMode;
     UMask = "0027";
+    # Inside the sandbox below, which keeps a name a member left there from leading it
+    # anywhere else.
+    ExecStartPre = "${grantAcl}";
   }
   // lib.optionalAttrs (userControlAllows "autoProxy") { Group = cfg.userControl.group; }
   # Root writes by fixed names in a directory the group writes to: nowhere else, whatever

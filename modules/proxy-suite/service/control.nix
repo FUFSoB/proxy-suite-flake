@@ -136,6 +136,8 @@ in
       RUNTIME_OUTBOUNDS_DIR = constants.runtimeOutboundsDir;
       RUNTIME_SUBS_DIR = constants.runtimeSubscriptionsDir;
       USER_CONTROL_GROUP = userControlCfg.group;
+      # {group: [scopes]}: what proxy-suite-clash-api lets each group's members ask.
+      USER_CONTROL_GROUPS = builtins.toJSON ctx.clashBrokerGroups;
       LOCAL_PROXY_URL = "http://${localProxy.hostPart}:${toString proxyCfg.listener.port}";
       AUTOPROXY_ENABLED = flag proxyCfg.autoProxy.enable;
       AUTOPROXY_STATE_DIR = constants.autoProxyStateDir;
@@ -145,6 +147,9 @@ in
       RUNTIME_DIR = constants.runtimeDir;
       SERVICE_MANAGER = constants.serviceManager;
       PRIVILEGED = flag constants.privileged;
+    }
+    // lib.optionalAttrs ctx.clashBrokerEnabled {
+      CLASH_BROKER = constants.clashBrokerSocket;
     }
     // lib.optionalAttrs (constants.serviceManager == "supervisor") {
       SUPERVISOR_CTL = constants.systemctl;

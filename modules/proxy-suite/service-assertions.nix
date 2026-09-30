@@ -251,6 +251,18 @@ let
     (mkAssertion (cfg.userControl.scopes == [ ] || cfg.userControl.enable)
       "proxy-suite: userControl.scopes is set but userControl.enable is false, so the group gets nothing"
     )
+    (mkAssertion (cfg.userControl.groups == { } || cfg.userControl.enable)
+      "proxy-suite: userControl.groups is set but userControl.enable is false, so those groups get nothing"
+    )
+    (mkAssertion
+      (lib.all (
+        g:
+        builtins.match "[a-z_][a-z0-9_-]*" g != null
+        && g != cfg.userControl.group
+        && g != derived.constants.serviceUser
+      ) (builtins.attrNames cfg.userControl.groups))
+      "proxy-suite: userControl.groups names must be group names (lowercase letters, digits, - and _), and neither userControl.group nor ${derived.constants.serviceUser}"
+    )
     (requireEnabled (
       cfg.warp.enable && cfg.warp.asOutbound != null
     ) proxyEnabled "proxy-suite: warp.asOutbound requires proxy.enable = true")

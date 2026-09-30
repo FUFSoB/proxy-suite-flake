@@ -3,6 +3,7 @@
   pkgs,
   evalProxySuite,
   baseModule,
+  mkProxyCtlDerived,
 }:
 
 let
@@ -35,11 +36,32 @@ let
     enable = true;
     group = "vpnops";
   };
+  # The primary group routes; proxy-admins may do anything, proxy-users what is listed.
+  multiGroupFixture = mkFixture {
+    enable = true;
+    scopes = [ "routing" ];
+    groups = {
+      proxy-admins.scopes = [ ];
+      proxy-users.scopes = [
+        "perApp"
+        "outbounds"
+      ];
+    };
+  };
   disabledFixture = mkFixture { };
   scopesWithoutEnableFixture = mkFixture { scopes = [ "routing" ]; };
+  groupsWithoutEnableFixture = mkFixture { groups.proxy-users.scopes = [ "routing" ]; };
+  primaryInGroupsFixture = mkFixture {
+    enable = true;
+    groups.proxy-suite.scopes = [ "routing" ];
+  };
 
   polkitConfig = fixture: fixture.config.security.polkit.extraConfig;
   service = fixture: name: fixture.config.systemd.services.${name}.serviceConfig;
+  hasUnit = fixture: name: fixture.config.systemd.services ? ${name};
+  failedAssertion =
+    fixture: text: builtins.any (a: !a.assertion && hasInfix text a.message) fixture.config.assertions;
+  wrapperEnv = fixture: (mkProxyCtlDerived fixture).proxyCtl.proxySuiteCheck.wrapperEnv;
 
   # Every unit declaring the autoProxy state directory must carry the group, or
   # the next start chowns it back and `proxy auto list|queue` loses its read.
@@ -75,7 +97,10 @@ in
     # -- userControl: enabled without scopes grants every scope --
     (
       assert allFixture.config.users.groups ? "proxy-suite";
-      assert hasInfix "var scopes = [];" (polkitConfig allFixture);
+      # No scopes listed: every one of them, spelled out.
+      assert hasInfix "var groupScopes = {\"proxy-suite\":[\"services\",\"perApp\"," (
+        polkitConfig allFixture
+      );
       assert hasInfix "subject.isInGroup(\"proxy-suite\")" (polkitConfig allFixture);
       assert hasInfix "\"proxy-suite-zapret2-cutoff.\":\"zapret\"" (polkitConfig allFixture);
       # Declared units by name: systemd asks polkit the same question, with the same unit
@@ -133,7 +158,9 @@ in
 
     # -- userControl: a listed scope grants only itself --
     (
-      assert hasInfix "var scopes = [\"routing\"];" (polkitConfig routingOnlyFixture);
+      assert hasInfix "var groupScopes = {\"proxy-suite\":[\"routing\"]};" (
+        polkitConfig routingOnlyFixture
+      );
       assert rootOnlySecrets routingOnlyFixture;
       assert
         autoProxyGroups routingOnlyFixture == [
@@ -148,12 +175,89 @@ in
       true
     )
 
+    # -- userControl.groups: each group its own scopes, the files opened through ACLs --
+    (
+      let
+        fixture = multiGroupFixture;
+        polkit = polkitConfig fixture;
+        start = socksStart fixture;
+        acls = fixture.config.systemd.services.proxy-suite-acls.script;
+        derived = import ../../modules/proxy-suite/derived.nix {
+          inherit (pkgs) lib;
+          cfg = fixture.config.services.proxy-suite;
+        };
+      in
+      assert fixture.config.users.groups ? "proxy-admins";
+      assert fixture.config.users.groups ? "proxy-users";
+      assert hasInfix
+        "subject.isInGroup(\"proxy-admins\") || subject.isInGroup(\"proxy-suite\") || subject.isInGroup(\"proxy-users\")"
+        polkit;
+      assert hasInfix "\"proxy-suite\":[\"routing\"],\"proxy-users\":[\"perApp\",\"outbounds\"]}" polkit;
+      assert hasInfix "\"proxy-admins\":[\"services\",\"perApp\"," polkit;
+      # outbounds.d: the primary group lacks the scope, so root owns it and the mode keeps
+      # the ACL mask open for those that hold it.
+      assert builtins.elem "d /var/lib/proxy-suite/outbounds.d 2770 root root -" (
+        fixture.config.systemd.tmpfiles.rules
+      );
+      # -n: the mask stays each file's group bits, so a 0600 file stays closed to them.
+      assert hasInfix
+        "setfacl -R -P -n -m g:proxy-admins:rwX,d:g:proxy-admins:rwX,g:proxy-users:rwX,d:g:proxy-users:rwX -- /var/lib/proxy-suite/outbounds.d"
+        acls;
+      # What was granted before goes first: a dropped group loses its access.
+      assert hasInfix "setfacl -R -P -b -- /var/lib/proxy-suite/outbounds.d" acls;
+      assert (service fixture "proxy-suite-acls").ProtectSystem == "strict";
+      # autoProxy: proxy-admins only, the primary group not at all.
+      assert
+        autoProxyGroups fixture == [
+          null
+          null
+          null
+        ];
+      assert (service fixture "proxy-suite-autoproxy").StateDirectoryMode == "0771";
+      assert derived.userControlExtraGroupsFor "autoProxy" == [ "proxy-admins" ];
+      assert pkgs.lib.hasSuffix "-proxy-suite-autoproxy-acl"
+        (service fixture "proxy-suite-autoproxy").ExecStartPre;
+      # Secrets to proxy-admins alone, still 600 for the primary group.
+      assert hasInfix "chmod 600 \"$SHARE_TMP\"" start;
+      assert hasInfix "setfacl -m g:proxy-admins:r -- \"$SHARE_TMP\"" start;
+      assert !(hasInfix "g:proxy-users:r -- \"$SHARE_TMP\"" start);
+      # The Clash API's secret stays root's; the broker answers the groups.
+      assert hasInfix "chmod 600 \"$RUNTIME_DIR/clash-secret.tmp\"" start;
+      # Nor in config.json, which the secrets scope reads: sing-box merges it in.
+      assert !(hasInfix ".experimental.clash_api.secret = " start);
+      assert hasInfix "chmod 400 \"$RUNTIME_DIR/clash-api.json.tmp\"" start;
+      assert hasInfix "run -c \"$RUNTIME_DIR/config.json\" \"\${BACKEND_EXTRA_CONFIG[@]}\"" start;
+      assert (service fixture "proxy-suite-clash-api").CapabilityBoundingSet == [ "" ];
+      assert
+        builtins.fromJSON (wrapperEnv fixture).USER_CONTROL_GROUPS == {
+          proxy-admins = import ../../modules/proxy-suite/options/user-control-scopes.nix;
+          proxy-suite = [ "routing" ];
+          proxy-users = [
+            "perApp"
+            "outbounds"
+          ];
+        };
+      assert (wrapperEnv fixture).CLASH_BROKER == "/run/proxy-suite-clash/api.sock";
+      true
+    )
+
+    # -- userControl.groups: refused without enable, and never the primary group again --
+    (ok (failedAssertion groupsWithoutEnableFixture "userControl.groups is set"))
+    (ok (failedAssertion primaryInGroupsFixture "userControl.groups names must be group names"))
+
     # -- userControl: off by default, with no group, polkit rule or grants --
     (
       assert !(disabledFixture.config.users.groups ? "proxy-suite");
       assert !(hasInfix "subject.isInGroup(\"proxy-suite\")" (polkitConfig disabledFixture));
       assert !(hasInfix "org.freedesktop.systemd1.manage-units" (polkitConfig disabledFixture));
       assert rootOnlySecrets disabledFixture;
+      assert !(hasUnit disabledFixture "proxy-suite-clash-api");
+      # Only taking away what an earlier configuration granted.
+      assert hasInfix "setfacl -R -P -b -- /var/lib/proxy-suite/outbounds.d" (
+        disabledFixture.config.systemd.services.proxy-suite-acls.script
+      );
+      assert !(hasInfix " -m " disabledFixture.config.systemd.services.proxy-suite-acls.script);
+      assert !((wrapperEnv disabledFixture) ? CLASH_BROKER);
       assert
         autoProxyGroups disabledFixture == [
           null

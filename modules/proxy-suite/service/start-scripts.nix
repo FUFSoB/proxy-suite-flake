@@ -166,6 +166,11 @@ let
     } > "${runtimeProxychainsConfig}"
     ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${runtimeProxychainsConfig}"''}
     chmod 640 "${runtimeProxychainsConfig}"
+    # It holds the proxy's password: userControl.groups that run apps through proxychains.
+    ${constants.grantFileAcl pkgs ''"${runtimeProxychainsConfig}"''
+      (ctx.userControlExtraGroupsFor "perApp")
+      "r"
+    }
   '';
 
   mkStartScript =
@@ -231,7 +236,7 @@ let
         AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
         # 0751: sing-box, running as ${constants.serviceUser}, reaches the rules/ inside;
         # 0771 with userControl's autoProxy scope, whose group queues learn requests there.
-        install -d -m ${if userControlAllows "autoProxy" then "0771" else "0751"} "$AUTOPROXY_DIR"
+        install -d -m ${if ctx.userControlAnyAllows "autoProxy" then "0771" else "0751"} "$AUTOPROXY_DIR"
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
 
         # direct is always exit 0; state is keyed by tag, so shifting indices are
@@ -293,6 +298,7 @@ let
             ''
               ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$ENDPOINTS_TMP"''}
               chmod 640 "$ENDPOINTS_TMP"
+              ${constants.grantFileAcl pkgs ''"$ENDPOINTS_TMP"'' ctx.userControlExtraGroups "r"}
             ''
           else
             ''chmod 600 "$ENDPOINTS_TMP"''
@@ -314,6 +320,7 @@ let
         ' <<< "$OUTBOUNDS_JSON" > "$SHARE_TMP")
         ${lib.optionalString (userControlAllows "secrets") ''${chgrp} ${userControlGroup} "$SHARE_TMP"''}
         chmod ${if userControlAllows "secrets" then "640" else "600"} "$SHARE_TMP"
+        ${constants.grantFileAcl pkgs ''"$SHARE_TMP"'' (ctx.userControlExtraGroupsFor "secrets") "r"}
         mv "$SHARE_TMP" "$RUNTIME_DIR/outbound-share.json"
 
         ${lib.optionalString (!pureXrayEnabled) ''
@@ -388,22 +395,23 @@ let
       ''}
       # The Clash API lists every connection and switches outbounds. Loopback alone lets
       # every local user at it, and every web page too (sing-box allows any origin): a
-      # secret per start, readable where outbound-endpoints.json is.
+      # secret per start.
+      BACKEND_EXTRA_CONFIG=()
       if ${jq} -e '.experimental.clash_api? != null' "$RUNTIME_DIR/config.json" >/dev/null; then
         CLASH_SECRET=$(${pkgs.coreutils}/bin/od -An -tx1 -N24 /dev/urandom | ${pkgs.coreutils}/bin/tr -d ' \n')
-        (umask 077 && ${jq} --rawfile s <(printf '%s' "$CLASH_SECRET") '.experimental.clash_api.secret = $s' \
-          "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next")
-        mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
+        # Not in config.json, which the secrets scope reads (`proxy config --raw`): the
+        # backend's alone, which sing-box merges in (a second -c).
+        (umask 077 && ${jq} -n --rawfile s <(printf '%s' "$CLASH_SECRET") '{experimental: {clash_api: {secret: $s}}}' \
+          > "$RUNTIME_DIR/clash-api.json.tmp")
+        ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chown ${constants.serviceUser}:${constants.serviceUser} "$RUNTIME_DIR/clash-api.json.tmp"''}
+        chmod 400 "$RUNTIME_DIR/clash-api.json.tmp"
+        mv "$RUNTIME_DIR/clash-api.json.tmp" "$RUNTIME_DIR/clash-api.json"
+        BACKEND_EXTRA_CONFIG=(-c "$RUNTIME_DIR/clash-api.json")
+        # Root's alone where the host is privileged: userControl's groups ask
+        # proxy-suite-clash-api, which lets them do what their scopes cover. A rootless host
+        # runs as its one user anyway.
         (umask 077 && printf '%s\n' "$CLASH_SECRET" > "$RUNTIME_DIR/clash-secret.tmp")
-        ${
-          if userControlCfg.enable || localProxyAuthEnabled then
-            ''
-              ${constants.ifPrivileged ''${chgrp} ${userControlGroup} "$RUNTIME_DIR/clash-secret.tmp"''}
-              chmod 640 "$RUNTIME_DIR/clash-secret.tmp"
-            ''
-          else
-            ''chmod 600 "$RUNTIME_DIR/clash-secret.tmp"''
-        }
+        chmod 600 "$RUNTIME_DIR/clash-secret.tmp"
         mv "$RUNTIME_DIR/clash-secret.tmp" "$RUNTIME_DIR/clash-secret"
       fi
       # Credentials, read by the backend running as ${constants.serviceUser}. With
@@ -423,6 +431,7 @@ let
               chmod 640 "$backend_config"
             ''
         }
+        ${constants.grantFileAcl pkgs ''"$backend_config"'' (ctx.userControlExtraGroupsFor "secrets") "r"}
       done
       FAKE_IP_CACHE=$(${jq} -r '.experimental.cache_file.path? // empty' "$RUNTIME_DIR/config.json")
       if [ -n "$FAKE_IP_CACHE" ]; then
@@ -452,7 +461,7 @@ let
                 exit "$XRAY_SIDECAR_STATUS"
               fi
 
-              ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json" &
+              ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json" "''${BACKEND_EXTRA_CONFIG[@]}" &
               SING_BOX_PID="$!"
               # Either one going away breaks the outbounds: exit, and let systemd restart both.
               SING_BOX_STATUS=0
@@ -460,11 +469,11 @@ let
               exit "$(( SING_BOX_STATUS == 0 ? 1 : SING_BOX_STATUS ))"
             fi
 
-            exec ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json"
+            exec ${runBackend} ${singBox} run -c "$RUNTIME_DIR/config.json" "''${BACKEND_EXTRA_CONFIG[@]}"
           ''
         else
           ''
-            exec ${runBackend} ${backendBin} run -c "$RUNTIME_DIR/config.json"
+            exec ${runBackend} ${backendBin} run -c "$RUNTIME_DIR/config.json" "''${BACKEND_EXTRA_CONFIG[@]}"
           ''
       }
     '';

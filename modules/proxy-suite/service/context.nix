@@ -52,7 +52,8 @@ let
   builders = import ./builders.nix { inherit lib pkgs; };
 
   polkit = import ./polkit.nix {
-    inherit lib pkgs userControlCfg;
+    inherit lib pkgs;
+    inherit (derived) userControlGroupScopes;
     unitNames =
       let
         declared =

@@ -9,6 +9,9 @@ Part of the [proxy-suite options reference](./index.md).
 - userControl
   - [enable](#services-proxy-suite-usercontrol-enable)
   - [group](#services-proxy-suite-usercontrol-group)
+  - [groups](#services-proxy-suite-usercontrol-groups)
+    - `<name>`
+      - [scopes](#services-proxy-suite-usercontrol-groups-name-scopes)
   - [scopes](#services-proxy-suite-usercontrol-scopes)
 
 <a id="services-proxy-suite-usercontrol-enable"></a>
@@ -26,6 +29,34 @@ Group whose members can run privileged ` proxy-ctl ` commands\.
 
 **Type:** string matching the pattern ^\[a-z_]\[a-z0-9_-]\*$\
 **Default:** `"proxy-suite"`
+
+<a id="services-proxy-suite-usercontrol-groups"></a>
+## services\.proxy-suite\.userControl\.groups
+
+More groups, each with scopes of its own, alongside ` userControl.group `\. A member gets
+what all of their groups allow\. ` group ` stays the one that owns proxy-suite’s files;
+these are given access to them through POSIX ACLs, so the file systems of
+` /var/lib/proxy-suite ` and ` /run ` must support them (the defaults do)\.
+
+**Type:** attribute set of (submodule)\
+**Default:** `{ }`\
+**Example:**
+
+```nix
+{
+  proxy-admins.scopes = [ ];
+  proxy-users.scopes = [ "perApp" "routing" ];
+}
+
+```
+
+<a id="services-proxy-suite-usercontrol-groups-name-scopes"></a>
+## services\.proxy-suite\.userControl\.groups\.\<name>\.scopes
+
+What this group may do, as in ` userControl.scopes `\. Empty allows everything\.
+
+**Type:** list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “inbounds”, “whitelistBypass”, “amneziaWg”)\
+**Default:** `[ ]`
 
 <a id="services-proxy-suite-usercontrol-scopes"></a>
 ## services\.proxy-suite\.userControl\.scopes

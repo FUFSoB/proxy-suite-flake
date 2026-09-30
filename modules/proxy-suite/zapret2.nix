@@ -19,6 +19,8 @@ let
   inherit (import ./derived.nix { inherit lib cfg; })
     constants
     userControlAllows
+    userControlAnyAllows
+    userControlExtraGroupsFor
     zapretGlobalEnabled
     ;
   inherit
@@ -88,9 +90,17 @@ let
   mkPreStart = ''
     ${lib.getExe' pkgs.kmod "modprobe"} nfnetlink_queue 2>/dev/null || true
     install -d -m ${
-      if userControlAllows "zapret" then "2775 -g ${lib.escapeShellArg cfg.userControl.group}" else "0755"
+      if userControlAllows "zapret" then
+        "2775 -g ${lib.escapeShellArg cfg.userControl.group}"
+      # userControl.groups only, through ACLs: the group bits (their mask) stay open.
+      else if userControlAnyAllows "zapret" then
+        "2775"
+      else
+        "0755"
     } ${runtime.stateDir} ${runtime.circularStateDir}
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
+    # In this unit's sandbox: a name a member left here leads nowhere else.
+    ${constants.grantDirAcl pkgs runtime.stateDir (userControlExtraGroupsFor "zapret") "rwX"}
     ${runtime.initScript} start_fw
   '';
 
@@ -102,7 +112,7 @@ let
       ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
       Environment = runtimeEnv;
       # Its own part of the state only: under the sandbox below, the rest stays read-only.
-      StateDirectoryMode = if userControlAllows "zapret" then "2775" else "0755";
+      StateDirectoryMode = if userControlAnyAllows "zapret" then "2775" else "0755";
     }
     # systemd gives the state directory the unit's group on every start: the group's, which
     # edits the lists (as autoProxy's units do).

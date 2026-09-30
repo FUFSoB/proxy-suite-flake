@@ -455,6 +455,15 @@ let
   # proxy-suite-outbound-groups moves failover groups, and "failover" selection, along. Runtime
   # groups can be failover too, so it runs with every Clash API; with nothing to watch it idles.
   outboundGroupsWatch = proxyEnabled && clashApiEnabled;
+  # proxy-suite-clash-api: the Clash API for those in the groups, as their scopes allow; the
+  # secret itself stays root's. With listener.auth alone, userControl.group only reads.
+  clashBrokerEnabled =
+    proxyEnabled
+    && clashApiEnabled
+    && cfg.host.privileged
+    && (userControlEnabled || localProxy.authEnabled);
+  clashBrokerGroups =
+    if userControlEnabled then userControlGroupScopes else { ${userControlCfg.group} = [ ]; };
 
   hasStaticOutbounds = proxyCfg.outbounds != [ ];
   hasSubscriptions = proxyCfg.subscriptions != [ ];
@@ -478,10 +487,32 @@ let
   zapretCutoffProxyFallback =
     zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
   userControlEnabled = userControlCfg.enable;
-  # Whether the group holds a scope; no scopes listed means all of them.
+  # Whether userControl.group, which owns proxy-suite's files, holds a scope; no scopes
+  # listed means all of them. The groups in userControl.groups get theirs through ACLs.
   userControlAllows =
     scope:
     userControlEnabled && (userControlCfg.scopes == [ ] || builtins.elem scope userControlCfg.scopes);
+  # Every group and what it may do, "none listed" spelled out as every scope.
+  userControlGroupScopes = lib.optionalAttrs userControlEnabled (
+    lib.mapAttrs (_: scopes: if scopes == [ ] then import ./options/user-control-scopes.nix else scopes)
+      (
+        lib.mapAttrs (_: g: g.scopes) userControlCfg.groups
+        // {
+          ${userControlCfg.group} = userControlCfg.scopes;
+        }
+      )
+  );
+  # The groups in userControl.groups that hold a scope.
+  userControlExtraGroupsFor =
+    scope:
+    builtins.filter (g: g != userControlCfg.group && builtins.elem scope userControlGroupScopes.${g}) (
+      builtins.attrNames userControlGroupScopes
+    );
+  # Whether any group holds it.
+  userControlAnyAllows = scope: userControlAllows scope || userControlExtraGroupsFor scope != [ ];
+  userControlExtraGroups = lib.optionals userControlEnabled (
+    builtins.attrNames userControlCfg.groups
+  );
   managerFlag = lib.optionalString (cfg.host.serviceManager == "systemd-user") " --user";
   constants = {
     inherit stateDir runtimeDir;
@@ -539,6 +570,34 @@ let
       ProtectHome = true;
       PrivateTmp = true;
     };
+    # POSIX ACLs for the groups in userControl.groups, which cannot own a file the way
+    # userControl.group does. Shell text, for root.
+    # grantFileAcl: after a file's chmod (which sets the ACL mask), `perm` for each group.
+    grantFileAcl =
+      pkgs: path: groups: perm:
+      lib.optionalString (cfg.host.privileged && groups != [ ]) ''
+        ${pkgs.acl}/bin/setfacl -m ${lib.concatMapStringsSep "," (g: "g:${g}:${perm}") groups} -- ${path}
+      '';
+    # grantDirAcl: a directory and all in it, for each group, and what is made in it later
+    # (default entries). What was granted before is taken away first, so a group dropped
+    # from the configuration loses access; -b keeps each file's effective bits. Nothing for
+    # a directory not there yet. -P: never through a symlink a member left in it; a unit
+    # running it keeps the rest of the file system read-only as well.
+    # -n: each file keeps its mask, its group bits, so a group gets no more than the
+    # file's own group would: nothing of a 0600 key. Recalculated, the mask would take
+    # `perm` whole.
+    grantDirAcl =
+      pkgs: path: groups: perm:
+      lib.optionalString cfg.host.privileged ''
+        if [ -d ${path} ]; then
+          ${pkgs.acl}/bin/setfacl -R -P -b -- ${path}
+          ${lib.optionalString (groups != [ ]) ''
+            ${pkgs.acl}/bin/setfacl -R -P -n -m ${
+              lib.concatMapStringsSep "," (g: "g:${g}:${perm},d:g:${g}:${perm}") groups
+            } -- ${path}
+          ''}
+        fi
+      '';
     # Socket marks and IP_TRANSPARENT, TUN and auto_redirect, listeners below 1024, ICMP.
     backendCaps = [
       "net_admin"
@@ -593,6 +652,7 @@ let
     '';
     # Written by every backend start script; proxy-ctl reads the socks copy.
     outboundInventoryFile = "${runtimeDir}/proxy-suite-socks/outbounds.json";
+    clashBrokerSocket = "${runtimeDir}/proxy-suite-clash/api.sock";
 
     inboundStatsApiSocket = "${runtimeDir}/proxy-suite-inbounds/api/stats.sock";
     # Mark and table sending the AmneziaWG listeners' diverted packets to the local stack,
@@ -709,6 +769,10 @@ in
     userControlCfg
     userControlEnabled
     userControlAllows
+    userControlGroupScopes
+    userControlExtraGroupsFor
+    userControlAnyAllows
+    userControlExtraGroups
     sshProxyCfg
     sshProxyOutboundEnabled
     sshProxyNativeOutbound
@@ -763,6 +827,8 @@ in
     subscriptionTags
     groupTags
     outboundGroupsWatch
+    clashBrokerEnabled
+    clashBrokerGroups
     hasSubscriptions
     hasAvailableOutbounds
     collapseNamedOutbounds
