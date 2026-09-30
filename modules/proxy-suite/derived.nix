@@ -606,6 +606,8 @@ let
     ];
 
     zapret2StateDir = "${stateDir}/zapret2";
+    # The running global instance's strategy map, which proxy-ctl names state.tsv's rows by.
+    zapret2StrategiesFile = "${runtimeDir}/proxy-suite-zapret/strategies.json";
     # Not under zapret2/, which the zapret scope's group writes to: root works here by
     # fixed names (the group asks for probes in requests/).
     zapret2CutoffDir = "${stateDir}/zapret2-cutoff";

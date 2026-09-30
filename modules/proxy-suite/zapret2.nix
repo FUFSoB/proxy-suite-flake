@@ -149,7 +149,9 @@ in
         wants = [ "network-online.target" ];
         conflicts = awgServiceNames;
         wantedBy = [ "multi-user.target" ];
-        preStart = mkPreStart;
+        preStart = mkPreStart + ''
+          ln -sfn ${globalRuntime}/strategies.json ${constants.zapret2StrategiesFile}
+        '';
         runtimeDirectory = "proxy-suite-zapret";
         stateDirectory = "proxy-suite/zapret2";
         execStart = "${runtime.daemonScript}";

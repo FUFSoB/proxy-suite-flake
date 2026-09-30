@@ -1222,6 +1222,32 @@ class ZapretAutoTest(EnvTest):
         ok(ctl.cmd_zapret_auto, "forget", "2001:db8::1")
         self.assertIn("zapret auto add <domain>", run(ctl.cmd_zapret_auto, "add", "1.2.3")[2])
 
+    def test_list_names_the_strategy_remembered_for_the_apex(self):
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        self.write("zapret-hosts-auto.txt", "www.blocked.example\nnew.example\n")
+        self.write(
+            "circular/state.tsv",
+            "# key\thost\tstrategy\tts\tmode\tsni\n"
+            "rkn_tcp\tblocked.example\t3\t1\tfrozen\t\n"
+            "http_rkn\tblocked.example|4\t2\t1\tauto\thcaptcha.com\n",
+        )
+        os.environ["ZAPRET_STRATEGIES_FILE"] = self.write(
+            "strategies.json",
+            {"rkn_tcp": {"3": ["fake:blob=x:repeats=6", "multisplit:pos=1", "fake:blob=y"]}},
+        )
+        out = run(ctl.cmd_zapret_auto, "list")[1].splitlines()
+        self.assertEqual(
+            out,
+            [
+                "www.blocked.example  rkn_tcp #3 (fake + multisplit), frozen; http_rkn #2, fake SNI hcaptcha.com",
+                "new.example",
+            ],
+        )
+        # A missing or unreadable map still names the profile and the number.
+        os.environ["ZAPRET_STRATEGIES_FILE"] = self.path("gone.json")
+        self.assertIn("rkn_tcp #3, frozen", run(ctl.cmd_zapret_auto, "list")[1])
+        self.assertEqual(ctl._zapret_strategy_summary("notblocked.example"), "")
+
 
 class InboundsTest(EnvTest):
     def test_stats(self):

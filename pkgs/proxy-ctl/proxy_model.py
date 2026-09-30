@@ -394,9 +394,11 @@ def zapret_rows(_):
     if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
         return []
     rows = {}
+    strategy_rows, strategies = ctl._zapret_strategy_rows(), ctl._zapret_strategy_map()
     for kind, name in ZAPRET_LISTS:
         for host in _lines(name):
-            rows.setdefault(f"{kind}:{host}", {"key": f"{kind}:{host}", "host": host, "kind": kind})
+            strategy = "" if kind == "excluded" else ctl._zapret_strategy_summary(host, strategy_rows, strategies)
+            rows.setdefault(f"{kind}:{host}", {"key": f"{kind}:{host}", "host": host, "kind": kind, "strategy": strategy})
     return list(rows.values())
 
 
@@ -840,7 +842,7 @@ TABS = [
         "zapret",
         "zapret",
         lambda s: "proxy-suite-zapret" in s or ctl.env("ZAPRET_AUTO_ENABLED") == "1",
-        [("host", "Host"), ("kind", "List")],
+        [("host", "Host"), ("kind", "List"), ("strategy", "Strategy")],
         zapret_rows,
         summary=zapret_summary,
         actions=[

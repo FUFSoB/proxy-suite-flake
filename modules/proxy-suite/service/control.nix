@@ -130,6 +130,7 @@ in
       # Only the system-wide instance reads the site lists; per-app zapret handles all traffic.
       ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2" && zapretGlobalEnabled);
       ZAPRET_STATE_DIR = constants.zapret2StateDir;
+      ZAPRET_STRATEGIES_FILE = constants.zapret2StrategiesFile;
       ZAPRET_CUTOFF_ENABLED = flag zapretCutoffEnabled;
       ZAPRET_CUTOFF_DIR = constants.zapret2CutoffDir;
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;

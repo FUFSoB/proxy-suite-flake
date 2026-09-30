@@ -142,6 +142,7 @@ in
       {
         nativeBuildInputs = [
           pkgs.gnugrep
+          pkgs.jq
           pkgs.lua
         ];
       }
@@ -215,6 +216,15 @@ in
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 1
         grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST>'$" "${z2kRuntime}/config"
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
+
+        # proxy-ctl names state.tsv's rows by this map: keyed circulars by key, the
+        # others by instance, a template's strategies under the profile importing it.
+        jq -e '.rkn_tcp["1"] | map(split(":")[0]) == ["tls_client_hello_clone", "fake", "multisplit"]' "${z2kRuntime}/strategies.json"
+        jq -e '.cf_extra == .rkn_tcp' "${z2kRuntime}/strategies.json"
+        jq -e '.http_rkn["1"] == ["http_methodeol:payload=http_req:dir=out"]' "${z2kRuntime}/strategies.json"
+        jq -e 'has("yt_tcp") and has("gv_tcp") and has("yt_quic")' "${z2kRuntime}/strategies.json"
+        jq -e 'keys == ["circular_1_1", "circular_3_1"]' "${globalRuntime}/strategies.json"
+        if grep -qF 'strategy=' "${z2kRuntime}/strategies.json"; then exit 1; fi
 
         # z2k's Lua in its own order: ranges (repeats=6-10) resolve before its strategies fire.
         grep -qE -- 'z2k-fooling-ext\.lua --lua-init=@[^ ]+/z2k-range-rand\.lua --lua-init=@[^ ]+/z2k-modern-core\.lua' "${z2kRuntime}/config"

@@ -3618,6 +3618,54 @@ def _zapret_strategy_drop(domain):
     _replace_lines(path, keep)
 
 
+def _zapret_strategy_rows():
+    """state.tsv as (key, host, strategy, mode, sni): the strategy each profile's rotation
+    settled on per domain. The host may carry a |4 or |6 address family."""
+    rows = []
+    for fields in _tsv(_zapret_auto_file("circular/state.tsv")):
+        if len(fields) < 3 or fields[0].startswith("#") or not fields[2].isdigit():
+            continue
+        fields += [""] * (6 - len(fields))
+        rows.append((fields[0], fields[1].split("|", 1)[0], fields[2], fields[4], fields[5]))
+    return rows
+
+
+def _zapret_strategies_for(domain, rows=None):
+    """The rows for domain: circular keys them by the domain it rotates on, usually the apex."""
+    return [r for r in (_zapret_strategy_rows() if rows is None else rows) if r[1] and (domain == r[1] or domain.endswith(f".{r[1]}"))]
+
+
+def _zapret_strategy_map():
+    """{key: {strategy: [desync instances]}} of the running global instance, or {}."""
+    return read_json_or(env("ZAPRET_STRATEGIES_FILE"), {})
+
+
+def _zapret_strategy_specs(row, strategies):
+    specs = strategies.get(row[0])
+    specs = specs.get(row[2]) if isinstance(specs, dict) else None
+    return [s for s in specs if isinstance(s, str)] if isinstance(specs, list) else []
+
+
+def _zapret_strategy_text(row, strategies):
+    """"rkn_tcp #3 (fake + multisplit)": the profile's key, the strategy number, what it does."""
+    key, _, n, mode, sni = row
+    text = f"{key} #{n}"
+    names = " + ".join(dict.fromkeys(s.split(":", 1)[0] for s in _zapret_strategy_specs(row, strategies)))
+    if names:
+        text += f" ({names})"
+    if mode == "frozen":
+        text += ", frozen"
+    if sni:
+        text += f", fake SNI {sni}"
+    return text
+
+
+def _zapret_strategy_summary(domain, rows=None, strategies=None):
+    """Every strategy remembered for domain, "; "-joined, or ""."""
+    strategies = _zapret_strategy_map() if strategies is None else strategies
+    return "; ".join(_zapret_strategy_text(r, strategies) for r in _zapret_strategies_for(domain, rows))
+
+
 def _truncate(path):
     _replace_lines(path, lambda _: False)
 
@@ -3643,10 +3691,14 @@ def cmd_zapret_auto(verb="list", domain="", *_):
     if verb in ("add", "forget", "exclude", "unpin", "include") and not _zapret_auto_host(domain):
         usage(f"zapret auto {verb} <domain>")
     if verb == "list":
-        if os.path.isfile(auto) and os.path.getsize(auto) > 0:
-            sys.stdout.write(read_text(auto))
-        else:
+        hosts = [h for h in lines(read_text(auto)) if h] if os.path.isfile(auto) else []
+        if not hosts:
             print("No hostnames learned yet.")
+        rows, strategies = _zapret_strategy_rows(), _zapret_strategy_map()
+        width = max(map(len, hosts), default=0)
+        for host in hosts:
+            summary = _zapret_strategy_summary(host, rows, strategies)
+            print(f"{host:<{width}}  {summary}" if summary else host)
     elif verb == "add":
         _zapret_auto_edit(user, domain, "add")
         print(f"Pinned {domain}: zapret treats it as blocked.")
@@ -3924,6 +3976,12 @@ def cmd_where(domain="", *_):
             verdict = verdict or "direct, with the zapret bypass"
         else:
             _where_row("zapret", "not learned, not pinned, not excluded")
+        # Remembered for hosts a source's own lists cover too, learned or not.
+        strategies = _zapret_strategy_map()
+        for row in _zapret_strategies_for(domain):
+            _where_row("strategy", _zapret_strategy_text(row, strategies))
+            for spec in _zapret_strategy_specs(row, strategies):
+                _where_row("", f"  --lua-desync={spec}")
 
     if local:
         zapret = verdict == "direct, with the zapret bypass"
