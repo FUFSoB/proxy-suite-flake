@@ -207,8 +207,13 @@ in
         grep -qF -- 'key=rkn_tcp:nld=2:failure_detector=z2k_fail_tls_alert:retrans=3:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset' "${z2kRuntime}/config"
         grep -qF -- 'failure_detector=z2k_fail_quic_silence' "${z2kRuntime}/config"
         grep -qF -- ':fool=z2k_dynamic_ttl' "${z2kRuntime}/config"
-        grep -qF -- '/extra_strats/TCP_Discord.txt <HOSTLIST> ' "${z2kRuntime}/config"
+        # A --hostlist-auto profile wins every named flow, so the one that learns is
+        # last and has no strategies; rkn_tcp reads what it learned and leaves
+        # YouTube's hosts to yt_tcp/gv_tcp.
+        grep -qF -- '/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO> --hostlist-exclude=' "${z2kRuntime}/config"
+        grep -qE -- '<HOSTLIST_NOAUTO> --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --filter-tcp=' "${z2kRuntime}/config"
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 1
+        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST>'$" "${z2kRuntime}/config"
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
 
         # z2k's Lua in its own order: ranges (repeats=6-10) resolve before its strategies fire.
@@ -318,6 +323,9 @@ in
 
         dry_run ${z2kRuntime} z2k.args
         test "$(grep -cx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" z2k.args)" = 1
+        # Nothing follows the learning profile, so no profile after it can lose to it.
+        test "$(sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -c -- '^--new$')" = 0
+        if sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -q -- '^--lua-desync='; then exit 1; fi
 
         touch "$out"
       '';

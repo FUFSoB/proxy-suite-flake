@@ -157,17 +157,28 @@ let
             sed -n '/^NFQWS2_OPT="/,/^"$/p' generated | sed '1s/^NFQWS2_OPT="//; $d' | tr '\n' ' ' >raw
             grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no profiles" >&2; exit 1; }
 
-            # Its learned-host list becomes ours (only the first profile learns), its
-            # whitelist gains our excludes, and the circular args it pins to the zapret2
-            # docs are dropped so autoHostlist fills them in.
+            # Its learned-host list becomes ours, its whitelist gains our excludes, and
+            # the circular args it pins to the zapret2 docs are dropped so autoHostlist
+            # fills them in. A profile with --hostlist-auto wins every flow with a known
+            # name (nfq2/desync.c), so learning goes in a last profile of its own with no
+            # strategies, as z2k's own autohostlist does: on rkn_tcp it would take
+            # YouTube from yt_tcp/gv_tcp below it. rkn_tcp then leaves their hosts to
+            # them even once learned or added by hand.
             awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
                 -v wl="--hostlist-exclude=$root/lists/whitelist.txt" \
+                -v yt="--hostlist-exclude=$root/extra_strats/TCP/YT/List.txt --hostlist-exclude=$root/extra_strats/TCP/YT_GV/List.txt" \
                 -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" '
               {
                 for (i = 1; i <= NF; i++) {
                   t = $i
+                  if (t == "--new") {
+                    prof++
+                  } else if (t ~ /^--filter-tcp=/ && !(prof in ports)) {
+                    ports[prof] = substr(t, 14)
+                  }
                   if (t == disc) {
-                    t = (seen++ ? "<HOSTLIST_NOAUTO>" : "<HOSTLIST>") hsuf
+                    t = "<HOSTLIST_NOAUTO>" hsuf
+                    if (!seen++) { t = t " " yt; learner = prof }
                   } else if (t == wl) {
                     t = t esuf
                   } else if (t ~ /^--lua-desync=circular:/) {
@@ -178,6 +189,10 @@ let
                   }
                   printf "%s%s", (i > 1 ? " " : ""), t
                 }
+              }
+              END {
+                if (!seen || !(learner in ports)) { print "z2k general TLS profile not found" > "/dev/stderr"; exit 1 }
+                printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
               }' raw >body
 
             awk -v z=${src} '
