@@ -284,7 +284,13 @@ let
             elif .settings.vnext then {server: .settings.vnext[0].address, port: .settings.vnext[0].port}
             elif .settings.servers then {server: .settings.servers[0].address, port: .settings.servers[0].port}
             else null end;
-          def udp: (.type // .protocol) as $t | (["hysteria", "hysteria2", "tuic"] | index($t) != null) or .quic? == true;
+          # XRay dials XHTTP over HTTP/3, on UDP, when its ALPN is h3 alone (and not REALITY);
+          # mKCP is UDP as well. Their servers have no TCP handshake to time either.
+          def udp: (.type // .protocol) as $t | .streamSettings.network? as $net
+            | (["hysteria", "hysteria2", "tuic"] | index($t) != null) or .quic? == true
+              or ($net == "xhttp" and .streamSettings.security? == "tls"
+                  and .streamSettings.tlsSettings.alpn? == ["h3"])
+              or $net == "kcp" or $net == "mkcp";
           ($sidecar | map({key: .tag, value: .}) | from_entries) as $real
           | [.[] | select(.type != "selector" and .type != "urltest")
              | (.tag | ltrimstr("proxy-suite-ob-")) as $tag

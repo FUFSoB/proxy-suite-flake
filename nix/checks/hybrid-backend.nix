@@ -90,6 +90,10 @@ in
       assert pkgs.lib.hasInfix "--backend sing-box" hybridStartScript;
       assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
+      # The outbounds test pings a sidecar outbound's real server, over UDP when XRay dials
+      # XHTTP over HTTP/3 or mKCP: no TCP handshake to time there.
+      assert pkgs.lib.hasInfix ''.streamSettings.tlsSettings.alpn? == ["h3"]'' hybridStartScript;
+      assert pkgs.lib.hasInfix ''$net == "kcp"'' hybridStartScript;
       assert pkgs.lib.hasInfix "hybrid XRay json sidecar" hybridXrayRawStartScript;
       assert pkgs.lib.hasInfix ''{type: "vless", tag: $tag, server: "127.0.0.1"''
         hybridXrayRawStartScript;
