@@ -160,6 +160,13 @@ in
       assert !(pkgs.lib.hasInfix "SOCKS_WAS_ACTIVE" subscriptionOnlyUpdateScript);
       true
     )
+    # ...and only when a cache changed: the timer fires after every switch, and an unchanged
+    # refresh must not cut the proxy's connections.
+    (
+      assert pkgs.lib.hasInfix ''if [ "$SUB_CACHE_CHANGED" -eq 1 ]; then'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "/bin/cmp -s" subscriptionOnlyUpdateScript;
+      true
+    )
     (
       assert pkgs.lib.hasInfix "is-active --quiet proxy-suite-per-app-tun"
         subscriptionPerAppTunUpdateScript;

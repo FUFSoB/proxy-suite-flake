@@ -43,7 +43,10 @@ let
     ${lib.concatMapStrings mkSubscriptionFetchBlock proxyCfg.subscriptions}
     ${runtimeSubscriptionsFetchBlock}
 
-    if [ "$FAILED" -eq 0 ]; then
+    # Only a changed cache: the timer runs this 5 minutes after every switch and daily, and
+    # a restart drops every connection through the proxy, the inbounds' users' included. A
+    # failed subscription keeps its old cache, so the others' changes still apply.
+    if [ "$SUB_CACHE_CHANGED" -eq 1 ]; then
       ${restartActiveConfigConsumersBlock}
     fi
     exit "$FAILED"

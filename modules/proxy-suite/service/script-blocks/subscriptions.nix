@@ -46,10 +46,19 @@ let
       } "$1" >/dev/null 2>&1
     }
 
+    # Set when a fetch leaves a cache different from before, so the update unit restarts the
+    # proxy only for a change: a restart cuts every connection through it.
+    SUB_CACHE_CHANGED=0
+
     _proxy_suite_commit_subscription_cache() {
       local tmp="$1" target="$2" tag="$3"
       if _proxy_suite_valid_subscription_cache "$tmp"; then
-        mv "$tmp" "$target"
+        if [ -f "$target" ] && ${pkgs.diffutils}/bin/cmp -s "$tmp" "$target"; then
+          rm -f "$tmp"
+        else
+          mv "$tmp" "$target"
+          SUB_CACHE_CHANGED=1
+        fi
         return 0
       fi
       rm -f "$tmp"
