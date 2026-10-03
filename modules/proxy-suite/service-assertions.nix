@@ -791,6 +791,40 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.hysteria.portHopping == null || hostKind == "nixos"
       ) "${prefix}: hysteria.portHopping needs a NixOS host")
+      # Share variants rewrite a link's query, which vmess (a JSON blob) and the others lack.
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.shareVariants == [ ]
+        || builtins.elem l.type [
+          "vless"
+          "trojan"
+          "hysteria2"
+        ]
+      ) "${prefix}: shareVariants are for vless, trojan and hysteria2 listeners")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || (
+          let
+            names = map (v: v.name) l.shareVariants;
+          in
+          lib.length (lib.unique names) == lib.length names && !builtins.elem "onion" names
+        )
+      ) "${prefix}: shareVariants need names of their own, and not \"onion\"")
+      (mkAssertion (
+        !proxyInboundsEnabled || lib.all (v: v.mode == null || l.transport.type == "xhttp") l.shareVariants
+      ) "${prefix}: a share variant's mode is for xhttp listeners only")
+      (mkAssertion (
+        !proxyInboundsEnabled || lib.all (v: v.portHopping == null || l.type == "hysteria2") l.shareVariants
+      ) "${prefix}: a share variant's portHopping is for hysteria2 listeners only")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || lib.all (
+          v:
+          (v.fingerprint == null && v.alpn == null && v.serverName == null)
+          || tlsTerminated
+          || l.reality.enable
+        ) l.shareVariants
+      ) "${prefix}: a share variant's fingerprint, alpn and serverName need tls or reality")
       # A PROXY header opens a TCP stream; raw JSON listeners set their own sockopt.
       (mkAssertion
         (

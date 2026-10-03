@@ -144,8 +144,9 @@ Changes and secrets need root or the userControl group.
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--onion] [--qr|--json]
-                                         share link or client JSON; --onion: via the onion service
+  inbounds link <tag> [user] [--onion|--variant=<name>] [--qr|--json]
+                                         share link or client JSON; --onion: via the onion
+                                         service; --variant: one of the listener's shareVariants
   inbounds link <tag> [user] --config [--qr]
                                          AmneziaWG client .conf or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON
@@ -199,6 +200,7 @@ INBOUND_ADD_FLAGS = {
     "--method": "shadowsocks cipher",
     "--share-port": "port in share links",
     "--share-address": "address in share links",
+    "--fingerprint": "browser fingerprint in share links (fp)",
     "--order": "position in links and subscriptions",
     "--masquerade": "hysteria2: site shown to anything else",
     "--salamander": "hysteria2: Salamander obfuscation",
@@ -870,6 +872,7 @@ COMPLETE = {
         "flags": {
             "--qr": "print a QR code",
             "--onion": "the link through the onion service",
+            "--variant=": "one of the listener's share variants: --variant=<name>",
             "--json": "the client's outbound JSON",
             "--config": "an AmneziaWG client's .conf",
             "--server-json": "the server's inbound JSON",
@@ -1370,9 +1373,25 @@ class _UnixHTTPConnection(http.client.HTTPConnection):
         self._path = path
 
     def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(self._path)
+        # A Unix socket whose listen queue is full refuses at once with EAGAIN, timeout or
+        # not: a burst of callers (a whole outbounds test) is waited out, not read as no API.
+        deadline = time.monotonic() + (self.timeout or 0)
+        while True:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            try:
+                sock.connect(self._path)
+            except BlockingIOError:
+                sock.close()
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+                continue
+            except BaseException:
+                sock.close()
+                raise
+            self.sock = sock
+            return
 
 
 def _clash_via_broker(broker, method, path, body, timeout):
@@ -1532,6 +1551,9 @@ def _clash_broker_server(path):
     class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         daemon_threads = True
         slots = threading.BoundedSemaphore(CLASH_BROKER_MAX_CLIENTS)
+        # socketserver listens with a queue of 5: the rest of a burst that arrives while
+        # this thread checks a caller's groups was refused before it could be accepted.
+        request_queue_size = CLASH_BROKER_MAX_CLIENTS
 
         def verify_request(self, request, client_address):
             # Someone in no userControl group is closed on before sending a byte.
@@ -4570,7 +4592,8 @@ def _inbound_server_json(tag):
 
 
 def _inbound_link_for(tag, user="", *_, field="link", variant=""):
-    """variant "onion": the link to the listener through the onion service."""
+    """variant "onion": the link to the listener through the onion service; any other: the
+    listener's share variant of that name."""
     matches = [
         x
         for x in _inbound_links()
@@ -4579,6 +4602,8 @@ def _inbound_link_for(tag, user="", *_, field="link", variant=""):
     if not matches:
         if variant == "onion":
             die(f"No onion link for {tag}: is it in tor.onionService.listeners, and has Tor written its address?")
+        if variant:
+            die(f"No share variant '{variant}' for {tag}: see its shareVariants, or `proxy-ctl inbounds list`.")
         die(f"Unknown inbound, or no share link for it: {tag}")
     if len(matches) > 1:
         sys.stdout.flush()
@@ -4884,15 +4909,18 @@ def cmd_inbounds(verb="list", *args):
         row = "  {:<24} {:<16} {:<14} {:<8} {:<8}" + (" {}" if sources else "")
         print(row.format("TAG", "USER", "TYPE", "PORT", "STATE", "SOURCE").rstrip())
         for x in _inbound_links():
-            kind = _s(x.get("type")) + (" (onion)" if x.get("variant") == "onion" else "")
+            kind = _s(x.get("type")) + (f" ({_s(x.get('variant'))})" if x.get("variant") else "")
             tag = _s(x.get("tag"))
             print(row.format(tag, _s(x.get("user")), kind, _s(x.get("port")), state, sources.get(tag, "nix")).rstrip())
     elif verb in ("link", "qr"):
         rest = [a for a in args if not a.startswith("--")]
         if not rest:
-            usage("inbounds link <tag> [user] [--onion] [--qr|--json|--config|--server-json]")
+            usage("inbounds link <tag> [user] [--onion|--variant=<name>] [--qr|--json|--config|--server-json]")
         qr = verb == "qr" or "--qr" in args
         variant = "onion" if "--onion" in args else ""
+        for a in args:
+            if a.startswith("--variant="):
+                variant = a[len("--variant=") :]
         if "--server-json" in args:
             _inbound_server_json(rest[0])
         elif "--json" in args:

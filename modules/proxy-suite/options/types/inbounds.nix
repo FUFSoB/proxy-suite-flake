@@ -309,6 +309,92 @@ let
     };
   };
 
+  # Browsers whose TLS ClientHello a client can imitate (uTLS), as share links name them.
+  fingerprintType = types.enum [
+    "chrome"
+    "firefox"
+    "safari"
+    "ios"
+    "android"
+    "edge"
+    "360"
+    "qq"
+    "random"
+    "randomized"
+  ];
+
+  # One more link per user to a listener, with only what the client sends changed.
+  shareVariantType = types.submodule {
+    options = {
+      name = mkOption {
+        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*";
+        description = ''
+          Names the variant: in its links' labels, after the listener's tag, and as `variant` in
+          `links.json` (`proxy-ctl inbounds link <tag> --variant=<name>`). Not "onion", which
+          the onion service's links use.
+        '';
+        example = "firefox";
+      };
+
+      fingerprint = mkOption {
+        type = types.nullOr fingerprintType;
+        default = null;
+        description = "Browser whose TLS ClientHello the client imitates (`fp`), instead of the listener's `shareFingerprint`.";
+        example = "firefox";
+      };
+
+      alpn = mkOption {
+        type = types.nullOr (
+          types.listOf (
+            types.enum [
+              "h3"
+              "h2"
+              "http/1.1"
+            ]
+          )
+        );
+        default = null;
+        description = ''
+          ALPN in the link, instead of `tls.alpn`: what the client offers, and so which HTTP
+          version an xhttp client speaks. `[ ]` leaves it out, for the client's default. `null`:
+          the listener's.
+        '';
+        example = [ "http/1.1" ];
+      };
+
+      mode = mkOption {
+        type = types.nullOr (
+          types.enum [
+            "auto"
+            "packet-up"
+            "stream-up"
+            "stream-one"
+          ]
+        );
+        default = null;
+        description = "xhttp mode in the link, instead of `transport.mode`. An xhttp listener without a mode of its own takes every one.";
+        example = "stream-one";
+      };
+
+      address = nullStr ''
+        Address the link dials, instead of the listener's. The SNI stays the listener's unless
+        `serverName` changes it too.
+      '' "img.example.com";
+
+      serverName = nullStr ''
+        SNI in the link, instead of the listener's. Whatever routes by SNI in front of the
+        listener must send this name to it as well.
+      '' "img.example.com";
+
+      portHopping = mkOption {
+        type = types.nullOr types.bool;
+        default = null;
+        description = "hysteria2: `false` leaves the hop range out, so the client stays on `port`. `null`: as the listener.";
+        example = false;
+      };
+    };
+  };
+
   inboundType = types.submodule (
     { name, ... }:
     {
@@ -373,6 +459,40 @@ let
 
             Every connection must carry the header, so only set it on a listener nothing but
             the front can reach, such as one on loopback.
+          '';
+        };
+
+        shareFingerprint = mkOption {
+          type = types.nullOr fingerprintType;
+          default = "chrome";
+          description = ''
+            Browser whose TLS ClientHello clients imitate (`fp` in vless and trojan share links,
+            with tls or reality). A network that blocks one browser's handshakes to a server can
+            let another's through. `null` leaves it out, and the client picks: XRay-based clients
+            (v2rayNG, v2rayN) imitate Chrome then, sing-box-based ones send Go's own handshake.
+          '';
+          example = "firefox";
+        };
+
+        shareVariants = mkOption {
+          type = types.listOf shareVariantType;
+          default = [ ];
+          description = ''
+            More links per user to this same listener, each changing only what the client sends:
+            its TLS fingerprint, ALPN, xhttp mode, the name it dials and sends as SNI, or
+            hysteria2's port hopping. They follow the listener's own link in subscriptions,
+            labelled "<tag> <name>", so a client can test them side by side and show which of
+            them a network lets through. vless, trojan and hysteria2 listeners.
+
+            A variant only connects if the listener accepts what it changes: the ALPNs its TLS
+            offers, any xhttp mode unless `transport.mode` fixes one, names that reach it.
+          '';
+          example = lib.literalExpression ''
+            [
+              { name = "firefox"; fingerprint = "firefox"; }
+              { name = "h1"; alpn = [ "http/1.1" ]; }
+              { name = "stream-one"; mode = "stream-one"; }
+            ]
           '';
         };
 

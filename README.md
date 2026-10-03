@@ -223,8 +223,9 @@ Changes and secrets need root or the userControl group.
   apps run <profile> -- <cmd> [args]     run a command through a profile
 
   inbounds [list]                        server inbounds
-  inbounds link <tag> [user] [--onion] [--qr|--json]
-                                         share link or client JSON; --onion: via the onion service
+  inbounds link <tag> [user] [--onion|--variant=<name>] [--qr|--json]
+                                         share link or client JSON; --onion: via the onion
+                                         service; --variant: one of the listener's shareVariants
   inbounds link <tag> [user] --config [--qr]
                                          AmneziaWG client .conf or its QR code
   inbounds link <tag> --server-json      the server's inbound JSON

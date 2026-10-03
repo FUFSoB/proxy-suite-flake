@@ -166,6 +166,13 @@ class ModelTest(unittest.TestCase):
         self.assertFalse(model._amneziawg(onion))
         self.assertEqual(model.TOGGLES["proxy-suite-tor"], ["tor"])
 
+    def test_share_variant_rows_link_to_their_variant(self):
+        links = [{"tag": "xh", "user": "alice", "type": "vless", "port": 443, "variant": "h1"}]
+        with mock.patch.object(ctl, "_inbound_links", lambda: links):
+            (row,) = model.inbound_rows({})
+        self.assertEqual((row["key"], row["type"]), ("xh/alice/h1", "vless (h1)"))
+        self.assertEqual(model._link(row, "--json"), ["inbounds", "link", "xh", "alice", "--variant=h1", "--json"])
+
     def test_whitelist_bypass_rows(self):
         """A creator or joiner is a unit on the services tab: toggled, restarted, and its call handled there."""
         tab = model.TABS[0]

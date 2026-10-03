@@ -429,14 +429,15 @@ def inbound_rows(_):
     # No presence column: XRay keys the online map by user alone (no inbound dimension),
     # so a per-listener row could only repeat the same verdict once per listener. The
     # "who is online" action shows it once per user, which is the shape the data has.
-    # A listener behind the onion service has a second row, for its .onion link.
+    # A listener behind the onion service has a second row, for its .onion link, and one per
+    # share variant.
     sources = ctl._inbound_runtime_names("listeners")
     return [
         {
             # The TUI titles its menu with the key: no trailing "/" for the plain link.
             "key": "/".join(ctl._s(x.get(k)) for k in ("tag", "user", "variant") if x.get(k)),
             **{k: ctl._s(x.get(k) or "") for k in ("tag", "user", "type", "port", "variant")},
-            **({"type": f"{ctl._s(x.get('type') or '')} (onion)"} if x.get("variant") == "onion" else {}),
+            **({"type": f"{ctl._s(x.get('type') or '')} ({ctl._s(x.get('variant'))})"} if x.get("variant") else {}),
             "source": sources.get(ctl._s(x.get("tag")), "nix"),
         }
         for x in ctl._inbound_links()
@@ -543,8 +544,9 @@ def _natural(value):
 
 
 def _link(row, *extra):
-    onion = ["--onion"] if row.get("variant") == "onion" else []
-    return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *onion, *extra]
+    variant = row.get("variant") or ""
+    which = ["--onion"] if variant == "onion" else ([f"--variant={variant}"] if variant else [])
+    return ["inbounds", "link", row["tag"], *([row["user"]] if row["user"] else []), *which, *extra]
 
 
 def _amneziawg(row):

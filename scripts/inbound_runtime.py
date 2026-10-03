@@ -47,6 +47,8 @@ TYPES = UUID_TYPES + PASSWORD_TYPES
 TRANSPORTS = ("raw", "ws", "grpc", "httpupgrade", "xhttp")
 XHTTP_MODES = ("auto", "packet-up", "stream-up", "stream-one")
 ALPNS = ("h3", "h2", "http/1.1")
+# As the shareFingerprint option takes them (options/types/inbounds.nix).
+FINGERPRINTS = ("chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized")
 # Shadowsocks 2022 keys, by method: bytes of base64 key.
 SS2022_KEY_BYTES = {
     "2022-blake3-aes-128-gcm": 16,
@@ -203,6 +205,7 @@ LISTENER_SCHEMA = {
     "port": _is_port,
     "sharePort": _nullable(_is_port),
     "shareAddress": _nullable(_nonspace),
+    "shareFingerprint": _nullable(_one_of(*FINGERPRINTS)),
     "address": _nonspace,
     "acceptProxyProtocol": _is_bool,
     "via": _nullable(_nonspace),
@@ -538,6 +541,8 @@ def _render_listener(tag: str, entry: dict, runtime: dict) -> dict:
         tls["serverName"] = certificate.get("serverName")
     hysteria = filled.setdefault("hysteria", {})
     hysteria["portHopping"] = None
+    # Declared listeners only: the module's assertions are what check them.
+    filled["shareVariants"] = []
     hysteria.setdefault("salamander", {})["passwordFile"] = None
     filled["serverPasswordFile"] = None
     filled["xrayJson"] = None
@@ -1044,7 +1049,8 @@ def listener_from_flags(kind: str, args: argparse.Namespace) -> dict:
     """A listener entry from `add <tag> <type> [flags]`."""
     entry: dict = {"type": kind}
     for flag, key in (("port", "port"), ("listen", "address"), ("via", "via"), ("share_port", "sharePort"),
-                      ("share_address", "shareAddress"), ("order", "order"), ("method", "method")):
+                      ("share_address", "shareAddress"), ("fingerprint", "shareFingerprint"), ("order", "order"),
+                      ("method", "method")):
         if getattr(args, flag) is not None:
             entry[key] = getattr(args, flag)
     if args.flow:
@@ -1232,7 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("tag")
     add.add_argument("source", help="a listener type, a JSON file, or - for JSON on stdin")
     for flag, kind in (("--port", int), ("--listen", str), ("--via", str), ("--share-port", int), ("--share-address", str),
-                       ("--order", int), ("--method", str), ("--flow", str), ("--transport", str), ("--path", str),
+                       ("--fingerprint", str), ("--order", int), ("--method", str), ("--flow", str), ("--transport", str), ("--path", str),
                        ("--host", str), ("--mode", str), ("--service-name", str), ("--tls", str), ("--alpn", str),
                        ("--sni", str), ("--reality", str), ("--reality-dest", str), ("--short-id", str),
                        ("--masquerade", str)):

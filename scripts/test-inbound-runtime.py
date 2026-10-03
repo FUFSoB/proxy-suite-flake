@@ -230,7 +230,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_reality_listener_gets_generated_keys(self):
         args = rt.main.__globals__["argparse"].Namespace(
-            port=20001, listen=None, via=None, share_port=None, share_address=None, order=None, method=None,
+            port=20001, listen=None, via=None, share_port=None, share_address=None, fingerprint="firefox", order=None, method=None,
             flow="vision", transport=None, path=None, host=None, mode=None, service_name=None, tls=None, alpn=None,
             sni=None, reality="www.example.com,example.com", reality_dest=None, short_id=None, masquerade=None,
             salamander=False, user=["bob"],
@@ -238,6 +238,7 @@ class RuntimeTest(unittest.TestCase):
         entry = rt.listener_from_flags("vless", args)
         self.assertEqual(entry["reality"]["dest"], "www.example.com:443")
         self.assertEqual(entry["flow"], "xtls-rprx-vision")
+        self.assertEqual(entry["shareFingerprint"], "firefox")
         rt.cmd_add(self.spec, self.spool, "friends", entry, self.xray)
         saved = self.state()["listeners"]["friends"]
         self.assertEqual((saved["reality"]["privateKey"], saved["reality"]["publicKey"]), ("private-x", "public-x"))
@@ -245,6 +246,7 @@ class RuntimeTest(unittest.TestCase):
         merged, result, _ = rt.merge(self.spec)
         friends = next(l for l in merged["listeners"] if l["tag"] == "friends")
         self.assertEqual(friends["listen"], "::")
+        self.assertEqual(friends["shareFingerprint"], "firefox")
         self.assertEqual(friends["via"], "proxy")
         self.assertTrue(friends["runtime"])
         self.assertEqual(result["listeners"], ["friends"])
@@ -259,6 +261,7 @@ class RuntimeTest(unittest.TestCase):
             ({"type": "vless", "port": 20001, "tls": {"certificateFile": "/etc/shadow"}}, "not something a runtime entry can set"),
             ({"type": "vless", "port": 20001, "xrayJson": {}}, "not something a runtime entry can set"),
             ({"type": "amneziawg", "port": 20001}, "type: invalid value"),
+            ({"type": "vless", "port": 20001, "shareFingerprint": "netscape"}, "shareFingerprint: invalid value"),
             ({"type": "hysteria2", "port": 20001, "hysteria": {"portHopping": "1-2"}}, "not something"),
             ({"type": "vless", "port": 20001, "fallbacks": [{"dest": 22}]}, "not in inbounds.runtime.fallbackDests"),
             ({"type": "vless", "port": 20001, "fallbacks": [{"listener": "vless-in"}]}, "must be another runtime listener"),

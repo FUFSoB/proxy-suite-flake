@@ -274,7 +274,10 @@ def _link_transport_params(listener: dict) -> dict:
     return params
 
 
-def _link_security_params(listener: dict, server_address: str) -> dict:
+def _link_security_params(listener: dict, server_address: str, fingerprint: str | None) -> dict:
+    """The link's security: the TLS or REALITY of the listener it dials (`listener`, the
+    front of one behind a fallback), with the browser fingerprint the link's own listener
+    names, if any."""
     reality = listener["reality"]
     tls = listener["tls"]
     if reality["enable"]:
@@ -289,8 +292,9 @@ def _link_security_params(listener: dict, server_address: str) -> dict:
             "security": "reality",
             "pbk": reality["publicKey"],
             "sni": server_names[0] if server_names else server_address,
-            "fp": "chrome",
         }
+        if fingerprint:
+            params["fp"] = fingerprint
         if short_ids and short_ids[0]:
             params["sid"] = short_ids[0]
         return params
@@ -298,8 +302,9 @@ def _link_security_params(listener: dict, server_address: str) -> dict:
         params = {
             "security": "tls",
             "sni": tls.get("serverName") or server_address,
-            "fp": "chrome",
         }
+        if fingerprint:
+            params["fp"] = fingerprint
         # A client left to its own ALPN offers h2 and http/1.1, and so never
         # reaches an HTTP/3-only listener at all.
         if tls.get("alpn"):
@@ -333,13 +338,32 @@ def _vmess_link(
     return "vmess://" + _b64(json.dumps(blob, separators=(",", ":")))
 
 
+def _apply_variant(params: dict, variant: dict, listener_type: str) -> None:
+    """Rewrite a link's query for a share variant: only what the client sends changes."""
+    if variant.get("fingerprint") is not None and params.get("security") in ("tls", "reality"):
+        params["fp"] = variant["fingerprint"]
+    if variant.get("alpn") is not None:
+        if variant["alpn"]:
+            params["alpn"] = ",".join(variant["alpn"])
+        else:
+            params.pop("alpn", None)
+    if variant.get("mode") is not None and params.get("type") == "xhttp":
+        params["mode"] = variant["mode"]
+    if variant.get("serverName") is not None and "sni" in params:
+        params["sni"] = variant["serverName"]
+    if listener_type == "hysteria2" and variant.get("portHopping") is False:
+        params.pop("mport", None)
+
+
 def build_share_link(
-    listener: dict, server_address: str, user_index: int = 0, onion_address: str = ""
+    listener: dict, server_address: str, user_index: int = 0, onion_address: str = "", variant: dict | None = None
 ) -> str:
     """Build the client-facing share URL for a listener.
 
     With an onion address the link dials that instead, through the client's Tor; the TLS
     and REALITY names stay those of server_address, which the listener still answers to.
+    A share variant (listener["shareVariants"]) changes what the client sends: fingerprint,
+    ALPN, xhttp mode, the address it dials and the SNI, hysteria2's port hopping.
     """
     tag = listener["tag"]
     listener_type = listener["type"]
@@ -358,9 +382,13 @@ def build_share_link(
     user = users[user_index]
     secret = _user_secret(user, listener_type, tag)
     user_name = user.get("name") or f"{tag}-{user_index}"
-    label = f"{tag} ({user_name}, onion)" if onion_address else f"{tag} ({user_name})"
+    variant = variant or {}
+    if variant:
+        label = f"{tag} {variant['name']} ({user_name})"
+    else:
+        label = f"{tag} ({user_name}, onion)" if onion_address else f"{tag} ({user_name})"
     fragment = urllib.parse.quote(label, safe="")
-    endpoint_address = onion_address or server_address
+    endpoint_address = onion_address or variant.get("address") or server_address
     host = f"[{endpoint_address}]" if ":" in endpoint_address else endpoint_address
     endpoint = f"{host}:{_share_port(front)}"
 
@@ -397,13 +425,15 @@ def build_share_link(
         hopping = (listener.get("hysteria") or {}).get("portHopping")
         if hopping:
             params["mport"] = hopping
+        _apply_variant(params, variant, listener_type)
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return f"hysteria2://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 
     params = _link_transport_params(listener)
-    params.update(_link_security_params(front, server_address))
+    params.update(_link_security_params(front, server_address, listener.get("shareFingerprint")))
     if listener_type == "vless" and listener.get("flow"):
         params["flow"] = listener["flow"]
+    _apply_variant(params, variant, listener_type)
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     return f"{listener_type}://{secret}@{endpoint}?{query}#{fragment}"
 
@@ -475,12 +505,27 @@ def build_listener(
         if share_links and onion_address
         else []
     )
+    variant_links = (
+        [
+            (
+                variant["name"],
+                [
+                    build_share_link(listener, server_address, index, variant=variant)
+                    for index in range(len(listener["users"]))
+                ],
+            )
+            for variant in listener.get("shareVariants") or []
+        ]
+        if share_links
+        else []
+    )
     return {
         "tag": tag,
         "type": listener["type"],
         "port": _share_port(listener.get("front") or listener),
         "inbound": inbound,
         "links": links,
+        "variantLinks": variant_links,
         "onionLinks": onion_links,
     }
 
@@ -513,7 +558,8 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
 
     A subscription gathers one user's links from every listener -- users are
     matched by name -- as base64 of the newline-joined links, which is what
-    v2rayNG, Hiddify and NekoBox import. Listeners in spec["onionListeners"] get a
+    v2rayNG, Hiddify and NekoBox import. A listener's share variants follow its own
+    link, each with "variant": its name. Listeners in spec["onionListeners"] get a
     second link per user to onion_address, with "variant": "onion", in both.
     """
     inbounds = []
@@ -524,6 +570,8 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
         rendered = build_listener(listener, server_address, spec.get("shareLinks", True), onion)
         inbounds.append(rendered["inbound"])
         variants = [(rendered["links"], {})]
+        for name, variant_links in rendered.get("variantLinks") or []:
+            variants.append((variant_links, {"variant": name}))
         if rendered.get("onionLinks"):
             variants.append((rendered["onionLinks"], {"variant": "onion"}))
         for variant_links, extra in variants:

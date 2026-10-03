@@ -135,6 +135,8 @@ let
           port
           sharePort
           shareAddress
+          shareFingerprint
+          shareVariants
           acceptProxyProtocol
           users
           flow

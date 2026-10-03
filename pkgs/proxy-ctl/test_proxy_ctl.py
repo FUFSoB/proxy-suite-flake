@@ -11,6 +11,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from unittest import mock
@@ -216,6 +217,99 @@ class ClashBrokerTest(EnvTest):
         os.environ["USER_CONTROL_GROUPS"] = json.dumps({"someone-else": []})
         self.assertEqual(ask("GET", "/proxies"), (0, None))
         self.assertEqual(len(seen), 3)
+
+    def test_a_full_listen_queue_is_waited_out(self):
+        # Nothing accepts at first, and the queue holds one: a Unix socket refuses the next
+        # connect at once (EAGAIN), which the client must retry rather than read as no API.
+        path = self.path("busy.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(server.close)
+        server.bind(path)
+        server.listen(0)
+        queued = [socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) for _ in range(4)]
+        for s in queued:
+            self.addCleanup(s.close)
+            s.setblocking(False)
+            try:
+                s.connect(path)
+            except BlockingIOError:
+                pass
+
+        def drain():
+            time.sleep(0.3)
+            server.settimeout(5)
+            for _ in range(len(queued) + 1):
+                try:
+                    server.accept()[0].close()
+                except OSError:
+                    return
+
+        threading.Thread(target=drain, daemon=True).start()
+        conn = ctl._UnixHTTPConnection(path, 5)
+        self.addCleanup(conn.close)
+        conn.connect()
+        self.assertIsNotNone(conn.sock)
+        # With no one ever accepting, it still gives up once its timeout has passed.
+        stuck = self.path("stuck.sock")
+        never = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(never.close)
+        never.bind(stuck)
+        never.listen(0)
+        fillers = [socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) for _ in range(4)]
+        for s in fillers:
+            self.addCleanup(s.close)
+            s.setblocking(False)
+            try:
+                s.connect(stuck)
+            except BlockingIOError:
+                pass
+        start = time.monotonic()
+        with self.assertRaises(BlockingIOError):
+            ctl._UnixHTTPConnection(stuck, 0.3).connect()
+        self.assertLess(time.monotonic() - start, 3)
+
+    @unittest.skipIf(os.geteuid() == 0, "root holds every scope")
+    def test_a_burst_of_delay_tests_all_get_answers(self):
+        import grp
+        import http.server
+        from concurrent.futures import ThreadPoolExecutor
+
+        try:
+            group = grp.getgrgid(os.getgid()).gr_name
+        except KeyError:
+            self.skipTest("no name for this group")
+
+        class Api(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                time.sleep(0.2)  # a delay test takes a while
+                raw = json.dumps({"delay": 1}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_):
+                pass
+
+        api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
+        self.addCleanup(api.server_close)
+        threading.Thread(target=api.serve_forever, daemon=True).start()
+        self.addCleanup(api.shutdown)
+        self.write("clash-secret", "s3cret\n")
+        os.environ.update(
+            CLASH_API=f"http://127.0.0.1:{api.server_address[1]}",
+            OUTBOUND_INVENTORY_FILE=self.path("outbounds.json"),
+            USER_CONTROL_GROUPS=json.dumps({group: ["outbounds"]}),
+        )
+        sock = self.path("api.sock")
+        broker = ctl._clash_broker_server(sock)
+        self.addCleanup(broker.server_close)
+        threading.Thread(target=broker.serve_forever, daemon=True).start()
+        self.addCleanup(broker.shutdown)
+        # As `proxy outbounds test` asks: every outbound's delay at once.
+        with ThreadPoolExecutor(max_workers=32) as pool:
+            statuses = list(pool.map(lambda i: ctl._clash_via_broker(sock, "GET", f"/proxies/o{i}/delay?url=x", None, 5)[0], range(32)))
+        self.assertEqual(statuses, [200] * 32)
 
 
 class WarpDevicesTest(EnvTest):
@@ -1680,6 +1774,25 @@ class ShareTest(EnvTest):
         self.assertIn("onionService.listeners", err)
         self.patch("svc_state", lambda unit: "active")
         self.assertRegex(ok(ctl.cmd_inbounds, "list"), r"(?m)^  in +u +vless \(onion\) +443 +active$")
+
+    def test_inbound_share_variant_link(self):
+        self.write(
+            "inbounds/links.json",
+            [
+                {"tag": "in", "user": "u", "type": "vless", "port": 443, "link": "vless://x@h:443?fp=chrome", "outbound": {"server": "h"}},
+                {"tag": "in", "user": "u", "type": "vless", "port": 443, "link": "vless://x@h:443?fp=firefox",
+                 "outbound": {"server": "h", "fp": "firefox"}, "variant": "firefox"},
+            ],
+        )
+        # The listener's own link unless --variant names one of its variants.
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "in", "u"), "vless://x@h:443?fp=chrome\n")
+        self.assertEqual(ok(ctl.cmd_inbounds, "link", "in", "--variant=firefox"), "vless://x@h:443?fp=firefox\n")
+        self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "u", "--variant=firefox", "--json"))["fp"], "firefox")
+        status, _, err = run(ctl.cmd_inbounds, "link", "in", "--variant=safari")
+        self.assertNotEqual(status, 0)
+        self.assertIn("No share variant 'safari'", err)
+        self.patch("svc_state", lambda unit: "active")
+        self.assertRegex(ok(ctl.cmd_inbounds, "list"), r"(?m)^  in +u +vless \(firefox\) +443 +active$")
 
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable(self):

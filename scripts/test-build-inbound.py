@@ -18,6 +18,7 @@ def listener(**overrides):
         "type": "vless",
         "port": 443,
         "sharePort": None,
+        "shareFingerprint": "chrome",
         "acceptProxyProtocol": False,
         "listen": "::",
         "via": "direct",
@@ -489,6 +490,25 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual([m["type"] for m in masks], ["udphop", "salamander"])
         self.assertEqual(masks[0]["settings"]["remotePorts"], "20000-30000")
 
+    def test_share_fingerprint_names_the_browser_or_leaves_it_to_the_client(self):
+        tls = {"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None}
+        self.assertEqual(link_params(build_share_link(listener(tls=tls), "vpn.example.com"))["fp"], "chrome")
+        firefox = build_share_link(listener(tls=tls, shareFingerprint="firefox"), "vpn.example.com")
+        self.assertEqual(link_params(firefox)["fp"], "firefox")
+        self.assertEqual(build_outbound(firefox, "fp", backend="xray")["streamSettings"]["tlsSettings"]["fingerprint"], "firefox")
+        self.assertNotIn("fp", link_params(build_share_link(listener(tls=tls, shareFingerprint=None), "vpn.example.com")))
+        # REALITY's too; without TLS there is no handshake to shape.
+        self.assertEqual(link_params(build_share_link(listener(reality=reality(), shareFingerprint="safari"), "vpn.example.com"))["fp"], "safari")
+        self.assertNotIn("fp", link_params(build_share_link(listener(shareFingerprint="safari"), "vpn.example.com")))
+        # A variant's own fingerprint wins, and one is added where the listener names none.
+        variant = {"name": "ff", "fingerprint": "firefox"}
+        self.assertEqual(link_params(build_share_link(listener(tls=tls, shareFingerprint="safari"), "vpn.example.com", variant=variant))["fp"], "firefox")
+        self.assertEqual(link_params(build_share_link(listener(tls=tls, shareFingerprint=None), "vpn.example.com", variant=variant))["fp"], "firefox")
+        self.assertEqual(
+            link_params(build_share_link(listener(tls=tls, shareFingerprint="safari"), "vpn.example.com", variant={"name": "plain"}))["fp"],
+            "safari",
+        )
+
     def test_share_address_is_dialled_and_the_default_sni(self):
         tls = {"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": None}
         front = listener(shareAddress="cdn.example.com", tls=tls, flow="xtls-rprx-vision")
@@ -793,6 +813,75 @@ class BuildInboundsTests(unittest.TestCase):
         without = build_inbounds(spec, "vpn.example.com")
         self.assertEqual([e for e in without["links"] if e.get("variant")], [])
         self.assertEqual(without["inbounds"], result["inbounds"])
+
+    def test_share_variants_change_only_what_the_client_sends(self):
+        tls = {"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": "x.example.com", "alpn": ["h2"]}
+        users = [{"name": "alice", "uuid": "uuid-1", "uuidFile": None, "password": "pw", "passwordFile": None}]
+        xhttp = {"type": "xhttp", "path": "/x", "host": None, "mode": None, "serviceName": "", "trustedXForwardedFor": []}
+        variants = [
+            {"name": "firefox", "fingerprint": "firefox"},
+            {"name": "h1", "alpn": ["http/1.1"]},
+            {"name": "any-alpn", "alpn": []},
+            {"name": "stream-one", "mode": "stream-one"},
+            {"name": "fresh", "address": "img.example.com", "serverName": "img.example.com"},
+        ]
+        spec = {
+            "serverAddress": "vpn.example.com",
+            "shareLinks": True,
+            "listeners": [
+                listener(tag="xh", users=users, port=10005, sharePort=443, tls=tls, transport=xhttp, shareVariants=variants),
+                listener(
+                    tag="hy2",
+                    type="hysteria2",
+                    users=users,
+                    tls=dict(tls, alpn=None),
+                    hysteria={"masquerade": None, "portHopping": "20000-20010"},
+                    shareVariants=[{"name": "no-hop", "portHopping": False}],
+                ),
+            ],
+        }
+        result = build_inbounds(spec, "vpn.example.com")
+        # The listeners render as without variants: they change links only.
+        self.assertEqual(
+            result["inbounds"],
+            build_inbounds({**spec, "listeners": [dict(l, shareVariants=[]) for l in spec["listeners"]]}, "vpn.example.com")["inbounds"],
+        )
+        by_variant = {(e["tag"], e.get("variant", "")): e for e in result["links"]}
+        self.assertEqual(
+            [(e["tag"], e.get("variant", "")) for e in result["links"]],
+            [("xh", ""), ("xh", "firefox"), ("xh", "h1"), ("xh", "any-alpn"), ("xh", "stream-one"), ("xh", "fresh"), ("hy2", ""), ("hy2", "no-hop")],
+        )
+        base = link_params(by_variant[("xh", "")]["link"])
+        self.assertEqual((base["fp"], base["alpn"], base.get("mode")), ("chrome", "h2", None))
+
+        def params(variant):
+            entry = by_variant[("xh", variant)]
+            self.assertIn(f"xh {variant} (alice)", urllib.parse.unquote(urllib.parse.urlsplit(entry["link"]).fragment))
+            return link_params(entry["link"])
+
+        self.assertEqual(params("firefox"), dict(base, fp="firefox"))
+        self.assertEqual(params("h1"), dict(base, alpn="http/1.1"))
+        self.assertEqual(params("any-alpn"), {k: v for k, v in base.items() if k != "alpn"})
+        self.assertEqual(params("stream-one"), dict(base, mode="stream-one"))
+        self.assertEqual(params("fresh"), dict(base, sni="img.example.com"))
+        self.assertTrue(by_variant[("xh", "fresh")]["link"].startswith("vless://uuid-1@img.example.com:443?"))
+
+        # Each reads back into a client config that sends what it says.
+        stream = by_variant[("xh", "firefox")]["outbound"]["streamSettings"]
+        self.assertEqual(stream["tlsSettings"]["fingerprint"], "firefox")
+        self.assertEqual(by_variant[("xh", "h1")]["outbound"]["streamSettings"]["tlsSettings"]["alpn"], ["http/1.1"])
+        self.assertEqual(by_variant[("xh", "stream-one")]["outbound"]["streamSettings"]["xhttpSettings"]["mode"], "stream-one")
+
+        hop = link_params(by_variant[("hy2", "")]["link"])
+        self.assertEqual(hop["mport"], "20000-20010")
+        self.assertEqual(link_params(by_variant[("hy2", "no-hop")]["link"]), {k: v for k, v in hop.items() if k != "mport"})
+        self.assertNotIn("server_ports", by_variant[("hy2", "no-hop")]["outbound"])
+
+        # One subscription, every link in that order, and the same token as without variants.
+        body = base64.b64decode(result["subscriptions"][0]["body"]).decode().split("\n")
+        self.assertEqual(body, [e["link"] for e in result["links"]])
+        plain = build_inbounds({**spec, "listeners": [dict(l, shareVariants=[]) for l in spec["listeners"]]}, "vpn.example.com")
+        self.assertEqual(result["subscriptions"][0]["token"], plain["subscriptions"][0]["token"])
 
 
 if __name__ == "__main__":

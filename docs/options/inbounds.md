@@ -82,7 +82,17 @@ Part of the [proxy-suite options reference](./index.md).
       - [serverPassword](#services-proxy-suite-inbounds-listeners-name-serverpassword)
       - [serverPasswordFile](#services-proxy-suite-inbounds-listeners-name-serverpasswordfile)
       - [shareAddress](#services-proxy-suite-inbounds-listeners-name-shareaddress)
+      - [shareFingerprint](#services-proxy-suite-inbounds-listeners-name-sharefingerprint)
       - [sharePort](#services-proxy-suite-inbounds-listeners-name-shareport)
+      - [shareVariants](#services-proxy-suite-inbounds-listeners-name-sharevariants)
+        - item
+          - [address](#services-proxy-suite-inbounds-listeners-name-sharevariants-address)
+          - [alpn](#services-proxy-suite-inbounds-listeners-name-sharevariants-alpn)
+          - [fingerprint](#services-proxy-suite-inbounds-listeners-name-sharevariants-fingerprint)
+          - [mode](#services-proxy-suite-inbounds-listeners-name-sharevariants-mode)
+          - [name](#services-proxy-suite-inbounds-listeners-name-sharevariants-name)
+          - [portHopping](#services-proxy-suite-inbounds-listeners-name-sharevariants-porthopping)
+          - [serverName](#services-proxy-suite-inbounds-listeners-name-sharevariants-servername)
       - [tls](#services-proxy-suite-inbounds-listeners-name-tls)
         - [enable](#services-proxy-suite-inbounds-listeners-name-tls-enable)
         - [alpn](#services-proxy-suite-inbounds-listeners-name-tls-alpn)
@@ -810,6 +820,18 @@ they then send as SNI\. Links of listeners behind its fallbacks use it too\.
 **Default:** `null`\
 **Example:** `"cdn.example.com"`
 
+<a id="services-proxy-suite-inbounds-listeners-name-sharefingerprint"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareFingerprint
+
+Browser whose TLS ClientHello clients imitate (` fp ` in vless and trojan share links,
+with tls or reality)\. A network that blocks one browser’s handshakes to a server can
+let another’s through\. ` null ` leaves it out, and the client picks: XRay-based clients
+(v2rayNG, v2rayN) imitate Chrome then, sing-box-based ones send Go’s own handshake\.
+
+**Type:** null or one of “chrome”, “firefox”, “safari”, “ios”, “android”, “edge”, “360”, “qq”, “random”, “randomized”\
+**Default:** `"chrome"`\
+**Example:** `"firefox"`
+
 <a id="services-proxy-suite-inbounds-listeners-name-shareport"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.sharePort
 
@@ -818,6 +840,99 @@ Port in share links, if something in front owns the public port\. ` null `: ` po
 **Type:** null or 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `null`\
 **Example:** `443`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants
+
+More links per user to this same listener, each changing only what the client sends:
+its TLS fingerprint, ALPN, xhttp mode, the name it dials and sends as SNI, or
+hysteria2’s port hopping\. They follow the listener’s own link in subscriptions,
+labelled “\<tag> \<name>”, so a client can test them side by side and show which of
+them a network lets through\. vless, trojan and hysteria2 listeners\.
+
+A variant only connects if the listener accepts what it changes: the ALPNs its TLS
+offers, any xhttp mode unless ` transport.mode ` fixes one, names that reach it\.
+
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
+
+```nix
+[
+  { name = "firefox"; fingerprint = "firefox"; }
+  { name = "h1"; alpn = [ "http/1.1" ]; }
+  { name = "stream-one"; mode = "stream-one"; }
+]
+
+```
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-address"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.address
+
+Address the link dials, instead of the listener’s\. The SNI stays the listener’s unless
+` serverName ` changes it too\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"img.example.com"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-alpn"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.alpn
+
+ALPN in the link, instead of ` tls.alpn `: what the client offers, and so which HTTP
+version an xhttp client speaks\. ` [ ] ` leaves it out, for the client’s default\. ` null `:
+the listener’s\.
+
+**Type:** null or (list of (one of “h3”, “h2”, “http/1\.1”))\
+**Default:** `null`\
+**Example:** `[ "http/1.1" ]`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-fingerprint"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.fingerprint
+
+Browser whose TLS ClientHello the client imitates (` fp `), instead of the listener’s ` shareFingerprint `\.
+
+**Type:** null or one of “chrome”, “firefox”, “safari”, “ios”, “android”, “edge”, “360”, “qq”, “random”, “randomized”\
+**Default:** `null`\
+**Example:** `"firefox"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-mode"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.mode
+
+xhttp mode in the link, instead of ` transport.mode `\. An xhttp listener without a mode of its own takes every one\.
+
+**Type:** null or one of “auto”, “packet-up”, “stream-up”, “stream-one”\
+**Default:** `null`\
+**Example:** `"stream-one"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-name"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.name
+
+Names the variant: in its links’ labels, after the listener’s tag, and as ` variant ` in
+` links.json ` (` proxy-ctl inbounds link <tag> --variant=<name> `)\. Not “onion”, which
+the onion service’s links use\.
+
+**Type:** string matching the pattern \[A-Za-z0-9]\[A-Za-z0-9\._-]\*\
+**Example:** `"firefox"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-porthopping"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.portHopping
+
+hysteria2: ` false ` leaves the hop range out, so the client stays on ` port `\. ` null `: as the listener\.
+
+**Type:** null or boolean\
+**Default:** `null`\
+**Example:** `false`
+
+<a id="services-proxy-suite-inbounds-listeners-name-sharevariants-servername"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareVariants\.\*\.serverName
+
+SNI in the link, instead of the listener’s\. Whatever routes by SNI in front of the
+listener must send this name to it as well\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"img.example.com"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-tls"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls
