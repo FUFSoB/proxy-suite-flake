@@ -184,8 +184,8 @@ let
             pkgs.bash
             pkgs.curl
             pkgs.fzf
-            # `proxy-ctl logs` follows in less.
-            pkgs.less
+            # `proxy-ctl logs` follows in lnav.
+            pkgs.lnav
             pkgs.proxychains-ng
             pkgs.qrencode
             pkgs.systemd

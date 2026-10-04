@@ -710,18 +710,29 @@ class ServiceManagerTest(EnvTest):
             raise SystemExit(0)
 
         self.patch("_exec", exec_)
-        self.patch("_follow_in_pager", lambda argv, pager: ran.append(("less", argv)) or 0)
-        self.patch("shutil", mock.Mock(which=lambda name: f"/bin/{name}"))
+        self.patch("_follow_in_pager", lambda argv, viewer: ran.append((viewer, argv)) or 0)
+        found = {"lnav", "less"}
+        self.patch("shutil", mock.Mock(which=lambda name: f"/bin/{name}" if name in found else None))
         # Piped (run() captures stdout): journalctl itself, with a backlog.
         run(ctl.cmd_logs)
         self.assertEqual(ran[-1], ("exec", ["journalctl", "-f", "-n", "1000", "--unit=proxy-suite-*"]))
-        # In a terminal: through less, one --unit per named unit.
+        # In a terminal: through lnav, one --unit per named unit.
         terminal = mock.Mock(isatty=lambda: True)
         with mock.patch.object(ctl.sys, "stdin", terminal), mock.patch.object(ctl.sys, "stdout", terminal):
             with self.assertRaises(SystemExit) as done:
                 ctl.cmd_logs("a", "b")
-        self.assertEqual(done.exception.code, 0)
-        self.assertEqual(ran[-1], ("less", ["journalctl", "-f", "-n", "1000", "--unit=a", "--unit=b"]))
+            self.assertEqual(done.exception.code, 0)
+            self.assertEqual(ran[-1], (["/bin/lnav", "-q"], ["journalctl", "-f", "-n", "1000", "--unit=a", "--unit=b"]))
+            # Without lnav: less, already following.
+            found.discard("lnav")
+            with self.assertRaises(SystemExit):
+                ctl.cmd_logs()
+            self.assertEqual(ran[-1][0], ["/bin/less", "-R", "-M", "+F"])
+            # Without either: journalctl itself.
+            found.clear()
+            with self.assertRaises(SystemExit):
+                ctl.cmd_logs()
+            self.assertEqual(ran[-1][0], "exec")
 
     def test_kill_switch_lifts_only_on_purpose(self):
         seen = self.calls()

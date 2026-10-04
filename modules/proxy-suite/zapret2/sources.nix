@@ -106,18 +106,37 @@ let
       src = sources.z2k;
       generator = builtins.readFile "${src}/lib/config_official.sh";
       ports = name: between "config_official.sh" "\n${name}=\"" "\"" generator;
+      # Its silence detector, the only one that sees a dead QUIC flow (it sends less, not
+      # more), knows the YouTube pools alone; rkn_quic (z2k-profiles.template.sh) joins them.
+      # It took any reply for an answer, but DPI that lets the server's first flight through
+      # and drops the rest leaves a flow dead with a reply or two (every Discord host): such
+      # a flow neither failed nor, past udp_in, succeeded, and rotation never moved. A flow
+      # is answered now past udp_in replies, as the success detector judges it.
+      quicSilence = pkgs.writeText "z2k-quic-silence.lua" (
+        lib.pipe (builtins.readFile "${src}/files/lua/z2k-quic-silence.lua") [
+          (patch "z2k-quic-silence.lua" "local Z2K_QUIC_POOLS = { yt_quic = true, gv_quic = true }"
+            "local Z2K_QUIC_POOLS = { yt_quic = true, gv_quic = true, rkn_quic = true }"
+          )
+          (patch "z2k-quic-silence.lua"
+            "    if not desync.outgoing then\n        crec.z2k_quic_answered = true\n"
+            "    if not desync.outgoing then\n        if (pos_get(desync, 'n') or 0) > (tonumber(desync.arg.udp_in) or 1) then crec.z2k_quic_answered = true end\n"
+          )
+        ]
+      );
     in
     {
       # Its S99zapret2 order. z2k-range-rand resolves the ranges its strategies
       # write (repeats=6-10); without it nfqws2 sends each fake once.
-      luaInit = map (name: "${src}/files/lua/${name}.lua") [
-        "z2k-alert"
-        "z2k-quic-silence"
-        "z2k-tcp16"
-        "z2k-fooling-ext"
-        "z2k-range-rand"
-        "z2k-modern-core"
-      ];
+      luaInit =
+        map (name: if name == "z2k-quic-silence" then quicSilence else "${src}/files/lua/${name}.lua")
+          [
+            "z2k-alert"
+            "z2k-quic-silence"
+            "z2k-tcp16"
+            "z2k-fooling-ext"
+            "z2k-range-rand"
+            "z2k-modern-core"
+          ];
       # As its S99zapret2 runs nfqws2: a connection without SNI (some TVs and apps, a
       # SYN before the ClientHello its syndata strategies act on) takes the name last
       # seen on that IP, so it still meets its site's profile and strategy.

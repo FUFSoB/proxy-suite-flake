@@ -60,7 +60,7 @@ Changes and secrets need root or the userControl group.
   status [--json]                        services and routing mode (--tray: deprecated)
   restart                                restart running services
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
-                                         terminal, in less: Ctrl-C scrolls back, F follows
+                                         terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
 
   proxy [status|on|off]                  local proxy
@@ -5265,16 +5265,29 @@ def cmd_logs(*units):
         "journalctl",
         ["-f", "-n", str(LOGS_BACKLOG), *(f"--unit={u}" for u in units or ["proxy-suite-*"])],
     )
-    pager = shutil.which("less")
-    if not (pager and sys.stdin.isatty() and sys.stdout.isatty()):
+    viewer = _log_viewer()
+    if not (viewer and sys.stdin.isatty() and sys.stdout.isatty()):
         _exec(argv)
-    sys.exit(_follow_in_pager(argv, pager))
+    sys.exit(_follow_in_pager(argv, viewer))
 
 
-def _follow_in_pager(argv, pager):
-    """argv's output in less, following it: Ctrl-C stops to scroll back, F follows again, q quits.
+def _log_viewer():
+    """The argv that follows logs on its stdin in a terminal: lnav, or less where it is missing.
 
-    argv runs in a session of its own, so Ctrl-C reaches less alone.
+    lnav follows while at the bottom: scrolling back pauses it, G follows again, q or Ctrl-C
+    quits. less starts following (+F): Ctrl-C stops to scroll back, F follows again, q quits.
+    """
+    lnav = shutil.which("lnav")
+    if lnav:
+        return [lnav, "-q"]
+    less = shutil.which("less")
+    return [less, "-R", "-M", "+F"] if less else None
+
+
+def _follow_in_pager(argv, viewer):
+    """argv's output in viewer, the argv of a pager that reads its stdin.
+
+    argv runs in a session of its own, so Ctrl-C reaches the viewer alone.
     """
     sys.stdout.flush()
     old = signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -5285,14 +5298,14 @@ def _follow_in_pager(argv, pager):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            # journalctl colors only a terminal; less -R shows them.
+            # journalctl colors only a terminal; lnav and less -R show them.
             env={**os.environ, "SYSTEMD_COLORS": "1"},
         )
     except OSError as e:
         signal.signal(signal.SIGINT, old)
         die(f"proxy-ctl: {argv[0]}: {e.strerror}", 127)
     try:
-        return subprocess.call([pager, "-R", "-M", "+F"], stdin=source.stdout)
+        return subprocess.call(viewer, stdin=source.stdout)
     finally:
         source.stdout.close()
         source.terminate()

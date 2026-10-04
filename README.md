@@ -139,7 +139,7 @@ Changes and secrets need root or the userControl group.
   status [--json]                        services and routing mode (--tray: deprecated)
   restart                                restart running services
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
-                                         terminal, in less: Ctrl-C scrolls back, F follows
+                                         terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
 
   proxy [status|on|off]                  local proxy

@@ -360,6 +360,29 @@ in
         jq -e '.cf_extra == .rkn_tcp' "${z2kRuntime}/strategies.json"
         jq -e '.http_rkn["1"] == ["http_methodeol:payload=http_req:dir=out"]' "${z2kRuntime}/strategies.json"
         jq -e 'has("yt_tcp") and has("gv_tcp") and has("yt_quic")' "${z2kRuntime}/strategies.json"
+        # QUIC to the sites rkn_tcp handles gets YouTube's QUIC strategies, after yt_quic,
+        # and the silence detector that sees dead QUIC flows counts its failures.
+        jq -e '.rkn_quic == .yt_quic' "${z2kRuntime}/strategies.json"
+        grep -qE -- "key=yt_quic:[^']* --new [^']*/extra_strats/TCP/RKN/List.txt --hostlist=[^ ]+/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO> --filter-udp=443 --filter-l7=quic [^']*key=rkn_quic:" "${z2kRuntime}/config"
+        QS=$(grep -oE '/nix/store/[^ ]+-z2k-quic-silence\.lua' "${z2kRuntime}/config")
+        grep -qF 'rkn_quic = true' "$QS"
+        # Its first flight is no success, nor an answer to the silence detector: rotation moves.
+        grep -qE -- "key=rkn_quic:" "${z2kRuntime}/config"
+        grep -oE -- "--lua-desync=circular:[^ ]*key=rkn_quic:[^ ]*" "${z2kRuntime}/config" | grep -qF ':udp_in=4:'
+        grep -oE -- "--lua-desync=circular:[^ ]*key=yt_quic:[^ ]*" "${z2kRuntime}/config" | grep -qF ':udp_in=1:'
+        QS="$QS" lua -e '
+          function standard_failure_detector() return "standard" end
+          function pos_get(desync) return desync.n end
+          dofile(os.getenv("QS"))
+          local function reply(key, udp_in, n)
+            local crec = {}
+            z2k_fail_quic_silence({ dis = { udp = true }, outgoing = false, n = n, arg = { key = key, udp_in = udp_in } }, crec)
+            return crec.z2k_quic_answered == true
+          end
+          assert(not reply("rkn_quic", "4", 2) and reply("rkn_quic", "4", 5))
+          assert(not reply("yt_quic", "1", 1) and reply("yt_quic", "1", 2))
+          assert(z2k_fail_quic_silence({ dis = { udp = true }, arg = { key = "rkn_tcp" } }, {}) == "standard")
+        '
         jq -e 'keys == ["circular_1_1", "circular_3_1"]' "${globalRuntime}/strategies.json"
         if grep -qF 'strategy=' "${z2kRuntime}/strategies.json"; then exit 1; fi
 

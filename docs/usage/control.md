@@ -109,8 +109,10 @@ proxy-ctl logs            # follow the logs of every proxy-suite service, with t
 proxy-ctl restart         # restart what is running
 ```
 
-In a terminal, `proxy-ctl logs` follows in `less`: Ctrl-C stops following so you can scroll
-back, `F` follows again and `q` quits.
+In a terminal, `proxy-ctl logs` follows in [`lnav`](https://lnav.org): it follows while at
+the bottom, scrolling back pauses it, `G` follows again, `e`/`E` jump between errors, `/`
+searches, and `q` or Ctrl-C quits. `:enable-word-wrap` wraps long lines, and lnav remembers
+it for the next time. Piped, it is plain `journalctl -f`.
 
 ## See also
 
