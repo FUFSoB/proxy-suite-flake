@@ -31,6 +31,14 @@ let
     else
       builtins.head (splitString stop (builtins.elemAt parts 1));
 
+  # The same for a fix to a pinned file: one that no longer applies must fail the build.
+  patch =
+    what: from: to: text:
+    if lib.hasInfix from text then
+      replaceStrings [ from ] [ to ] text
+    else
+      throw "proxy-suite: expected `${from}` in ${what}; did a flake input bump change it?";
+
   keenetic =
     let
       src = sources.nfqws2-keenetic;
@@ -46,29 +54,46 @@ let
           )
         );
       lists = "--hostlist=${src}/etc/nfqws2/lists/user.list --hostlist-exclude=${src}/etc/nfqws2/lists/exclude.list";
+      circular = "--lua-desync=circular:fails=2:time=300:retrans=3:nld=2";
+      tcpPayload = "--payload=tls_client_hello,mtproto_initial";
+      udpPayload = "--payload=wireguard_initiation,wireguard_response,wireguard_cookie,stun,discord_ip_discovery,mtproto_initial,unknown";
     in
     {
       # Its init script's order. QUIC reads the learned list but never adds to it:
       # browsers retry over TCP. The UDP profile carries no SNI, so no lists.
+      #
+      # circular counts failures on the packets Lua is handed, and nfqws2 hands it no
+      # incoming ones by default. As shipped it never saw a reset or a server's reply
+      # (only a silent drop rotated TCP), and on UDP, behind <n2, only the first packet
+      # of the udp_out it waits for: UDP never rotated. circular gets them now, as in
+      # zapret2's manual, and the strategies after it keep their own filters. The NFQUEUE
+      # window still bounds what reaches Lua.
       profiles = [
         # Its first UDP strategy's fake has no blob, which zapret2 rejects on every
         # packet; nfqws1's default for unknown UDP was 64 zero bytes.
-        (replaceStrings
-          [ "--lua-desync=fake:repeats=6:strategy=1" ]
-          [
+        (lib.pipe (args "NFQWS_ARGS_UDP") [
+          (patch "NFQWS_ARGS_UDP" "--lua-desync=fake:repeats=6:strategy=1"
             "--lua-desync=fake:blob=0x${lib.fixedWidthString 128 "0" ""}:repeats=6:strategy=1"
-          ]
-          (args "NFQWS_ARGS_UDP")
-        )
+          )
+          (patch "NFQWS_ARGS_UDP" "--out-range=<n2 ${udpPayload} ${circular}"
+            "--out-range=a --in-range=a ${udpPayload} ${circular} --out-range=<n2 --in-range=x"
+          )
+        ])
         "${args "NFQWS_ARGS_QUIC"} <HOSTLIST_NOAUTO> ${lists}"
         # No 16 KB cutoff name step: its fake ClientHello ahead of these strategies
-        # broke every host on a line where the strategies alone work.
-        "${args "NFQWS_ARGS"} <HOSTLIST> ${lists}"
+        # broke every host on a line where the strategies alone work. Its HTTP strategy
+        # has no strategy=N, so circular must not take http_req: it would skip it.
+        "${
+          patch "NFQWS_ARGS" "${tcpPayload} ${circular}"
+            "--in-range=-s5556 ${tcpPayload},tls_server_hello,empty,unknown ${circular} --in-range=x ${tcpPayload}"
+            (args "NFQWS_ARGS")
+        } <HOSTLIST> ${lists}"
       ];
       blobArgs = map (replaceStrings [ "@/opt/etc/nfqws2/" ] [ "@${src}/etc/nfqws2/" ]) (
         filter (hasPrefix "--blob=") (words (quoted "NFQWS_BASE_ARGS"))
       );
       luaInit = [ ];
+      daemonArgs = [ ];
       ports = {
         tcp = bare "TCP_PORTS";
         udp = replaceStrings [ ":" ] [ "-" ] (bare "UDP_PORTS");
@@ -93,6 +118,10 @@ let
         "z2k-range-rand"
         "z2k-modern-core"
       ];
+      # As its S99zapret2 runs nfqws2: a connection without SNI (some TVs and apps, a
+      # SYN before the ClientHello its syndata strategies act on) takes the name last
+      # seen on that IP, so it still meets its site's profile and strategy.
+      daemonArgs = [ "--ipcache-hostname=1" ];
       ports = {
         tcp = ports "NFQWS2_PORTS_TCP";
         udp = ports "NFQWS2_PORTS_UDP";

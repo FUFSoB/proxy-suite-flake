@@ -213,6 +213,30 @@ def _controllable(row):
     return row["unit"] in TOGGLES or bool(_awg_profile(row)) or bool(_wl_entry(row))
 
 
+# Units whose failure is one run's, not something still down: once seen, it stops marking the
+# suite failed until a later run fails again.
+FAILURE_EVENTS = (ctl.SUBSCRIPTION_UPDATE,)
+
+
+def failure_marks(states):
+    """unit -> when it last failed, for the failed FAILURE_EVENTS: a later failure is a new mark.
+    Empty where the manager does not say (the supervisor): a run that does not fail ends the mark there."""
+    units = [u for u in FAILURE_EVENTS if states.get(u) == "failed"]
+    if not units:
+        return {}
+    _, out = ctl.systemctl("show", "--property=Id,InactiveEnterTimestampMonotonic", "--", *units, capture=True, quiet=True)
+    marks = {}
+    for unit, block in zip(units, out.strip().split("\n\n"), strict=False):
+        props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        marks[unit] = props.get("InactiveEnterTimestampMonotonic", "")
+    return {u: marks.get(u, "") for u in units}
+
+
+def unseen(states, marks, seen):
+    """states with the failures already seen (unit -> mark) read as inactive: nothing counts them as failed."""
+    return {u: "inactive" if u in marks and seen.get(u) == marks[u] else s for u, s in states.items()}
+
+
 def service_rows(states):
     return [
         {"key": u, "unit": u, "name": u.removeprefix("proxy-suite-"), "state": s}
@@ -582,8 +606,8 @@ def _enabled(name):
     return lambda _: ctl.env(name) == "1"
 
 
-def _sub_url(row):
-    return bool(row["user"]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
+def _sub_url(row, user="user"):
+    return bool(row[user]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
 
 
 def _add_args(text):
@@ -937,6 +961,10 @@ TABS = [
             Action("e", "set its order…", lambda r, t, _: ["inbounds", "users", "order", r["name"], t.strip()], when=_runtime_row, prompt="<order>", offered=_inbounds_runtime),
             Action("b", "bind it to a listener…", lambda r, t, _: ["inbounds", "bind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
             Action("x", "unbind it from a listener…", lambda r, t, _: ["inbounds", "unbind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
+            # The user's one subscription, as the inbounds tab has it on each of the user's rows.
+            Action("s", "subscription URL", lambda r, *_: ["inbounds", "sub", r["name"]], when=ROW, mode="dialog"),
+            Action("c", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["name"]], when=lambda r: _sub_url(r, "name"), mode="copy"),
+            Action("Q", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["name"], "--qr"], when=lambda r: _sub_url(r, "name"), mode="dialog"),
             Action("i", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
         ],
     ),

@@ -45,6 +45,13 @@ in
     zapret2 = {
       domains = [ "pinned.example" ];
       excludeDomains = [ "excluded.example" ];
+      ports = {
+        extraTcp = [ 8444 ];
+        extraUdp = [
+          "27015-27030"
+          "50000-50100"
+        ];
+      };
       autoHostlist = {
         failThreshold = 5;
         failTime = 120;
@@ -62,6 +69,16 @@ in
   zapret2Z2k = mkZapret2 {
     enable = true;
     zapret2.strategySource = "z2k";
+  };
+
+  zapret2Z2kTuned = mkZapret2 {
+    enable = true;
+    zapret2 = {
+      strategySource = "z2k";
+      ports.extraTcp = [ 8444 ];
+      strategyLog = false;
+      debug = true;
+    };
   };
 
   zapret2NoFallback = mkZapret2 {

@@ -72,6 +72,21 @@ class ModelTest(unittest.TestCase):
         rows = model.service_rows({"proxy-suite-socks": "active", ctl.SUBSCRIPTION_UPDATE: "inactive"})
         self.assertEqual([r["unit"] for r in rows], ["proxy-suite-socks"])
 
+    def test_a_seen_failure_event_reads_inactive(self):
+        sub = ctl.SUBSCRIPTION_UPDATE
+        states = {"proxy-suite-socks": "failed", sub: "failed"}
+        with mock.patch.object(ctl, "systemctl", return_value=(0, f"Id={sub}\nInactiveEnterTimestampMonotonic=42\n")) as systemctl:
+            marks = model.failure_marks(states)
+        self.assertEqual(marks, {sub: "42"})
+        self.assertIn(sub, systemctl.call_args.args)
+        # A long-running unit that failed is still down: only the event is let go.
+        self.assertEqual(model.unseen(states, marks, {sub: "42"}), {"proxy-suite-socks": "failed", sub: "inactive"})
+        # Failed again since: a new mark, counted again.
+        self.assertEqual(model.unseen(states, {sub: "99"}, {sub: "42"}), states)
+        with mock.patch.object(ctl, "systemctl") as systemctl:
+            self.assertEqual(model.failure_marks({sub: "inactive"}), {})
+        systemctl.assert_not_called()
+
     def test_warp_over_amneziawg_toggles_with_warp(self):
         tab = model.TABS[0]
         row = model.service_rows({"proxy-suite-awg-warp": "inactive"})[0]
@@ -109,7 +124,7 @@ class ModelTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"INBOUNDS_ENABLED": "1", "INBOUNDS_RUNTIME_ENABLED": "0"}):
             # Listed from the configuration; nothing to change them with.
             self.assertTrue(users.available({}))
-            self.assertEqual([a.key for a in users.actions if model.offered(a)], ["i"])
+            self.assertEqual([a.key for a in users.actions if model.offered(a)], ["s", "c", "Q", "i"])
             self.assertNotIn("n", [a.key for a in inbounds.actions if model.offered(a)])
         with mock.patch.dict(os.environ, {"INBOUNDS_ENABLED": "0"}):
             self.assertFalse(users.available({}))
@@ -124,7 +139,12 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(actions["n"].argv(None, "carol 7 in ws", {}),
                              ["inbounds", "users", "add", "carol", "--order", "7", "--listener", "in", "--listener", "ws"])
             self.assertEqual(actions["n"].argv(None, "carol", {}), ["inbounds", "users", "add", "carol"])
-            self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "x", "i"])
+            self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "x", "s", "i"])
+            self.assertEqual(actions["s"].argv(bob), ["inbounds", "sub", "bob"])
+            # A URL to copy or encode only with subscriptions.baseUrl: else it is a file path.
+            with mock.patch.dict(os.environ, {"INBOUNDS_SUB_BASE_URL": "https://sub.example"}):
+                self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "x", "s", "c", "Q", "i"])
+            self.assertEqual(actions["Q"].argv(bob), ["inbounds", "sub", "bob", "--qr"])
             self.assertEqual(actions["e"].argv(alice, " 9 ", {}), ["inbounds", "users", "order", "alice", "9"])
             self.assertEqual(actions["b"].argv(alice, "in", {}), ["inbounds", "bind", "alice", "in"])
             actions = {a.key: a for a in inbounds.actions}

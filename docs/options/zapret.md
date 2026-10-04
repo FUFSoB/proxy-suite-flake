@@ -53,13 +53,17 @@ Part of the [proxy-suite options reference](./index.md).
     - cutoff
       - [enable](#services-proxy-suite-zapret-zapret2-cutoff-enable)
       - [proxyFallback](#services-proxy-suite-zapret-zapret2-cutoff-proxyfallback)
+    - [debug](#services-proxy-suite-zapret-zapret2-debug)
     - [domains](#services-proxy-suite-zapret-zapret2-domains)
     - [excludeDomains](#services-proxy-suite-zapret-zapret2-excludedomains)
     - [ipv6](#services-proxy-suite-zapret-zapret2-ipv6)
     - ports
+      - [extraTcp](#services-proxy-suite-zapret-zapret2-ports-extratcp)
+      - [extraUdp](#services-proxy-suite-zapret-zapret2-ports-extraudp)
       - [tcp](#services-proxy-suite-zapret-zapret2-ports-tcp)
       - [udp](#services-proxy-suite-zapret-zapret2-ports-udp)
     - [profiles](#services-proxy-suite-zapret-zapret2-profiles)
+    - [strategyLog](#services-proxy-suite-zapret-zapret2-strategylog)
     - [strategySource](#services-proxy-suite-zapret-zapret2-strategysource)
 
 <a id="services-proxy-suite-zapret-enable"></a>
@@ -90,7 +94,9 @@ Subnets zapret skips\.
 <a id="services-proxy-suite-zapret-directsync-enable"></a>
 ## services\.proxy-suite\.zapret\.directSync\.enable
 
-Send zapret’s domains direct in the proxy routing, so zapret handles them\.
+Send zapret’s domains direct in the proxy routing, so zapret handles them\. With zapret2,
+also the sites it pins and learns at runtime, after your own rules and autoProxy’s\.
+The all-proxy and all-bypass route modes leave them out, like every direct list\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -415,6 +421,14 @@ sees by IP (TUN, TProxy, per-app routing)\. Explicit direct rules still win\.
 **Type:** boolean\
 **Default:** `true`
 
+<a id="services-proxy-suite-zapret-zapret2-debug"></a>
+## services\.proxy-suite\.zapret\.zapret2\.debug
+
+Log everything nfqws2 does to the journal, every packet included\. Very verbose: for troubleshooting\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-zapret-zapret2-domains"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.domains
 
@@ -441,10 +455,32 @@ Handle IPv6 too\.
 **Type:** boolean\
 **Default:** `false`
 
+<a id="services-proxy-suite-zapret-zapret2-ports-extratcp"></a>
+## services\.proxy-suite\.zapret\.zapret2\.ports\.extraTcp
+
+More TCP ports, handled like the profiles’ own: each profile that recognizes its traffic
+(` --filter-l7 `, e\.g\. TLS) gets them too, so TLS to a blocked site on one of these ports
+gets the same strategies\. A profile without ` --filter-l7 ` keeps its ports\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]+(-\[0-9]+)?)\
+**Default:** `[ ]`\
+**Example:** `[ 8444 "9000-9010" ]`
+
+<a id="services-proxy-suite-zapret-zapret2-ports-extraudp"></a>
+## services\.proxy-suite\.zapret\.zapret2\.ports\.extraUdp
+
+More UDP ports, handled like the profiles’ own: each profile that recognizes its traffic
+(` --filter-l7 `, e\.g\. STUN, Discord, QUIC) gets them too, so a game’s or call app’s STUN
+on these ports gets the same strategies as Discord’s\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]+(-\[0-9]+)?)\
+**Default:** `[ ]`\
+**Example:** `[ "27015-27030" ]`
+
 <a id="services-proxy-suite-zapret-zapret2-ports-tcp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.tcp
 
-TCP ports zapret2 handles\. Must include every port a profile uses\. ` null `: use the ports from ` strategySource `\.
+TCP ports zapret2 handles\. The ports the profiles filter on and ` extraTcp ` are always added\. ` null `: use the ports from ` strategySource `\.
 
 **Type:** null or string\
 **Default:** `null`\
@@ -453,7 +489,7 @@ TCP ports zapret2 handles\. Must include every port a profile uses\. ` null `: u
 <a id="services-proxy-suite-zapret-zapret2-ports-udp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.udp
 
-UDP ports zapret2 handles\. Must include every port a profile uses\. ` null `: use the ports from ` strategySource `\.
+UDP ports zapret2 handles\. The ports the profiles filter on and ` extraUdp ` are always added\. ` null `: use the ports from ` strategySource `\.
 
 **Type:** null or string\
 **Default:** `null`\
@@ -475,6 +511,15 @@ learning\. ` --qnum `, ` --fwmark ` and ` --lua-init ` are added for you\. ` nul
   "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
 ]
 ```
+
+<a id="services-proxy-suite-zapret-zapret2-strategylog"></a>
+## services\.proxy-suite\.zapret\.zapret2\.strategyLog
+
+Log each counted failure and strategy switch to the journal, per site
+(` proxy-ctl logs proxy-suite-zapret `)\. Without it nfqws2 logs them only with ` debug `\.
+
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-strategysource"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.strategySource

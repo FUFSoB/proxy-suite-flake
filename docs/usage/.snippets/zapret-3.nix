@@ -1,15 +1,4 @@
 { config, lib, pkgs, ... }:
 {
-  services.proxy-suite = {
-  enable = true;
-  zapret = {
-    enable = true;
-    global.enable = false; # no system-wide zapret
-  };
-  perAppRouting = {
-    enable = true;
-    createDefaultProfiles = true; # adds a profile named "zapret"
-    zapret.enable = true;
-  };
-};
+  services.proxy-suite.zapret.zapret2.ports.extraUdp = [ "27015-27030" ];
 }

@@ -57,6 +57,9 @@ let
   viaTun = helpers.wrapPerApp { profile = "tun"; } fake;
 in
 assert helpers.urls.http == "http://127.0.0.1:1080";
+assert helpers.urls.socks5h == "socks5h://127.0.0.1:1080";
+assert helpers.urls.socks5 == "socks5://127.0.0.1:1080";
+assert helpers.urls.socks == helpers.urls.socks5h;
 assert helpers.env.ALL_PROXY == "socks5h://127.0.0.1:1080";
 assert refuses (bare.wrapProxychains { } fake);
 assert refuses (bare.wrapPerApp { profile = "tun"; } fake);

@@ -32,10 +32,14 @@ let
   checked =
     value: if envUnavailable != null then throw "proxy-suite helpers: ${envUnavailable}" else value;
 
-  urls = checked {
+  urls = checked rec {
     http = "http://${credentials}${hostPort}";
     # socks5h: names are resolved by the proxy, so they follow its routing.
-    socks = "socks5h://${credentials}${hostPort}";
+    socks5h = "socks5h://${credentials}${hostPort}";
+    # socks5: names are resolved locally. For programs that refuse socks5h, like
+    # Chromium and Electron apps (VS Code's http.proxy).
+    socks5 = "socks5://${credentials}${hostPort}";
+    socks = socks5h;
   };
 
   httpVars = [
@@ -63,7 +67,9 @@ let
       or (throw "proxy-suite helpers: protocol must be \"http\", \"socks\" or \"all\", not \"${protocol}\"");
   envFor =
     protocol:
-    lib.genAttrs (varsOf protocol) (name: if builtins.elem name httpVars then urls.http else urls.socks)
+    lib.genAttrs (varsOf protocol) (
+      name: if builtins.elem name httpVars then urls.http else urls.socks5h
+    )
     // noProxy;
 
   # A copy of `package` whose programs (all of bin/, or the named ones) are replaced by

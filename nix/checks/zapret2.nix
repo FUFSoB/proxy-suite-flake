@@ -2,6 +2,8 @@
   pkgs,
   evalProxySuite,
   baseModule,
+  mkRoutingRules,
+  hasDirectDomain,
   mkProxyCtlDerived,
   mkBadFixture,
   mkFailingAssertions,
@@ -18,6 +20,7 @@ let
     zapret2Tuned
     zapret2NoAuto
     zapret2Z2k
+    zapret2Z2kTuned
     zapret2NoFallback
     ;
 
@@ -43,10 +46,14 @@ let
   tunedRuntime = runtimeDir zapret2Tuned globalService;
   noAutoRuntime = runtimeDir zapret2NoAuto globalService;
   z2kRuntime = runtimeDir zapret2Z2k globalService;
+  z2kTunedRuntime = runtimeDir zapret2Z2kTuned globalService;
   daemonStart = zapret2Global.config.systemd.services.${globalService}.serviceConfig.ExecStart;
   cutoffProbe =
     zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
+  directSync = builtins.head (
+    lib.splitString " " zapret2Global.config.systemd.services.proxy-suite-zapret2-direct.serviceConfig.ExecStart
+  );
 
   proxyCtlEnv = fixture: (mkProxyCtlDerived fixture).wrapperEnv;
 in
@@ -128,6 +135,27 @@ in
       true
     )
 
+    # directSync sends zapret2's pinned domains direct, so zapret2 sees them; its excludes stay out.
+    (
+      let
+        rules = mkRoutingRules zapret2Tuned;
+      in
+      assert hasDirectDomain rules "pinned.example";
+      assert !(hasDirectDomain rules "excluded.example");
+      assert !(hasDirectDomain (mkRoutingRules zapretDiscordYoutubeGlobal) "pinned.example");
+      true
+    )
+
+    # The hosts zapret2 pins and learns at runtime are synced too, whenever a list changes.
+    (
+      assert zapret2Global.config.systemd.paths ? proxy-suite-zapret2-direct;
+      assert
+        zapret2Global.config.systemd.services.proxy-suite-zapret2-direct.serviceConfig.StateDirectoryMode
+        == "0755";
+      assert !(zapretDiscordYoutubeGlobal.config.systemd.services ? proxy-suite-zapret2-direct);
+      true
+    )
+
     # `proxy-ctl zapret auto` only makes sense when something is learning.
     (
       assert (proxyCtlEnv zapret2Global).ZAPRET_AUTO_ENABLED == "1";
@@ -177,6 +205,17 @@ in
         grep -qF -- '<HOSTLIST_NOAUTO> --hostlist-domains=pinned.example --hostlist-exclude-domains=excluded.example' "${tunedRuntime}/config"
         test "$(grep -oF -- '--hostlist-domains=pinned.example' "${tunedRuntime}/config" | wc -l)" = 2
 
+        # Extra ports join every profile that tells its traffic by protocol, and the
+        # queue, merged with what overlaps.
+        grep -qF -- '--filter-tcp=443,80,1984,5222,8444 --filter-l7=http,tls,mtproto' "${tunedRuntime}/config"
+        grep -qF -- '--filter-udp=443,27015-27030,50000-50100 --filter-l7=quic' "${tunedRuntime}/config"
+        grep -qx 'NFQWS2_PORTS_TCP=80,443,1984,2053,2083,2087,2096,5222,8443-8444' "${tunedRuntime}/config"
+        grep -qx 'NFQWS2_PORTS_UDP=443,590-600,1400,3478-3481,5349,19294-19344,27015-27030,49152-65535' "${tunedRuntime}/config"
+        # A profile that does not check the protocol keeps its ports: on 5222 it splits anything.
+        grep -qF -- '--filter-tcp=5222 --payload=unknown' "${z2kTunedRuntime}/config"
+        grep -qF -- '--filter-tcp=80 ' "${z2kTunedRuntime}/config"
+        grep -qF -- ' --new --filter-tcp=443,2053,2083,2087,2096,8443,8444 --filter-l7=tls ' "${z2kTunedRuntime}/config"
+
         # --- strategy sources -----------------------------------------------
         # nfqws2-keenetic by default; every source remembers strategies across restarts.
         grep -qx 'NFQWS2_PORTS_TCP=80,443,1984,2053,2083,2087,2096,5222,8443' "${globalRuntime}/config"
@@ -195,16 +234,114 @@ in
           automate_failure_counter(hrec, crec, 2, 60)
           assert(hrec.z2k_last_fail_ts == 1, "a duplicate failure is not counted, so not stamped")
         '
+        # Every new host or switch reaches state.tsv, or a restart loses it; a z2k bump
+        # that drops the setter must fail the start, not quietly lose switches again.
+        grep -qE -- 'z2k-state-persist\.lua --lua-init=@[^ ]+-persist-every\.lua --lua-init=@[^ ]+-strategy-log\.lua' "${z2kRuntime}/config"
+        EVERY=$(grep -oE '/nix/store/[^ ]+-persist-every\.lua' "${globalRuntime}/config") lua -e '
+          local set, flushed, now = nil, 0, 1000
+          local state = { rkn_tcp = { ["example.com"] = { strategy = 1 } } }
+          z2k_state_persist = {
+            _set_interval = function(n) set = n end,
+            _state = function() return state end,
+            flush = function() flushed = flushed + 1 end,
+          }
+          os.time = function() return now end
+          function circular() return "verdict" end
+          dofile(os.getenv("EVERY"))
+          assert(set == 0)
+          -- A switch whose write was skipped is written within a minute; no change, no write.
+          state.rkn_tcp["example.com"].strategy = 2
+          assert(circular() == "verdict" and flushed == 0)
+          now = now + 60
+          circular()
+          assert(flushed == 1)
+          now = now + 60
+          circular()
+          assert(flushed == 1)
+          z2k_state_persist = { _set_interval = function() end }
+          assert(not pcall(dofile, os.getenv("EVERY")))
+        '
+        # nld counts from the public suffix, so sites under co.uk no longer share a strategy;
+        # the private section (github.io) stays one site, as before.
+        PSL=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-public-suffix-hostkey\.lua' "${z2kRuntime}/config") lua -e '
+          function standard_hostkey() return "standard" end
+          dofile(os.getenv("PSL"))
+          local function key(host, nld, ip)
+            return standard_hostkey({ arg = { nld = nld }, track = { hostname = host, hostname_is_ip = ip } })
+          end
+          for host, want in pairs({
+            ["www.google.com"] = "google.com",
+            ["rr1.sn-abc.googlevideo.com"] = "googlevideo.com",
+            ["a.b.foo.co.uk"] = "foo.co.uk",
+            ["co.uk"] = "co.uk",
+            ["x.y.github.io"] = "github.io",
+            ["WWW.Example.COM."] = "example.com",
+            ["www.xn--80aswg.xn--p1ai"] = "xn--80aswg.xn--p1ai",
+            ["a.www.ck"] = "www.ck",
+            ["foo.bar.ck"] = "foo.bar.ck",
+          }) do
+            assert(key(host, "2") == want, host .. ": " .. tostring(key(host, "2")))
+          end
+          assert(key("a.b.foo.co.uk", "3") == "b.foo.co.uk")
+          assert(key("1.2.3.4", "2", true) == "standard")
+          assert(key("www.google.com", nil) == "standard")
+        '
+        # Counted failures and switches, named by circular key and host; the switch
+        # is the one that stuck, after the state layer's revert.
+        LOG=$(grep -oE '/nix/store/[^ ]+-strategy-log\.lua' "${z2kRuntime}/config") lua -e '
+          function automate_failure_counter(hrec, crec, fails)
+            if crec.failure then return false end
+            crec.failure = true
+            hrec.failure_counter = (hrec.failure_counter or 0) + 1
+            if hrec.failure_counter < fails then return false end
+            hrec.failure_counter = nil
+            return true
+          end
+          local revert = false
+          function circular()
+            local hrec = autostate.rkn_tcp["example.com"]
+            local before = hrec.nstrategy
+            if automate_failure_counter(hrec, {}, 2) then hrec.nstrategy = hrec.nstrategy % hrec.ctstrategy + 1 end
+            if revert then hrec.nstrategy = before end
+            return "verdict"
+          end
+          autostate = { rkn_tcp = { ["example.com"] = { nstrategy = 1, ctstrategy = 50 } } }
+          dofile(os.getenv("LOG"))
+          assert(circular() == "verdict")
+          circular()
+          automate_failure_counter(autostate.rkn_tcp["example.com"], { failure = true }, 2)
+          revert = true
+          circular()
+          circular()
+        ' 2>strategy.log
+        diff - strategy.log <<'EOF'
+        zapret2: rkn_tcp example.com: failure 1/2 on strategy 1/50
+        zapret2: rkn_tcp example.com: switched from strategy 1 to 2/50
+        zapret2: rkn_tcp example.com: failure 1/2 on strategy 2/50
+        zapret2: rkn_tcp example.com: failed enough to switch, but stays on strategy 2/50: it worked moments ago, or that strategy is final
+        EOF
+        # Off, the log is gone; debug hands nfqws2 its own.
+        if grep -qF -- 'strategy-log.lua' "${z2kTunedRuntime}/config"; then exit 1; fi
+        grep -qF -- "NFQWS2_OPT='--debug=1 --bind-fix4 --bind-fix6 --ipcache-hostname=1 --lua-init=" "${z2kTunedRuntime}/config"
+        # z2k's own daemon flags; the other source runs without the experimental name cache.
+        grep -qF -- "NFQWS2_OPT='--bind-fix4 --bind-fix6 --ipcache-hostname=1 --lua-init=" "${z2kRuntime}/config"
+        grep -qF -- "NFQWS2_OPT='--bind-fix4 --bind-fix6 --lua-init=" "${globalRuntime}/config"
         # Every UDP fake carries a blob; zapret2 errors on each packet otherwise.
         grep -qF -- '--lua-desync=fake:blob=0x0000' "${globalRuntime}/config"
         if grep -qF -- '--lua-desync=fake:repeats=' "${globalRuntime}/config"; then exit 1; fi
+        # circular sees what it counts: incoming resets and replies on TCP, as many UDP
+        # packets as udp_out; the strategies after it keep their own filters.
+        grep -qF -- '--in-range=-s5556 --payload=tls_client_hello,mtproto_initial,tls_server_hello,empty,unknown --lua-desync=circular:' "${globalRuntime}/config"
+        grep -qE -- ':reset --in-range=x --payload=tls_client_hello,mtproto_initial --lua-desync=fake:' "${globalRuntime}/config"
+        grep -qE -- '--out-range=a --in-range=a --payload=[^ ]+ --lua-desync=circular:[^ ]+ --out-range=<n2 --in-range=x --lua-desync=fake:' "${globalRuntime}/config"
         # autoHostlist fills what circular leaves unset; the source keeps its fails and time.
         grep -qF -- '--lua-desync=circular:fails=2:time=300:retrans=3:nld=2:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset ' "${globalRuntime}/config"
 
         # z2k: its generator's pools, detectors and fake TTL; only the general profile learns.
         grep -qx 'NFQWS2_TCP_PKT_OUT=20' "${z2kRuntime}/config"
         grep -qx 'NFQWS2_UDP_PKT_IN=8' "${z2kRuntime}/config"
-        grep -qx 'NFQWS2_PORTS_UDP=443,50000-50099,1400,3478-3481,5349,19294-19344' "${z2kRuntime}/config"
+        # Its Discord profile filters up to 50100, one port past its queue: the queue takes it.
+        grep -qx 'NFQWS2_PORTS_UDP=443,1400,3478-3481,5349,19294-19344,50000-50100' "${z2kRuntime}/config"
         grep -qF -- 'key=rkn_tcp:nld=2:failure_detector=z2k_fail_tls_alert:retrans=3:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset' "${z2kRuntime}/config"
         grep -qF -- 'failure_detector=z2k_fail_quic_silence' "${z2kRuntime}/config"
         grep -qF -- ':fool=z2k_dynamic_ttl' "${z2kRuntime}/config"
@@ -265,6 +402,25 @@ in
         # The proxy carries what no name fixes, unless the fallback is off.
         grep -qF 'tag: "zapret-cutoff"' ${socksStart zapret2Global}
         if grep -qF 'zapret-cutoff' ${socksStart zapret2NoFallback}; then exit 1; fi
+
+        # --- directSync of runtime hosts --------------------------------------
+        # Last before the final rule, and only where direct lists apply.
+        grep -qF 'tag: "zapret-hosts"' ${socksStart zapret2Global}
+        grep -qF 'all-proxy | all-bypass) ;;' ${socksStart zapret2Global}
+        if grep -qF 'zapret-hosts' ${socksStart zapretDiscordYoutubeGlobal}; then exit 1; fi
+        # Pinned and learned hosts less the excluded ones; IP literals as single addresses.
+        mkdir -p direct-lists empty-lists
+        printf 'pinned.example\n# a comment\n\n' >direct-lists/zapret-hosts-user.txt
+        printf 'Learned.Example\nexcluded.example\n203.0.113.7\n2001:db8::1\npinned.example\n' >direct-lists/zapret-hosts-auto.txt
+        printf 'excluded.example\n' >direct-lists/zapret-hosts-user-exclude.txt
+        ${directSync} direct-lists direct.json
+        test "$(cat direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["2001:db8::1/128","203.0.113.7/32"]}]}'
+        # Unchanged, the file stays as it was: sing-box reloads on every rename.
+        inode=$(stat -c %i direct.json)
+        ${directSync} direct-lists direct.json
+        test "$(stat -c %i direct.json)" = "$inode"
+        ${directSync} empty-lists empty.json
+        test "$(cat empty.json)" = '{"version":1,"rules":[]}'
 
         # --- per-app instance -------------------------------------------------
         # Wrapped apps opted in explicitly, so no hostlist gates them.
@@ -336,6 +492,10 @@ in
         # Nothing follows the learning profile, so no profile after it can lose to it.
         test "$(sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -c -- '^--new$')" = 0
         if sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -q -- '^--lua-desync='; then exit 1; fi
+
+        # Extra ports and --debug are options nfqws2 takes.
+        dry_run ${tunedRuntime} tuned.args
+        dry_run ${z2kTunedRuntime} z2k-tuned.args >/dev/null
 
         touch "$out"
       '';

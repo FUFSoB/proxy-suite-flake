@@ -15,6 +15,7 @@ let
     pureXrayEnabled
     constants
     zapretCutoffProxyFallback
+    zapret2DirectSync
     jq
     singBox
     xray
@@ -185,6 +186,7 @@ let
       enableAutoProxy ? false,
       enableOutboundTest ? false,
       enableZapretCutoff ? false,
+      enableZapretDirect ? false,
       excludeServiceUserFromTun ? false,
     }:
     pkgs.writeShellScript "proxy-suite-core" ''
@@ -364,6 +366,25 @@ let
         fi
       ''}
 
+      ${lib.optionalString enableZapretDirect ''
+        # directSync for the hosts zapret2 pins and learns at runtime: direct, so zapret2
+        # sees them. Last, after explicit rules, autoProxy's exits and the cutoff's networks,
+        # which zapret2 cannot fix. all-proxy and all-bypass keep no direct lists.
+        case "$ROUTE_MODE" in
+          all-proxy | all-bypass) ;;
+          *)
+            ZAPRET_RULE_SET=${lib.escapeShellArg "${constants.zapret2DirectDir}/direct.json"}
+            # The sync unit owns the directory's mode: what is in it skips the proxy.
+            mkdir -p "$(dirname "$ZAPRET_RULE_SET")"
+            [ -s "$ZAPRET_RULE_SET" ] || echo '{"version":1,"rules":[]}' > "$ZAPRET_RULE_SET"
+            chmod 644 "$ZAPRET_RULE_SET"
+            AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$ZAPRET_RULE_SET" \
+              '. + [{type: "local", format: "source", tag: "zapret-hosts", path: $p}]' <<< "$AUTOPROXY_RULE_SETS_JSON")
+            AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-hosts"], outbound: "direct"}]' <<< "$AUTOPROXY_RULES_JSON")
+            ;;
+        esac
+      ''}
+
       # umask: the file holds credentials until the chmod below; the process
       # substitutions keep them out of the argv every local user can read.
       (umask 077 && ${jq} \
@@ -498,6 +519,7 @@ let
     # Only the socks unit: relayed traffic reaches it, and the prober needs one home.
     enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
     enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
+    enableZapretDirect = zapret2DirectSync && !pureXrayEnabled;
     enableOutboundTest = true;
   };
 

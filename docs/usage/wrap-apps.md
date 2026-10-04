@@ -81,8 +81,11 @@ proxySuite = inputs.proxy-suite.lib.proxyHelpers {
 
 ## Reference
 
-- `urls.http`, `urls.socks`: the proxy's URLs. A listener on `0.0.0.0` or `::` is reached on
-  loopback.
+- `urls.http`, `urls.socks5h`, `urls.socks5`: the proxy's URLs. A listener on `0.0.0.0` or
+  `::` is reached on loopback. With `socks5h://` the proxy resolves names; `socks5://`
+  resolves them locally, for programs that do not accept `socks5h://`, such as Chromium and
+  Electron apps.
+- `urls.socks`: the same as `urls.socks5h`.
 - `env`: every proxy variable (`http_proxy`, `https_proxy`, `all_proxy`, their upper-case
   forms, and `no_proxy`). `envFor "http"` or `envFor "socks"` gives one kind only.
 - `wrapEnv { protocol ? "http"; programs ? null; } package`: the package, with its programs

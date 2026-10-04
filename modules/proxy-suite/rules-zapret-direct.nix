@@ -81,6 +81,12 @@ let
       [ ];
   zapretExcludedDomains =
     if syncZapretDirectDomains then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
+  # zapret2's own pinned domains; what it learns at runtime is not synced.
+  zapret2 = zapretCfg.engine == "zapret2";
+  zapret2Domains = lib.optionals (syncZapretDirectDomains && zapret2) zapretCfg.zapret2.domains;
+  zapret2ExcludedDomains = lib.optionals (
+    syncZapretDirectDomains && zapret2
+  ) zapretCfg.zapret2.excludeDomains;
   zapretExcludedIps = lib.unique (
     (
       if syncZapretDirectUpstreamIps then
@@ -103,12 +109,17 @@ let
       subtractItems
         (lib.unique (
           map stripExactPrefix (
-            zapretDefaultDomains ++ zapretCfg.zapret-discord-youtube.domains ++ zapretCustomDomains
+            zapretDefaultDomains
+            ++ zapretCfg.zapret-discord-youtube.domains
+            ++ zapretCustomDomains
+            ++ zapret2Domains
           )
         ))
         (
           lib.unique (
-            map stripExactPrefix (zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains)
+            map stripExactPrefix (
+              zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains ++ zapret2ExcludedDomains
+            )
           )
         )
     else

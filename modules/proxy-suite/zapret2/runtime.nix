@@ -109,17 +109,44 @@ let
     end
   '';
 
-  # The state layer wraps circular, so it loads after the source's Lua.
+  publicSuffixHostkey = pkgs.writeText "proxy-suite-zapret2-public-suffix-hostkey.lua" (
+    fillTemplate ./public-suffix-hostkey.lua {
+      suffixes =
+        pkgs.runCommand "proxy-suite-zapret2-public-suffixes"
+          {
+            nativeBuildInputs = [ pkgs.python3 ];
+          }
+          "python3 ${./public-suffixes.py} ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat >$out";
+    }
+  );
+
+  # The state layer wraps circular, so it loads after the source's Lua; the writes it
+  # skips are retried after it, and the log wraps them all, to report the switch that stuck.
+  #
+  # --bind-fix: a fake leaves by the interface its connection does. Under policy routing
+  # (an app or a domain sent through a tunnel) it would otherwise take the default route,
+  # away from the connection it was meant to precede; without such routing it is a no-op.
   optPrefix = lib.concatStringsSep " " (
-    map (file: "--lua-init=@${file}") (
+    lib.optional zapret2Cfg.debug "--debug=1"
+    ++ [
+      "--bind-fix4"
+      "--bind-fix6"
+    ]
+    ++ source.daemonArgs
+    ++ map (file: "--lua-init=@${file}") (
       source.luaInit
       ++ [
+        publicSuffixHostkey
         failStamp
         "${zapret2Sources.z2k}/files/lua/z2k-state-persist.lua"
+        ./persist-every.lua
       ]
+      ++ lib.optional zapret2Cfg.strategyLog ./strategy-log.lua
     )
     ++ lib.mapAttrsToList (name: file: "--blob=${name}:@${blobPath file}") zapret2Cfg.blobs
   );
+
+  portList = lib.concatMapStringsSep "," toString;
 
   # Detector args a circular instance leaves unset come from autoHostlist, so
   # learning and rotation agree; each source keeps its own fails and time.
@@ -169,8 +196,6 @@ let
           ++ lib.optional (!zapret2Cfg.ipv6) "DISABLE_IPV6=1"
           ++ [
             "NFQWS2_ENABLE=1"
-            "NFQWS2_PORTS_TCP=${orSource zapret2Cfg.ports.tcp source.ports.tcp}"
-            "NFQWS2_PORTS_UDP=${orSource zapret2Cfg.ports.udp source.ports.udp}"
             "NFQWS2_TCP_PKT_OUT=${toString packetWindow.tcpOut}"
             "NFQWS2_TCP_PKT_IN=${toString packetWindow.tcpIn}"
             "NFQWS2_UDP_PKT_OUT=${toString packetWindow.udpOut}"
@@ -194,6 +219,10 @@ let
       {
         nativeBuildInputs = [ pkgs.gawk ];
         inherit circularFill optPrefix;
+        basePortsTcp = orSource zapret2Cfg.ports.tcp source.ports.tcp;
+        basePortsUdp = orSource zapret2Cfg.ports.udp source.ports.udp;
+        extraPortsTcp = portList zapret2Cfg.ports.extraTcp;
+        extraPortsUdp = portList zapret2Cfg.ports.extraUdp;
       }
       ''
         opt="$optPrefix $(cat ${blobsFile}) $(cat ${profilesFile})"
@@ -212,13 +241,15 @@ let
               printf "%s%s", (i > 1 ? " " : ""), t
             }
           }')
+        opt=$(printf '%s\n' "$opt" | awk -v btcp="$basePortsTcp" -v budp="$basePortsUdp" \
+          -v xtcp="$extraPortsTcp" -v xudp="$extraPortsUdp" -v ports=ports -f ${./ports.awk})
         case "$opt" in
           *"'"*)
             echo "nfqws2 options must not contain a single quote" >&2
             exit 1
             ;;
         esac
-        { cat ${header}; printf "NFQWS2_OPT='%s'\n" "$opt"; } >"$out"
+        { cat ${header} ports; printf "NFQWS2_OPT='%s'\n" "$opt"; } >"$out"
       '';
 
   # {circular key: {strategy: [its desync instances]}}, for proxy-ctl to name the

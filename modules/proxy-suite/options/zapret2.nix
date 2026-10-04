@@ -4,6 +4,7 @@ let
   inherit (lib) mkEnableOption mkOption types;
   int = (import ./lib.nix { inherit lib; }).positiveInt;
   fromSource = what: "`null`: use the ${what} from `strategySource`.";
+  portOrRange = types.either types.port (types.strMatching "[0-9]+(-[0-9]+)?");
 in
 {
   options.services.proxy-suite.zapret.zapret2 = {
@@ -63,16 +64,56 @@ in
       tcp = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "TCP ports zapret2 handles. Must include every port a profile uses. ${fromSource "ports"}";
+        description = "TCP ports zapret2 handles. The ports the profiles filter on and `extraTcp` are always added. ${fromSource "ports"}";
         example = "80,443";
       };
 
       udp = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "UDP ports zapret2 handles. Must include every port a profile uses. ${fromSource "ports"}";
+        description = "UDP ports zapret2 handles. The ports the profiles filter on and `extraUdp` are always added. ${fromSource "ports"}";
         example = "443";
       };
+
+      extraTcp = mkOption {
+        type = types.listOf portOrRange;
+        default = [ ];
+        description = ''
+          More TCP ports, handled like the profiles' own: each profile that recognizes its traffic
+          (`--filter-l7`, e.g. TLS) gets them too, so TLS to a blocked site on one of these ports
+          gets the same strategies. A profile without `--filter-l7` keeps its ports.
+        '';
+        example = [
+          8444
+          "9000-9010"
+        ];
+      };
+
+      extraUdp = mkOption {
+        type = types.listOf portOrRange;
+        default = [ ];
+        description = ''
+          More UDP ports, handled like the profiles' own: each profile that recognizes its traffic
+          (`--filter-l7`, e.g. STUN, Discord, QUIC) gets them too, so a game's or call app's STUN
+          on these ports gets the same strategies as Discord's.
+        '';
+        example = [ "27015-27030" ];
+      };
+    };
+
+    strategyLog = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Log each counted failure and strategy switch to the journal, per site
+        (`proxy-ctl logs proxy-suite-zapret`). Without it nfqws2 logs them only with `debug`.
+      '';
+    };
+
+    debug = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Log everything nfqws2 does to the journal, every packet included. Very verbose: for troubleshooting.";
     };
 
     ipv6 = mkOption {

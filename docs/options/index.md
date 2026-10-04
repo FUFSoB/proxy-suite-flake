@@ -405,14 +405,18 @@ services.proxy-suite = {
         enable = true;
         proxyFallback = true;
       };
+      debug = false;
       domains = [ ];
       excludeDomains = [ ];
       ipv6 = false;
       ports = {
+        extraTcp = [ ];
+        extraUdp = [ ];
         tcp = null;
         udp = null;
       };
       profiles = null;
+      strategyLog = true;
       strategySource = "nfqws2-keenetic";
     };
   };

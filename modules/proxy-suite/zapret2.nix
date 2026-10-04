@@ -22,6 +22,7 @@ let
     userControlAnyAllows
     userControlExtraGroupsFor
     zapretGlobalEnabled
+    zapret2DirectSync
     ;
   inherit
     (import ./zapret/common.nix {
@@ -131,8 +132,15 @@ let
       ;
   };
 
+  directSync = import ./zapret2/direct-sync.nix { inherit lib pkgs cfg; };
+
 in
 {
+  services.proxy-suite.internal.services.proxy-suite-zapret2-direct =
+    lib.mkIf zapret2DirectSync directSync.service;
+  services.proxy-suite.internal.paths.proxy-suite-zapret2-direct =
+    lib.mkIf zapret2DirectSync directSync.path;
+
   services.proxy-suite.internal.earlyPackages = [ runtime.package ];
 
   services.proxy-suite.internal.services.proxy-suite-zapret2-cutoff =

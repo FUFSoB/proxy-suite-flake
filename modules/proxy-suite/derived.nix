@@ -553,6 +553,9 @@ let
   # The cut-off networks no whitelisted name fixes go through the proxy outbound.
   zapretCutoffProxyFallback =
     zapretCutoffEnabled && zapretCfg.zapret2.cutoff.proxyFallback && hasAvailableOutbounds;
+  # directSync for what zapret2 pins and learns at runtime: a rule-set the proxy reloads.
+  # The fixed lists go in with the routing rules (rules-zapret-direct.nix).
+  zapret2DirectSync = zapretEngine == "zapret2" && zapretGlobalEnabled && zapretCfg.directSync.enable;
   userControlEnabled = userControlCfg.enable;
   # Whether userControl.group, which owns proxy-suite's files, holds a scope; no scopes
   # listed means all of them. The groups in userControl.groups get theirs through ACLs.
@@ -678,6 +681,8 @@ let
     # Not under zapret2/, which the zapret scope's group writes to: root works here by
     # fixed names (the group asks for probes in requests/).
     zapret2CutoffDir = "${stateDir}/zapret2-cutoff";
+    # The same for the rule-set of zapret2's runtime hosts: what is in it skips the proxy.
+    zapret2DirectDir = "${stateDir}/zapret2-direct";
     # Conntrack bit on the cutoff probe's own connections, which zapret2 leaves alone.
     zapret2CutoffProbeCtMark = 33554432; # 0x2000000
 
@@ -878,6 +883,7 @@ in
     zapretGlobalEnabled
     zapretCutoffEnabled
     zapretCutoffProxyFallback
+    zapret2DirectSync
     userControlCfg
     userControlEnabled
     userControlAllows

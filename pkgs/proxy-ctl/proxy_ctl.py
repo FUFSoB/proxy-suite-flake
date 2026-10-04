@@ -5292,7 +5292,7 @@ def _follow_in_pager(argv, pager):
         signal.signal(signal.SIGINT, old)
         die(f"proxy-ctl: {argv[0]}: {e.strerror}", 127)
     try:
-        return subprocess.call([pager, "-R", "-S", "-M", "+F"], stdin=source.stdout)
+        return subprocess.call([pager, "-R", "-M", "+F"], stdin=source.stdout)
     finally:
         source.stdout.close()
         source.terminate()

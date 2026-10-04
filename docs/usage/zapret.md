@@ -45,6 +45,17 @@ services.proxy-suite = {
 the full RKN list and uses more memory. It also turns on a workaround for ISPs that cut
 TLS to some hosting networks after about 16 KB.
 
+Each failure zapret2 counts and each strategy switch is logged, per site:
+`proxy-ctl logs proxy-suite-zapret`. A site stays on its first strategy as long as that one
+works.
+
+Other ports, such as a game's, take the same strategies with `zapret2.ports.extraUdp` or
+`extraTcp`:
+
+```nix
+services.proxy-suite.zapret.zapret2.ports.extraUdp = [ "27015-27030" ];
+```
+
 ## Commands
 
 ```sh
@@ -60,8 +71,10 @@ proxy-ctl zapret cutoff                   # networks cut off at 16 KB (z2k)
 ## With a proxy
 
 zapret and the proxy work side by side. By default (`zapret.directSync`), the sites zapret
-handles are sent direct, so they skip the proxy and reach zapret. Everything else follows
-your [routing rules](./routing.md).
+handles are sent direct, so they skip the proxy and reach zapret. With zapret2 that includes
+the sites it learns and the ones you pin with `proxy-ctl zapret auto add`, as soon as they
+are added; your own rules and autoProxy still come first. Everything else follows your
+[routing rules](./routing.md).
 
 ## Only for some apps
 
@@ -100,4 +113,5 @@ belong to the system-wide zapret, so they do nothing here. See
 - [`zapret.global.enable`](../options/zapret.md#services-proxy-suite-zapret-global-enable)
 - [`zapret-discord-youtube.configName`](../options/zapret.md#services-proxy-suite-zapret-zapret-discord-youtube-configname)
 - [`zapret2.strategySource`](../options/zapret.md#services-proxy-suite-zapret-zapret2-strategysource)
+- [`zapret2.ports.extraUdp`](../options/zapret.md#services-proxy-suite-zapret-zapret2-ports-extraudp)
 - [`zapret.directSync`](../options/zapret.md#services-proxy-suite-zapret-directsync-enable)

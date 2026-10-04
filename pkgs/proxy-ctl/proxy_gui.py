@@ -1106,6 +1106,10 @@ class ProxySuiteGui(Adw.Application):
         self.pending = False
         self.generation = 0
         self.failed = None  # units in failed state at the last load; None before the first
+        # model.FAILURE_EVENTS failures (unit -> mark): on screen in the window now, and seen there
+        # before. A seen one stops marking the tray and the status line once the window is left.
+        self.viewing = {}
+        self.seen = {}
         self.root_read_refused = False  # pkexec for a tab read was dismissed: not asked again until Ctrl+E flips
         self.timer = None
 
@@ -1177,6 +1181,8 @@ class ProxySuiteGui(Adw.Application):
     def present(self, tab=None):
         if self.window is None:
             self.window = Window(self)
+            # Hidden to the tray or switched away from: what it showed has been seen.
+            self.window.connect("notify::is-active", lambda w, _: w.is_active() or self.leave_window())
             self.window.show_tabs(model.available_tabs(self.states) if self.states else ["services"])
         if tab and tab in self.window.pages:
             self.window.stack.set_visible_child_name(tab)
@@ -1190,6 +1196,12 @@ class ProxySuiteGui(Adw.Application):
             self.window.set_visible(False)
         else:
             self.present()
+
+    def leave_window(self):
+        if self.viewing:
+            self.seen.update(self.viewing)
+            self.viewing.clear()
+            self.reload()
 
     def on_tray_available(self, available):
         if not available and self.window is None:
@@ -1212,15 +1224,17 @@ class ProxySuiteGui(Adw.Application):
         if window:
             window.set_busy(True)
         tab = window.pages[window.stack.get_visible_child_name()].tab if window and window.stack.get_visible_child_name() else None
-        threading.Thread(target=self.load, args=(self.generation, tab, self.elevated()), daemon=True).start()
+        threading.Thread(target=self.load, args=(self.generation, tab, self.elevated(), dict(self.seen)), daemon=True).start()
 
-    def load(self, generation, tab, elevated):
+    def load(self, generation, tab, elevated, seen):
         model.new_load()
         states = model._read_states()
+        marks = model._safe(model.failure_marks, states, fallback={})
+        states = model.unseen(states, marks, seen)
         snap = model.snapshot(states) if states else None
         outbound = model._safe(ctl._status_outbound, fallback="") if snap and snap["proxy"]["active"] else ""
         tray = (model.tray_menu(snap, model.tray_outbounds(snap)), ctl._overall_state(snap), outbound)
-        result = {"states": states, "snap": snap, "tray": tray}
+        result = {"states": states, "snap": snap, "tray": tray, "marks": marks}
         if tab is not None:
             result["visible"] = model.available_tabs(states)
             result["status"] = model._safe(model.status_items, states, fallback=[("", "Status unavailable", "bad")])
@@ -1252,6 +1266,12 @@ class ProxySuiteGui(Adw.Application):
             stale = not result["states"] and bool(self.states)
             if not stale:
                 self.states = result["states"]
+                marks = result["marks"]
+                # A failure that is over, or failed again since, is no longer the one seen.
+                self.seen = {u: m for u, m in self.seen.items() if marks.get(u) == m}
+                self.viewing = {u: m for u, m in self.viewing.items() if marks.get(u) == m}
+                if "tab" in result and self.window and self.window.is_active():
+                    self.viewing.update((u, m) for u, m in marks.items() if u not in self.seen)
                 snap = result["snap"]
                 tree, overall, outbound = result["tray"]
                 if self.tray:

@@ -273,6 +273,8 @@ let
       pkgs
       evalProxySuite
       baseModule
+      mkRoutingRules
+      hasDirectDomain
       mkProxyCtlDerived
       mkBadFixture
       mkFailingAssertions
