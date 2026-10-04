@@ -15,6 +15,7 @@
 }:
 
 let
+  fillTemplate = import ../lib/fill-template.nix;
   # Units a narrower scope starts; every other proxy-suite unit is "services".
   scopeByUnitPrefix = {
     "proxy-suite-per-app-" = "perApp";
@@ -48,55 +49,14 @@ let
   ];
 in
 {
-  userControlPolkitRules = ''
-    var verb = action.lookup("verb");
-    if (typeof unit !== "string" || ${builtins.toJSON verbs}.indexOf(verb) === -1) {
-      return null;
-    }
-    var known = ${builtins.toJSON units}.indexOf(unit) !== -1;
-    var templates = ${builtins.toJSON templates};
-    for (var i = 0; !known && i < templates.length; i++) {
-      var template = templates[i];
-      if (unit.indexOf(template) !== 0) {
-        continue;
-      }
-      var instance = unit.slice(template.length).replace(/\.service$/, "");
-      if (!/^[A-Za-z0-9:_.\\-]+$/.test(instance) || unit !== template + instance + ".service") {
-        continue;
-      }
-      // Per-app marking follows one user's apps: only that user's own instance.
-      if (/-user@$/.test(template)) {
-        try {
-          var uid = polkit.spawn(["${pkgs.coreutils}/bin/id", "-u", "--", subject.user]).trim();
-        } catch (error) {
-          return null;
-        }
-        if (instance !== uid) {
-          return null;
-        }
-      }
-      known = true;
-    }
-    if (!known) {
-      return null;
-    }
-
-    var scopeByUnitPrefix = ${builtins.toJSON scopeByUnitPrefix};
-    var scope = "services";
-    for (var prefix in scopeByUnitPrefix) {
-      if (unit.indexOf(prefix) === 0) {
-        scope = scopeByUnitPrefix[prefix];
-        break;
-      }
-    }
-    // Any of the subject's groups that holds the scope.
-    var groupScopes = ${builtins.toJSON userControlGroupScopes};
-    for (var group in groupScopes) {
-      if (groupScopes[group].indexOf(scope) !== -1 && subject.isInGroup(group)) {
-        return polkit.Result.YES;
-      }
-    }
-  '';
+  userControlPolkitRules = fillTemplate ./polkit-rules.template.js {
+    verbs = builtins.toJSON verbs;
+    units = builtins.toJSON units;
+    templates = builtins.toJSON templates;
+    coreutils = pkgs.coreutils;
+    scopeByUnitPrefix = builtins.toJSON scopeByUnitPrefix;
+    groupScopes = builtins.toJSON userControlGroupScopes;
+  };
   # Whether the subject is in any userControl group at all: the rule's first test.
   userControlPolkitMember = lib.concatMapStringsSep " || " (
     group: "subject.isInGroup(${builtins.toJSON group})"

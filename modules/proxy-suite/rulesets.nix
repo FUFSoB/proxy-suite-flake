@@ -8,6 +8,7 @@
 }:
 
 let
+  fillTemplate = import ./lib/fill-template.nix;
   inherit (derived) ruleSets localProxy;
   inherit (derived.constants) ruleSetsDir unprivilegedServiceConfig serviceUser;
   inherit (cfg.host) privileged;
@@ -35,74 +36,33 @@ let
     ${singBox} rule-set compile --output "$out" ${emptySource}
   '';
 
-  fetchScript = pkgs.writeShellScript "proxy-suite-rulesets" ''
-    set -uo pipefail
-    proxy=(--proxy socks5h://${localProxy.hostPart}:${toString cfg.proxy.listener.port})
-    # The listener's login as curl config on a pipe (-K): argv is readable by every local user.
-    proxy_login() {
-      [ "$1" = proxy ] || return 0
-      ${lib.optionalString withProxyAuth ''
+  fetchScript = pkgs.writeShellScript "proxy-suite-rulesets" (
+    fillTemplate ./rulesets-fetch.template.sh {
+      proxyHost = localProxy.hostPart;
+      proxyPort = toString cfg.proxy.listener.port;
+      proxyLogin = lib.optionalString withProxyAuth ''
         local login
         login=${lib.escapeShellArg auth.username}:"$(< "$CREDENTIALS_DIRECTORY/proxy-password")"
         login=''${login//\\/\\\\}
         printf 'proxy-user = "%s"\n' "''${login//\"/\\\"}"
-      ''}
+      '';
+      coreutils = pkgs.coreutils;
+      inherit curl singBox;
+      jq = pkgs.jq;
+      fetchRuleSets = lib.concatMapStrings (rs: ''
+        fetch ${
+          lib.escapeShellArgs [
+            rs.name
+            rs.url
+            rs.path
+            rs.dnsPath
+            rs.format
+            rs.detour
+          ]
+        }
+      '') ruleSets;
     }
-    failed=0
-
-    # A download replaces the file only once sing-box has read it back, so a bad one never
-    # reaches the backend; a failed one keeps what was there. Its domain rules go to the copy
-    # DNS rules read.
-    fetch() {
-      local name=$1 url=$2 path=$3 dns=$4 format=$5 detour=$6 tmp dnsTmp
-      local args=(--fail --silent --show-error --location --max-time 120 --max-filesize 64M)
-      [ "$detour" = proxy ] && args+=("''${proxy[@]}")
-      tmp=$(${pkgs.coreutils}/bin/mktemp "$path.XXXXXX") || { failed=1; return; }
-      dnsTmp=$(${pkgs.coreutils}/bin/mktemp "$dns.XXXXXX") || { rm -f "$tmp"; failed=1; return; }
-      if ${curl} "''${args[@]}" -K <(proxy_login "$detour") --output "$tmp" "$url" && valid "$tmp" "$format" &&
-        domains "$tmp" "$format" > "$dnsTmp" && valid "$dnsTmp" source; then
-        chmod 0644 "$tmp" "$dnsTmp"
-        mv -f "$dnsTmp" "$dns"
-        mv -f "$tmp" "$path"
-        echo "rule set $name: updated"
-      else
-        rm -f "$tmp" "$dnsTmp"
-        echo "rule set $name: not updated from $url; keeping the one it has" >&2
-        failed=1
-      fi
-    }
-    valid() {
-      if [ "$2" = binary ]; then
-        ${singBox} rule-set decompile --output /dev/null "$1" 2>/dev/null
-      else
-        ${singBox} rule-set compile --output /dev/null "$1" 2>/dev/null
-      fi
-    }
-    domains() {
-      if [ "$2" = binary ]; then
-        ${singBox} rule-set decompile --output /dev/stdout "$1"
-      else
-        cat "$1"
-      fi | ${pkgs.jq}/bin/jq '.rules = [(.rules // [])[]
-        | select((.type // "default") == "default"
-          and (has("domain") or has("domain_suffix") or has("domain_keyword") or has("domain_regex")))
-        | del(.ip_cidr, .ip_is_private)]'
-    }
-
-    ${lib.concatMapStrings (rs: ''
-      fetch ${
-        lib.escapeShellArgs [
-          rs.name
-          rs.url
-          rs.path
-          rs.dnsPath
-          rs.format
-          rs.detour
-        ]
-      }
-    '') ruleSets}
-    exit "$failed"
-  '';
+  );
 in
 {
   services.proxy-suite.internal = {
