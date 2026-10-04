@@ -70,16 +70,15 @@ let
       '';
   proxychainsQuietArg = lib.optionalString perAppRoutingCfg.proxychains.quiet "-q ";
 
-  hasProxychainsProfiles = builtins.any (
-    profile: profile.route == "proxychains"
+  # A profile run straight into an AmneziaWG interface uses no method, whatever its route.
+  methodProfiles = builtins.filter (
+    profile: (profile.outbound or null) == null || !ctx.perAppViaDirect profile.outbound
   ) effectivePerAppRoutingProfiles;
-  hasTunProfiles = builtins.any (profile: profile.route == "tun") effectivePerAppRoutingProfiles;
-  hasTproxyProfiles = builtins.any (
-    profile: profile.route == "tproxy"
-  ) effectivePerAppRoutingProfiles;
-  hasZapretProfiles = builtins.any (
-    profile: profile.route == "zapret"
-  ) effectivePerAppRoutingProfiles;
+  hasRoute = route: builtins.any (profile: profile.route == route) methodProfiles;
+  hasProxychainsProfiles = hasRoute "proxychains";
+  hasTunProfiles = hasRoute "tun";
+  hasTproxyProfiles = hasRoute "tproxy";
+  hasZapretProfiles = hasRoute "zapret";
 in
 {
   inherit

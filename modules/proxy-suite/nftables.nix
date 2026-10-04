@@ -11,6 +11,10 @@ let
     awgGlobalProfiles
     awgGlobalAvailable
     awgRuntimeGlobal
+    perAppViaMarks
+    perAppPinTproxy
+    perAppPinTun
+    perAppPinSlots
     ;
   inherit (constants) serviceUser;
   proxyCfg = cfg.proxy;
@@ -22,6 +26,10 @@ let
   tgWsProxyBypassEnabled = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
   tgWsProxyBypassMarkLine = lib.optionalString tgWsProxyBypassEnabled ''
     meta mark ${toString tgWsProxyCfg.fwmark} return
+  '';
+  # Apps run `--via` an AmneziaWG interface are routed into it, not into the proxy.
+  perAppViaMarkLine = lib.optionalString (perAppViaMarks != [ ]) ''
+    meta mark { ${lib.concatMapStringsSep ", " toString perAppViaMarks} } return
   '';
 
   # Shared across all three nftables rule files that do IP routing.
@@ -86,10 +94,11 @@ let
     lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 "
   }meta l4proto { tcp, udp }";
   # Both listeners share the port; `tproxy ip`/`tproxy ip6` only match their own family.
-  mkTproxyLines = prefix: suffix: ''
-    ${prefix}meta l4proto { tcp, udp } tproxy ip to 127.0.0.1:${toString globalTproxy.port}${suffix}
-    ${lib.optionalString proxyCfg.ipv6 "${prefix}meta l4proto { tcp, udp } tproxy ip6 to [::1]:${toString globalTproxy.port}${suffix}"}
+  mkTproxyLinesTo = port: prefix: suffix: ''
+    ${prefix}meta l4proto { tcp, udp } tproxy ip to 127.0.0.1:${toString port}${suffix}
+    ${lib.optionalString proxyCfg.ipv6 "${prefix}meta l4proto { tcp, udp } tproxy ip6 to [::1]:${toString port}${suffix}"}
   '';
+  mkTproxyLines = mkTproxyLinesTo globalTproxy.port;
 
   nftablesRulesFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
@@ -118,40 +127,62 @@ let
                   # inbound XRay dials unmarked, lacking CAP_NET_ADMIN), leave as they are.
                   ct direction reply return
                   meta skuid "${serviceUser}" return
-    ${tgWsProxyBypassMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
+    ${tgWsProxyBypassMarkLine}${perAppViaMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
               }
           }
   '';
 
-  perAppTproxyRulesFile = pkgs.writeText "proxy-suite-routing" ''
-        ${reservedIpBlock}
-          table inet proxy_suite_per_app_tproxy {
-              chain prerouting {
-                  type filter hook prerouting priority mangle; policy accept;
-        ${reservedLines}
-                  iifname != "lo" ip saddr $RESERVED_IP return
-                  iifname != "lo" ip6 saddr $RESERVED_IP6 return
-                  # This host's own addresses are served here, not detoured through the proxy.
-                  fib daddr type local return
-        ${perAppTproxyLocalSubnetLines}
-                  # The backend's forged UDP replies belong to the app's flow too; an unconnected
-                  # app socket is no match for the tproxy lookup, so the listener would take them.
-                  ct direction reply return
-                  ct mark ${toString perAppTproxy.fwmark} meta mark set ${toString perAppTproxy.fwmark}
-        ${mkTproxyLines "meta mark ${toString perAppTproxy.fwmark} " ""}
-              }
+  # Per-app TProxy, and a pin slot of it (perAppRouting.via): `mark` on the app's packets, which
+  # the backend takes on `port`.
+  mkPerAppTproxyRules =
+    {
+      table,
+      mark,
+      port,
+    }:
+    ''
+          ${reservedIpBlock}
+            table inet ${table} {
+                chain prerouting {
+                    type filter hook prerouting priority mangle; policy accept;
+          ${reservedLines}
+                    iifname != "lo" ip saddr $RESERVED_IP return
+                    iifname != "lo" ip6 saddr $RESERVED_IP6 return
+                    # This host's own addresses are served here, not detoured through the proxy.
+                    fib daddr type local return
+          ${perAppTproxyLocalSubnetLines}
+                    # The backend's forged UDP replies belong to the app's flow too; an unconnected
+                    # app socket is no match for the tproxy lookup, so the listener would take them.
+                    ct direction reply return
+                    ct mark ${toString mark} meta mark set ${toString mark}
+          ${mkTproxyLinesTo port "meta mark ${toString mark} " ""}
+                }
 
-              chain output {
-                  type route hook output priority mangle; policy accept;
-        ${reservedLines}
-        ${perAppTproxyLocalSubnetLines}
-                  meta mark ${toString globalTproxy.proxyMark} return
-                  ct direction reply return
-    ${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}              ct mark ${toString perAppTproxy.fwmark} meta mark set ${toString perAppTproxy.fwmark}
-                  meta mark ${toString perAppTproxy.fwmark} return
-              }
-          }
-  '';
+                chain output {
+                    type route hook output priority mangle; policy accept;
+          ${reservedLines}
+          ${perAppTproxyLocalSubnetLines}
+                    meta mark ${toString globalTproxy.proxyMark} return
+                    ct direction reply return
+      ${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}              ct mark ${toString mark} meta mark set ${toString mark}
+                    meta mark ${toString mark} return
+                }
+            }
+    '';
+
+  perAppTproxyRulesFile = pkgs.writeText "proxy-suite-routing" (mkPerAppTproxyRules {
+    table = "proxy_suite_per_app_tproxy";
+    mark = perAppTproxy.fwmark;
+    inherit (globalTproxy) port;
+  });
+  perAppPinTproxyRulesFiles = lib.genList (
+    slot:
+    pkgs.writeText "proxy-suite-routing" (mkPerAppTproxyRules {
+      table = "proxy_suite_per_app_via_tproxy_${toString slot}";
+      mark = constants.perAppPinTproxyFwmarkBase + slot;
+      port = constants.perAppPinTproxyPortBase + slot;
+    })
+  ) (if perAppPinTproxy then perAppPinSlots else 0);
 
   # Everything proxy-suite sends itself, or has already taken into the proxy, gets past; the
   # rest is what TUN, TProxy or a global AmneziaWG profile would have taken, had it been up.
@@ -163,7 +194,14 @@ let
   ++ lib.optional perAppTun.enable perAppTun.fwmark
   ++ lib.optional perAppTproxy.enable perAppTproxy.fwmark
   ++ lib.optional tgWsProxyBypassEnabled tgWsProxyCfg.fwmark
-  ++ lib.optional awgGlobalAvailable constants.awgGlobalFwmark;
+  ++ lib.optional awgGlobalAvailable constants.awgGlobalFwmark
+  ++ perAppViaMarks
+  ++ lib.optionals perAppPinTproxy (
+    lib.genList (slot: constants.perAppPinTproxyFwmarkBase + slot) perAppPinSlots
+  )
+  ++ lib.optionals perAppPinTun (
+    lib.genList (slot: constants.perAppPinTunFwmarkBase + slot) perAppPinSlots
+  );
   awgGlobalInterfaces =
     lib.mapAttrsToList (_: profile: profile.interfaceName) awgGlobalProfiles
     ++ lib.optional awgRuntimeGlobal cfg.amneziaWg.runtime.interfaceName;
@@ -231,34 +269,63 @@ let
     }
   '';
 
-  perAppTunChainFile = pkgs.writeText "proxy-suite-routing" ''
-        ${reservedIpBlock}
-          table inet proxy_suite_per_app_tun {
-              # The per-user cgroup mark rules are added here at runtime; `output` reaches it
-              # by two paths, so they are written once. Defined first: a jump only resolves
-              # to a chain nft has already read.
-              chain app_mark {
-              }
-              chain output {
-                  type route hook output priority mangle; policy accept;
-                  # Replies to connections from outside leave the way they came, not through the TUN.
-                  ct direction reply return
-                  ct mark ${toString perAppTun.fwmark} meta mark set ${toString perAppTun.fwmark}
-                  meta mark ${toString perAppTun.fwmark} return
-                  # A wrapped app's DNS goes through the TUN even when its resolver sits on a
-                  # local or reserved address, as the global TUN's dport 53 ip rules do:
-                  # otherwise names resolve outside the proxy, fake DNS never sees them, and
-                  # domain rules match nothing.
-                  meta l4proto { tcp, udp } th dport 53 goto app_mark
-                  ip daddr $RESERVED_IP return
-                  ip6 daddr $RESERVED_IP6 return
-    ${lib.concatMapStrings (cidr: ''
-      ${ipFamily cidr} daddr ${cidr} return
-    '') perAppTun.localSubnets}
-                  goto app_mark
-              }
-          }
-  '';
+  # Per-app TUN, and a pin slot of it: `mark` on the app's packets routes them into the TUN.
+  # `snat`: the addresses a pin slot's packets enter the TUN from, which the backend tells the
+  # slot by. The app picked its source on the host's route, before the mark moved it here.
+  mkPerAppTunChain =
+    {
+      table,
+      mark,
+      snat ? null,
+    }:
+    ''
+          ${reservedIpBlock}
+            table inet ${table} {
+                # The per-user cgroup mark rules are added here at runtime; `output` reaches it
+                # by two paths, so they are written once. Defined first: a jump only resolves
+                # to a chain nft has already read.
+                chain app_mark {
+                }
+                chain output {
+                    type route hook output priority mangle; policy accept;
+                    # Replies to connections from outside leave the way they came, not through the TUN.
+                    ct direction reply return
+                    ct mark ${toString mark} meta mark set ${toString mark}
+                    meta mark ${toString mark} return
+                    # A wrapped app's DNS goes through the TUN even when its resolver sits on a
+                    # local or reserved address, as the global TUN's dport 53 ip rules do:
+                    # otherwise names resolve outside the proxy, fake DNS never sees them, and
+                    # domain rules match nothing.
+                    meta l4proto { tcp, udp } th dport 53 goto app_mark
+                    ip daddr $RESERVED_IP return
+                    ip6 daddr $RESERVED_IP6 return
+      ${lib.concatMapStrings (cidr: ''
+        ${ipFamily cidr} daddr ${cidr} return
+      '') perAppTun.localSubnets}
+                    goto app_mark
+                }
+      ${lib.optionalString (snat != null) ''
+        chain postrouting {
+            type nat hook postrouting priority srcnat; policy accept;
+            oifname "${perAppTun.interface}" meta mark ${toString mark} meta nfproto ipv4 snat ip to ${snat.ipv4}
+            ${lib.optionalString proxyCfg.ipv6 ''oifname "${perAppTun.interface}" meta mark ${toString mark} meta nfproto ipv6 snat ip6 to ${snat.ipv6}''}
+        }
+      ''}
+            }
+    '';
+
+  perAppTunChainFile = pkgs.writeText "proxy-suite-routing" (mkPerAppTunChain {
+    table = "proxy_suite_per_app_tun";
+    mark = perAppTun.fwmark;
+  });
+  perAppPinTunChainFiles = lib.genList (
+    slot:
+    pkgs.writeText "proxy-suite-routing" (mkPerAppTunChain {
+      table = "proxy_suite_per_app_via_tun_${toString slot}";
+      mark = constants.perAppPinTunFwmarkBase + slot;
+      snat = constants.perAppPinTunSource slot;
+    })
+  ) (if perAppPinTun then perAppPinSlots else 0);
 
   ip = "${pkgs.iproute2}/bin/ip";
   nft = "${pkgs.nftables}/bin/nft";
@@ -270,8 +337,10 @@ in
     nftablesRulesFile
     killSwitchRulesFile
     perAppTproxyRulesFile
+    perAppPinTproxyRulesFiles
     perAppZapretRulesFile
     perAppTunChainFile
+    perAppPinTunChainFiles
     ip
     nft
     ;

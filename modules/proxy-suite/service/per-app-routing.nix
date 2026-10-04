@@ -42,6 +42,7 @@ slices
 // import ./per-app-routing/profiles.nix { inherit ctx; }
 // import ./per-app-routing/backend-scripts.nix { inherit ctx; }
 // userRules
+// import ./per-app-routing/via.nix { inherit ctx userRules; }
 // {
   inherit (builders) mkAnchorService;
 }

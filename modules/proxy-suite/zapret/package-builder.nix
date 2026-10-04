@@ -39,11 +39,18 @@ let
               "$rule_helper" "$1" "$chain" -t mangle -m mark ! --mark 0/${filterMark} -m comment --comment "proxy-suite ${scope} per-app-zapret bypass" -j RETURN
             done
           ''}
-          ${lib.concatMapStrings (interface: ''
-            "$rule_helper" "$1" POSTROUTING -t mangle -o ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
-            "$rule_helper" "$1" INPUT -t mangle -i ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
-            "$rule_helper" "$1" FORWARD -t mangle -i ${lib.escapeShellArg interface} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
-          '') tunInterfaces}
+          ${lib.concatMapStrings (
+            interface:
+            let
+              # iptables' wildcard.
+              name = lib.escapeShellArg (lib.replaceStrings [ "*" ] [ "+" ] interface);
+            in
+            ''
+              "$rule_helper" "$1" POSTROUTING -t mangle -o ${name} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+              "$rule_helper" "$1" INPUT -t mangle -i ${name} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+              "$rule_helper" "$1" FORWARD -t mangle -i ${name} -m comment --comment "proxy-suite ${scope} TUN bypass" -j RETURN
+            ''
+          ) tunInterfaces}
         done
         return 0
       }

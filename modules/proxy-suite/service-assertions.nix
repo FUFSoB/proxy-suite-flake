@@ -455,7 +455,53 @@ let
     (requires hasZapretProfiles perAppZapretCfg.enable "route=zapret in perAppRouting.profiles"
       "perAppRouting.zapret.enable"
     )
-  ];
+    (mkAssertion
+      (
+        !lib.any (
+          mark:
+          builtins.elem mark (
+            [
+              globalTproxy.fwmark
+              globalTproxy.proxyMark
+              perAppRoutingTun.fwmark
+              perAppRoutingTproxy.fwmark
+              constants.awgGlobalFwmark
+              constants.awgInboundFwmark
+            ]
+            ++ lib.optional tgWsProxyCfg.enable tgWsProxyCfg.fwmark
+          )
+        ) derived.perAppViaMarks
+      )
+      "proxy-suite: apps run --via an AmneziaWG interface are marked from ${toString constants.awgPerAppFwmarkBase} up, which a proxy.tproxy, perAppRouting or tgWsProxy fwmark also uses"
+    )
+    (mkAssertion (
+      perAppRoutingCfg.via.pinSlots <= 16
+    ) "proxy-suite: perAppRouting.via.pinSlots is at most 16")
+  ]
+  # An "interface" AmneziaWG outbound or a global profile takes the app directly; any other
+  # outbound, a pin slot of the profile's route. A name declared nowhere may be one added at
+  # runtime; one that is both a global profile and an outbound has to say which.
+  ++ lib.concatMap (
+    profile:
+    let
+      target = derived.perAppViaTarget profile.outbound;
+      direct = derived.perAppViaDirect profile.outbound;
+      pinned =
+        target.kind != "awg"
+        && (
+          (profile.route == "tproxy" && derived.perAppPinTproxy)
+          || (profile.route == "tun" && derived.perAppPinTun)
+        );
+    in
+    lib.optionals (profile.outbound != null) [
+      (mkAssertion (direct || pinned)
+        "proxy-suite: perAppRouting profile '${profile.name}': outbound '${profile.outbound}' needs route \"tproxy\" or \"tun\" with that method enabled, on a privileged host with the sing-box or hybrid backend; or an \"interface\" AmneziaWG outbound (amneziaWg.profiles.<name>.asOutbound), or a global AmneziaWG profile on a privileged host"
+      )
+      (mkAssertion (!derived.perAppViaAmbiguous profile.outbound)
+        "proxy-suite: perAppRouting profile '${profile.name}': '${profile.outbound}' is both a global AmneziaWG profile and an outbound; say \"awg:${target.name}\" or \"outbound:${target.name}\""
+      )
+    ]
+  ) perAppRoutingCfg.profiles;
 
   localProxyAuthCfg = proxyCfg.listener.auth;
   localProxyAuthUsed =

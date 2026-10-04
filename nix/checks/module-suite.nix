@@ -181,6 +181,10 @@ let
       ;
   };
 
+  perAppRoutingAwgChecks = import ./per-app-routing-awg.nix {
+    inherit checkLib pkgs mkPerAppUserRules;
+  };
+
   outboundValidationChecks = import ./outbound-validation.nix {
     inherit mkBadProxySuiteFixture mkFailingAssertions;
   };
@@ -337,6 +341,7 @@ let
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
     ++ perAppRoutingChecks.assertions
+    ++ perAppRoutingAwgChecks.assertions
     ++ serverModuleChecks.assertions
   );
 in

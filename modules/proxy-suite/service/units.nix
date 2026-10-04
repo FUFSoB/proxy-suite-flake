@@ -16,6 +16,8 @@ let
     perAppRoutingTun
     perAppRoutingTproxy
     perAppZapretEnabled
+    perAppViaInterfaceOutbounds
+    perAppViaRuntime
     sshProxyOutboundEnabled
     sshProxyUnitEnabled
     torOutboundEnabled
@@ -68,6 +70,10 @@ let
       "sing-box";
 
   localProxyAuthEnabled = ctx.localProxy.authEnabled;
+  # `apps run --via`: an "interface" AmneziaWG outbound to run through, declared or to come.
+  perAppViaAwg = perAppViaInterfaceOutbounds != [ ] || perAppViaRuntime || ctx.perAppViaProfiles;
+  # Or any outbound, through a pin slot: either way, the apps' slices and their marking.
+  perAppViaEnabled = perAppViaAwg || perAppRouting.pinUp != { };
 
   # For the root units reading what userControl's group writes (outbounds.d,
   # subscriptions.d): the file system read-only but for their own directories, so no
@@ -294,6 +300,75 @@ let
         execStop = "${perAppRouting.perAppZapretUserRuleStop} %i";
       };
     }
+    # `apps run --via <tag>`: an instance per outbound, up while anyone runs through it: its
+    # rules, and the forwarder its apps' lookups go to. Each user's apps in its slice are
+    # marked by the next unit (<uid>-<instance>).
+    {
+      enable = perAppViaAwg;
+      name = "proxy-suite-per-app-via@";
+      value = mkRestartingService {
+        description = "proxy-suite per-app routing via %i";
+        execStartPre = "${perAppRouting.viaUp} %i";
+        execStart = "${perAppRouting.viaDns} %i";
+        execStopPost = "${perAppRouting.viaDown} %i";
+        runtimeDirectory = "proxy-suite-per-app-via-%i";
+        extraServiceConfig = {
+          # Ready once the forwarder listens, so the app's first lookup finds it.
+          Type = "notify";
+          NotifyAccess = "main";
+          RestartSec = 2;
+          NoNewPrivileges = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          ProtectClock = true;
+          ProtectHostname = true;
+          ProtectKernelLogs = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          LockPersonality = true;
+          # nft and ip rules, and SO_MARK on the forwarder's sockets.
+          CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+        };
+      };
+    }
+  ]
+  # `apps run --via <tag>` for any other outbound: a pin slot of per-app TProxy or TUN for
+  # each outbound apps run through. Part of the backend whose selector it switches: a
+  # restart of that switches it again.
+  ++ map (route: {
+    enable = true;
+    name = "proxy-suite-per-app-via-${route}@";
+    value =
+      let
+        backend = perAppRouting.pinRoutes.${route}.backend;
+      in
+      mkOneshotService {
+        description = "proxy-suite per-app ${route} pin for the outbound %i (in hex)";
+        execStart = "${perAppRouting.pinUp.${route}} %i";
+        execStop = "${perAppRouting.pinDown.${route}} %i";
+        after = [ backend ];
+        requires = [ backend ];
+        # As per-app TProxy: under a global mode, proxy-ctl runs the app without its route.
+        conflicts = [
+          "${serviceNames.tproxy}.service"
+          "${serviceNames.tun}.service"
+        ];
+      }
+      // {
+        partOf = [ backend ];
+      };
+  }) (builtins.attrNames perAppRouting.pinUp)
+  ++ [
+    {
+      enable = perAppViaEnabled;
+      name = "proxy-suite-per-app-via-user@";
+      value = mkOneshotService {
+        description = "Enable proxy-suite per-app via marking for %i";
+        execStart = "${perAppRouting.viaUserStart} %i";
+        execStop = "${perAppRouting.viaUserStop} %i";
+      };
+    }
     {
       # Not gated on hasSubscriptions: runtime subscriptions need refreshing too.
       enable = proxyEnabled;
@@ -378,6 +453,11 @@ let
       enable = perAppZapretEnabled;
       name = "${serviceNames.perAppZapret}-anchor";
       value = mkAnchorService perAppRouting.perAppZapretSliceName "Anchor service for proxy-suite app zapret slice";
+    }
+    {
+      enable = perAppViaEnabled;
+      name = "proxy-suite-per-app-via-anchor@";
+      value = mkAnchorService "proxy-suite-per-app-via-%i.slice" "Anchor service for the proxy-suite per-app via %i slice";
     }
   ];
 

@@ -477,9 +477,25 @@ def _user_add_argv(text):
 
 def app_rows(_):
     return [
-        {"key": ctl._s(p.get("name")), "profile": ctl._s(p.get("name")), "route": ctl._s(p.get("route"))}
+        {
+            "key": ctl._s(p.get("name")),
+            "profile": ctl._s(p.get("name")),
+            "route": ctl._s(p.get("route")),
+            "via": ctl._s(p.get("outbound") or ""),
+            "source": "runtime" if p.get("runtime") else "declared",
+        }
         for p in ctl._per_app_profiles()
     ]
+
+
+def _via_run_argv(text):
+    """<outbound> <command> [args], as typed, to `apps run --via`."""
+    words = shlex.split(text)
+    return ["apps", "run", "--via", *words[:1], "--", *words[1:]]
+
+
+def _via_offered():
+    return bool(ctl._via_outbounds())
 
 
 def snapshot(states):
@@ -730,6 +746,14 @@ TABS = [
                 stdin=lambda r, t: _add_stdin(t),
             ),
             Action(
+                "N",
+                "add an AmneziaWG outbound on an interface of its own…",
+                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--interface"],
+                prompt="[tag] <vpn://… or a .conf path> - apps can then run through it (proxy-ctl apps run --via)",
+                stdin=lambda r, t: _add_stdin(t),
+                offered=lambda: ctl.env("AWG_RUNTIME_IFACE_OUTBOUNDS") == "1",
+            ),
+            Action(
                 "g",
                 "add a group…",
                 lambda r, t, _: ["proxy", "groups", "add", *shlex.split(t)],
@@ -921,10 +945,13 @@ TABS = [
         "Apps",
         # `apps run` is per user (its uid, systemctl --user): nothing a root session can use.
         lambda states: not is_root() and _enabled("PER_APP_ROUTING_ENABLED")(states),
-        [("profile", "Profile"), ("route", "Route")],
+        [("profile", "Profile"), ("route", "Route"), ("via", "Via"), ("source", "Source")],
         app_rows,
         actions=[
+            Action("n", "add a profile…", lambda r, t, _: ["apps", "add", *shlex.split(t)], prompt="<name> [--route tun|tproxy|…] [--via <outbound>] - e.g. game --via de"),
+            Action("d", "remove it", lambda r, *_: ["apps", "rm", r["profile"]], when=lambda r: r["source"] == "runtime", confirm=True),
             Action("space", "run a command through it…", lambda r, t, _: ["apps", "run", r["profile"], "--", *shlex.split(t)], when=ROW, prompt="<command> [args]", mode="pause"),
+            Action("v", "run a command via an outbound…", lambda r, t, _: _via_run_argv(t), prompt="<outbound> <command> [args] - e.g. de firefox", mode="pause", offered=_via_offered),
         ],
     ),
 ]

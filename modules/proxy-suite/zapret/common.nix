@@ -10,6 +10,7 @@
   scriptName ? "proxy-suite-zapret",
 }:
 let
+  derived = import ../derived.nix { inherit lib cfg; };
   dropMarkTable = "${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true";
 in
 {
@@ -21,6 +22,12 @@ in
   tunInterfaces = lib.unique (
     lib.optional (cfg.proxy.enable && cfg.proxy.tun.enable) cfg.proxy.tun.interface
     ++ lib.optional (cfg.proxy.enable && cfg.perAppRouting.tun.enable) cfg.perAppRouting.tun.interface
+    # AmneziaWG outbound interfaces, and those apps run through: what enters them is a
+    # tunnel's inside. Desync there would send its fakes out the uplink, past the tunnel.
+    # (A trailing * is nft's wildcard; the iptables rules make it +.)
+    ++ map (ob: ob.interface) derived.awgInterfaceOutbounds
+    ++ lib.optional derived.awgRuntimeIfaceOutbounds "${derived.constants.awgRuntimeIfacePrefix}*"
+    ++ lib.optional derived.perAppViaProfiles "${derived.constants.awgAppIfacePrefix}*"
     # TProxy reroutes local apps' packets out lo to the backend's listener; desync there
     # corrupts the handshake the backend reads, like on a TUN.
     ++ lib.optional (

@@ -142,6 +142,10 @@ Changes and secrets need root or the userControl group.
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
+  apps run --via <outbound> -- <cmd>     run a command through one outbound
+                                         (--route tun|tproxy picks the method)
+  apps add <name> [--route r] [--via o]  add a profile without a rebuild
+  apps rm <name>                         remove one added that way
 
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--onion|--variant=<name>] [--qr|--json]
@@ -308,8 +312,8 @@ def denied(path, what="read"):
     die(f"Cannot {what} {path} - {ask_group()}.")
 
 
-def _spool_write(path, text=""):
-    """Replaces path whole, 0640, in a directory userControl's group may write to.
+def _spool_write(path, text="", mode=0o640):
+    """Replaces path whole, 0640 by default, in a directory userControl's group may write to.
 
     Through a new file renamed over it: a symlink a member left at path is replaced rather
     than followed, so proxy-ctl run as root never writes where it points. The file takes
@@ -319,7 +323,7 @@ def _spool_write(path, text=""):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.chmod(tmp, 0o640)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -692,7 +696,13 @@ COMPLETE = {
             "link": "its URL, QR code, JSON or client config",
         }
     },
-    "proxy outbounds add": {"flags": {"--detour": "chain it through another outbound"}},
+    "proxy outbounds add": {
+        "flags": {
+            "--detour": "chain it through another outbound",
+            "--interface": "an AmneziaWG config on an interface of its own",
+            "--userspace": "an AmneziaWG config in wireproxy",
+        }
+    },
     "proxy outbounds link": {
         "args": _outbound_choices,
         "flags": {"--qr": "print a QR code", "--json": "backend JSON", "--config": "client config for this server"},
@@ -833,8 +843,23 @@ COMPLETE = {
     "wl join": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "joiner")},
     "wl new": {"args": lambda: _names(w["name"] for w in _wl() if w["role"] == "creator" and not w.get("fixedLink"))},
     **{f"wl {verb}": {"args": lambda: {w["name"]: w["role"] for w in _wl()}} for verb in ("on", "off", "toggle", "restart")},
-    "apps": {"words": {"list": "per-app routing profiles", "run": "run a command through a profile"}},
-    "apps run": {"args": lambda: {_s(p["name"]): _s(p.get("route") or "") for p in read_json(env("PER_APP_ROUTING_PROFILES_FILE"))}},
+    "apps": {
+        "words": {
+            "list": "per-app routing profiles",
+            "run": "run a command through a profile",
+            "add": "add a profile at runtime",
+            "rm": "remove a profile added at runtime",
+        }
+    },
+    "apps add": {"flags": {"--route": "how the app is routed", "--via": "the outbound it goes through"}},
+    "apps rm": {"args": lambda: _names(p["name"] for p in _runtime_apps())},
+    "apps run": {
+        "args": lambda: {
+            _s(p["name"]): _s(p.get("outbound") or p.get("route") or "")
+            for p in [*_runtime_apps(), *read_json(env("PER_APP_ROUTING_PROFILES_FILE"))]
+        },
+        "flags": {"--via": "through one outbound, not a profile", "--route": "tun or tproxy, for --via"},
+    },
     "inbounds": {
         "words": {
             "list": "server inbounds",
@@ -890,6 +915,16 @@ def _complete_tree(*words):
     while rest and f"{path} {rest[0]}".strip() in COMPLETE:
         path = f"{path} {rest.pop(0)}".strip()
     node = COMPLETE[path]
+    if path == "apps add" and rest[-1:] == ["--route"]:
+        return _names(APP_ROUTES)
+    if path in ("apps run", "apps add") and rest[-1:] == ["--via"]:
+        return {
+            **(_outbound_choices() if _pin_routes() else {}),
+            **_names(_via_outbounds()),
+            **({p: "AmneziaWG profile" for p in _awg_profiles()} if env("PER_APP_VIA_PROFILES") == "1" else {}),
+        }
+    if path == "apps run" and rest[-1:] == ["--route"]:
+        return _names(_pin_routes())
     if rest[-1:] in (["--exits"], ["--via"], ["--detour"]):
         return _outbound_choices()
     if rest[-1:] == ["--by"]:
@@ -1246,7 +1281,14 @@ def cmd_outbounds(verb="list", *args):
             del args[i : i + 2]
             if not container:
                 usage("proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]")
-        _runtime_entry_add("outbound", *args, detour=detour, container=container)
+        awg_kind = ""
+        for flag in ("--interface", "--userspace"):
+            if flag in args:
+                if awg_kind:
+                    die("Pick one of --interface and --userspace.")
+                awg_kind = flag[2:]
+                args.remove(flag)
+        _runtime_entry_add("outbound", *args, detour=detour, container=container, awg_kind=awg_kind)
     elif verb == "chain":
         cmd_outbound_chain(*args)
     elif verb in ("rm", "remove", "del"):
@@ -2528,7 +2570,7 @@ def _runtime_json_outbound(text):
 
 
 def _check_runtime_tag(kind, tag):
-    if tag in ("proxy", "direct", "block"):
+    if tag in ("proxy", "direct", "block") or tag.startswith("proxy-suite-"):
         die(f"'{tag}' is reserved; pick another {kind} tag.")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
         die(f"Invalid {kind} tag '{tag}': letters, digits, dot, dash and underscore only.")
@@ -2613,7 +2655,7 @@ def _unique_runtime_tag(kind, name, fallback):
     return tag
 
 
-def _runtime_entry_add(kind, *args, detour="", container=""):
+def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
     what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url>"
     shape = f"proxy {_runtime_noun(kind)} add [tag] {what}"
     if len(args) == 1 and _runtime_source(kind, args[0]):
@@ -2634,10 +2676,12 @@ def _runtime_entry_add(kind, *args, detour="", container=""):
     if kind == "outbound" and _awg_file(url):
         url = _awg_input(url)
     if kind == "outbound" and _awg_source(url):
-        _awg_outbound_add(tag, url, detour, container)
+        _awg_outbound_add(tag, url, detour, container, awg_kind)
         return
     if container:
         die("--container only applies to an AmneziaWG vpn:// link.")
+    if awg_kind:
+        die(f"--{awg_kind} only applies to an AmneziaWG config.")
     if not tag:
         tag = _runtime_tag_for(kind, url)
         _check_runtime_tag(kind, tag)
@@ -2711,7 +2755,7 @@ def _runtime_entry_rm(kind, tag="", *_):
     try:
         os.unlink(path)
         # Its hop, and a disable left from it: a new entry of this name would inherit them.
-        for extra in (".detour", ".disabled", ".port") if kind == "outbound" else ():
+        for extra in (".detour", ".disabled", ".port", ".iface") if kind == "outbound" else ():
             if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
                 os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
     except FileNotFoundError:
@@ -4031,7 +4075,8 @@ def _awg_service(profile):
 # --- AmneziaWG configs added at runtime -----------------------------------------
 #
 # A .conf or vpn:// link becomes a global profile (`awg add`, amneziawg.d/<name>.conf) or an
-# outbound (`proxy outbounds add`, outbounds.d/<tag>.awg with its tunnel's port in <tag>.port).
+# outbound (`proxy outbounds add`, outbounds.d/<tag>.awg with its tunnel's port in <tag>.port,
+# or on an interface of its own, with its slot in <tag>.iface).
 # amneziawg_config.py --import checks and normalizes it, hooks refused. The config always
 # reaches it on stdin: keys in argv would show in ps.
 
@@ -4132,8 +4177,35 @@ def _awg_free_port():
     return port
 
 
-def _awg_outbound_add(tag, text, detour, container):
+def _awg_iface_slots():
+    return range(int(env("AWG_IFACE_SLOTS", "16")))
+
+
+def _awg_free_iface_slot():
+    """A slot no <tag>.iface holds: the interface psawgr<slot>, and its table and marks."""
+    taken = set()
+    directory = _runtime_dir("outbound")
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        names = []
+    for name in names:
+        if name.endswith(".iface"):
+            try:
+                taken.add(int(read_text(os.path.join(directory, name)).split()[0]))
+            except (OSError, ValueError, IndexError):
+                pass
+    slot = next((n for n in _awg_iface_slots() if n not in taken), None)
+    if slot is None:
+        die(f"No free slot for another AmneziaWG interface: all {len(_awg_iface_slots())} are taken. Remove one first.")
+    return slot
+
+
+def _awg_outbound_add(tag, text, detour, container, kind=""):
     require_enabled("AWG_RUNTIME_OUTBOUNDS", "Adding AmneziaWG outbounds at runtime")
+    kind = kind or env("AWG_RUNTIME_OUTBOUND_KIND", "userspace")
+    if kind == "interface":
+        require_enabled("AWG_RUNTIME_IFACE_OUTBOUNDS", "An AmneziaWG outbound on an interface of its own (root hosts only)")
     if detour:
         die("An AmneziaWG outbound cannot chain through another: its tunnel dials the peer itself.")
     described = _awg_describe(text, container)
@@ -4144,13 +4216,17 @@ def _awg_outbound_add(tag, text, detour, container):
     directory = _runtime_dir("outbound")
     if not os.access(directory, os.W_OK | os.X_OK):
         denied(directory, "write to")
-    port = _awg_free_port()
+    # The port, or the interface's slot, first: the config is what the start script and the
+    # sync unit look for.
+    if kind == "interface":
+        extra, value, stale = ".iface", _awg_free_iface_slot(), ".port"
+    else:
+        extra, value, stale = ".port", _awg_free_port(), ".iface"
     try:
-        # The port first: the config is what the start script and the sync unit look for.
-        for extra in (".detour", ".disabled"):
-            if os.path.lexists(os.path.join(directory, tag + extra)):
-                os.unlink(os.path.join(directory, tag + extra))  # left from an earlier entry of this name
-        _spool_write(os.path.join(directory, f"{tag}.port"), f"{port}\n")
+        for leftover in (".detour", ".disabled", stale):
+            if os.path.lexists(os.path.join(directory, tag + leftover)):
+                os.unlink(os.path.join(directory, tag + leftover))  # left from an earlier entry of this name
+        _spool_write(os.path.join(directory, tag + extra), f"{value}\n")
     except OSError:
         denied(directory, "write to")
     _awg_write(text, os.path.join(directory, f"{tag}.awg"), container)
@@ -4426,11 +4502,90 @@ SLICE_ROUTES = {
 }
 
 
-def _per_app_profiles():
+APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+APP_ROUTES = ("direct", "proxychains", "tun", "tproxy", "zapret")
+
+
+def _runtime_apps():
+    """Profiles `apps add` added, <name>.json in RUNTIME_APPS_DIR, each marked "runtime"."""
+    directory = env("RUNTIME_APPS_DIR")
     try:
-        return read_json(env("PER_APP_ROUTING_PROFILES_FILE"))
+        names = sorted(os.listdir(directory)) if directory else []
+    except OSError:
+        names = []
+    apps = []
+    for file in names:
+        name = file.removesuffix(".json")
+        entry = read_json_or(os.path.join(directory, file), {}) if file.endswith(".json") else {}
+        if APP_NAME.fullmatch(name) and _s(entry.get("route")) in APP_ROUTES:
+            apps.append({"name": name, "route": _s(entry["route"]), "outbound": _s(entry.get("outbound") or "") or None, "runtime": True})
+    return apps
+
+
+def _per_app_profiles():
+    """The declared profiles, then those added at runtime under a name none of them has."""
+    try:
+        declared = read_json(env("PER_APP_ROUTING_PROFILES_FILE"))
     except (OSError, ValueError):
         die(f"Cannot read perAppRouting profiles: {env('PER_APP_ROUTING_PROFILES_FILE')}")
+    names = {p.get("name") for p in declared}
+    return declared + [p for p in _runtime_apps() if p["name"] not in names]
+
+
+APPS_ADD_USAGE = "add <name> [--route direct|proxychains|tun|tproxy|zapret] [--via <outbound>]"
+
+
+def _apps_add(*args):
+    args, route, via = list(args), "", ""
+    for flag in ("--route", "--via"):
+        if flag in args:
+            i = args.index(flag)
+            value = args[i + 1] if i + 1 < len(args) else ""
+            del args[i : i + 2]
+            if not value:
+                usage(f"apps {APPS_ADD_USAGE}")
+            route, via = (value, via) if flag == "--route" else (route, value)
+    if len(args) != 1 or not (route or via):
+        usage(f"apps {APPS_ADD_USAGE}")
+    name = args[0]
+    if not APP_NAME.fullmatch(name):
+        die(f"Invalid profile name '{name}': lowercase letters, digits and dashes.")
+    if any(p.get("name") == name and not p.get("runtime") for p in _per_app_profiles()):
+        die(f"Profile '{name}' is declared in the NixOS configuration; pick another name.")
+    if route and route not in APP_ROUTES:
+        die(f"--route is one of {', '.join(APP_ROUTES)}, not '{route}'.")
+    # An "interface" outbound or a global profile takes the app directly; `apps run` sorts out
+    # a name that is both.
+    direct = via in _via_outbounds() or via.startswith("awg:") or (env("PER_APP_VIA_PROFILES") == "1" and via in _awg_profiles())
+    if via and not direct:
+        # Any other outbound goes through a pin slot of the route.
+        route = route or next(iter(_pin_routes()), "")
+        if route not in _pin_routes():
+            die(f"--via '{via}' needs --route tun or tproxy with pin slots here, or an \"interface\" AmneziaWG outbound.")
+    directory = env("RUNTIME_APPS_DIR")
+    if not directory or not os.access(directory, os.W_OK | os.X_OK):
+        denied(directory or "RUNTIME_APPS_DIR", "write to")
+    try:
+        # Readable by everyone: whoever runs apps reads the profiles.
+        _spool_write(os.path.join(directory, f"{name}.json"), json.dumps({"route": route or "direct", "outbound": via or None}) + "\n", 0o644)
+    except OSError:
+        denied(directory, "write to")
+    print(f"Added app profile: {name}")
+
+
+def _apps_rm(name="", *_):
+    if not name:
+        usage("apps rm <name>")
+    path = os.path.join(env("RUNTIME_APPS_DIR"), f"{name}.json")
+    if not APP_NAME.fullmatch(name) or not os.path.exists(path):
+        if any(p.get("name") == name for p in _per_app_profiles()):
+            die(f"Profile '{name}' is declared in the NixOS configuration; remove it there.")
+        die(f"No app profile added at runtime named '{name}'.")
+    try:
+        os.unlink(path)
+    except OSError:
+        denied(path, "remove")
+    print(f"Removed app profile: {name}")
 
 
 def _ensure_app_routing():
@@ -4446,13 +4601,21 @@ def _has_units(*args):
     return bool(re.search(".", systemctl(*args, capture=True)[1]))
 
 
-def _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc):
+def _units_active(*globs):
+    return _has_units("list-units", "--type=service", "--state=active", "--plain", "--no-legend", *globs)
+
+
+def _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc, users_glob="", busy=(), then=None):
+    """busy: globs of other units that keep the backend up; then: what to do once it stopped."""
     if _has_units("--user", "list-units", "--type=scope", "--state=running", "--plain", "--no-legend", f"{slice_base}-*"):
         return
     systemctl("stop", user_svc)
     systemctl("--user", "stop", anchor_unit)
-    if not _has_units("list-units", "--type=service", "--state=active", "--plain", "--no-legend", f"{slice_base}-user@*.service"):
+    users_glob = users_glob or f"{slice_base}-user@*.service"
+    if not _units_active(users_glob, *busy):
         systemctl("stop", backend_svc)
+        if then:
+            then()
 
 
 def _stub_resolver_nameservers(path="/etc/resolv.conf"):
@@ -4483,16 +4646,22 @@ def _warn_stub_resolver(route):
     )
 
 
-def _wrap_slice(slice_base, profile, backend_svc, cmd):
-    """Runs cmd in a user scope inside the route's slice, then stops what went idle."""
+def _wrap_slice(slice_base, profile, backend_svc, cmd, units=None, busy=(), then=None, before=()):
+    """Runs cmd in a user scope inside the route's slice, then stops what went idle.
+
+    units: (anchor, this user's marking unit, a glob of every user's) when they are not
+    named after the slice. busy and then: as _cleanup_slice_if_idle takes them. before:
+    units the backend needs up first.
+    """
     uid = os.getuid()
     scope_unit = f"{slice_base}-{profile}-{os.getpid()}"
-    anchor_unit = f"{slice_base}-anchor.service"
-    user_svc = f"{slice_base}-user@{uid}.service"
+    anchor_unit, user_svc, users_glob = units or (f"{slice_base}-anchor.service", f"{slice_base}-user@{uid}.service", "")
     # SIGTERM still cleans up, as it did behind bash's EXIT trap.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         status = systemctl("--user", "start", anchor_unit)[0]
+        for unit in before:
+            status = status or systemctl("start", unit)[0]
         status = status or systemctl("start", backend_svc)[0]
         status = status or systemctl("start", user_svc)[0]
         if not status:
@@ -4510,8 +4679,113 @@ def _wrap_slice(slice_base, profile, backend_svc, cmd):
                 ]
             )
     finally:
-        _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc)
+        _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc, users_glob, busy, then)
     sys.exit(status)
+
+
+def _via_outbounds():
+    """What `apps run --via` takes: {tag: {...}}, the "interface" AmneziaWG outbounds, which
+    the app's packets enter directly: declared ones, and those added at runtime."""
+    outbounds = read_json_or(env("PER_APP_VIA_FILE"), {})
+    if env("PER_APP_VIA_RUNTIME") == "1":
+        try:
+            names = os.listdir(_runtime_dir("outbound"))
+        except OSError:
+            names = []
+        for name in names:
+            if name.endswith(".iface"):
+                outbounds.setdefault(name[: -len(".iface")], {"runtime": True})
+    return outbounds
+
+
+def _via_key(tag):
+    """The units' instance for tag. In hex: a "-" in a tag would nest one slice in another's."""
+    return "awg-" + tag.encode().hex()
+
+
+# Routes that take any outbound through a pin slot, and the flag that says this host has them.
+PIN_ROUTES = {"tun": "PER_APP_PIN_TUN", "tproxy": "PER_APP_PIN_TPROXY"}
+
+
+def _pin_routes():
+    return [route for route, flag in PIN_ROUTES.items() if env(flag) == "1"]
+
+
+def _stop_per_app_tun_if_idle():
+    """The per-app TUN backend, once neither a tun profile nor a pin of it uses it."""
+    if not _units_active("proxy-suite-per-app-tun-user@*.service", "proxy-suite-per-app-via-tun@*.service"):
+        systemctl("stop", "proxy-suite-per-app-tun.service")
+
+
+def _run_via(tag, label, cmd, route=""):
+    """Runs cmd with all its traffic through tag, past the routing rules: into an "interface"
+    AmneziaWG outbound's interface directly, with its DNS; else through a pin slot of per-app
+    TUN or TProxy (route; TUN when both are there), whose selector sends it to tag. A global
+    AmneziaWG profile is brought up apart for the apps (proxy-suite-awg-app@), as an
+    "interface" outbound has it, unless it is up globally already.
+
+    tag may say which it is, "awg:<profile>" or "outbound:<tag>"; a bare name that is both
+    is refused. Neither a tag nor a profile name has a colon."""
+    kind, name = tag.split(":", 1) if ":" in tag else ("", tag)
+    if kind not in ("", "awg", "outbound") or not name:
+        die(f"--via takes an outbound, awg:<profile> or outbound:<tag>, not '{tag}'.")
+    label = name if label == tag else label
+    profiles = _awg_profiles() if env("PER_APP_VIA_PROFILES") == "1" else []
+    is_profile = kind != "outbound" and name in profiles
+    if kind == "awg" and not is_profile:
+        die(f"No global AmneziaWG profile '{name}' to run apps through. See: proxy-ctl awg")
+    if not kind and is_profile and (name in _via_outbounds() or name in _outbound_tags()):
+        die(f"'{name}' is both a global AmneziaWG profile and an outbound: say --via awg:{name} or --via outbound:{name}.")
+    tag = name
+    before = ()
+    if not is_profile and tag in _via_outbounds():
+        key = _via_key(tag)
+        unit, global_units, then = f"proxy-suite-per-app-via@{key}.service", ("proxy-suite-tun",), None
+    elif is_profile:
+        key = f"app-{tag.encode().hex()}"
+        unit = f"proxy-suite-per-app-via@{key}.service"
+        # Up globally, it carries the app already.
+        global_units = ("proxy-suite-tun", _awg_service(tag))
+        before = (f"proxy-suite-awg-app@{tag}.service",)
+        then = lambda: systemctl("stop", *before)  # noqa: E731
+    else:
+        routes = _pin_routes()
+        route = route or next(iter(routes), "")
+        if route not in routes:
+            interfaces = ", ".join(sorted(_via_outbounds())) or "none"
+            why = (
+                f"no pin slots of per-app {route} here (perAppRouting.{route}.enable, the sing-box or hybrid backend)"
+                if route
+                else "this configuration has no pin slots: per-app TUN or TProxy, with the sing-box or hybrid backend"
+            )
+            die(f"Cannot run via '{tag}': {why}. \"interface\" AmneziaWG outbounds: {interfaces}.")
+        tags = _outbound_tags()
+        if tags and tag not in {*tags, *_outbound_groups(), "proxy", "direct", "block"}:
+            die(f"Unknown outbound: {tag}. See: proxy-ctl proxy outbounds")
+        key = f"{route}-{tag.encode().hex()}"
+        unit = f"proxy-suite-per-app-via-{route}@{tag.encode().hex()}.service"
+        global_units = ("proxy-suite-tun", "proxy-suite-tproxy")
+        then = _stop_per_app_tun_if_idle if route == "tun" else None
+    # A global mode takes the app past the per-app rules; run it as it is rather than refuse,
+    # like the other per-app routes.
+    active = next((u for u in global_units if svc_active(f"{u}.service")), "")
+    if active:
+        print(f"note: {active}.service is active; running without --via {tag}.", file=sys.stderr)
+        _exec(list(cmd))
+    uid = os.getuid()
+    _wrap_slice(
+        f"proxy-suite-per-app-via-{key}",
+        label,
+        unit,
+        list(cmd),
+        (
+            f"proxy-suite-per-app-via-anchor@{key}.service",
+            f"proxy-suite-per-app-via-user@{uid}-{key}.service",
+            f"proxy-suite-per-app-via-user@*-{key}.service",
+        ),
+        then=then,
+        before=before,
+    )
 
 
 def cmd_apps(verb="list", *args):
@@ -4521,24 +4795,51 @@ def cmd_apps(verb="list", *args):
         if not profiles:
             print("No perAppRouting profiles configured.")
             return
-        print(f"  {'PROFILE':<24} ROUTE")
+        print(f"  {'PROFILE':<24} {'ROUTE':<12} {'VIA':<16} SOURCE")
         for p in profiles:
-            print(f"  {_s(p.get('name')):<24} {_s(p.get('route'))}")
+            source = "runtime" if p.get("runtime") else "declared"
+            print(f"  {_s(p.get('name')):<24} {_s(p.get('route')):<12} {_s(p.get('outbound') or '-'):<16} {source}")
     elif verb == "run":
         cmd_apps_run(*args)
+    elif verb == "add":
+        _apps_add(*args)
+    elif verb in ("rm", "remove", "del"):
+        _apps_rm(*args)
     else:
-        usage("apps [list] | run <profile> -- <cmd> [args]")
+        usage(f"apps [list] | {APPS_RUN_USAGE} | {APPS_ADD_USAGE} | rm <name>")
 
 
-def cmd_apps_run(profile="", *cmd):
-    if cmd[:1] == ("--",):
-        cmd = cmd[1:]
-    if not profile or not cmd:
-        usage("apps run <profile> -- <cmd> [args]")
+APPS_RUN_USAGE = "run <profile> -- <cmd> [args] | run --via <outbound> [--route tun|tproxy] -- <cmd> [args]"
 
-    route = next((_s(p.get("route")) for p in _per_app_profiles() if p.get("name") == profile), "")
-    if not route:
+
+def cmd_apps_run(*args):
+    profile, via, route = "", "", ""
+    args = list(args)
+    # --via <outbound> [--route tun|tproxy], before the command.
+    while args[:1] in (["--via"], ["--route"]):
+        if len(args) < 2 or not args[1]:
+            usage(f"apps {APPS_RUN_USAGE}")
+        if args[0] == "--via":
+            via = args[1]
+        else:
+            route = args[1]
+        del args[:2]
+    if route and route not in PIN_ROUTES:
+        die(f"--route is tun or tproxy, not '{route}'.")
+    if not via:
+        profile, args = (args[0], args[1:]) if args and not route else ("", args)
+    cmd = args[1:] if args[:1] == ["--"] else args
+    if not (profile or via) or not cmd:
+        usage(f"apps {APPS_RUN_USAGE}")
+    if via:
+        _run_via(via, via, cmd, route)
+
+    entry = next((p for p in _per_app_profiles() if p.get("name") == profile), None)
+    if entry is None:
         die(f"Unknown perAppRouting profile: {profile}")
+    route = _s(entry.get("route"))
+    if entry.get("outbound"):
+        _run_via(_s(entry["outbound"]), profile, cmd, route if route in PIN_ROUTES else "")
 
     if route == "direct":
         _exec(list(cmd))
@@ -4560,7 +4861,9 @@ def cmd_apps_run(profile="", *cmd):
         if env(enabled) != "1":
             die(f"Profile '{profile}' uses route={route}, but {option} is false.")
         _warn_stub_resolver(route)
-        _wrap_slice(slice_base, profile, f"{slice_base}.service", list(cmd))
+        # Pins of per-app TUN (apps run --via) keep its backend up too.
+        busy = ("proxy-suite-per-app-via-tun@*.service",) if route == "tun" else ()
+        _wrap_slice(slice_base, profile, f"{slice_base}.service", list(cmd), busy=busy)
     else:
         die(f"Route backend '{route}' is not implemented.")
 

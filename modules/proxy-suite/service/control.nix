@@ -26,6 +26,8 @@ let
     amneziaWgProfileNamesFile
     awgRuntimeGlobal
     awgRuntimeOutbounds
+    awgRuntimeIfaceOutbounds
+    perAppViaRuntime
     proxySuiteScriptsDir
     ruleSets
     pkgs
@@ -38,6 +40,7 @@ let
     proxyInboundsSubscriptionsFile
     ;
   inherit (ctx.perAppRouting)
+    perAppViaFile
     perAppRoutingProfilesFile
     proxychainsConfigFile
     proxychainsQuietArg
@@ -73,6 +76,17 @@ in
       PER_APP_ROUTING_TPROXY_ENABLED = flag perAppRoutingTproxy.enable;
       PER_APP_ROUTING_ZAPRET_ENABLED = flag perAppZapretCfg.enable;
       PER_APP_ROUTING_PROFILES_FILE = toString perAppRoutingProfilesFile;
+      # And the ones `apps add` adds.
+      RUNTIME_APPS_DIR = constants.runtimeAppsDir;
+      # The outbounds `apps run --via` takes, tag -> its interface and mark.
+      PER_APP_VIA_FILE = toString perAppViaFile;
+      # And the runtime ones, on their own interfaces (<tag>.iface in the outbound spool).
+      PER_APP_VIA_RUNTIME = flag perAppViaRuntime;
+      # And global AmneziaWG profiles, each brought up apart for the apps.
+      PER_APP_VIA_PROFILES = flag ctx.perAppViaProfiles;
+      # Any other outbound, through a pin slot of these routes.
+      PER_APP_PIN_TPROXY = flag ctx.perAppPinTproxy;
+      PER_APP_PIN_TUN = flag ctx.perAppPinTun;
       PROXYCHAINS_CONFIG = toString proxychainsConfigFile;
       PROXYCHAINS_QUIET_ARG = lib.removeSuffix " " proxychainsQuietArg;
       ROUTE_MODE_STATE_FILE = routeModeStateFile;
@@ -94,6 +108,9 @@ in
       AWG_CONFIG_TOOL = "${proxySuiteScriptsDir}/amneziawg_config.py";
       AWG_TUNNEL_BASE_PORT = toString constants.awgRuntimeTunnelBasePort;
       AWG_TUNNEL_SLOTS = toString constants.awgRuntimeTunnelSlots;
+      AWG_RUNTIME_IFACE_OUTBOUNDS = flag awgRuntimeIfaceOutbounds;
+      AWG_RUNTIME_OUTBOUND_KIND = cfg.amneziaWg.runtime.outboundKind;
+      AWG_IFACE_SLOTS = toString constants.awgRuntimeIfaceSlots;
       WL_FILE = toString (
         pkgs.writeText "proxy-suite-control" (
           builtins.toJSON (

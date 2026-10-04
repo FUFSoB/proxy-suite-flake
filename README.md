@@ -221,6 +221,10 @@ Changes and secrets need root or the userControl group.
 
   apps [list]                            per-app routing profiles
   apps run <profile> -- <cmd> [args]     run a command through a profile
+  apps run --via <outbound> -- <cmd>     run a command through one outbound
+                                         (--route tun|tproxy picks the method)
+  apps add <name> [--route r] [--via o]  add a profile without a rebuild
+  apps rm <name>                         remove one added that way
 
   inbounds [list]                        server inbounds
   inbounds link <tag> [user] [--onion|--variant=<name>] [--qr|--json]

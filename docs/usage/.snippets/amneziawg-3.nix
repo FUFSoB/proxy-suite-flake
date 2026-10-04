@@ -2,10 +2,17 @@
 {
   services.proxy-suite = {
   enable = true;
-  amneziaWg.enable = true; # no profiles needed
-  userControl = {
+  proxy.enable = true;
+  amneziaWg = {
     enable = true;
-    scopes = [ "services" "amneziaWg" "outbounds" ]; # optional: no sudo for these
+    profiles.de = {
+      configFile = "/run/secrets/de-awg.conf";
+      asOutbound = "interface";
+    };
+  };
+  perAppRouting = {
+    enable = true;
+    profiles = [ { name = "games"; outbound = "de"; } ];
   };
 };
 }

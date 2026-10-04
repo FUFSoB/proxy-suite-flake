@@ -46,6 +46,7 @@ services.proxy-suite = {
     runtime = {
       enable = true;
       interfaceName = "awg-rt";
+      outboundKind = "userspace";
     };
     serverUdpPorts = [ ];
     toolsPackage = ‹proxy-suite's patched amneziawg-tools (pkgs/amneziawg.nix)›;
@@ -137,6 +138,12 @@ services.proxy-suite = {
       ];
       mtu = 1400;
       routeTable = 101;
+    };
+    via = {
+      localSubnets = [
+        "192.168.0.0/16"
+      ];
+      pinSlots = 8;
     };
     zapret = {
       enable = false;

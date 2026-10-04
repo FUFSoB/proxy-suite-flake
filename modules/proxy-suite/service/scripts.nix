@@ -129,6 +129,7 @@ let
       whitelistBypassJoiners
       awgOutbounds
       awgRuntimeOutbounds
+      awgRuntimeIfaceOutbounds
       constants
       pureXrayEnabled
       hybridEnabled
@@ -161,6 +162,15 @@ let
       proxyInboundsGuardStrategy
       ;
     userDnsRules = proxyCfg.dns.singBox.rules;
+    awgRuntimeDnsServer =
+      if ctx.awgRuntimeIfaceOutbounds then
+        {
+          inherit (proxyCfg.dns.remote) type;
+          server = proxyCfg.dns.remote.address;
+          server_port = proxyCfg.dns.remote.port;
+        }
+      else
+        null;
   };
   backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 

@@ -499,6 +499,35 @@ class AmneziaWgConfigTests(unittest.TestCase):
         # The peer is untouched.
         self.assertIn("Endpoint = vpn.example.com:51820", rendered)
 
+    def test_dns_servers_skip_search_domains(self):
+        config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1, corp.example,2606:4700::1111")
+        self.assertEqual(amneziawg_config.dns_servers(config), ["1.1.1.1", "2606:4700::1111"])
+        self.assertEqual(amneziawg_config.dns_servers("[Interface]\nAddress = 10.0.0.2/32\n"), [])
+
+    def test_dns_out_written_before_outbound_render_drops_dns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "de.conf"
+            source.write_text(BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1,8.8.8.8"))
+            output = Path(directory) / "out.conf"
+            dns = Path(directory) / "dns"
+            subprocess.run(
+                [
+                    sys.executable,
+                    amneziawg_config.__file__,
+                    "--config",
+                    str(source),
+                    "--output",
+                    str(output),
+                    "--outbound-fwmark",
+                    "2",
+                    "--dns-out",
+                    str(dns),
+                ],
+                check=True,
+            )
+            self.assertEqual(dns.read_text(), "1.1.1.1\n8.8.8.8\n")
+            self.assertEqual(amneziawg_config.section_values(output.read_text(), "interface", "dns"), [])
+
     def test_resolve_endpoints(self):
         # Under the kill switch awg-quick gets addresses; a name that does not resolve is left.
         config = "[Peer]\nEndpoint = vpn.example:51820\n[Peer]\nEndpoint = 192.0.2.1:1\nendpoint = [2001:db8::1]:2\n[Peer]\nEndpoint = gone.invalid:3\n"

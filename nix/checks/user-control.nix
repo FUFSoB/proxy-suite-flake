@@ -114,7 +114,10 @@ in
       );
       assert !(hasInfix "\"set-property\"" (polkitConfig allFixture));
       # A user's per-app marking is theirs alone.
-      assert hasInfix "if (instance !== uid)" (polkitConfig allFixture);
+      assert hasInfix "if (owner !== uid)" (polkitConfig allFixture);
+      assert hasInfix ''"proxy-suite-per-app-via-user@" ? instance.split("-")[0]'' (
+        polkitConfig allFixture
+      );
       assert groupReadsSecrets allFixture;
       assert hasInfix "chown proxy-suite-daemon:proxy-suite \"$backend_config\"" (socksStart allFixture);
       assert

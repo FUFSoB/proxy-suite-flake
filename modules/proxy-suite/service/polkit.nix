@@ -27,6 +27,9 @@ let
     # Tunnels of the AmneziaWG outbounds added at runtime; a global profile's own unit
     # (proxy-suite-awg@) is "services", like the declared ones.
     "proxy-suite-awg-tunnel@" = "outbounds";
+    # A global profile brought up for `apps run --via`, by proxy-ctl as the app starts.
+    "proxy-suite-awg-app@" = "perApp";
+    "proxy-suite-awg-if@" = "outbounds";
     "proxy-suite-awg-runtime-sync." = "outbounds";
     "proxy-suite-autoproxy-learn." = "autoProxy";
     "proxy-suite-zapret2-cutoff." = "zapret";

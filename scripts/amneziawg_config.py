@@ -377,6 +377,18 @@ def _remove_interface_key(config: str, key: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def dns_servers(config: str) -> list[str]:
+    """The addresses in [Interface] DNS, in order; search domains left out."""
+    servers: list[str] = []
+    for value in section_values(config, "interface", "dns"):
+        for item in value.split(","):
+            try:
+                servers.append(str(ipaddress.ip_address(item.strip())))
+            except ValueError:
+                pass
+    return servers
+
+
 def as_outbound(config: str, fwmark: int) -> str:
     """Keep the host's routes and resolver: the proxy binds to the interface instead.
 
@@ -824,6 +836,11 @@ def main() -> int:
         help="render for an outbound-only interface: no routes or DNS, packets marked MARK",
     )
     parser.add_argument(
+        "--dns-out",
+        metavar="FILE",
+        help="also write the profile's DNS server addresses to FILE, one a line",
+    )
+    parser.add_argument(
         "--wireproxy",
         metavar="ADDRESS",
         help="render for wireproxy, as a SOCKS5 listener on ADDRESS (packets marked with --outbound-fwmark)",
@@ -894,6 +911,9 @@ def main() -> int:
         if not isinstance(manifest, dict):
             raise ConfigError("manifest must be a JSON object")
         config = prepare(manifest)
+        if args.dns_out is not None:
+            # Before the outbound rendering drops them: per-app routing sends the app's DNS here.
+            write_private(args.dns_out, "".join(f"{server}\n" for server in dns_servers(config)))
         if args.wireproxy is not None:
             config = as_wireproxy(config, args.wireproxy, args.outbound_fwmark)
         elif args.outbound_fwmark is not None:

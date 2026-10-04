@@ -20,7 +20,9 @@ for (var i = 0; !known && i < templates.length; i++) {
     } catch (error) {
       return null;
     }
-    if (instance !== uid) {
+    // A via instance is <uid>-<what the apps run via>.
+    var owner = template === "proxy-suite-per-app-via-user@" ? instance.split("-")[0] : instance;
+    if (owner !== uid) {
       return null;
     }
   }

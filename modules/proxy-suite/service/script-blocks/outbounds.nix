@@ -9,6 +9,7 @@
   whitelistBypassJoiners,
   awgOutbounds,
   awgRuntimeOutbounds ? false,
+  awgRuntimeIfaceOutbounds ? false,
   constants,
   pureXrayEnabled,
   hybridEnabled,
@@ -181,6 +182,38 @@ let
         }
         _proxy_suite_record_tag_source "$1" "$3"
       }
+
+      ${lib.optionalString awgRuntimeIfaceOutbounds ''
+        # $1 tag, $2 its slot: an AmneziaWG outbound added at runtime on an interface of its
+        # own, as mkInterfaceOutboundBlock has it. sing-box resolves through the interface
+        # with a server the backend filter adds for awg-dns-<tag>; XRay resolves as usual.
+        _proxy_suite_add_awg_interface() {
+          local ob
+          case "$2" in
+            "" | *[!0-9]*) return 1 ;;
+          esac
+          [ "$2" -lt ${toString constants.awgRuntimeIfaceSlots} ] || return 1
+          ob=$(${jq} -nc --arg t "$1" --arg i "${constants.awgRuntimeIfacePrefix}$2" ${
+            lib.escapeShellArg (
+              if pureXrayEnabled then
+                ''{protocol: "freedom", tag: $t, streamSettings: {sockopt: ({interface: $i}${
+                  lib.optionalString (routingMark != null) " + {mark: ${toString routingMark}}"
+                })}}''
+              else
+                ''{type: "direct", tag: $t, bind_interface: $i, domain_resolver: ("${constants.awgDnsServerTag ""}" + $t)}${
+                  lib.optionalString (routingMark != null) " + {routing_mark: ${toString routingMark}}"
+                }''
+            )
+          }) || return 1
+          ${
+            if hybridEnabled then
+              ''_proxy_suite_add_sing_box_ob "$ob"''
+            else
+              ''OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")''
+          }
+          _proxy_suite_record_tag_source "$1" awg
+        }
+      ''}
 
       # $1 sub tag, $2 file holding its URL, $3 its links file (absent for a cache
       # written before links existed: those entries share as JSON until the next update).
@@ -507,7 +540,15 @@ let
       case "$RUNTIME_OB_SRC" in
         *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
         # Its tunnel (proxy-suite-awg-tunnel@<tag>) checks the port again before listening.
-        *.awg) _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null | head -n 1)" runtime ;;
+        *.awg)
+          ${lib.optionalString awgRuntimeIfaceOutbounds ''
+            if [ -e "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.iface" ]; then
+              _proxy_suite_add_awg_interface "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.iface" 2>/dev/null | head -n 1)"
+            else
+          ''}
+          _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null | head -n 1)" runtime
+          ${lib.optionalString awgRuntimeIfaceOutbounds "fi"}
+          ;;
         *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "$RUNTIME_OB_SRC")" runtime ;;
       esac || { echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2; continue; }
       if [ -s "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" ]; then

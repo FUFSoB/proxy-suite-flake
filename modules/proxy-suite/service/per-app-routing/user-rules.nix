@@ -16,18 +16,24 @@
 }:
 
 let
+  # `prelude` runs first and may set what the rest reads: a template whose instance carries
+  # more than the uid turns its $1 into the uid and sets the shell variables that `nftTable`,
+  # `markRule` and `sliceNameArg` (the slice's name, as shell text) then name.
   mkUserRuleStart =
     {
       name,
       nftFamily,
       nftTable,
       nftChain,
-      sliceName,
+      sliceName ? null,
+      sliceNameArg ? lib.escapeShellArg sliceName,
       sliceLabel,
       markRule,
+      prelude ? "",
     }:
     pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
+      ${prelude}
       uid="$1"
       if ! [[ $uid =~ ^[0-9]+$ ]]; then
         echo "proxy-suite: '$uid' is not a uid" >&2
@@ -44,7 +50,7 @@ let
       # The user owns this subtree and names its directories, quotes and semicolons included:
       # only a path nft reads as the one quoted string below, never one that closes the quote
       # and runs nft commands of its own as root. systemd's names never need more.
-      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${lib.escapeShellArg sliceName} \
+      cgroup_dir=$(${findBin} "$cgroup_root" -type d -name ${sliceNameArg} \
         | ${grepBin} -E '^[A-Za-z0-9@._:+,=\\/-]+$' | ${headBin} -n1 || true)
       if [ -z "$cgroup_dir" ]; then
         echo "proxy-suite: ${sliceLabel} slice cgroup does not exist for uid $uid under $cgroup_root" >&2
@@ -74,9 +80,11 @@ let
       nftFamily,
       nftTable,
       nftChain,
+      prelude ? "",
     }:
     pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
+      ${prelude}
       uid="$1"
       rule_comment_prefix="proxy-suite-${name}-user-$uid"
       handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
@@ -140,6 +148,7 @@ let
   };
 in
 {
+  inherit mkUserRuleStart mkUserRuleStop;
   inherit
     perAppTunUserRuleStart
     perAppTunUserRuleStop

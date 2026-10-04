@@ -200,8 +200,10 @@ let
       # (only sing-box listens on directPort).
       tunnelPort = awgTunnelBasePort + 2 * index;
       directPort = awgTunnelBasePort + 1 + 2 * index;
-      # Only an "interface" one routes by it.
+      # Only an "interface" one routes by it, and by this mark the apps sent into it.
       routeTable = constants.awgOutboundRouteTableBase + index;
+      perAppFwmark = constants.awgPerAppFwmarkBase + index;
+      perAppDnsPort = constants.awgPerAppDnsBasePort + index;
     }
   ) (builtins.filter (name: awgProfiles.${name}.asOutbound != null) (builtins.attrNames awgProfiles));
   awgInterfaceOutbounds = builtins.filter (ob: ob.kind == "interface") awgOutbounds;
@@ -211,10 +213,75 @@ let
   awgRuntimeEnabled = cfg.amneziaWg.enable && cfg.amneziaWg.runtime.enable;
   awgRuntimeGlobal = awgRuntimeEnabled && cfg.host.privileged;
   awgRuntimeOutbounds = awgRuntimeEnabled && proxyEnabled && cfg.host.serviceManager != "supervisor";
+  # Of those, ones on an AmneziaWG interface of their own (`outbounds add --interface`): root only.
+  awgRuntimeIfaceOutbounds = awgRuntimeOutbounds && cfg.host.privileged;
   # Some global profile may run: declared, or added at runtime.
   awgGlobalAvailable = awgGlobalProfiles != { } || awgRuntimeGlobal;
   # Profiles run behind a loopback SOCKS hop rather than an interface.
   awgTunnelOutbounds = builtins.filter (ob: ob.kind != "interface") awgOutbounds;
+  # `proxy-ctl apps run --via <tag>` straight into an "interface" outbound: the marks it gives
+  # the apps, which the other per-app and global chains let past.
+  perAppViaInterfaceOutbounds = lib.optionals (
+    cfg.perAppRouting.enable && cfg.host.privileged
+  ) awgInterfaceOutbounds;
+  perAppViaRuntime = cfg.perAppRouting.enable && awgRuntimeIfaceOutbounds;
+  # Or a global profile (declared, or added with `awg add`), brought up for the apps alone.
+  perAppViaProfiles =
+    cfg.perAppRouting.enable && cfg.host.privileged && (awgGlobalProfiles != { } || awgRuntimeGlobal);
+  # A per-app profile's `outbound`: "awg:<name>" a global profile, "outbound:<tag>" an
+  # outbound, a bare name whichever it is. { kind; name; } with kind "awg", "outbound" or "".
+  perAppViaTarget =
+    outbound:
+    let
+      parts = builtins.match "(awg|outbound):(.*)" outbound;
+    in
+    if parts == null then
+      {
+        kind = "";
+        name = outbound;
+      }
+    else
+      {
+        kind = builtins.head parts;
+        name = builtins.elemAt parts 1;
+      };
+  # Whether it takes the app into an AmneziaWG interface directly ("interface" outbound, or a
+  # global profile, perhaps one `awg add` adds), with no per-app method; and whether a bare
+  # name is both a global profile and a declared outbound.
+  perAppViaDirect =
+    outbound:
+    let
+      target = perAppViaTarget outbound;
+    in
+    (target.kind != "awg" && builtins.any (ob: ob.tag == target.name) perAppViaInterfaceOutbounds)
+    || (
+      target.kind != "outbound"
+      && perAppViaProfiles
+      && (builtins.hasAttr target.name awgGlobalProfiles || target.kind == "awg")
+    );
+  perAppViaAmbiguous =
+    outbound:
+    let
+      target = perAppViaTarget outbound;
+    in
+    target.kind == ""
+    && builtins.hasAttr target.name awgGlobalProfiles
+    && builtins.elem target.name (map (ob: ob.tag) proxyCfg.outbounds);
+  # `apps run --via` any other outbound: a pin slot of per-app TProxy or TUN, which the
+  # backend sends to that outbound through a selector (sing-box only, for its Clash API).
+  perAppPinSlots = cfg.perAppRouting.via.pinSlots;
+  perAppPinEnabled =
+    cfg.perAppRouting.enable && singBoxEnabled && cfg.host.privileged && perAppPinSlots > 0;
+  perAppPinTproxy = perAppPinEnabled && cfg.perAppRouting.tproxy.enable;
+  perAppPinTun = perAppPinEnabled && cfg.perAppRouting.tun.enable;
+  perAppViaMarks =
+    map (ob: ob.perAppFwmark) perAppViaInterfaceOutbounds
+    ++ lib.optionals perAppViaRuntime (
+      lib.genList (slot: constants.awgRuntimeIfacePerAppFwmarkBase + slot) constants.awgRuntimeIfaceSlots
+    )
+    ++ lib.optionals perAppViaProfiles (
+      lib.genList (slot: constants.awgAppPerAppFwmarkBase + slot) constants.awgAppSlots
+    );
 
   proxyInboundsCfg = cfg.inbounds;
   proxyInboundsEnabled = proxyInboundsCfg.enable;
@@ -632,6 +699,8 @@ let
     runtimeSubscriptionsDir = "${stateDir}/subscriptions.d";
     # inbounds.runtime: users/<name>.json and listeners/<tag>.json (scripts/inbound_runtime.py).
     runtimeInboundsDir = "${stateDir}/inbounds.d";
+    # Per-app profiles added with `proxy-ctl apps add`: <name>.json, next to the declared ones.
+    runtimeAppsDir = "${stateDir}/apps.d";
     # Shell function for the scripts that read those spools as root. $1 a file: in a spool,
     # a regular file only, and never through a symlink, which would hand over any file root
     # can read (a share link or an error message then shows it), nor a FIFO, which would
@@ -673,12 +742,53 @@ let
     awgOutboundRulePriority = 8991;
     # A global AmneziaWG profile's rules keeping the host's UDP services on the main table.
     awgServerUdpRulePriority = 8989;
+    # Apps run `--via` an "interface" AmneziaWG outbound: their mark (the base plus its
+    # index) sends them to its table, ahead of every other rule here (the XRay TUN's from
+    # 8992, sing-box's at tunAutoRouteRulePriority) and awg-quick's; the next rule turns
+    # them away while that table has no route.
+    awgPerAppFwmarkBase = 23040;
+    awgPerAppRulePriority = 8986;
+    awgPerAppUnreachablePriority = 8987;
+    # Their lookups go to a forwarder on loopback (scripts/per_app_dns.py), one port each,
+    # above the WARP devices' tunnels (18900 up, two each).
+    awgPerAppDnsBasePort = 19100;
     # Global profiles and outbounds added with proxy-ctl: <name>.conf here, and
     # <tag>.awg with <tag>.port in runtimeOutboundsDir.
     runtimeAwgDir = "${stateDir}/amneziawg.d";
     # Loopback SOCKS listeners of the runtime AmneziaWG outbounds, one per slot.
     awgRuntimeTunnelBasePort = 18800;
     awgRuntimeTunnelSlots = 32;
+    # Runtime "interface" outbounds: slot n in <tag>.iface is interface psawgr<n>, with the
+    # table, per-app mark and per-app DNS port at these bases plus n, clear of the declared
+    # outbounds' (asserted).
+    awgRuntimeIfacePrefix = "psawgr";
+    awgRuntimeIfaceSlots = 16;
+    awgRuntimeIfaceTableBase = 150;
+    awgRuntimeIfacePerAppFwmarkBase = 23040 + 64;
+    awgRuntimeIfaceDnsBasePort = 19100 + 40;
+    # Global profiles apps run through (proxy-suite-awg-app@): slot n is interface psawga<n>,
+    # with the table, per-app mark and DNS port at these bases plus n.
+    awgAppIfacePrefix = "psawga";
+    awgAppSlots = 8;
+    awgAppTableBase = 210;
+    awgAppPerAppFwmarkBase = 23232;
+    awgAppDnsBasePort = 19190;
+    # Pin slots: slot n of per-app TProxy is the backend's listener at the port base plus n,
+    # its mark and table at those bases plus n; one of per-app TUN is the source its packets
+    # are SNATed to as they enter the TUN, by its own mark and table. Each is a selector
+    # proxy-suite-pin-<route>-<n>, switched through the Clash API (the per-app TUN backend's
+    # own).
+    perAppPinRulePriority = 8988;
+    perAppPinTproxyFwmarkBase = 23168;
+    perAppPinTunFwmarkBase = 23200;
+    perAppPinTproxyTableBase = 170;
+    perAppPinTunTableBase = 190;
+    perAppPinTproxyPortBase = 19160;
+    perAppPinTunSource = slot: {
+      ipv4 = "172.20.1.${toString (slot + 2)}";
+      ipv6 = "fd66:21::${lib.toLower (lib.toHexString (slot + 2))}";
+    };
+    perAppTunClashApiPort = 19180;
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Downloaded proxy.routing.ruleSets, one file each, written by the service user.
@@ -795,9 +905,21 @@ in
     awgGlobalAvailable
     awgRuntimeGlobal
     awgRuntimeOutbounds
+    awgRuntimeIfaceOutbounds
     awgOutbounds
     awgInterfaceOutbounds
     awgTunnelOutbounds
+    perAppViaInterfaceOutbounds
+    perAppViaRuntime
+    perAppViaProfiles
+    perAppViaTarget
+    perAppViaDirect
+    perAppViaAmbiguous
+    perAppViaMarks
+    perAppPinSlots
+    perAppPinEnabled
+    perAppPinTproxy
+    perAppPinTun
     proxyInboundsCfg
     proxyInboundsEnabled
     proxyInbounds

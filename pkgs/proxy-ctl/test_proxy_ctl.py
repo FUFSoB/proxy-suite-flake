@@ -1293,6 +1293,35 @@ class AmneziaWgRuntimeTest(RuntimeSpoolTest):
         os.environ["AWG_RUNTIME_OUTBOUNDS"] = "0"
         self.assertIn("not enabled", run(ctl.cmd_outbounds, "add", "fr", AWG_CONF)[2])
 
+    def test_interface_outbounds(self):
+        os.environ.update(AWG_RUNTIME_IFACE_OUTBOUNDS="1", AWG_IFACE_SLOTS="2", PER_APP_VIA_RUNTIME="1")
+        # --interface: a slot in <tag>.iface instead of a port, which frees nothing of the tunnels'.
+        self.assertIn("Added outbound: de", ok(ctl.cmd_outbounds, "add", "de", AWG_CONF, "--interface"))
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/de.iface")), "0\n")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/de.port")))
+        self.assertEqual(ctl._awg_free_port(), 18800)
+        # The configuration's default kind, unless the command says.
+        os.environ["AWG_RUNTIME_OUTBOUND_KIND"] = "interface"
+        ok(ctl.cmd_outbounds, "add", "nl", AWG_CONF)
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/nl.iface")), "1\n")
+        self.assertIn("No free slot", run(ctl.cmd_outbounds, "add", "fr", AWG_CONF)[2])
+        ok(ctl.cmd_outbounds, "add", "fr", AWG_CONF, "--userspace")
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/fr.port")), "18800\n")
+        # Apps can run through the interface ones.
+        self.assertEqual(sorted(ctl._via_outbounds()), ["de", "nl"])
+        # rm takes the slot along.
+        ok(ctl.cmd_outbounds, "rm", "de")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/de.iface")))
+        self.assertEqual(ctl._awg_free_iface_slot(), 0)
+        for args, why in [
+            (("x", AWG_CONF, "--interface", "--userspace"), "Pick one"),
+            (("x", "vless://u@x.test:443", "--interface"), "--interface only applies"),
+        ]:
+            with self.subTest(args=args[-1]):
+                self.assertIn(why, run(ctl.cmd_outbounds, "add", *args)[2])
+        os.environ["AWG_RUNTIME_IFACE_OUTBOUNDS"] = "0"
+        self.assertIn("root hosts only", run(ctl.cmd_outbounds, "add", "x", AWG_CONF, "--interface")[2])
+
 
 class ZapretAutoTest(EnvTest):
     @unittest.skipIf(os.geteuid() == 0, "root writes anything")
@@ -1450,8 +1479,10 @@ class AppsRunTest(EnvTest):
             PROXYCHAINS_CONFIG=self.write("proxychains.conf", ""),
             PER_APP_ROUTING_PROFILES_FILE=self.write(
                 "profiles.json",
-                [{"name": n, "route": n} for n in ("direct", "proxychains", "tun", "tproxy", "zapret")],
+                [{"name": n, "route": n} for n in ("direct", "proxychains", "tun", "tproxy", "zapret")]
+                + [{"name": "game", "route": "tun", "outbound": "de-2"}],
             ),
+            PER_APP_VIA_FILE=self.write("via.json", {"de-2": {"interface": "awg-de", "mark": 23040}}),
         )
 
         def systemctl(*args, **kw):
@@ -1507,6 +1538,155 @@ class AppsRunTest(EnvTest):
         self.assertEqual(self.execed, ["curl", "x"])
         self.assertIn("proxy-suite-tun.service is active", err)
         self.assertFalse(any(c[0] == "systemd-run" for c in self.calls))
+
+    def test_via_interface_outbound(self):
+        # Its own slice and units, keyed by the tag in hex: "de-2" must not nest under "de".
+        key = "awg-" + "de-2".encode().hex()
+        uid = os.getuid()
+        for args, label in ((("--via", "de-2", "--", "curl", "x"), "de-2"), (("game", "--", "curl", "x"), "game")):
+            self.calls.clear()
+            status, _, _ = run(ctl.cmd_apps, "run", *args)
+            self.assertEqual(status, 0)
+            base = f"proxy-suite-per-app-via-{key}"
+            scope = next(c for c in self.calls if c[0] == "systemd-run")
+            self.assertIn(f"--unit={base}-{label}-{os.getpid()}", scope)
+            self.assertIn(f"--slice={base}", scope)
+            self.assertEqual(scope[-2:], ("curl", "x"))
+            self.assertIn(("--user", "start", f"proxy-suite-per-app-via-anchor@{key}.service"), self.calls)
+            self.assertIn(("start", f"proxy-suite-per-app-via@{key}.service"), self.calls)
+            self.assertIn(("start", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
+            self.assertIn(("stop", f"proxy-suite-per-app-via@{key}.service"), self.calls)
+            listed = next(c for c in self.calls if c[0] == "list-units" and c[-1].startswith("proxy-suite-per-app-via-user@"))
+            self.assertEqual(listed[-1], f"proxy-suite-per-app-via-user@*-{key}.service")
+
+    def test_via_without_pin_slots(self):
+        status, _, err = run(ctl.cmd_apps, "run", "--via", "nl", "--", "curl")
+        self.assertNotEqual(status, 0)
+        self.assertIn("this configuration has no pin slots", err)
+        self.assertIn('"interface" AmneziaWG outbounds: de-2.', err)
+        self.assertFalse(any(c[0] == "systemd-run" for c in self.calls))
+
+    def test_via_pin_slots(self):
+        os.environ.update(PER_APP_PIN_TUN="1", PER_APP_PIN_TPROXY="1")
+        self.patch("_outbound_tags", lambda: ["nl", "de-2"])
+        self.patch("_outbound_groups", lambda: {})
+        hexed = "nl".encode().hex()
+        uid = os.getuid()
+        # TUN when both are there; a profile's route, or --route, picks.
+        for args, route, label in (
+            (("--via", "nl", "--", "curl"), "tun", "nl"),
+            (("--via", "nl", "--route", "tproxy", "--", "curl"), "tproxy", "nl"),
+            (("--route", "tproxy", "--via", "nl", "curl"), "tproxy", "nl"),
+        ):
+            with self.subTest(args=args):
+                self.calls.clear()
+                status, _, _ = run(ctl.cmd_apps, "run", *args)
+                self.assertEqual(status, 0)
+                key = f"{route}-{hexed}"
+                scope = next(c for c in self.calls if c[0] == "systemd-run")
+                self.assertIn(f"--slice=proxy-suite-per-app-via-{key}", scope)
+                self.assertIn(f"--unit=proxy-suite-per-app-via-{key}-{label}-{os.getpid()}", scope)
+                self.assertIn(("start", f"proxy-suite-per-app-via-{route}@{hexed}.service"), self.calls)
+                self.assertIn(("start", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
+                self.assertIn(("stop", f"proxy-suite-per-app-via-{route}@{hexed}.service"), self.calls)
+                # The per-app TUN backend goes too once nothing uses it; the socks backend stays.
+                self.assertEqual(("stop", "proxy-suite-per-app-tun.service") in self.calls, route == "tun")
+        self.assertIn("Unknown outbound: fr", run(ctl.cmd_apps, "run", "--via", "fr", "--", "curl")[2])
+        self.assertIn("--route is tun or tproxy", run(ctl.cmd_apps, "run", "--via", "nl", "--route", "zapret", "--", "curl")[2])
+        os.environ["PER_APP_PIN_TUN"] = "0"
+        self.assertIn("no pin slots of per-app tun here", run(ctl.cmd_apps, "run", "--via", "nl", "--route", "tun", "--", "curl")[2])
+        # A global TProxy takes pinned apps past their route, as it does the other routes.
+        self.active = {"proxy-suite-tproxy.service"}
+        run(ctl.cmd_apps, "run", "--via", "nl", "--", "curl", "x")
+        self.assertEqual(self.execed, ["curl", "x"])
+
+    def test_runtime_profiles(self):
+        os.environ.update(PER_APP_PIN_TPROXY="1", RUNTIME_APPS_DIR=self.path("apps.d"))
+        os.makedirs(self.path("apps.d"))
+        self.patch("_outbound_tags", lambda: ["nl"])
+        self.patch("_outbound_groups", lambda: {})
+        self.assertIn("Added app profile: play", ok(ctl.cmd_apps, "add", "play", "--via", "nl"))
+        ok(ctl.cmd_apps, "add", "chat", "--route", "proxychains")
+        ok(ctl.cmd_apps, "add", "vpn", "--via", "de-2")
+        # Readable by whoever runs apps; the pin route chosen now, an interface outbound needs none.
+        self.assertEqual(os.stat(self.path("apps.d/play.json")).st_mode & 0o777, 0o644)
+        added = {p["name"]: p for p in ctl._per_app_profiles() if p.get("runtime")}
+        self.assertEqual((added["play"]["route"], added["play"]["outbound"]), ("tproxy", "nl"))
+        self.assertEqual((added["chat"]["route"], added["chat"]["outbound"]), ("proxychains", None))
+        self.assertEqual(added["vpn"]["outbound"], "de-2")
+        listing = ok(ctl.cmd_apps, "list")
+        self.assertRegex(listing, r"play\s+tproxy\s+nl\s+runtime")
+        self.assertRegex(listing, r"tun\s+tun\s+-\s+declared")
+        self.assertIn("play", ctl._complete_tree("apps", "rm"))
+        # Run like a declared one.
+        self.calls.clear()
+        self.assertEqual(run(ctl.cmd_apps, "run", "play", "--", "curl")[0], 0)
+        self.assertIn(("start", f"proxy-suite-per-app-via-tproxy@{'nl'.encode().hex()}.service"), self.calls)
+        for args, why in [
+            (("tun", "--route", "tun"), "declared in the NixOS configuration"),
+            (("Bad", "--route", "tun"), "Invalid profile name"),
+            (("x", "--route", "warp"), "--route is one of"),
+            (("x", "--via", "nl", "--route", "proxychains"), "needs --route tun or tproxy"),
+            (("x",), "usage"),
+        ]:
+            with self.subTest(args=args):
+                status, out, err = run(ctl.cmd_apps, "add", *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn(why, (out + err).lower() if why == "usage" else err)
+        self.assertIn("remove it there", run(ctl.cmd_apps, "rm", "tun")[2])
+        self.assertIn("Removed app profile: play", ok(ctl.cmd_apps, "rm", "play"))
+        self.assertFalse(os.path.exists(self.path("apps.d/play.json")))
+        self.assertIn("No app profile", run(ctl.cmd_apps, "rm", "play")[2])
+
+    def test_via_global_awg_profile(self):
+        # Brought up apart for the app, first, and taken down with the last app through it.
+        os.environ.update(PER_APP_VIA_PROFILES="1", AWG_PROFILES_FILE=self.write("awg.json", ["netcup"]))
+        key = "app-" + "netcup".encode().hex()
+        status, _, _ = run(ctl.cmd_apps, "run", "--via", "netcup", "--", "curl", "x")
+        self.assertEqual(status, 0)
+        starts = [c[1] for c in self.calls if c[0] == "start"]
+        self.assertEqual(starts[:2], ["proxy-suite-awg-app@netcup.service", f"proxy-suite-per-app-via@{key}.service"])
+        scope = next(c for c in self.calls if c[0] == "systemd-run")
+        self.assertIn(f"--slice=proxy-suite-per-app-via-{key}", scope)
+        self.assertIn(("stop", "proxy-suite-awg-app@netcup.service"), self.calls)
+        self.assertIn("netcup", ctl._complete_tree("apps", "run", "--via"))
+        # Up globally, it carries the app as it is.
+        self.calls.clear()
+        self.active = {"proxy-suite-awg-netcup.service"}
+        status, _, err = run(ctl.cmd_apps, "run", "--via", "netcup", "--", "curl", "x")
+        self.assertEqual(self.execed, ["curl", "x"])
+        self.assertIn("proxy-suite-awg-netcup.service is active", err)
+        self.assertNotIn(("start", "proxy-suite-awg-app@netcup.service"), self.calls)
+
+    def test_via_names_both_a_profile_and_an_outbound(self):
+        # "nl" is an outbound and a global profile: a bare name is refused, a prefix picks.
+        os.environ.update(PER_APP_VIA_PROFILES="1", PER_APP_PIN_TPROXY="1", AWG_PROFILES_FILE=self.write("awg.json", ["nl"]))
+        self.patch("_outbound_tags", lambda: ["nl"])
+        self.patch("_outbound_groups", lambda: {})
+        status, _, err = run(ctl.cmd_apps, "run", "--via", "nl", "--", "curl")
+        self.assertNotEqual(status, 0)
+        self.assertIn("say --via awg:nl or --via outbound:nl", err)
+        hexed = "nl".encode().hex()
+        for via, unit in (("awg:nl", f"proxy-suite-per-app-via@app-{hexed}.service"), ("outbound:nl", f"proxy-suite-per-app-via-tproxy@{hexed}.service")):
+            with self.subTest(via=via):
+                self.calls.clear()
+                self.assertEqual(run(ctl.cmd_apps, "run", "--via", via, "--", "curl")[0], 0)
+                self.assertIn(("start", unit), self.calls)
+                scope = next(c for c in self.calls if c[0] == "systemd-run")
+                self.assertTrue(any(a.startswith("--unit=") and ":" not in a for a in scope))
+        self.assertIn("No global AmneziaWG profile 'fr'", run(ctl.cmd_apps, "run", "--via", "awg:fr", "--", "curl")[2])
+        self.assertIn("--via takes an outbound", run(ctl.cmd_apps, "run", "--via", "wg:nl", "--", "curl")[2])
+
+    def test_tun_profile_keeps_backend_for_pins(self):
+        self.calls.clear()
+        run(ctl.cmd_apps, "run", "tun", "--", "curl")
+        listed = next(c for c in self.calls if c[0] == "list-units" and "proxy-suite-per-app-tun-user@*.service" in c)
+        self.assertIn("proxy-suite-per-app-via-tun@*.service", listed)
+
+    def test_via_under_global_tun_runs_plain(self):
+        self.active = {"proxy-suite-tun.service"}
+        run(ctl.cmd_apps, "run", "--via", "de-2", "--", "curl", "x")
+        self.assertEqual(self.execed, ["curl", "x"])
 
     def test_disabled_route(self):
         os.environ["PER_APP_ROUTING_ZAPRET_ENABLED"] = "0"

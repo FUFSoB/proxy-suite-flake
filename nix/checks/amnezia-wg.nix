@@ -247,10 +247,12 @@ in
     grep -qx 'stop proxy-suite-awg@gone.service' log
     ! grep -q 'stop proxy-suite-awg@self.service' log
 
-    printf '%s\n' '● proxy-suite-awg-tunnel@old.service loaded failed failed x' > units
+    printf '%s\n' '● proxy-suite-awg-tunnel@old.service loaded failed failed x' \
+      '  proxy-suite-awg-if@gone.service loaded active exited x' > units
     : > log
     $sync
     grep -qx 'stop --no-block proxy-suite-awg-tunnel@old.service' log
+    grep -qx 'stop --no-block proxy-suite-awg-if@gone.service' log
     touch "$out"
   '';
 
@@ -399,7 +401,21 @@ in
       assert runtimeTunnel.serviceConfig.RuntimeDirectory == "proxy-suite-awg-tunnel-%i";
       assert builtins.elem "proxy-suite-outbound-reload.service"
         runtimeUnits.proxy-suite-awg-runtime-sync.wantedBy;
-      assert pkgs.lib.hasInfix "proxy-suite-awg-tunnel@$tag.service" runtimeSync;
+      assert pkgs.lib.hasInfix "proxy-suite-awg-$kind@$tag.service" runtimeSync;
+      assert pkgs.lib.hasInfix "[[ -e /var/lib/proxy-suite/outbounds.d/$tag.iface ]] && kind=if"
+        runtimeSync;
+      # Or, with <tag>.iface, an interface of its own: a template like the global one's,
+      # behind a direct outbound bound to it.
+      assert runtimeUnits."proxy-suite-awg-if@".wantedBy == [ ];
+      assert runtimeUnits."proxy-suite-awg-if@".serviceConfig.RuntimeDirectory == "proxy-suite-awg-if-%i";
+      assert builtins.elem "proxy-suite-awg-if-watchdog@%i.service"
+        runtimeUnits."proxy-suite-awg-if@".wants;
+      assert runtimeUnits."proxy-suite-awg-if-watchdog@".bindsTo == [ "proxy-suite-awg-if@%i.service" ];
+      assert pkgs.lib.hasInfix "_proxy_suite_add_awg_interface" runtimeOutboundScript;
+      assert pkgs.lib.hasInfix ''bind_interface: $i, domain_resolver: ("awg-dns-" + $t)''
+        runtimeOutboundScript;
+      assert runtimeCtl.wrapperEnv.AWG_RUNTIME_IFACE_OUTBOUNDS == "1";
+      assert runtimeCtl.wrapperEnv.AWG_RUNTIME_OUTBOUND_KIND == "userspace";
       # The backend dials each one's tunnel on the port in <tag>.port.
       assert pkgs.lib.hasInfix ''"/var/lib/proxy-suite/outbounds.d"/*.awg'' runtimeOutboundScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_socks_hop" runtimeOutboundScript;

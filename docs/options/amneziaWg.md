@@ -69,6 +69,7 @@ Part of the [proxy-suite options reference](./index.md).
   - runtime
     - [enable](#services-proxy-suite-amneziawg-runtime-enable)
     - [interfaceName](#services-proxy-suite-amneziawg-runtime-interfacename)
+    - [outboundKind](#services-proxy-suite-amneziawg-runtime-outboundkind)
   - [serverUdpPorts](#services-proxy-suite-amneziawg-serverudpports)
   - [toolsPackage](#services-proxy-suite-amneziawg-toolspackage)
   - [userspacePackage](#services-proxy-suite-amneziawg-userspacepackage)
@@ -569,6 +570,16 @@ Interface of the global profiles added at runtime\. Only one of them runs at a t
 
 **Type:** string matching the pattern ^\[A-Za-z0-9_\.-]{1,15}$\
 **Default:** `"awg-rt"`
+
+<a id="services-proxy-suite-amneziawg-runtime-outboundkind"></a>
+## services\.proxy-suite\.amneziaWg\.runtime\.outboundKind
+
+How an outbound added with ` proxy-ctl proxy outbounds add ` runs, unless it says
+(` --interface `, ` --userspace `): in wireproxy, or as an AmneziaWG interface of its own
+(root hosts only), which apps can also be run through with ` proxy-ctl apps run --via `\.
+
+**Type:** one of “userspace”, “interface”\
+**Default:** `"userspace"`
 
 <a id="services-proxy-suite-amneziawg-serverudpports"></a>
 ## services\.proxy-suite\.amneziaWg\.serverUdpPorts

@@ -64,6 +64,46 @@ host's routes and DNS alone. Use it like any other outbound: for selection, in
 | `"userspace"` | yes | no | Runs in wireproxy. The only mode on home-manager and Nix-on-Droid. |
 | `"singBox"` | no | no | Plain WireGuard inside sing-box. For servers without obfuscation, such as WARP. |
 
+## Run single apps through it
+
+With [per-app routing](./per-app.md) on, `--via` sends one app through an outbound:
+
+```sh
+proxy-ctl apps run --via de -- steam
+```
+
+An `"interface"` outbound takes the app's packets into its interface directly: no proxy in
+between, and UDP as it is. The app's DNS goes to the profile's `DNS` servers (or to
+`proxy.dns.remote` when it names none), through the tunnel, even when `/etc/resolv.conf`
+points at a local resolver. While the interface is down, the app's connections fail instead of
+leaving another way. A `"userspace"` or `"singBox"` outbound works like any other outbound
+here: through per-app TUN or TProxy.
+
+A global profile works too, declared or added with `awg add`: `--via home` brings up a copy
+of it for the apps alone, the same way, and takes it down after the last one exits. The
+rest of the system is untouched. A profile cannot be up globally and for apps at once: while
+`awg on home` holds it, `--via home` runs the app as it is, and `awg on home` stops the copy.
+When a name is both a global profile and an outbound, say which: `--via awg:home` or
+`--via outbound:home`.
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  proxy.enable = true;
+  amneziaWg = {
+    enable = true;
+    profiles.de = {
+      configFile = "/run/secrets/de-awg.conf";
+      asOutbound = "interface";
+    };
+  };
+  perAppRouting = {
+    enable = true;
+    profiles = [ { name = "games"; outbound = "de"; } ];
+  };
+};
+```
+
 ## Add one without rebuilding
 
 `amneziaWg.enable` alone is enough: profiles and outbounds can come from `proxy-ctl` instead
@@ -86,15 +126,21 @@ proxy-ctl awg add home ~/home.conf          # a name first; a link, a file, or -
 proxy-ctl awg on home
 proxy-ctl awg rm home
 proxy-ctl proxy outbounds add de ~/de.conf  # an outbound instead (needs proxy.enable)
+proxy-ctl proxy outbounds add nl ~/nl.conf --interface  # on an interface of its own
 ```
 
 - A global profile works like a declared one: `awg on`, the tray menu, the kill switch. The
   ones added this way share one interface, `amneziaWg.runtime.interfaceName`.
 - An outbound runs in wireproxy (like `asOutbound = "userspace"`), so the obfuscation stays.
-  It cannot chain through another outbound.
+  With `--interface` it gets an AmneziaWG interface of its own instead (like
+  `asOutbound = "interface"`; root hosts only), which apps can run through directly (see
+  above).
+  `amneziaWg.runtime.outboundKind` sets which one an outbound gets when the command does not
+  say. Either way, it cannot chain through another outbound.
 - In `proxy-tui` and the desktop app, paste a `vpn://` link or a whole `.conf` onto a tab: on
-  the Outbounds tab it becomes an outbound, anywhere else a global profile. The AmneziaWG tab
-  also adds one from a prompt, and removes what was added.
+  the Outbounds tab it becomes an outbound, anywhere else a global profile. The Outbounds tab
+  also adds one on an interface of its own, and the AmneziaWG tab adds a global profile from a
+  prompt and removes what was added.
 - Hooks (`PostUp` and the like) are always refused, whoever adds the config.
   `--container <name>` picks one from a `vpn://` export that holds several.
 - Adding and removing takes root, or a `userControl` scope: `amneziaWg` for global profiles,
@@ -116,4 +162,5 @@ proxy-ctl proxy outbounds add de ~/de.conf  # an outbound instead (needs proxy.e
 - [`amneziaWg.profiles`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles)
 - [`amneziaWg.runtime`](../options/amneziaWg.md#services-proxy-suite-amneziawg-runtime-enable)
 - [`asOutbound`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles-name-asoutbound)
+- [Route a single app](./per-app.md)
 - [`settings`](../options/amneziaWg.md#services-proxy-suite-amneziawg-profiles-name-settings)

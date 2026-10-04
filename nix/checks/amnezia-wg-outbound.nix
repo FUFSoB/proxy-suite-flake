@@ -111,7 +111,7 @@ in
       assert (de.conflicts or [ ]) == [ ];
       assert builtins.elem "multi-user.target" de.wantedBy;
       assert de.serviceConfig.Restart == "on-failure";
-      assert hasInfix "ping -n -c 1 -I awg-de" deStart;
+      assert hasInfix ''ping -n -c 1 -I "awg-de"'' deStart;
       assert !(builtins.elem "proxy-suite-awg-de.service" services.proxy-suite-tproxy.conflicts);
       assert builtins.elem "proxy-suite-awg-home.service" services.proxy-suite-tproxy.conflicts;
       assert !(builtins.elem "proxy-suite-awg-de.service" services.proxy-suite-awg-home.conflicts);
@@ -123,9 +123,9 @@ in
     # IPv6 needs a route for sockets bound to the interface: a table of its own, looked up
     # only by them, and gone with the unit.
     (
-      assert hasInfix "route replace default dev awg-de table 110" deStart;
-      assert hasInfix "rule add pref 8991 oif awg-de table 110" deStart;
-      assert hasInfix "rule del pref 8991 oif awg-de" deStop;
+      assert hasInfix ''route replace default dev "awg-de" table "110"'' deStart;
+      assert hasInfix ''rule add pref 8991 oif "awg-de" table "110"'' deStart;
+      assert hasInfix ''rule del pref 8991 oif "awg-de"'' deStop;
       assert !(hasInfix "fib daddr type local" deStart);
       true
     )
@@ -136,7 +136,7 @@ in
         homeStart;
       assert hasInfix "type route hook output priority mangle - 5" homeStart;
       assert hasInfix "nft delete table inet proxy-suite-awg-awg-home" homeStop;
-      assert !(hasInfix "oif awg-home" homeStart);
+      assert !(hasInfix "oif" homeStart);
       # UDP services answer from the right address even on a socket bound to every address.
       assert hasInfix "for port in 3478 49152-65535" homeStart;
       assert hasInfix ''rule add pref 8989 ipproto udp sport "$port" lookup main'' homeStart;

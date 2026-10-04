@@ -16,6 +16,9 @@ let
     globalTproxy
     clashApiEnabled
     perAppRoutingTun
+    perAppPinSlots
+    perAppPinTproxy
+    perAppPinTun
     ;
   inherit (constants)
     xrayDnsBridgePorts
@@ -113,9 +116,45 @@ let
     action = "hijack-dns";
   };
 
-  clashApiBlock = lib.optionalAttrs clashApiEnabled {
-    experimental.clash_api.external_controller = "127.0.0.1:${toString singBoxCfg.clashApiPort}";
+  clashApiBlock = port: {
+    experimental.clash_api.external_controller = "127.0.0.1:${toString port}";
   };
+
+  # perAppRouting.via's pin slots (constants.perAppPinRulePriority): a selector each, which the
+  # backend filter fills with every outbound, block first and by default, and the Clash API
+  # switches to the outbound an app runs through. `match` is what of an app's connection
+  # tells its slot apart.
+  mkPins =
+    route: count: match:
+    let
+      slots = lib.genList (slot: slot) count;
+      tag = slot: "proxy-suite-pin-${route}-${toString slot}";
+    in
+    {
+      inherit route;
+      rules = map (slot: match slot // { outbound = tag slot; }) slots;
+      selectors = map (slot: {
+        type = "selector";
+        tag = tag slot;
+        outbounds = [ "block" ];
+        default = "block";
+      }) slots;
+    };
+  pinTproxyInbound = slot: "per-app-pin-tproxy-${toString slot}";
+  tproxyPins = mkPins "tproxy" perAppPinSlots (slot: {
+    inbound = [ (pinTproxyInbound slot) ] ++ lib.optional proxyCfg.ipv6 "${pinTproxyInbound slot}-6";
+  });
+  # The slot's source, which its packets are SNATed to as they enter the TUN.
+  tunPins = mkPins "tun" perAppPinSlots (
+    slot:
+    let
+      source = constants.perAppPinTunSource slot;
+    in
+    {
+      inbound = [ "tun-in" ];
+      source_ip_cidr = [ "${source.ipv4}/32" ] ++ lib.optional proxyCfg.ipv6 "${source.ipv6}/128";
+    }
+  );
 
   mkConfig =
     {
@@ -135,6 +174,9 @@ let
       forceLocalDnsViaProxy ? false,
       useOutboundRoutingMark ? false,
       enableClashApi ? clashApiEnabled,
+      clashApiPort ? singBoxCfg.clashApiPort,
+      # perAppRouting.via's pin slots, of mkPins.
+      pins ? null,
       enableXrayDnsBridge ? hybridEnabled,
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
       # Names the fake IP cache: TUN configs only.
@@ -185,6 +227,25 @@ let
                 listen_port = globalTproxy.port;
               }
             )
+            ++ lib.optionals (enableTProxy && pins != null && pins.route == "tproxy") (
+              lib.concatMap (
+                slot:
+                [
+                  {
+                    type = "tproxy";
+                    tag = pinTproxyInbound slot;
+                    listen = "127.0.0.1";
+                    listen_port = constants.perAppPinTproxyPortBase + slot;
+                  }
+                ]
+                ++ lib.optional proxyCfg.ipv6 {
+                  type = "tproxy";
+                  tag = "${pinTproxyInbound slot}-6";
+                  listen = "::1";
+                  listen_port = constants.perAppPinTproxyPortBase + slot;
+                }
+              ) (lib.genList (slot: slot) perAppPinSlots)
+            )
             ++ lib.optional enableTun (
               {
                 type = "tun";
@@ -215,19 +276,25 @@ let
               type = "block";
               tag = "block";
             }
-          ];
+          ]
+          ++ lib.optionals (pins != null) pins.selectors;
 
           route = {
             default_domain_resolver = "local";
             rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets ++ rules.remoteRuleSets;
-            rules = lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ] ++ rules.singBoxRoutingRules;
+            # The pins go after the common hijack-dns and sniff rules, wherever the backend
+            # filter finds those.
+            rules =
+              lib.optionals enableXrayDnsBridge [ xrayDnsBridgeHijackRule ]
+              ++ rules.singBoxRoutingRules
+              ++ lib.optionals (pins != null) pins.rules;
             final = if (proxyCfg.routing.default == "proxy") then "proxy" else "direct";
           }
           // lib.optionalAttrs (enableTun && tunAutoRoute) {
             auto_detect_interface = true;
           };
         }
-        // lib.optionalAttrs enableClashApi clashApiBlock
+        // lib.optionalAttrs enableClashApi (clashApiBlock clashApiPort)
       )
       # Fake addresses handed out survive a restart, so apps still holding one keep working. The
       # start script creates the directory; nothing else is stored, since TUN configs have no
@@ -248,6 +315,7 @@ in
   tproxy = mkConfig {
     enableMixed = true;
     enableTProxy = constants.privileged;
+    pins = if perAppPinTproxy then tproxyPins else null;
     useOutboundRoutingMark = constants.privileged;
     xrayDnsBridgePort = xrayDnsBridgePorts.socks;
   };
@@ -272,13 +340,16 @@ in
     tunInterface = perAppRoutingTun.interface;
     tunAddress = perAppRoutingTun.address;
     tunIPv6Address = constants.perAppTunIPv6Address;
+    pins = if perAppPinTun then tunPins else null;
+    # The pins' selectors are switched through it.
+    enableClashApi = perAppPinTun;
+    clashApiPort = constants.perAppTunClashApiPort;
     tunMtu = perAppRoutingTun.mtu;
     tunAutoRoute = false;
     tunAutoRedirect = false;
     tunStrictRoute = false;
     forceLocalDnsViaProxy = false;
     useOutboundRoutingMark = globalTproxy.enable;
-    enableClashApi = false;
     xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
     fakeIpCache = "per-app-tun";
   };

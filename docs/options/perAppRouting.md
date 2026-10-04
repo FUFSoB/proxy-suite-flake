@@ -12,6 +12,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [profiles](#services-proxy-suite-perapprouting-profiles)
     - item
       - [name](#services-proxy-suite-perapprouting-profiles-name)
+      - [outbound](#services-proxy-suite-perapprouting-profiles-outbound)
       - [route](#services-proxy-suite-perapprouting-profiles-route)
   - proxychains
     - [enable](#services-proxy-suite-perapprouting-proxychains-enable)
@@ -30,6 +31,9 @@ Part of the [proxy-suite options reference](./index.md).
     - [localSubnets](#services-proxy-suite-perapprouting-tun-localsubnets)
     - [mtu](#services-proxy-suite-perapprouting-tun-mtu)
     - [routeTable](#services-proxy-suite-perapprouting-tun-routetable)
+  - via
+    - [localSubnets](#services-proxy-suite-perapprouting-via-localsubnets)
+    - [pinSlots](#services-proxy-suite-perapprouting-via-pinslots)
   - zapret
     - [enable](#services-proxy-suite-perapprouting-zapret-enable)
     - [filterMark](#services-proxy-suite-perapprouting-zapret-filtermark)
@@ -68,6 +72,20 @@ Unique profile name\.
 
 **Type:** string matching the pattern ^\[a-z0-9]\[a-z0-9-]\*$\
 **Example:** `"steam-browser"`
+
+<a id="services-proxy-suite-perapprouting-profiles-outbound"></a>
+## services\.proxy-suite\.perAppRouting\.profiles\.\*\.outbound
+
+Send all of the app’s traffic through this outbound, past the routing rules\. An
+“interface” AmneziaWG outbound (` amneziaWg.profiles.<name>.asOutbound `), or a
+global AmneziaWG profile, takes the app’s packets into its interface directly,
+whatever ` route ` is; any other outbound needs ` route ` “tun” or “tproxy”\. For a name
+that is both a global profile and an outbound, say which: “awg:\<name>” or
+“outbound:\<name>”\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"de"`
 
 <a id="services-proxy-suite-perapprouting-profiles-route"></a>
 ## services\.proxy-suite\.perAppRouting\.profiles\.\*\.route
@@ -191,6 +209,27 @@ Routing table for the per-app TUN\.
 
 **Type:** signed integer\
 **Default:** `101`
+
+<a id="services-proxy-suite-perapprouting-via-localsubnets"></a>
+## services\.proxy-suite\.perAppRouting\.via\.localSubnets
+
+Subnets an app run ` --via ` an AmneziaWG interface (an “interface” outbound or a global
+profile) still reaches directly; DNS still goes through the tunnel\. Every other
+address goes through it, private ones included, as the server may serve them\.
+
+**Type:** list of string\
+**Default:** `[ "192.168.0.0/16" ]`\
+**Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
+
+<a id="services-proxy-suite-perapprouting-via-pinslots"></a>
+## services\.proxy-suite\.perAppRouting\.via\.pinSlots
+
+How many outbounds ` apps run --via ` can send apps through at once, for per-app TProxy
+and again for per-app TUN; at most 16\. Apps via the same outbound share one\. An
+“interface” AmneziaWG outbound takes none: apps enter it directly\.
+
+**Type:** signed integer\
+**Default:** `8`
 
 <a id="services-proxy-suite-perapprouting-zapret-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.enable

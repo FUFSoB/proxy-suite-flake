@@ -85,6 +85,20 @@ in
       localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
     };
 
+    via = {
+      pinSlots = int 8 ''
+        How many outbounds `apps run --via` can send apps through at once, for per-app TProxy
+        and again for per-app TUN; at most 16. Apps via the same outbound share one. An
+        "interface" AmneziaWG outbound takes none: apps enter it directly.
+      '';
+
+      localSubnets = localSubnets ''
+        Subnets an app run `--via` an AmneziaWG interface (an "interface" outbound or a global
+        profile) still reaches directly; DNS still goes through the tunnel. Every other
+        address goes through it, private ones included, as the server may serve them.
+      '';
+    };
+
     zapret = {
       enable = mkEnableOption "per-app zapret, a separate zapret for wrapped apps only";
       filterMark = int 268435456 "Firewall mark bit for wrapped apps' traffic.";

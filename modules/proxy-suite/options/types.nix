@@ -80,6 +80,20 @@ let
           "tproxy" or "zapret".
         '';
       };
+
+      outbound = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Send all of the app's traffic through this outbound, past the routing rules. An
+          "interface" AmneziaWG outbound (`amneziaWg.profiles.<name>.asOutbound`), or a
+          global AmneziaWG profile, takes the app's packets into its interface directly,
+          whatever `route` is; any other outbound needs `route` "tun" or "tproxy". For a name
+          that is both a global profile and an outbound, say which: "awg:<name>" or
+          "outbound:<name>".
+        '';
+        example = "de";
+      };
     };
   };
 in

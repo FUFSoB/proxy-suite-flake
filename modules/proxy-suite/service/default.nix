@@ -91,6 +91,10 @@ let
       path = constants.runtimeAwgDir;
       scope = "amneziaWg";
     }
+    ++ lib.optional cfg.perAppRouting.enable {
+      path = constants.runtimeAppsDir;
+      scope = "perApp";
+    }
     ++ lib.optional derived.zapretCutoffEnabled {
       path = "${constants.zapret2CutoffDir}/requests";
       scope = "zapret";
@@ -352,6 +356,20 @@ lib.mkMerge [
             "${constants.runtimeInboundsDir}/listeners"
           ]
         ))
+        # Per-app profiles added at runtime: read by everyone who runs apps, written with the
+        # perApp scope.
+        (lib.mkIf (cfg.enable && cfg.perAppRouting.enable) [
+          "d ${constants.runtimeAppsDir} ${
+            if !constants.privileged then
+              "0700 - -"
+            else if userControlAllows "perApp" then
+              "2775 root ${userControlCfg.group}"
+            else if derived.userControlAnyAllows "perApp" then
+              "2775 root root"
+            else
+              "0755 root root"
+          } -"
+        ])
         # Global AmneziaWG profiles added at runtime. Listable, so the tray and TUI show
         # their names to everyone; each file is 0600 (amneziawg_config.py writes it so).
         (lib.mkIf (cfg.enable && derived.awgRuntimeGlobal) [

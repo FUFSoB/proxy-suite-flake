@@ -83,6 +83,19 @@ in
         default = "awg-rt";
         description = "Interface of the global profiles added at runtime. Only one of them runs at a time, so they share it.";
       };
+
+      outboundKind = mkOption {
+        type = types.enum [
+          "userspace"
+          "interface"
+        ];
+        default = "userspace";
+        description = ''
+          How an outbound added with `proxy-ctl proxy outbounds add` runs, unless it says
+          (`--interface`, `--userspace`): in wireproxy, or as an AmneziaWG interface of its own
+          (root hosts only), which apps can also be run through with `proxy-ctl apps run --via`.
+        '';
+      };
     };
 
     profiles = mkOption {
