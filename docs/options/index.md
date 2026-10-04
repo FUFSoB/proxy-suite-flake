@@ -391,6 +391,7 @@ services.proxy-suite = {
       autoHostlist = {
         debugLog = false;
         enable = true;
+        extendedDetection = true;
         failThreshold = 3;
         failTime = 300;
         incomingMaxseq = 4096;
@@ -416,6 +417,7 @@ services.proxy-suite = {
         udp = null;
       };
       profiles = null;
+      proxyFallback = true;
       strategyLog = true;
       strategySource = "nfqws2-keenetic";
     };

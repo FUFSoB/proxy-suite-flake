@@ -194,6 +194,7 @@ Changes and secrets need root or the userControl group.
   zapret auto add|forget|exclude <domain>
                                          treat a site as blocked, forget it, or never touch it
   zapret auto unpin|include <domain>     undo add or exclude
+  zapret auto retry <domain|ip>          give zapret2 another try where it sent the proxy
   zapret auto clear                      forget learned sites and strategies
   zapret cutoff [status]                 networks cut off at 16 KB, and names that pass
   zapret cutoff probe                    probe again now

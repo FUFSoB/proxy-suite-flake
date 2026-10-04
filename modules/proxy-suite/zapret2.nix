@@ -23,6 +23,7 @@ let
     userControlExtraGroupsFor
     zapretGlobalEnabled
     zapret2DirectSync
+    zapret2ProxyFallback
     ;
   inherit
     (import ./zapret/common.nix {
@@ -136,10 +137,12 @@ let
 
 in
 {
-  services.proxy-suite.internal.services.proxy-suite-zapret2-direct =
-    lib.mkIf zapret2DirectSync directSync.service;
-  services.proxy-suite.internal.paths.proxy-suite-zapret2-direct =
-    lib.mkIf zapret2DirectSync directSync.path;
+  services.proxy-suite.internal.services.proxy-suite-zapret2-direct = lib.mkIf (
+    zapret2DirectSync || zapret2ProxyFallback
+  ) directSync.service;
+  services.proxy-suite.internal.paths.proxy-suite-zapret2-direct = lib.mkIf (
+    zapret2DirectSync || zapret2ProxyFallback
+  ) directSync.path;
 
   services.proxy-suite.internal.earlyPackages = [ runtime.package ];
 

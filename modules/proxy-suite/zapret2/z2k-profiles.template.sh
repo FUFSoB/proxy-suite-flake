@@ -39,10 +39,16 @@ grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no prof
 # strategies, as z2k's own autohostlist does: on rkn_tcp it would take
 # YouTube from yt_tcp/gv_tcp below it. rkn_tcp then leaves their hosts to
 # them even once learned or added by hand.
+#
+# With $learnArgs (autoHostlist.extendedDetection), detect.lua's ps_learn learns
+# instead, in the same last place. It cannot ride along on the autohostlist profile:
+# nfqws2 applies nothing there to a host in no list, Lua included. It writes the
+# same auto list and reads the same excludes, which it checks itself.
 awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
     -v wl="--hostlist-exclude=$root/lists/whitelist.txt" \
     -v yt="--hostlist-exclude=$root/extra_strats/TCP/YT/List.txt --hostlist-exclude=$root/extra_strats/TCP/YT_GV/List.txt" \
-    -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" '
+    -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" \
+    -v learn="$learnArgs" -v wlfile="$root/lists/whitelist.txt" '
   {
     for (i = 1; i <= NF; i++) {
       t = $i
@@ -67,7 +73,13 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
   }
   END {
     if (!seen || !(learner in ports)) { print "z2k general TLS profile not found" > "/dev/stderr"; exit 1 }
-    printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
+    if (learn == "")
+      printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
+    else {
+      # Its own excludes come first: the profile itself takes every remaining TLS flow.
+      sub(/:exclude=/, ":exclude=" wlfile ",", learn)
+      printf " --new --filter-tcp=%s --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:%s", ports[learner], learn
+    }
   }' raw >body
 
 # QUIC to blocked sites: z2k rotates QUIC strategies over YouTube's list alone, and DPI

@@ -115,6 +115,7 @@ Changes and secrets need root or the userControl group.
   zapret auto add|forget|exclude <domain>
                                          treat a site as blocked, forget it, or never touch it
   zapret auto unpin|include <domain>     undo add or exclude
+  zapret auto retry <domain|ip>          give zapret2 another try where it sent the proxy
   zapret auto clear                      forget learned sites and strategies
   zapret cutoff [status]                 networks cut off at 16 KB, and names that pass
   zapret cutoff probe                    probe again now
@@ -795,9 +796,11 @@ COMPLETE = {
             "exclude": "never touch or learn a host",
             "unpin": "undo add",
             "include": "undo exclude",
+            "retry": "give zapret2 another try where it sent the proxy",
             "clear": "forget learned hosts and strategies",
         }
     },
+    "zapret auto retry": {"args": lambda: _names(name for name, _ in _zapret_proxied())},
     "zapret auto forget": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
     "zapret auto exclude": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
     "zapret auto unpin": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-user.txt"))))},
@@ -3732,6 +3735,82 @@ def _zapret_strategy_summary(domain, rows=None, strategies=None):
     return "; ".join(_zapret_strategy_text(r, strategies) for r in _zapret_strategies_for(domain, rows))
 
 
+# detect.lua's verdicts (zapret2/detect.lua): "kind<TAB>name<TAB>proto<TAB>note<TAB>time",
+# the last per name and proto standing. What the proxy carries in zapret2's stead, and
+# whether a learned site is seen working, which decides whether directSync sends it direct.
+ZAPRET_PROXIED = {"tcp": "no strategy gets through", "udp": "its QUIC: no strategy gets through", "ip": "blocked by address"}
+
+
+def _zapret_verdicts():
+    """{(name, proto): kind}, the last verdict of each."""
+    out = {}
+    for fields in _tsv(_zapret_auto_file("verdicts.tsv")):
+        if len(fields) >= 3 and fields[0] and fields[1]:
+            out[(fields[1], fields[2])] = fields[0]
+    return out
+
+
+def _zapret_covers(host, name):
+    """A host and a site key, either way round: www.notion.so and notion.so."""
+    return host == name or host.endswith(f".{name}") or name.endswith(f".{host}")
+
+
+def _zapret_status(host, verdicts=None):
+    """What zapret2 made of host, "" before it decided anything."""
+    verdicts = _zapret_verdicts() if verdicts is None else verdicts
+    kinds = {}
+    for (name, proto), kind in verdicts.items():
+        if _zapret_covers(host, name):
+            kinds[proto] = kind
+    parts = []
+    if kinds.get("tcp") == "unfixable":
+        parts.append("via the proxy: no strategy gets through")
+    elif kinds.get("cutoff") == "stalls":
+        parts.append("cut off after 16 KB: keeps the proxy's route")
+    elif kinds.get("tcp") == "works":
+        parts.append("works")
+    if kinds.get("udp") == "unfixable":
+        parts.append("QUIC via the proxy")
+    return ", ".join(parts)
+
+
+def _zapret_proxied(verdicts=None):
+    """[(name, why)] the proxy carries because zapret2 cannot fix them."""
+    verdicts = _zapret_verdicts() if verdicts is None else verdicts
+    return [
+        (name, ZAPRET_PROXIED[proto])
+        for (name, proto), kind in sorted(verdicts.items())
+        if (kind, proto) in (("unfixable", "tcp"), ("unfixable", "udp"), ("blocked", "ip"))
+    ]
+
+
+def _zapret_verdicts_drop(host):
+    """Forgets every verdict about host, so zapret2 judges it afresh."""
+    path = _zapret_auto_file("verdicts.tsv")
+    if not os.path.isfile(path):
+        return
+
+    def keep(line):
+        fields = line.split("\t")
+        return len(fields) < 2 or not _zapret_covers(host, fields[1])
+
+    _replace_lines(path, keep)
+
+
+def _zapret_retry(name):
+    """The proxy carries name no longer: zapret2 tries it again, rotation unfrozen."""
+    path = _zapret_auto_file("verdicts.tsv")
+    retried = [proto for (n, proto), kind in _zapret_verdicts().items() if n == name and kind in ("unfixable", "blocked")]
+    if not retried:
+        die(f"zapret2 sends nothing for {name} through the proxy: proxy-ctl zapret auto lists what it does.")
+    now = int(time.time())
+    _replace_lines(path, lambda _: True, [f"retry\t{name}\t{proto}\tproxy-ctl\t{now}" for proto in retried])
+    # nfqws2 keeps a site's rotation stopped, and its verdicts, until it restarts.
+    if svc_active("proxy-suite-zapret"):
+        cmd_zapret("restart")
+    print(f"zapret2 tries {name} again; the proxy carries it no longer.")
+
+
 def _truncate(path):
     _replace_lines(path, lambda _: False)
 
@@ -3754,27 +3833,39 @@ def cmd_zapret_auto(verb="list", domain="", *_):
     user = _zapret_auto_file("zapret-hosts-user.txt")
     exclude = _zapret_auto_file("zapret-hosts-user-exclude.txt")
 
-    if verb in ("add", "forget", "exclude", "unpin", "include") and not _zapret_auto_host(domain):
+    if verb in ("add", "forget", "exclude", "unpin", "include", "retry") and not _zapret_auto_host(domain):
         usage(f"zapret auto {verb} <domain>")
     if verb == "list":
         hosts = [h for h in lines(read_text(auto)) if h] if os.path.isfile(auto) else []
         if not hosts:
             print("No hostnames learned yet.")
-        rows, strategies = _zapret_strategy_rows(), _zapret_strategy_map()
+        rows, strategies, verdicts = _zapret_strategy_rows(), _zapret_strategy_map(), _zapret_verdicts()
         width = max(map(len, hosts), default=0)
         for host in hosts:
-            summary = _zapret_strategy_summary(host, rows, strategies)
-            print(f"{host:<{width}}  {summary}" if summary else host)
+            notes = [n for n in (_zapret_strategy_summary(host, rows, strategies), _zapret_status(host, verdicts)) if n]
+            print(f"{host:<{width}}  {'; '.join(notes)}" if notes else host)
+        proxied = _zapret_proxied(verdicts)
+        if proxied:
+            print("\nThrough the proxy, as zapret2 cannot fix them:")
+            width = max(len(name) for name, _ in proxied)
+            for name, why in proxied:
+                print(f"  {name:<{width}}  {why}")
+            sys.stdout.flush()
+            print("Give one another try: proxy-ctl zapret auto retry <name>", file=sys.stderr)
+    elif verb == "retry":
+        _zapret_retry(domain)
     elif verb == "add":
         _zapret_auto_edit(user, domain, "add")
         print(f"Pinned {domain}: zapret treats it as blocked.")
     elif verb == "forget":
         _zapret_auto_edit(auto, domain, "drop")
         _zapret_strategy_drop(domain)
+        _zapret_verdicts_drop(domain)
         print(f"Forgot {domain}. It is learned again if it keeps failing; 'exclude' prevents that.")
     elif verb == "exclude":
         _zapret_auto_edit(auto, domain, "drop")
         _zapret_strategy_drop(domain)
+        _zapret_verdicts_drop(domain)
         _zapret_auto_edit(exclude, domain, "add")
         print(f"Excluded {domain}. It is no longer touched or learned.")
     elif verb == "unpin":
@@ -3785,12 +3876,12 @@ def cmd_zapret_auto(verb="list", domain="", *_):
         print(f"Included {domain}. It can be learned again.")
     elif verb == "clear":
         _truncate(auto)
-        state = _zapret_auto_file("circular/state.tsv")
-        if os.path.exists(state):
-            _truncate(state)
-        print("Cleared learned hosts and remembered strategies.")
+        for path in (_zapret_auto_file("circular/state.tsv"), _zapret_auto_file("verdicts.tsv")):
+            if os.path.exists(path):
+                _truncate(path)
+        print("Cleared learned hosts, remembered strategies and what zapret2 sent the proxy.")
     else:
-        usage("zapret auto [list|add|forget|exclude|unpin|include|clear]")
+        usage("zapret auto [list|add|forget|exclude|unpin|include|retry|clear]")
 
 
 # --- zapret cutoff ------------------------------------------------------------

@@ -101,6 +101,19 @@ in
       };
     };
 
+    proxyFallback = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Send through the proxy what zapret2 cannot fix: a site none of its strategies get
+        through for (only its QUIC, when that alone fails), and an address that leaves
+        connections unanswered (blocked by address, as Telegram's are). Learned sites go
+        direct (`zapret.directSync`) only once a strategy is seen working for them. Needs an
+        outbound; works for traffic the proxy sees (TUN, TProxy, per-app routing; by address
+        only where it sees the address). `proxy-ctl zapret auto retry` gives one another try.
+      '';
+    };
+
     strategyLog = mkOption {
       type = types.bool;
       default = true;
@@ -149,7 +162,19 @@ in
       debugLog = mkOption {
         type = types.bool;
         default = false;
-        description = "Log why sites are or are not learned.";
+        description = "Log why sites are or are not learned (nfqws2's own learner).";
+      };
+
+      extendedDetection = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Learn with proxy-suite's detector instead of nfqws2's. It also learns sites blocked
+          only some of the time (a working connection no longer clears the failures before it),
+          downloads that stall partway (the 16 KB cutoff), and requests that never get an
+          answer. Learned sites are logged with `strategyLog`. Only with the source's own
+          `profiles`, and for TLS: nfqws2-keenetic no longer learns plain HTTP sites.
+        '';
       };
     };
 

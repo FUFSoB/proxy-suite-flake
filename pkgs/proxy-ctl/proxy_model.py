@@ -418,11 +418,20 @@ def zapret_rows(_):
     if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
         return []
     rows = {}
-    strategy_rows, strategies = ctl._zapret_strategy_rows(), ctl._zapret_strategy_map()
+    strategy_rows, strategies, verdicts = ctl._zapret_strategy_rows(), ctl._zapret_strategy_map(), ctl._zapret_verdicts()
     for kind, name in ZAPRET_LISTS:
         for host in _lines(name):
-            strategy = "" if kind == "excluded" else ctl._zapret_strategy_summary(host, strategy_rows, strategies)
-            rows.setdefault(f"{kind}:{host}", {"key": f"{kind}:{host}", "host": host, "kind": kind, "strategy": strategy})
+            excluded = kind == "excluded"
+            rows.setdefault(f"{kind}:{host}", {
+                "key": f"{kind}:{host}",
+                "host": host,
+                "kind": kind,
+                "strategy": "" if excluded else ctl._zapret_strategy_summary(host, strategy_rows, strategies),
+                "status": "" if excluded else ctl._zapret_status(host, verdicts),
+            })
+    # What zapret2 cannot fix, the proxy carries: sites no strategy got through, blocked addresses.
+    for name, why in ctl._zapret_proxied(verdicts):
+        rows.setdefault(f"proxied:{name}", {"key": f"proxied:{name}", "host": name, "kind": "proxied", "strategy": "", "status": why})
     return list(rows.values())
 
 
@@ -430,6 +439,8 @@ def zapret_summary():
     if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
         return 'Learned hostlists need zapret.engine = "zapret2".'
     text = "   ".join(f"{len(_lines(name))} {kind}" for kind, name in ZAPRET_LISTS)
+    if proxied := ctl._zapret_proxied():
+        text += f"   {len(proxied)} via the proxy (zapret2 cannot fix them)"
     if ctl.env("ZAPRET_CUTOFF_ENABLED") == "1":
         text += "\n" + "   ".join(line.strip() for line in _cutoff_status().splitlines()[:2])
     return text
@@ -892,10 +903,11 @@ TABS = [
         "zapret",
         "zapret",
         lambda s: "proxy-suite-zapret" in s or ctl.env("ZAPRET_AUTO_ENABLED") == "1",
-        [("host", "Host"), ("kind", "List"), ("strategy", "Strategy")],
+        [("host", "Host"), ("kind", "List"), ("strategy", "Strategy"), ("status", "Status")],
         zapret_rows,
         summary=zapret_summary,
         actions=[
+            Action("t", "give zapret2 another try", lambda r, *_: ["zapret", "auto", "retry", r["host"]], when=_kind("proxied")),
             Action("f", "forget it", lambda r, *_: ["zapret", "auto", "forget", r["host"]], when=_kind("learned")),
             Action("p", "pin it", lambda r, *_: ["zapret", "auto", "add", r["host"]], when=_kind("learned")),
             Action("p", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),

@@ -28,7 +28,13 @@ as `"general (ALT9)"`.
 ## Blocked sites found automatically: zapret2
 
 zapret2 notices failing connections, marks the site as blocked, and finds a strategy that
-works for it. Each site's strategy is remembered.
+works for it. Each site's strategy is remembered. It also learns sites blocked only some of
+the time, downloads that stall partway, and requests that never get an answer.
+
+What zapret2 cannot fix goes through your proxy, when you have one: a site none of its
+strategies get through for (only its QUIC, when that alone fails), and an address that
+never answers at all, as Telegram's are blocked. That works for traffic the proxy sees
+(TUN, TProxy, per-app routing).
 
 ```nix
 services.proxy-suite = {
@@ -61,8 +67,9 @@ services.proxy-suite.zapret.zapret2.ports.extraUdp = [ "27015-27030" ];
 ```sh
 proxy-ctl zapret                          # status
 proxy-ctl zapret off                      # or: on, toggle, restart
-proxy-ctl zapret auto                     # sites zapret2 learned
+proxy-ctl zapret auto                     # sites zapret2 learned, and what goes to the proxy
 proxy-ctl zapret auto add example.com     # treat a site as blocked
+proxy-ctl zapret auto retry example.com   # give zapret2 another try at what it sent the proxy
 proxy-ctl zapret auto exclude example.com # never touch or learn a site
 proxy-ctl zapret auto forget example.com  # forget it and its strategy
 proxy-ctl zapret cutoff                   # networks cut off at 16 KB (z2k)
@@ -72,9 +79,9 @@ proxy-ctl zapret cutoff                   # networks cut off at 16 KB (z2k)
 
 zapret and the proxy work side by side. By default (`zapret.directSync`), the sites zapret
 handles are sent direct, so they skip the proxy and reach zapret. With zapret2 that includes
-the sites it learns and the ones you pin with `proxy-ctl zapret auto add`, as soon as they
-are added; your own rules and autoProxy still come first. Everything else follows your
-[routing rules](./routing.md).
+the ones you pin with `proxy-ctl zapret auto add`, and the sites it learns once one of its
+strategies is seen getting through; your own rules and autoProxy still come first.
+Everything else follows your [routing rules](./routing.md).
 
 ## Only for some apps
 

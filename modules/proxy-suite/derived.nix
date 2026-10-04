@@ -556,6 +556,12 @@ let
   # directSync for what zapret2 pins and learns at runtime: a rule-set the proxy reloads.
   # The fixed lists go in with the routing rules (rules-zapret-direct.nix).
   zapret2DirectSync = zapretEngine == "zapret2" && zapretGlobalEnabled && zapretCfg.directSync.enable;
+  # What zapret2 cannot fix (detect.lua's verdicts) goes through the proxy outbound.
+  zapret2ProxyFallback =
+    zapretEngine == "zapret2"
+    && zapretGlobalEnabled
+    && zapretCfg.zapret2.proxyFallback
+    && hasAvailableOutbounds;
   userControlEnabled = userControlCfg.enable;
   # Whether userControl.group, which owns proxy-suite's files, holds a scope; no scopes
   # listed means all of them. The groups in userControl.groups get theirs through ACLs.
@@ -884,6 +890,7 @@ in
     zapretCutoffEnabled
     zapretCutoffProxyFallback
     zapret2DirectSync
+    zapret2ProxyFallback
     userControlCfg
     userControlEnabled
     userControlAllows

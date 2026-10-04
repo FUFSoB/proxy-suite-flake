@@ -94,6 +94,8 @@ let
       );
       luaInit = [ ];
       daemonArgs = [ ];
+      # Never learned by detect.lua, as its own autohostlist never learned them.
+      learnExclude = [ "${src}/etc/nfqws2/lists/exclude.list" ];
       ports = {
         tcp = bare "TCP_PORTS";
         udp = replaceStrings [ ":" ] [ "-" ] (bare "UDP_PORTS");
@@ -141,6 +143,8 @@ let
       # SYN before the ClientHello its syndata strategies act on) takes the name last
       # seen on that IP, so it still meets its site's profile and strategy.
       daemonArgs = [ "--ipcache-hostname=1" ];
+      # Its whitelist, which z2k-profiles.template.sh adds in front.
+      learnExclude = [ ];
       ports = {
         tcp = ports "NFQWS2_PORTS_TCP";
         udp = ports "NFQWS2_PORTS_UDP";
@@ -158,7 +162,11 @@ let
       # detectors, fake TTL) comes out exactly as on a router. Its tree is staged
       # under $out because the generated options point into it.
       mkProfiles =
-        { hostlistSuffix, excludeSuffix }:
+        {
+          hostlistSuffix,
+          excludeSuffix,
+          learnArgs ? "",
+        }:
         pkgs.runCommand "proxy-suite-zapret2-z2k-profiles" {
           nativeBuildInputs = with pkgs; [
             bash
@@ -168,7 +176,7 @@ let
             gnugrep
             gnused
           ];
-          inherit hostlistSuffix excludeSuffix;
+          inherit hostlistSuffix excludeSuffix learnArgs;
         } (fillTemplate ./z2k-profiles.template.sh { z2k = src; });
     };
 in

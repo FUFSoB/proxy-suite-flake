@@ -41,6 +41,7 @@ Part of the [proxy-suite options reference](./index.md).
     - autoHostlist
       - [enable](#services-proxy-suite-zapret-zapret2-autohostlist-enable)
       - [debugLog](#services-proxy-suite-zapret-zapret2-autohostlist-debuglog)
+      - [extendedDetection](#services-proxy-suite-zapret-zapret2-autohostlist-extendeddetection)
       - [failThreshold](#services-proxy-suite-zapret-zapret2-autohostlist-failthreshold)
       - [failTime](#services-proxy-suite-zapret-zapret2-autohostlist-failtime)
       - [incomingMaxseq](#services-proxy-suite-zapret-zapret2-autohostlist-incomingmaxseq)
@@ -63,6 +64,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [tcp](#services-proxy-suite-zapret-zapret2-ports-tcp)
       - [udp](#services-proxy-suite-zapret-zapret2-ports-udp)
     - [profiles](#services-proxy-suite-zapret-zapret2-profiles)
+    - [proxyFallback](#services-proxy-suite-zapret-zapret2-proxyfallback)
     - [strategyLog](#services-proxy-suite-zapret-zapret2-strategylog)
     - [strategySource](#services-proxy-suite-zapret-zapret2-strategysource)
 
@@ -95,8 +97,9 @@ Subnets zapret skips\.
 ## services\.proxy-suite\.zapret\.directSync\.enable
 
 Send zapret’s domains direct in the proxy routing, so zapret handles them\. With zapret2,
-also the sites it pins and learns at runtime, after your own rules and autoProxy’s\.
-The all-proxy and all-bypass route modes leave them out, like every direct list\.
+also the sites pinned at runtime, and the ones it learns once a strategy is seen getting
+through for them, after your own rules and autoProxy’s\. The all-proxy and all-bypass
+route modes leave them out, like every direct list\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -322,10 +325,22 @@ blocked\. When off, only ` zapret2.domains ` and ` proxy-ctl zapret auto add ` a
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-debuglog"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.debugLog
 
-Log why sites are or are not learned\.
+Log why sites are or are not learned (nfqws2’s own learner)\.
 
 **Type:** boolean\
 **Default:** `false`
+
+<a id="services-proxy-suite-zapret-zapret2-autohostlist-extendeddetection"></a>
+## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.extendedDetection
+
+Learn with proxy-suite’s detector instead of nfqws2’s\. It also learns sites blocked
+only some of the time (a working connection no longer clears the failures before it),
+downloads that stall partway (the 16 KB cutoff), and requests that never get an
+answer\. Learned sites are logged with ` strategyLog `\. Only with the source’s own
+` profiles `, and for TLS: nfqws2-keenetic no longer learns plain HTTP sites\.
+
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-failthreshold"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.failThreshold
@@ -511,6 +526,19 @@ learning\. ` --qnum `, ` --fwmark ` and ` --lua-init ` are added for you\. ` nul
   "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
 ]
 ```
+
+<a id="services-proxy-suite-zapret-zapret2-proxyfallback"></a>
+## services\.proxy-suite\.zapret\.zapret2\.proxyFallback
+
+Send through the proxy what zapret2 cannot fix: a site none of its strategies get
+through for (only its QUIC, when that alone fails), and an address that leaves
+connections unanswered (blocked by address, as Telegram’s are)\. Learned sites go
+direct (` zapret.directSync `) only once a strategy is seen working for them\. Needs an
+outbound; works for traffic the proxy sees (TUN, TProxy, per-app routing; by address
+only where it sees the address)\. ` proxy-ctl zapret auto retry ` gives one another try\.
+
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-zapret-zapret2-strategylog"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.strategyLog

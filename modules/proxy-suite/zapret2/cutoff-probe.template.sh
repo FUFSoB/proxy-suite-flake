@@ -21,15 +21,32 @@ last=$(cat ts 2>/dev/null || true)
 [[ $last =~ ^[0-9]+$ ]] || last=0
 
 # The name map belongs to this line: probe again when its network changes, else
-# once a day. No answer (offline, captive portal) is no reason to probe.
-info=$(curl -sS --max-time 10 https://ipinfo.io/json 2>/dev/null || true)
-egress=$(jq -r '((.org // "") | split(" ")[0]) as $as
-  | if ($as | test("^AS[0-9]+$")) then $as else (.ip // "") end' <<<"$info" 2>/dev/null || true)
-if [ -z "$egress" ]; then
-  echo "no answer about this line's address; not probing"
+# once a day. Two services name the network, and they must agree: ipinfo.io alone now
+# and then named Cloudflare's for this line's, and each flip cost a full probe. One
+# answer alone counts only for the network already known (or when none is yet); no
+# answer at all (offline, captive portal) is no reason to probe.
+asn() {
+  curl -sS --max-time 10 "$1" 2>/dev/null | jq -r "$2"' | select(test("^AS[0-9]+$"))' 2>/dev/null || true
+}
+known=$(cat egress 2>/dev/null || true)
+ipinfo=$(asn https://ipinfo.io/json '(.org // "") | split(" ")[0]')
+ifconfig=$(asn https://ifconfig.co/json '.asn // ""')
+if [ -n "$ipinfo" ] && [ -n "$ifconfig" ] && [ "$ipinfo" != "$ifconfig" ]; then
+  echo "ipinfo.io says $ipinfo, ifconfig.co says $ifconfig; keeping the last probe"
   exit 0
 fi
-if [ "$force" = 0 ] && [ "$egress" = "$(cat egress 2>/dev/null || true)" ] &&
+egress=${ipinfo:-$ifconfig}
+if [ -z "$egress" ]; then
+  echo "no answer about this line's network; not probing"
+  exit 0
+fi
+if [ -z "$ipinfo" ] || [ -z "$ifconfig" ]; then
+  if [ -n "$known" ] && [ "$egress" != "$known" ]; then
+    echo "only one service answered, with $egress for this line's $known; keeping the last probe"
+    exit 0
+  fi
+fi
+if [ "$force" = 0 ] && [ "$egress" = "$known" ] &&
   [ $((now - last)) -lt 86400 ]; then
   exit 0
 fi

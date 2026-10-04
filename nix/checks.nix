@@ -57,6 +57,9 @@ let
   amneziaWgInboundsRuntime = import ./checks/amnezia-wg-inbound-runtime.nix {
     inherit pkgs proxySuiteModule;
   };
+  zapret2Runtime = import ./checks/zapret2-runtime.nix {
+    inherit pkgs proxySuiteModule;
+  };
 in
 moduleSuiteChecks
 // {
@@ -72,6 +75,7 @@ moduleSuiteChecks
   amneziawg-runtime = amneziaWgRuntime;
   proxy-inbounds-runtime = proxyInboundsRuntime;
   amneziawg-inbounds-runtime = amneziaWgInboundsRuntime;
+  zapret2-runtime = zapret2Runtime;
 }
 // pythonChecks
 // repoChecks

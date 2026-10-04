@@ -189,7 +189,9 @@ in
 
         # The NFQUEUE window must exceed the retransmission threshold.
         grep -qx 'NFQWS2_TCP_PKT_OUT=9' "${globalRuntime}/config"
-        grep -qx 'NFQWS2_TCP_PKT_IN=15' "${globalRuntime}/config"
+        # Wider with detect.lua learning, to see a transfer stall past the 16 KB cutoff.
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${globalRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=15' "${tunedRuntime}/config"
 
         # Learning off means list mode, not "no lists".
         grep -qx 'MODE_FILTER=hostlist' "${noAutoRuntime}/config"
@@ -236,7 +238,7 @@ in
         '
         # Every new host or switch reaches state.tsv, or a restart loses it; a z2k bump
         # that drops the setter must fail the start, not quietly lose switches again.
-        grep -qE -- 'z2k-state-persist\.lua --lua-init=@[^ ]+-persist-every\.lua --lua-init=@[^ ]+-strategy-log\.lua' "${z2kRuntime}/config"
+        grep -qE -- 'z2k-state-persist\.lua --lua-init=@[^ ]+-persist-every\.lua --lua-init=@[^ ]+-detect\.lua --lua-init=@[^ ]+-strategy-log\.lua' "${z2kRuntime}/config"
         EVERY=$(grep -oE '/nix/store/[^ ]+-persist-every\.lua' "${globalRuntime}/config") lua -e '
           local set, flushed, now = nil, 0, 1000
           local state = { rkn_tcp = { ["example.com"] = { strategy = 1 } } }
@@ -286,6 +288,21 @@ in
           assert(key("1.2.3.4", "2", true) == "standard")
           assert(key("www.google.com", nil) == "standard")
         '
+        # What nfqws2's learner and z2k's detector miss: flaky sites, stalled transfers,
+        # unanswered ClientHellos, for learning and for rotation; and the verdicts the
+        # proxy routes by: works, unfixable, blocked by address.
+        mkdir -p detect
+        touch detect/verdicts.tsv
+        DETECT=$(grep -oE '/nix/store/[^ ]+-detect\.lua' "${z2kRuntime}/config") WORK="$PWD/detect" \
+          PROXY_SUITE_ZAPRET2_VERDICTS="$PWD/detect/verdicts.tsv" lua ${./zapret2/detect-test.lua}
+        # nfqws2 finds the verdicts file by its environment; the last profile watches
+        # connections for addresses blocked outright.
+        grep -qF '"PROXY_SUITE_ZAPRET2_VERDICTS=/var/lib/proxy-suite/zapret2/verdicts.tsv"' \
+          <<<'${builtins.toJSON zapret2Z2k.config.systemd.services.proxy-suite-zapret.serviceConfig.Environment}'
+        grep -qE -- " --new --filter-tcp=\* --out-range=<n2 --in-range=<n2 --payload=empty --lua-desync=ps_syn:fails=3:time=300:log'$" "${z2kRuntime}/config"
+        # nfqws2-keenetic learns with detect.lua too: its own profile only reads the auto list.
+        grep -qE -- " --new --filter-tcp=443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=[^ ]+:exclude=[^ ]+/etc/nfqws2/lists/exclude.list,[^ ]+zapret-hosts-user-exclude.txt:" "${globalRuntime}/config"
+        test "$(grep -oF -- '<HOSTLIST>' "${globalRuntime}/config" | wc -l)" = 0
         # Counted failures and switches, named by circular key and host; the switch
         # is the one that stuck, after the state layer's revert.
         LOG=$(grep -oE '/nix/store/[^ ]+-strategy-log\.lua' "${z2kRuntime}/config") lua -e '
@@ -350,8 +367,15 @@ in
         # YouTube's hosts to yt_tcp/gv_tcp.
         grep -qF -- '/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO> --hostlist-exclude=' "${z2kRuntime}/config"
         grep -qE -- '<HOSTLIST_NOAUTO> --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --filter-tcp=' "${z2kRuntime}/config"
-        test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 1
-        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST>'$" "${z2kRuntime}/config"
+        # nfqws2's own learner, without extendedDetection.
+        test "$(grep -oF -- '<HOSTLIST>' "${z2kTunedRuntime}/config" | wc -l)" = 1
+        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443,8444 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST> --new --filter-tcp=\* " "${z2kTunedRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=15' "${z2kTunedRuntime}/config"
+        # detect.lua's in its place by default: same ports, the same auto list and excludes,
+        # and the server's packets past the 16 KB cutoff.
+        test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 0
+        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=/var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt:exclude=[^ ]+/lists/whitelist.txt,/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt:fails=3:time=300:inseq=4096:retrans=3:win=32:log --new --filter-tcp=\* " "${z2kRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${z2kRuntime}/config"
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
 
         # proxy-ctl names state.tsv's rows by this map: keyed circulars by key, the
@@ -431,19 +455,37 @@ in
         grep -qF 'tag: "zapret-hosts"' ${socksStart zapret2Global}
         grep -qF 'all-proxy | all-bypass) ;;' ${socksStart zapret2Global}
         if grep -qF 'zapret-hosts' ${socksStart zapretDiscordYoutubeGlobal}; then exit 1; fi
-        # Pinned and learned hosts less the excluded ones; IP literals as single addresses.
-        mkdir -p direct-lists empty-lists
+        # What zapret2 cannot fix goes to the proxy, ahead of what it does.
+        grep -qF 'tag: "zapret-unfixable"' ${socksStart zapret2Global}
+        test "$(grep -n 'zapret-unfixable' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \
+          "$(grep -n 'zapret-hosts' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)"
+        # Pinned hosts, and learned ones a strategy was seen working for, less the excluded;
+        # IP literals as single addresses.
+        mkdir -p direct-lists empty-lists out empty-out
         printf 'pinned.example\n# a comment\n\n' >direct-lists/zapret-hosts-user.txt
-        printf 'Learned.Example\nexcluded.example\n203.0.113.7\n2001:db8::1\npinned.example\n' >direct-lists/zapret-hosts-auto.txt
+        printf 'Learned.Example\nexcluded.example\n203.0.113.7\n2001:db8::1\npinned.example\nunseen.example\n' >direct-lists/zapret-hosts-auto.txt
         printf 'excluded.example\n' >direct-lists/zapret-hosts-user-exclude.txt
-        ${directSync} direct-lists direct.json
-        test "$(cat direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["2001:db8::1/128","203.0.113.7/32"]}]}'
-        # Unchanged, the file stays as it was: sing-box reloads on every rename.
-        inode=$(stat -c %i direct.json)
-        ${directSync} direct-lists direct.json
-        test "$(stat -c %i direct.json)" = "$inode"
-        ${directSync} empty-lists empty.json
-        test "$(cat empty.json)" = '{"version":1,"rules":[]}'
+        {
+          printf 'works\tlearned.example\ttcp\trkn_tcp\t1\nworks\texcluded.example\ttcp\trkn_tcp\t1\n'
+          printf 'works\t203.0.113.7\ttcp\trkn_tcp\t1\n'
+          printf 'stalls\tunseen.example\tcutoff\t\t1\nworks\tunseen.example\ttcp\trkn_tcp\t2\n'
+          printf 'unfixable\tchat.example\ttcp\trkn_tcp\t2\nunfixable\tdiscord.com\tudp\trkn_quic\t2\n'
+          printf 'works\tdiscord.com\ttcp\trkn_tcp\t2\n'
+          printf 'blocked\t149.154.167.99\tip\tx\t3\nblocked\t198.51.100.1\tip\tx\t3\nreachable\t198.51.100.1\tip\t\t4\n'
+          printf 'unfixable\tretried.example\ttcp\t\t5\nretry\tretried.example\ttcp\tproxy-ctl\t6\n'
+          printf 'unfixable\tBAD NAME\ttcp\t\t7\n'
+        } >direct-lists/verdicts.tsv
+        ${directSync} direct-lists out
+        test "$(cat out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["203.0.113.7/32"]}]}'
+        # A site's TCP, or only its QUIC; addresses blocked outright.
+        test "$(cat out/proxy.json)" = '{"version":1,"rules":[{"domain_suffix":["chat.example"]},{"network":["udp"],"port":[443],"domain_suffix":["discord.com"]},{"ip_cidr":["149.154.167.99/32"]}]}'
+        # Unchanged, the files stay as they were: sing-box reloads on every rename.
+        inode=$(stat -c %i out/direct.json)
+        ${directSync} direct-lists out
+        test "$(stat -c %i out/direct.json)" = "$inode"
+        ${directSync} empty-lists empty-out
+        test "$(cat empty-out/direct.json)" = '{"version":1,"rules":[]}'
+        test "$(cat empty-out/proxy.json)" = '{"version":1,"rules":[]}'
 
         # --- per-app instance -------------------------------------------------
         # Wrapped apps opted in explicitly, so no hostlist gates them.
@@ -490,7 +532,9 @@ in
           opt=$(printf '%s' "$opt" | sed "s|/var/lib/proxy-suite/zapret2/|$HOSTLIST_BASE/|g")
           printf '%s\n' "$opt" | tr ' ' '\n' >"$2"
 
-          # --user is deliberately omitted: the sandbox is not root.
+          # --user is deliberately omitted: the sandbox is not root. No globbing, as in
+          # the launcher: --filter-tcp=* is nfqws2's.
+          set -f
           "$base/nfq2/nfqws2" --dry-run --fwmark="$DESYNC_MARK" \
             --lua-init=@"$base/lua/zapret-lib.lua" \
             --lua-init=@"$base/lua/zapret-antidpi.lua" \
@@ -499,26 +543,38 @@ in
         )
 
         dry_run ${globalRuntime} global.args
-        grep -qx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" global.args
-        grep -qx -- '--hostlist-auto-fail-threshold=3' global.args
-        grep -qx -- '--hostlist-auto-fail-time=300' global.args
+        # detect.lua learns; the auto list is read like the others.
+        if grep -q -- '^--hostlist-auto=' global.args; then exit 1; fi
+        grep -qx -- "--hostlist=$HOSTLIST_BASE/zapret-hosts-auto.txt" global.args
+        grep -q -- '^--lua-desync=ps_learn:' global.args
 
         # The supervised launcher execs nfqws2 with the command line the init script builds.
         printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' >fake-nfqws2
         chmod +x fake-nfqws2
         ZAPRET_RW=${globalRuntime} NFQWS2="$PWD/fake-nfqws2" ${daemonStart} >daemon.args
         head -n1 daemon.args | grep -qx -- '--user=root'
-        tail -n +6 daemon.args | diff - global.args
+        # dry_run moved the state files into the sandbox, detect.lua's arguments with them.
+        tail -n +6 daemon.args | sed "s|/var/lib/proxy-suite/zapret2/|$HOSTLIST_BASE/|g" | diff - global.args
 
         dry_run ${z2kRuntime} z2k.args
-        test "$(grep -cx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" z2k.args)" = 1
-        # Nothing follows the learning profile, so no profile after it can lose to it.
-        test "$(sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -c -- '^--new$')" = 0
-        if sed -n '/^--hostlist-auto=/,$p' z2k.args | grep -q -- '^--lua-desync='; then exit 1; fi
+        # The learner is the last profile: nothing after it, and nfqws2's own autohostlist off.
+        test "$(grep -cx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" z2k.args)" = 0
+        # Only ps_syn follows it, last: it takes connections before their data names them.
+        test "$(sed -n '/^--lua-desync=ps_learn:/,$p' z2k.args | grep -c -- '^--new$')" = 1
+        tail -n1 z2k.args | grep -q -- '^--lua-desync=ps_syn:'
 
-        # Extra ports and --debug are options nfqws2 takes.
+        # Extra ports and --debug are options nfqws2 takes; nfqws2's own learner, tuned.
         dry_run ${tunedRuntime} tuned.args
+        grep -qx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" tuned.args
+        grep -qx -- '--hostlist-auto-fail-threshold=5' tuned.args
+        grep -qx -- '--hostlist-auto-fail-time=120' tuned.args
         dry_run ${z2kTunedRuntime} z2k-tuned.args >/dev/null
+        test "$(grep -cx -- "--hostlist-auto=$HOSTLIST_BASE/zapret-hosts-auto.txt" z2k-tuned.args)" = 1
+        # Nothing but ps_syn follows the learning profile, so no profile after it can lose
+        # to it: ps_syn takes only what has no protocol yet, which the TLS learner never does.
+        test "$(sed -n '/^--hostlist-auto=/,$p' z2k-tuned.args | grep -c -- '^--new$')" = 1
+        test "$(sed -n '/^--hostlist-auto=/,$p' z2k-tuned.args | grep -c -- '^--lua-desync=')" = 1
+        tail -n1 z2k-tuned.args | grep -q -- '^--lua-desync=ps_syn:'
 
         touch "$out"
       '';

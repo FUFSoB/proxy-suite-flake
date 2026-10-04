@@ -1382,6 +1382,41 @@ class ZapretAutoTest(EnvTest):
         self.assertIn("rkn_tcp #3, frozen", run(ctl.cmd_zapret_auto, "list")[1])
         self.assertEqual(ctl._zapret_strategy_summary("notblocked.example"), "")
 
+    def test_verdicts(self):
+        """What detect.lua decided: the last verdict per name and protocol stands."""
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        self.write("zapret-hosts-auto.txt", "www.notion.so\nchat.example\nsignal.org\n")
+        verdicts = self.write(
+            "verdicts.tsv",
+            "works\tnotion.so\ttcp\trkn_tcp\t1\n"
+            "stalls\tsignal.org\tcutoff\t\t1\n"
+            "works\tsignal.org\ttcp\trkn_tcp\t2\n"
+            "unfixable\tdiscord.com\tudp\trkn_quic\t2\n"
+            "unfixable\tchat.example\ttcp\trkn_tcp\t3\n"
+            "blocked\t149.154.167.99\tip\tno answer\t4\n"
+            "blocked\t203.0.113.9\tip\tno answer\t5\n"
+            "reachable\t203.0.113.9\tip\t\t6\n",
+        )
+        status, out, err = run(ctl.cmd_zapret_auto, "list")
+        self.assertEqual(status, 0)
+        self.assertIn("www.notion.so  works", out)
+        self.assertIn("chat.example   via the proxy: no strategy gets through", out)
+        self.assertIn("signal.org     cut off after 16 KB: keeps the proxy's route", out)
+        self.assertRegex(out, r"(?m)^  discord\.com +its QUIC: no strategy gets through$")
+        self.assertRegex(out, r"(?m)^  149\.154\.167\.99 +blocked by address$")
+        self.assertNotIn("203.0.113.9", out)
+        self.assertIn("zapret auto retry", err)
+        # retry clears it, and restarts zapret2 to unfreeze the rotation, when it runs.
+        self.patch("svc_active", lambda unit: False)
+        ok(ctl.cmd_zapret_auto, "retry", "149.154.167.99")
+        self.assertNotIn("149.154.167.99", [name for name, _ in ctl._zapret_proxied()])
+        self.assertTrue(ctl.read_text(verdicts).endswith("\n"))
+        self.assertIn("sends nothing", run(ctl.cmd_zapret_auto, "retry", "nothing.example")[2])
+        # forget drops its verdicts with it: zapret2 judges it afresh.
+        ok(ctl.cmd_zapret_auto, "forget", "chat.example")
+        self.assertNotIn("chat.example", ctl.read_text(verdicts))
+        self.assertIn("discord.com", ctl.read_text(verdicts))
+
 
 class InboundsTest(EnvTest):
     def test_stats(self):

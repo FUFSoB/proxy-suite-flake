@@ -16,6 +16,7 @@ let
     constants
     zapretCutoffProxyFallback
     zapret2DirectSync
+    zapret2ProxyFallback
     jq
     singBox
     xray
@@ -187,6 +188,7 @@ let
       enableOutboundTest ? false,
       enableZapretCutoff ? false,
       enableZapretDirect ? false,
+      enableZapretProxy ? false,
       excludeServiceUserFromTun ? false,
     }:
     pkgs.writeShellScript "proxy-suite-core" ''
@@ -366,6 +368,21 @@ let
         fi
       ''}
 
+      ${lib.optionalString enableZapretProxy ''
+        # What zapret2 cannot fix (its strategies all failed for a site, or an address
+        # leaves connections unanswered) goes through the proxy: after explicit rules,
+        # autoProxy and the cutoff's networks, ahead of the hosts zapret2 does fix.
+        if [ "$ROUTE_MODE" != all-bypass ]; then
+          ZAPRET_PROXY_SET=${lib.escapeShellArg "${constants.zapret2DirectDir}/proxy.json"}
+          mkdir -p "$(dirname "$ZAPRET_PROXY_SET")"
+          [ -s "$ZAPRET_PROXY_SET" ] || echo '{"version":1,"rules":[]}' > "$ZAPRET_PROXY_SET"
+          chmod 644 "$ZAPRET_PROXY_SET"
+          AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$ZAPRET_PROXY_SET" \
+            '. + [{type: "local", format: "source", tag: "zapret-unfixable", path: $p}]' <<< "$AUTOPROXY_RULE_SETS_JSON")
+          AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-unfixable"], outbound: "proxy"}]' <<< "$AUTOPROXY_RULES_JSON")
+        fi
+      ''}
+
       ${lib.optionalString enableZapretDirect ''
         # directSync for the hosts zapret2 pins and learns at runtime: direct, so zapret2
         # sees them. Last, after explicit rules, autoProxy's exits and the cutoff's networks,
@@ -520,6 +537,7 @@ let
     enableAutoProxy = proxyCfg.autoProxy.enable && !pureXrayEnabled;
     enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
     enableZapretDirect = zapret2DirectSync && !pureXrayEnabled;
+    enableZapretProxy = zapret2ProxyFallback && !pureXrayEnabled;
     enableOutboundTest = true;
   };
 

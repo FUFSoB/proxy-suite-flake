@@ -57,6 +57,7 @@ in
         failTime = 120;
         retransThreshold = 4;
         debugLog = true;
+        extendedDetection = false;
       };
     };
   };
@@ -78,6 +79,7 @@ in
       ports.extraTcp = [ 8444 ];
       strategyLog = false;
       debug = true;
+      autoHostlist.extendedDetection = false;
     };
   };
 

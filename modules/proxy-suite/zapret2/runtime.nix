@@ -76,19 +76,68 @@ let
       marker: marker + withSpaces staticListArgs
     ) hostlistMarkers) (lib.addContextFrom profile (lib.trim profile));
 
+  # detect.lua learns in place of nfqws2's autohostlist, in a last TLS profile of its
+  # own: z2k-profiles.template.sh puts it there, tailProfiles for nfqws2-keenetic.
+  learnLua = autoCfg.enable && autoCfg.extendedDetection && zapret2Cfg.profiles == null;
+  learnArgs = lib.optionalString learnLua (
+    lib.concatStringsSep ":" (
+      [
+        "auto=${autoHostlistFile}"
+        "exclude=${lib.concatStringsSep "," (source.learnExclude ++ [ excludeHostlistFile ])}"
+        "fails=${toString autoCfg.failThreshold}"
+        "time=${toString autoCfg.failTime}"
+        "inseq=${toString autoCfg.incomingMaxseq}"
+        "retrans=${toString autoCfg.retransThreshold}"
+        "win=${toString packetWindow.tcpIn}"
+      ]
+      ++ lib.optional (
+        zapret2Cfg.excludeDomains != [ ]
+      ) "exclude_domains=${lib.concatStringsSep "," zapret2Cfg.excludeDomains}"
+      ++ lib.optional zapret2Cfg.strategyLog "log"
+    )
+  );
+
   z2kGenerated = sources.z2k.mkProfiles {
+    inherit learnArgs;
     hostlistSuffix = withSpaces staticListArgs;
     # z2k's category profiles filter on their own lists, not on a marker.
     excludeSuffix = withSpaces ([ "--hostlist-exclude=${excludeHostlistFile}" ] ++ excludeDomainArgs);
   };
+
+  # With detect.lua learning, the source's own learning profile only reads the auto list.
+  sourceProfiles =
+    if learnLua then
+      map (lib.replaceStrings [ "<HOSTLIST>" ] [ "<HOSTLIST_NOAUTO>" ]) source.profiles
+    else
+      source.profiles;
 
   profilesFile =
     if zapret2Cfg.profiles == null && isZ2k then
       "${z2kGenerated}/profiles"
     else
       pkgs.writeText "proxy-suite-zapret2" (
-        lib.concatStringsSep " --new " (map renderProfile (orSource zapret2Cfg.profiles source.profiles))
+        lib.concatStringsSep " --new " (map renderProfile (orSource zapret2Cfg.profiles sourceProfiles))
       );
+
+  # After every source profile, so each only takes what none of them did. ps_learn: the
+  # TLS sites in no list (z2k's template places its own). ps_syn: every new TCP connection
+  # until its first data names the protocol, to tell an address blocked outright.
+  tailProfiles = lib.concatMapStrings (profile: " --new " + profile) (
+    lib.optional (learnLua && !isZ2k) (
+      "--filter-tcp=443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all"
+      + " --lua-desync=ps_learn:${learnArgs}"
+    )
+    ++ lib.optional zapret2Cfg.proxyFallback (
+      "--filter-tcp=* --out-range=<n2 --in-range=<n2 --payload=empty --lua-desync=ps_syn:"
+      + lib.concatStringsSep ":" (
+        [
+          "fails=${toString autoCfg.failThreshold}"
+          "time=${toString autoCfg.failTime}"
+        ]
+        ++ lib.optional zapret2Cfg.strategyLog "log"
+      )
+    )
+  );
 
   blobsFile =
     if isZ2k then
@@ -140,6 +189,8 @@ let
         failStamp
         "${zapret2Sources.z2k}/files/lua/z2k-state-persist.lua"
         ./persist-every.lua
+        # After z2k-alert.lua, whose detector it wraps.
+        ./detect.lua
       ]
       ++ lib.optional zapret2Cfg.strategyLog ./strategy-log.lua
     )
@@ -165,7 +216,9 @@ let
   # cover what the source's detectors need.
   packetWindow = {
     tcpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.tcpOut or 0);
-    tcpIn = 15;
+    # The learner tells a stalled transfer from a finished one only while it still sees
+    # the server's packets; the 16 KB cutoff falls at about 12 of them.
+    tcpIn = if learnLua then 32 else 15;
     udpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.udpOut or 0);
     udpIn = source.window.udpIn or 3;
   };
@@ -218,14 +271,14 @@ let
     pkgs.runCommand "proxy-suite-zapret2"
       {
         nativeBuildInputs = [ pkgs.gawk ];
-        inherit circularFill optPrefix;
+        inherit circularFill optPrefix tailProfiles;
         basePortsTcp = orSource zapret2Cfg.ports.tcp source.ports.tcp;
         basePortsUdp = orSource zapret2Cfg.ports.udp source.ports.udp;
         extraPortsTcp = portList zapret2Cfg.ports.extraTcp;
         extraPortsUdp = portList zapret2Cfg.ports.extraUdp;
       }
       ''
-        opt="$optPrefix $(cat ${blobsFile}) $(cat ${profilesFile})"
+        opt="$optPrefix $(cat ${blobsFile}) $(cat ${profilesFile})$tailProfiles"
         opt=$(printf '%s\n' "$opt" | awk -v fill="$circularFill" '
           {
             for (i = 1; i <= NF; i++) {
@@ -360,6 +413,8 @@ let
       "PATH=${lib.makeBinPath runtimeDeps}"
       # Read by z2k-state-persist.lua inside nfqws2, which inherits the unit's environment.
       "Z2K_STATE_DIR_OVERRIDE=${circularStateDir}"
+      # detect.lua's verdicts: what zapret2 fixes, and what the proxy has to carry.
+      "PROXY_SUITE_ZAPRET2_VERDICTS=${stateDir}/verdicts.tsv"
       "Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE=${pidDir}"
     ]
     # The cutoff probe's maps, read by z2k's tcp16 name step; pin.txt forces one name for the line.
