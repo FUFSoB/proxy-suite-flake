@@ -42,7 +42,7 @@ let
   tproxyManualServiceConfig =
     tproxyManualFixture.config.systemd.services."proxy-suite-tproxy".serviceConfig;
   tproxyManualStartScript = generated.readDerivation tproxyManualServiceConfig.ExecStart;
-  tproxyManualStopScript = generated.readDerivation tproxyManualServiceConfig.ExecStop;
+  tproxyManualStopScript = generated.readDerivation tproxyManualServiceConfig.ExecStopPost;
   tproxyManualConfig = mkTProxyConfig tproxyManualFixture;
   tproxyManualNftRules = mkTProxyNftRules tproxyManualFixture;
 
@@ -74,6 +74,22 @@ let
     }
   ];
   killSwitchNftRules = mkNftRules killSwitchFixture "killSwitchRulesFile";
+  killSwitchTproxyNftRules = mkTProxyNftRules killSwitchFixture;
+  killSwitchUpScript = generated.readDerivation killSwitchFixture.config.systemd.services.proxy-suite-killswitch.serviceConfig.ExecStart;
+  killSwitchSubscriptionUpdate = generated.readDerivation killSwitchFixture.config.systemd.services.proxy-suite-subscription-update.serviceConfig.ExecStart;
+  tunSubscriptionUpdate = generated.readDerivation tunManualFixture.config.systemd.services.proxy-suite-subscription-update.serviceConfig.ExecStart;
+
+  # TProxy alone diverts no forwarded traffic: only the gateway clients are held to the LAN.
+  tproxyKillSwitchNftRules = mkNftRules (evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite.killSwitch.enable = true;
+      services.proxy-suite.proxy.tproxy = {
+        enable = true;
+        lanInterfaces = [ "br0" ];
+      };
+    }
+  ]) "killSwitchRulesFile";
 
   # A global AmneziaWG profile alone, no proxy.
   awgKillSwitchFixture = evalProxySuite [
@@ -81,7 +97,10 @@ let
       system.stateVersion = "26.05";
       services.proxy-suite = {
         enable = true;
-        killSwitch.enable = true;
+        killSwitch = {
+          enable = true;
+          allowedSubnets = [ "2001:db8:1::/64" ];
+        };
         amneziaWg = {
           enable = true;
           kernelModulePackage = null;
@@ -208,6 +227,11 @@ in
     tproxyLanStartScript
     killSwitchFixture
     killSwitchNftRules
+    killSwitchTproxyNftRules
+    killSwitchUpScript
+    killSwitchSubscriptionUpdate
+    tunSubscriptionUpdate
+    tproxyKillSwitchNftRules
     awgKillSwitchFixture
     awgKillSwitchNftRules
     awgKillSwitchPrepare

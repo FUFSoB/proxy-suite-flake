@@ -115,6 +115,10 @@ import ./options-doc/render-options-markdown.nix {
       name = "tui";
       summary = "The `proxy-tui` terminal UI.";
     }
+    {
+      name = "tools";
+      summary = "Heavy helpers `proxy-ctl` can do without: lnav and curl-impersonate.";
+    }
   ];
   defaultConfigText = lib.generators.toPretty { allowPrettyValues = true; } (
     visibleConfig eval.options.services.proxy-suite eval.config.services.proxy-suite

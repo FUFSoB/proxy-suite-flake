@@ -77,7 +77,19 @@ let
       };
 
       nfqwsArgs = mkOption {
-        type = types.listOf types.str;
+        # They go into zapret's config inside double quotes, which its init script sources.
+        type = types.listOf (
+          types.addCheck types.str (
+            arg:
+            !builtins.any (c: lib.hasInfix c arg) [
+              "\""
+              "$"
+              "`"
+              "\\"
+              "\n"
+            ]
+          )
+        );
         default = [ ];
         description = "Raw nfqws arguments; `--hostlist` and `--new` are added. Cannot be used with `configName`.";
         example = [ "--filter-tcp=443 --dpi-desync=fake,multisplit" ];

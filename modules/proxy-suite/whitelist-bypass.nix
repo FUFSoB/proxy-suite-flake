@@ -9,7 +9,11 @@
 
 let
   w = derived.whitelistBypassCfg;
-  inherit (derived.constants) unprivilegedServiceConfig privileged serviceUser;
+  inherit (derived.constants)
+    unprivilegedServiceConfig
+    privileged
+    serviceUser
+    ;
   inherit (derived.localProxy) auth;
 
   # A file in the state directory, which the whitelistBypass scope's group writes to: a
@@ -33,6 +37,9 @@ let
   groupAccess = privileged && derived.userControlAnyAllows "whitelistBypass";
   stateDir = "${derived.constants.stateDir}/whitelist-bypass";
   stateMode = if groupAccess then "0770" else "0700";
+  # The creators' logins, which they rewrite as they run: the daemon's alone, out of the
+  # group's directory.
+  sessionsDir = "${derived.constants.stateDir}/whitelist-bypass-sessions";
   stateGroup =
     if privileged && derived.userControlAllows "whitelistBypass" then
       cfg.userControl.group
@@ -55,12 +62,17 @@ let
       // {
         Restart = "always";
         RestartSec = 5;
+        RestartSteps = 5;
+        RestartMaxDelaySec = 120;
         StateDirectory = "proxy-suite/whitelist-bypass";
         StateDirectoryMode = stateMode;
       }
       # The group writes the state directory: whatever a name there points at, the daemon
-      # writes nowhere else.
-      // lib.optionalAttrs privileged { ProtectSystem = "strict"; }
+      # writes nowhere else but the creators' sessions ("-": none without creators).
+      // lib.optionalAttrs privileged {
+        ProtectSystem = "strict";
+        ReadWritePaths = [ "-${sessionsDir}" ];
+      }
       // lib.optionalAttrs groupAccess { Group = stateGroup; }
       // serviceConfig;
   };
@@ -77,8 +89,15 @@ let
           # The link from the environment (pkgs/whitelist-bypass.nix): argv is public.
           WB_LINK=$(${readState ''"$join"''} | tr -d '[:space:]')
           export WB_LINK
-          exec ${w.package}/bin/headless-${j.platform}-joiner --socks-port ${toString j.port}
+          # Its listener takes the hop login, which the backend dials it with; the password
+          # from the environment as well.
+          WB_SOCKS_PASS=$(< ${lib.escapeShellArg derived.constants.hopLoginFile})
+          export WB_SOCKS_PASS
+          exec ${w.package}/bin/headless-${j.platform}-joiner --socks-port ${toString j.port} \
+            --socks-user ${derived.constants.hopUser}
         '';
+        # Root draws it, where nothing has yet this boot (the daemon cannot write there).
+        ExecStartPre = "+${derived.constants.ensureHopLogin pkgs}";
         LoadCredential = lib.optional (j.linkFile != null) "link:${j.linkFile}";
       }
       // lib.optionalAttrs (j.linkFile == null) (waitFor "${j.tag}.join")
@@ -92,10 +111,19 @@ let
       unit = mkUnit "proxy-suite - whitelist-bypass creator ${name}" {
         ExecStart = pkgs.writeShellScript "proxy-suite-wb-creator-${name}" ''
           set -euo pipefail
-          cookies="$STATE_DIRECTORY/${name}.cookies.json"
+          shared="$STATE_DIRECTORY/${name}.cookies.json"
+          cookies=${lib.escapeShellArg "${sessionsDir}/${name}.cookies.json"}
           links="$STATE_DIRECTORY/${name}.link"
-          # The creator opens it by name: not through a symlink the group left there.
-          if [ -L "$cookies" ]; then rm -f -- "$cookies"; fi
+          umask 077
+          # A login `proxy-ctl wl auth` left replaces the working copy, read without following
+          # a symlink, then goes: what the creator refreshes is the copy's.
+          if [ -L "$shared" ]; then
+            rm -f -- "$shared"
+          elif [ -f "$shared" ]; then
+            ${readState ''"$shared"''} > "$cookies.new"
+            mv -f -- "$cookies.new" "$cookies"
+            rm -f -- "$shared"
+          fi
           ${lib.optionalString (c.cookiesFile != null) ''
             [ -e "$cookies" ] || install -m 600 "$CREDENTIALS_DIRECTORY/cookies" "$cookies"
           ''}
@@ -127,8 +155,14 @@ let
     lib.nameValuePair "proxy-suite-wb-creator-${name}" (
       unit
       // lib.optionalAttrs viaProxy { after = unit.after ++ [ "proxy-suite-socks.service" ]; }
-      # Without a login it has nothing to run on until `proxy-ctl wl auth` writes one.
-      // lib.optionalAttrs (c.cookiesFile == null) (waitFor "${name}.cookies.json")
+      # Without a login it has nothing to run on until `proxy-ctl wl auth` writes one, or
+      # one is in its working copy already.
+      // lib.optionalAttrs (c.cookiesFile == null) {
+        unitConfig.ConditionPathExists = [
+          "|%S/proxy-suite/whitelist-bypass/${name}.cookies.json"
+          "|${sessionsDir}/${name}.cookies.json"
+        ];
+      }
     );
 in
 {
@@ -138,6 +172,9 @@ in
     );
     tmpfiles = [
       "d ${stateDir} ${stateMode} ${if privileged then "${serviceUser} ${stateGroup}" else "- -"} -"
-    ];
+    ]
+    ++
+      lib.optional (w.creators != { })
+        "d ${sessionsDir} 0700 ${if privileged then "${serviceUser} ${serviceUser}" else "- -"} -";
   };
 }

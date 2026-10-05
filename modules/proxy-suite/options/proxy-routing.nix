@@ -72,8 +72,8 @@ in
         types.submodule {
           options = {
             url = mkOption {
-              type = types.strMatching "https?://.+";
-              description = "URL of the sing-box rule set.";
+              type = types.strMatching "https://.+";
+              description = "URL of the sing-box rule set (https only).";
               example = "https://example.com/antifilter.srs";
             };
             format = mkOption {

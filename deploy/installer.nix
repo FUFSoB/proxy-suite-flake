@@ -20,6 +20,7 @@
   mkpasswd,
   nix,
   nixos-install-tools,
+  openssh,
   openssl,
   systemd,
   util-linux,
@@ -43,6 +44,7 @@ import ./script.nix { inherit lib writeShellApplication; } {
     mkpasswd
     nix
     nixos-install-tools
+    openssh
     openssl
     systemd
     util-linux

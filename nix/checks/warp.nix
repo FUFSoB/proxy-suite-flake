@@ -42,7 +42,7 @@ let
     generated.readDerivation
       fixture.config.systemd.services."proxy-suite-warp-tunnel".serviceConfig.ExecStart;
   convertCall =
-    fixture: "warp_outbound.py --tag warp --routing-mark ${markOf fixture} < \"$profile\"";
+    fixture: "warp_outbound.py --tag \"$TUNNEL_TAG\" --routing-mark ${markOf fixture} < \"$profile\"";
   singBoxHop = ''"server":"127.0.0.1","server_port":18538,"tag":"warp","type":"socks"'';
   xrayHop = ''"protocol":"socks","settings":{"address":"127.0.0.1","port":18538},"tag":"warp"'';
 
@@ -276,6 +276,33 @@ in
       assert hasInfix (convertCall singBox) singBoxTunnel;
       true
     )
+    # The tag reaches the scripts as a variable, never spliced into shell or jq text.
+    (
+      assert
+        hasInfix "TUNNEL_TAG=warp\n" singBoxTunnel
+        && hasInfix "export TUNNEL_TAG" singBoxTunnel
+        && hasInfix ''jq -n --arg tag "$TUNNEL_TAG"'' singBoxTunnel
+        && hasInfix "final: $tag" singBoxTunnel
+        && !(hasInfix ''"warp"'' singBoxTunnel);
+      true
+    )
+    # The root conversion step is sandboxed; the runtime directory stays writable for the
+    # watchdog's hints.
+    (
+      let
+        sc = singBox.config.systemd.services."proxy-suite-warp-tunnel".serviceConfig;
+      in
+      assert
+        sc.NoNewPrivileges
+        && sc.PrivateTmp
+        && sc.ProtectSystem == "strict"
+        && sc.ReadWritePaths == [ "/run" ]
+        && sc.ProtectKernelTunables
+        && sc.ProtectControlGroups
+        && sc.RestrictSUIDSGID
+        && !(sc ? ProtectHome);
+      true
+    )
     (
       assert !(hasInfix "PrivateKey" singBoxTunnel);
       true
@@ -331,7 +358,9 @@ in
       assert
         hasInfix "--reuid=proxy-suite-daemon" singBoxTunnel
         && hasInfix "--ambient-caps=-all,+net_admin --bounding-set" singBoxTunnel
-        && hasInfix ''{type: "socks", tag: "direct-in", listen: "127.0.0.1", listen_port: 18539}'' singBoxTunnel
+        && hasInfix ''{type: "socks", tag: "direct-in", listen: "127.0.0.1", listen_port: 18539,'' singBoxTunnel
+        # It reaches the uplink past the kill switch: a login drawn per start, never in argv.
+        && hasInfix ''users: [{username: "probe", password: $ENV.DIRECT_AUTH}]'' singBoxTunnel
         && hasInfix ''{type: "direct", tag: "direct", routing_mark: ${markOf singBox}}'' singBoxTunnel;
       true
     )

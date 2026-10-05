@@ -66,6 +66,9 @@ moduleSuiteChecks
   proxy-suite-hosts = builtins.seq (builtins.deepSeq hostChecks.assertions true) (
     pkgs.writeText "proxy-suite-hosts-check" "ok"
   );
+  backend-config-validation = import ./checks/backend-config-validation.nix {
+    inherit pkgs checkLib;
+  };
   proxy-helpers = import ./checks/proxy-helpers.nix {
     inherit pkgs;
     inherit (checkLib) evalProxySuite;

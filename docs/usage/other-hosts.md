@@ -67,6 +67,15 @@ nixOnDroidConfigurations.default = nix-on-droid.lib.nixOnDroidConfiguration {
   optimisation for it.
 - Point other apps at `127.0.0.1:1080`, in their own proxy settings or in the Wi-Fi proxy
   settings.
+- To save space, `proxy-ctl` comes without lnav and curl-impersonate: `proxy-ctl logs`
+  follows in `less`, and probes use plain curl. Set
+  [`tools.lnav.enable`](../options/tools.md#services-proxy-suite-tools-lnav-enable) and
+  [`tools.curlImpersonate.enable`](../options/tools.md#services-proxy-suite-tools-curlimpersonate-enable)
+  to have them back.
+- Every app on the phone can reach `127.0.0.1`, not only the ones you point at the proxy: set
+  `proxy.listener.auth` so that only those you give the login to can use it. The loopback
+  hops behind it take a login of their own, drawn per boot, except Tor's SOCKS port and the
+  OpenSSH tunnel's under XRay, which take none: any app reaches those exits.
 
 ## See also
 

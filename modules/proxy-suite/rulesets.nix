@@ -83,13 +83,19 @@ in
         "proxy-suite-socks.service"
       ];
       wants = [ "network-online.target" ];
-      serviceConfig = unprivilegedServiceConfig [ ] // {
-        Type = "oneshot";
-        ExecStart = fetchScript;
-        StateDirectory = "proxy-suite/rulesets";
-        StateDirectoryMode = "0755";
-        LoadCredential = lib.optional withProxyAuth "proxy-password:${passwordSource}";
-      };
+      serviceConfig =
+        unprivilegedServiceConfig [ ]
+        # Through the proxy curl looks nothing up itself (socks5h).
+        // lib.optionalAttrs (lib.any (rs: rs.detour == "direct") ruleSets) (
+          derived.constants.killSwitchOwnLookups pkgs
+        )
+        // {
+          Type = "oneshot";
+          ExecStart = fetchScript;
+          StateDirectory = "proxy-suite/rulesets";
+          StateDirectoryMode = "0755";
+          LoadCredential = lib.optional withProxyAuth "proxy-password:${passwordSource}";
+        };
     };
 
     timers.proxy-suite-rulesets = {

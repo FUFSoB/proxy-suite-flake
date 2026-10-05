@@ -5,15 +5,18 @@ validation, permission errors and systemd triggers stay in one place, and its
 die() cannot take a front end down.
 """
 
+import base64
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -367,10 +370,8 @@ def subscription_rows(_):
     rows = []
     for source, tags in (("static", ctl._sub_tags()), ("runtime", ctl._runtime_tags("subscription"))):
         for t in tags:
-            cache = ctl._subscription_cache(t)
-            cached = os.path.isfile(cache)
-            count = ctl._subscription_proxy_count_text(cache) if cached else "-"
-            updated = ctl._ago(int(os.path.getmtime(cache)), int(time.time())) + " ago" if cached else "-"
+            mtime, count = ctl._subscription_state(t) or (None, "-")
+            updated = ctl._ago(int(mtime), int(time.time())) + " ago" if mtime else "-"
             rows.append({"key": t, "tag": t, "proxies": count, "updated": updated, "source": source})
     # Nothing visible and the runtime entries out of reach: an error, not an empty tab.
     if not rows and (hidden := ctl._runtime_hidden("subscription")):
@@ -621,20 +622,29 @@ def _sub_url(row, user="user"):
     return bool(row[user]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
 
 
-def _add_args(text):
-    """[tag] <url>, or JSON with spaces in it, as `proxy-ctl ... add` takes them.
-    An AmneziaWG config becomes "-": _add_stdin hands it over on stdin."""
+def _add_source(text):
+    """[tag] <url, JSON or config> as typed: (tag or None, the rest)."""
     text = text.strip()
-    if text.startswith("{"):
-        return [text]
-    name, source = _awg_add(text)
-    if ctl._awg_source(source):
-        return [*([name] if name else []), "-"]
-    return text.split(None, 1)
+    return (None, text) if text.startswith("{") else _awg_add(text)
+
+
+def _secret(source):
+    # A link's userinfo and query, a JSON outbound, a config: credentials, all of them.
+    return "://" in source or source.startswith("{") or ctl._awg_source(source)
+
+
+def _add_args(text):
+    """[tag] <source> as `proxy-ctl ... add` takes them. A link, JSON or AmneziaWG config
+    becomes "-": _add_stdin hands it over on stdin, out of ps and pkexec's or sudo's log."""
+    name, source = _add_source(text)
+    if not source:
+        return []  # proxy-ctl says what it wants
+    return [*([name] if name else []), "-" if _secret(source) else source]
 
 
 def _add_stdin(text):
-    return _awg_add_stdin(text)
+    _, source = _add_source(text)
+    return source if source and _secret(source) else None
 
 
 def _zapret_auto():
@@ -689,7 +699,9 @@ TABS = [
             Action(
                 "j",
                 "set the call it joins…",
-                lambda r, t, _: ["wl", "join", _wl_entry(r)["name"], t.strip()],
+                # On stdin: the call link is what lets anyone into the call.
+                lambda r, t, _: ["wl", "join", _wl_entry(r)["name"], "-"],
+                stdin=lambda r, t: t.strip(),
                 when=_wl_role("joiner"),
                 prompt="<call link> - a room id, a slug or a URL",
             ),
@@ -830,6 +842,7 @@ TABS = [
                 lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--detour", r["tag"]],
                 when=_exit,
                 prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
+                stdin=lambda r, t: _add_stdin(t),
             ),
             Action(
                 "H",
@@ -873,6 +886,7 @@ TABS = [
                 "add a subscription…",
                 lambda r, t, _: ["proxy", "subs", "add", *_add_args(t)],
                 prompt="[tag] <url> - e.g. work https://… or just https://…",
+                stdin=lambda r, t: _add_stdin(t),
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
             Action("s", "URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
@@ -1013,6 +1027,7 @@ def paste_argv(tab_id, text):
     Dumb on purpose: a share link becomes an outbound, a subscription URL a subscription,
     a bare host a pinned or learned one, an AmneziaWG vpn:// link or .conf a global profile
     (an outbound on the outbounds tab). The tag comes from the link, as `add` derives it.
+    Links and JSON carry credentials: they go on stdin, never into argv.
     """
     text = (text or "").strip()
     if not text:
@@ -1020,14 +1035,14 @@ def paste_argv(tab_id, text):
     if ctl._awg_source(text):
         return _awg_paste(tab_id, text)
     if text.startswith("{"):
-        return [*OUTBOUND_ADD, text], "", None  # only outbounds take JSON
+        return [*OUTBOUND_ADD, "-"], "", text  # only outbounds take JSON
     if len(text.splitlines()) > 1:
         return None, "Paste one link at a time.", None
     scheme = text.split("://", 1)[0].lower() if "://" in text else ""
     if scheme in PROXY_SCHEMES:
-        return [*OUTBOUND_ADD, text], "", None
+        return [*OUTBOUND_ADD, "-"], "", text
     if scheme in ("http", "https"):
-        return ([*OUTBOUND_ADD, text] if tab_id == "outbounds" else ["proxy", "subs", "add", text]), "", None
+        return ([*OUTBOUND_ADD, "-"] if tab_id == "outbounds" else ["proxy", "subs", "add", "-"]), "", text
     if scheme:
         return None, f"Nothing takes a {scheme}:// link.", None
     if HOST.fullmatch(text) and tab_id in HOST_ARGV:
@@ -1098,6 +1113,78 @@ def short(label):
     return label.split(" (")[0].removesuffix("…")
 
 
+LINK = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"]+")
+USERINFO = re.compile(r"^([^:]+://)[^/?#]*@")
+QUERY_VALUE = re.compile(r"([?&][^=&#]*=)[^&#]*")
+
+
+# A path segment that reads as a token: a subscription's (/sub/<token>, proxy-ctl's own
+# <base>/<32 hex>) is the credential itself.
+TOKEN_SEGMENT = re.compile(r"(?<=/)[A-Za-z0-9_-]{16,}(?=[/?#]|$)")
+
+
+def _redact_link(link):
+    scheme, _, body = link.partition("://")
+    authority = re.split(r"[/?#]", body, maxsplit=1)[0]
+    # One blob, credentials and all: vmess:// (base64 JSON), vpn:// (AmneziaWG's whole config,
+    # private key and all), ss://base64(method:password@host:port), ssr://. Its server stays.
+    if scheme.lower() == "vmess" or ("@" not in authority and ":" not in authority and scheme.lower() not in ("http", "https")):
+        server = _blob_server(scheme.lower(), body)
+        return f"{scheme}://***" + (f"@{server}" if server else "")
+    link = QUERY_VALUE.sub(r"\1***", USERINFO.sub(r"\1***@", link))
+    head, sep, rest = link.partition("://")
+    host, slash, path = rest.partition("/")
+    return head + sep + host + TOKEN_SEGMENT.sub("***", slash + path) if slash else link
+
+
+SERVER = re.compile(r"[A-Za-z0-9.-]+(:\d+)?|\[[0-9A-Fa-f:.]+\](:\d+)?")
+
+
+def _blob_server(scheme, body):
+    """host:port inside a vmess://, ss:// or vpn:// blob; "" when it cannot be read."""
+    body = re.split(r"[?#]", body, maxsplit=1)[0].strip()
+    try:
+        raw = base64.urlsafe_b64decode(body.replace("+", "-").replace("/", "_") + "=" * (-len(body) % 4))
+        if scheme == "vmess":
+            data = json.loads(raw)
+            host, port = str(data.get("add") or ""), str(data.get("port") or "")
+            server = (f"[{host}]" if ":" in host else host) + (f":{port}" if port else "")
+        elif scheme == "ss":
+            _, at, server = raw.decode().rpartition("@")
+            server = server if at else ""
+        elif scheme == "vpn":
+            # 4 bytes of length, then zlib'd JSON whose config text names the peer.
+            match = re.search(r"Endpoint\s*=\s*([^\s\\\"]+)", zlib.decompress(raw[4:]).decode())
+            server = match.group(1) if match else ""
+        else:
+            return ""
+    except (ValueError, AttributeError, zlib.error):
+        return ""
+    return server if SERVER.fullmatch(server) else ""
+
+
+def redact(text):
+    """text with the credentials in its links blanked: the userinfo (vless://<uuid>@, ss://<key>@),
+    the query's values (?token=…), token-like path segments, and links that are one opaque blob
+    (vpn://, vmess://). Links go on stdin; this is for any that still reach argv."""
+    return LINK.sub(lambda m: _redact_link(m.group()), text)
+
+
+def shown(argv, via=None, stdin=None):
+    """The command line a toast, a dialog title or a notification shows for argv; with stdin,
+    what goes on it too, so a confirmation shows what it would add."""
+    line = f"{via + ' ' if via else ''}proxy-ctl {shlex.join(argv)}"
+    if stdin is not None:
+        if stdin.startswith("{"):
+            fed = "<an outbound's JSON>"
+        elif "\n" in stdin or not LINK.fullmatch(stdin):
+            fed = "<a config>"  # an AmneziaWG .conf: keys throughout
+        else:
+            fed = stdin
+        line += f" < {fed}"
+    return redact(line)
+
+
 def _capture(argv):
     try:
         p = subprocess.run([CTL, *argv], capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -1107,7 +1194,8 @@ def _capture(argv):
 
 
 def elevated(argv, via):
-    """proxy-ctl argv run as root through via (sudo, pkexec): by its full path, the one the polkit rule names."""
+    """proxy-ctl argv run as root through via (sudo, pkexec): by its full path, which pkexec
+    matches (after realpath) against the one proxy-suite's polkit action names."""
     return [via, shutil.which(CTL) or CTL, *argv]
 
 
@@ -1126,6 +1214,16 @@ def load_tab_as_root(tab, via):
         return None, (p.stderr.strip().splitlines() or [f"exit status {p.returncode}"])[-1]
 
 
+# What this GUI's and TUI's own wrappers set (pkgs/proxy-ctl.nix: PYTHONPATH, wrapGAppsHook4's
+# GTK paths): an app started with `apps run` would inherit them, and another nixpkgs' GTK or
+# Python app breaks on modules of this one's.
+WRAPPER_ENV = ("PYTHONPATH", "GI_TYPELIB_PATH", "GIO_EXTRA_MODULES", "GDK_PIXBUF_MODULE_FILE")
+
+
+def app_env():
+    return {k: v for k, v in os.environ.items() if k not in WRAPPER_ENV}
+
+
 def popen(argv, root=None, stdin=None):
     """proxy-ctl with its output streamed: its own process group, so stop() takes down what it spawned too.
     root: "pkexec" to run it as root, asking through the desktop's polkit agent.
@@ -1133,7 +1231,7 @@ def popen(argv, root=None, stdin=None):
     p = subprocess.Popen(
         elevated(argv, root) if root else [CTL, *argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
-        text=True, errors="replace", start_new_session=True,
+        text=True, errors="replace", start_new_session=True, env=app_env() if argv[:1] in (["apps"], ["wrap"]) else None,
     )
     feed(p, stdin)
     return p
@@ -1150,8 +1248,29 @@ def feed(p, stdin):
         pass  # it exited first: its output says why
 
 
+def output_lines(p, poll=0.2):
+    """p's output, line by line, until EOF or soon after stop(p) even when nothing comes. Then
+    the pipe is closed: a root process (pkexec) takes no signal of ours, and `journalctl -f`
+    exits once its stdout is gone, the rest at their next write."""
+    fd, pending = p.stdout.fileno(), b""
+    while not getattr(p, "proxy_suite_stopped", False):
+        if not select.select([fd], [], [], poll)[0]:
+            continue
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            if pending.rstrip(b"\r"):
+                yield pending.rstrip(b"\r").decode("utf-8", "replace")
+            return
+        # Lines as text mode splits them (\r too); a final \r waits for a \n that may follow.
+        data = pending + chunk
+        *done, pending = re.split(rb"\r\n|\r(?!$)|\n", data)
+        yield from (line.decode("utf-8", "replace") for line in done)
+    p.stdout.close()
+
+
 def stop(proc):
     if proc and proc.poll() is None:
+        proc.proxy_suite_stopped = True  # for output_lines
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except OSError:

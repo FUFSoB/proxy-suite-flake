@@ -25,7 +25,7 @@
           "172.20.0.1/30"
           checkConstants.perAppTunIPv6Address
         ];
-      assert perAppTunInbound.sniffing.destOverride == [ "fakedns" ];
+      assert perAppTunInbound.sniffing.destOverride == [ "fakedns+others" ];
       assert perAppTunInbound.sniffing.metadataOnly == false;
       assert xrayPerAppTunConfig.routing.domainStrategy == "IPIfNonMatch";
       assert (builtins.head xrayPerAppTunConfig.dns.servers).address == "fakedns";

@@ -60,6 +60,8 @@ let
   killSwitchEnabled =
     cfg.killSwitch.enable
     && (proxyEnabled && (globalTun.enable || globalTproxy.enable) || awgGlobalAvailable);
+  # Fetches that go directly, past it, when the tunnel cannot carry them (killSwitch.directFallbacks).
+  killSwitchDirectFallbacks = killSwitchEnabled && cfg.killSwitch.directFallbacks;
   perAppRoutingTun = cfg.perAppRouting.tun;
   perAppRoutingTproxy = cfg.perAppRouting.tproxy;
   zapretCfg = cfg.zapret;
@@ -172,7 +174,8 @@ let
       whitelistBypassCfg.joiners.${tag}
       // {
         inherit tag;
-        port = 18700 + i;
+        # Past the AmneziaWG listeners' loopback inbounds (awgInboundBasePort, 18700 up).
+        port = 18750 + i;
       }
     ) (builtins.attrNames whitelistBypassCfg.joiners)
   );
@@ -213,6 +216,28 @@ let
   awgRuntimeEnabled = cfg.amneziaWg.enable && cfg.amneziaWg.runtime.enable;
   awgRuntimeGlobal = awgRuntimeEnabled && cfg.host.privileged;
   awgRuntimeOutbounds = awgRuntimeEnabled && proxyEnabled && cfg.host.serviceManager != "supervisor";
+
+  # The loopback hops the backends dial (tunnels, Tor, joiners, OpenSSH -D, the sidecar):
+  # on a root host only proxy-suite-daemon and root reach them (constants.daemonMetadataGuard).
+  hopPorts = lib.unique (
+    lib.optionals warpOutboundEnabled (
+      lib.concatMap (d: [
+        d.tunnelPort
+        d.directPort
+      ]) warpDevices
+    )
+    ++ lib.concatMap (ob: [
+      ob.tunnelPort
+      ob.directPort
+    ]) awgTunnelOutbounds
+    ++ lib.optionals awgRuntimeOutbounds (
+      lib.genList (i: constants.awgRuntimeTunnelBasePort + i) constants.awgRuntimeTunnelSlots
+    )
+    ++ lib.optional torOutboundEnabled torCfg.socksPort
+    ++ map (j: j.port) whitelistBypassJoiners
+    ++ lib.optional (sshProxyOutboundEnabled && !sshProxyNativeOutbound) sshProxyCfg.listener.port
+    ++ lib.optionals hybridEnabled (builtins.attrValues constants.xraySidecarPorts)
+  );
   # Of those, ones on an AmneziaWG interface of their own (`outbounds add --interface`): root only.
   awgRuntimeIfaceOutbounds = awgRuntimeOutbounds && cfg.host.privileged;
   # Some global profile may run: declared, or added at runtime.
@@ -380,13 +405,16 @@ let
   # Names pass unresolved unless XRay dials itself (a direct listener, or pure XRay).
   proxyInboundsResolveInSingBox = !pureXrayEnabled && !builtins.elem "direct" proxyInboundsVias;
 
-  # Even when XRay resolves (a direct listener), it hands sing-box the name, which sing-box
-  # looks up again: guard there too.
-  proxyInboundsGuardPrivate =
-    proxyInboundsEnabled
-    && proxyInboundsCfg.routing.blockPrivate
-    && proxyInboundsNeedLocalProxy
-    && !pureXrayEnabled;
+  # sing-box looks a name up again even when XRay resolved it: guard there too, the private
+  # ranges with blockPrivate, else this host's loopback still.
+  proxyInboundsGuardPrivate = proxyInboundsEnabled && proxyInboundsNeedLocalProxy && !pureXrayEnabled;
+  # This host's loopback and unspecified addresses (connecting to either reaches it).
+  proxyInboundsLoopback = [
+    "127.0.0.0/8"
+    "::1/128"
+    "0.0.0.0/32"
+    "::/128"
+  ];
   # The guard's resolved addresses are dialed in its order, so it follows WARP's preference.
   proxyInboundsGuardStrategy =
     if proxyCfg.dns.strategy == null && warpCfg.enable && warpCfg.asOutbound != null then
@@ -491,6 +519,61 @@ let
       to = builtins.elemAt bounds 1;
     }
   ) (builtins.filter builtins.isString proxyInboundRuntimePorts);
+  # The ports of this host its inbounds' clients may reach on its own addresses: the ones
+  # they dial and the public ones (rules/proxy-inbounds.nix fences the rest).
+  proxyInboundsHostPorts = lib.unique (
+    map (ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port) (
+      # AmneziaWG is UDP to the interface, never relayed through XRay.
+      builtins.filter (ib: ib.listener.type != "amneziawg") proxyInbounds
+    )
+    ++ lib.optionals proxyInboundsCfg.subscriptions.enable [
+      80
+      443
+    ]
+    ++ proxyInboundsCfg.serverPorts
+    ++ proxyInboundRuntimePorts
+  );
+  # Every other port, as ranges { from, to }, for the backends' guard: their rules cannot
+  # say "all but these".
+  proxyInboundsHostClosedPorts =
+    let
+      open = builtins.sort (a: b: a.from < b.from) (
+        map (
+          p:
+          if builtins.isInt p then
+            {
+              from = p;
+              to = p;
+            }
+          else
+            let
+              bounds = map lib.toInt (lib.splitString "-" p);
+            in
+            {
+              from = builtins.elemAt bounds 0;
+              to = builtins.elemAt bounds 1;
+            }
+        ) proxyInboundsHostPorts
+      );
+      step = acc: r: {
+        next = lib.max acc.next (r.to + 1);
+        gaps =
+          acc.gaps
+          ++ lib.optional (r.from > acc.next) {
+            from = acc.next;
+            to = r.from - 1;
+          };
+      };
+      swept = builtins.foldl' step {
+        next = 1;
+        gaps = [ ];
+      } open;
+    in
+    swept.gaps
+    ++ lib.optional (swept.next <= 65535) {
+      from = swept.next;
+      to = 65535;
+    };
   # A raw-JSON listener could serve anything, so open both protocols for it.
   proxyInboundFirewallUdpPorts = lib.unique (
     map (ib: ib.listener.port) (
@@ -590,9 +673,35 @@ let
     builtins.attrNames userControlCfg.groups
   );
   managerFlag = lib.optionalString (cfg.host.serviceManager == "systemd-user") " --user";
+  resolvedUpstreams = "/run/systemd/resolve/resolv.conf";
   constants = {
     inherit stateDir runtimeDir;
     inherit (cfg.host) privileged serviceManager;
+
+    # proxy-suite's tables that are up, included by a NixOS firewall's ruleset (hosts/nixos.nix)
+    # so a reload that flushes it puts them back in the same transaction.
+    persistedNftDir = "${runtimeDir}/proxy-suite-nft";
+    # A bit TProxy's table sets on forwarded packets while it is up, which the kill switch's
+    # forward chain lets past (nftables.nix): no ip rule or other mark here uses it.
+    killSwitchForwardMark = 16777216; # 0x1000000
+
+    # Cloud instance metadata endpoints (AWS and most others, ECS, Tencent, Alibaba, Azure's
+    # WireServer, OCI; IPv6 for AWS, GCP, OCI): this host's alone, not its daemons'.
+    cloudMetadata = {
+      ipv4 = [
+        "169.254.169.254"
+        "169.254.170.2"
+        "169.254.0.23"
+        "100.100.100.200"
+        "168.63.129.16"
+        "192.0.0.192"
+      ];
+      ipv6 = [
+        "fd00:ec2::254"
+        "fd20:ce::254"
+        "fd00:c1::a9fe:a9fe"
+      ];
+    };
 
     # Daemons (sing-box, XRay, the WARP tunnel, OpenSSH, tg-ws-proxy, wgcf) run as this
     # user. Its group is not the userControl group: backend configs hold credentials. Start
@@ -601,6 +710,19 @@ let
     # On a rootless host everything already runs as the user: no service user, and
     # nothing to hand files over to it.
     serviceUser = "proxy-suite-daemon";
+    # Tor's own user, apart from the other daemons and their credentials.
+    torUser = "proxy-suite-tor";
+    # Whose traffic is proxy-suite's own, kept out of TUN and TProxy and past the kill switch.
+    # Not Tor's through the local proxy: whatever else it dialled would leave by the uplink.
+    ownTrafficUsers = [
+      "proxy-suite-daemon"
+    ]
+    ++ lib.optional (
+      cfg.host.privileged && torCfg.enable && torCfg.upstream != "proxy"
+    ) "proxy-suite-tor";
+    ownTrafficUsersNft = "{ ${
+      lib.concatMapStringsSep ", " (u: ''"${u}"'') constants.ownTrafficUsers
+    } }";
     # Shell text that only matters when the services run as root.
     ifPrivileged = lib.optionalString cfg.host.privileged;
     # The commands scripts manage units and read their logs with: the units live in the
@@ -616,6 +738,76 @@ let
         "${pkgs.util-linux}/bin/setpriv --reuid=proxy-suite-daemon --regid=proxy-suite-daemon --clear-groups"
         + " --inh-caps=-all${keep} --ambient-caps=-all${keep} --bounding-set=-all${keep} --no-new-privs --"
       );
+    # A per-app unit refuses to start under a global mode carrying the same traffic (not
+    # Conflicts=, which would let perApp members stop the global one). `patterns`: systemctl's.
+    refuseUnderGlobal =
+      pkgs: patterns:
+      "+${pkgs.writeShellScript "proxy-suite-per-app" ''
+        set -uo pipefail
+        (( $# )) || exit 0
+        active=$(${cfg.host.systemctl}${managerFlag} list-units --plain --no-legend --state=active,activating,reloading "$@" \
+          | ${pkgs.gawk}/bin/awk 'NR == 1 { print $1 }')
+        if [[ -n $active ]]; then
+          echo "proxy-suite: $active carries this traffic already: per-app routing stays down" >&2
+          exit 1
+        fi
+      ''} ${lib.concatStringsSep " " patterns}";
+    # Cloud metadata is no destination for proxy-suite's daemons (check_server only checks
+    # literal addresses); lookups pass, GCP's resolver being one. "-": no nf_tables, no guard.
+    daemonMetadataGuard =
+      pkgs:
+      if cfg.host.privileged then
+        "-+${pkgs.nftables}/bin/nft -f ${pkgs.writeText "proxy-suite-routing" ''
+          table inet proxy_suite_daemon_guard
+          delete table inet proxy_suite_daemon_guard
+          table inet proxy_suite_daemon_guard {
+              chain output {
+                  type filter hook output priority filter; policy accept;
+                  ${lib.optionalString (hopPorts != [ ]) ''
+                    # The hops: new connections only (no reply carries their port as its
+                    # destination), from proxy-suite-daemon or root alone.
+                    oifname "lo" tcp dport { ${
+                      lib.concatMapStringsSep ", " toString hopPorts
+                    } } ct state new meta skuid != { 0, "proxy-suite-daemon" } reject with tcp reset
+                  ''}
+                  meta skuid ${constants.ownTrafficUsersNft} ip daddr { ${lib.concatStringsSep ", " constants.cloudMetadata.ipv4} } th dport != 53 reject with icmpx admin-prohibited
+                  meta skuid ${constants.ownTrafficUsersNft} ip6 daddr { ${lib.concatStringsSep ", " constants.cloudMetadata.ipv6} } th dport != 53 reject with icmpx admin-prohibited
+              }
+          }
+        ''}"
+      else
+        null;
+    # The login of the loopback hops that take one: drawn once per boot by whatever starts
+    # first, so a restarted tunnel keeps the one the backend dials with.
+    hopUser = "hop";
+    hopLoginFile = "${runtimeDir}/proxy-suite-hop-login";
+    ensureHopLogin =
+      pkgs:
+      pkgs.writeShellScript "proxy-suite-hop-login" ''
+        set -euo pipefail
+        f=${lib.escapeShellArg "${runtimeDir}/proxy-suite-hop-login"}
+        [ -s "$f" ] && exit 0
+        ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$f")"
+        umask 077
+        tmp=$(${pkgs.coreutils}/bin/mktemp "$f.XXXXXX")
+        ${pkgs.coreutils}/bin/od -An -tx1 -N16 /dev/urandom | ${pkgs.coreutils}/bin/tr -d ' \n' > "$tmp"
+        ${lib.optionalString cfg.host.privileged ''
+          ${pkgs.coreutils}/bin/chgrp proxy-suite-daemon "$tmp"
+          ${pkgs.coreutils}/bin/chmod 0640 "$tmp"
+        ''}
+        # A hard link fails where the name is taken: the first to get there wins, the rest
+        # read what it drew.
+        ${pkgs.coreutils}/bin/ln "$tmp" "$f" 2>/dev/null || true
+        ${pkgs.coreutils}/bin/rm -f "$tmp"
+      '';
+    # One at a time: a unit this host does not have would fail the rest of one call.
+    stopPerAppUnits =
+      pkgs: patterns:
+      "-+${pkgs.writeShellScript "proxy-suite-per-app" ''
+        for unit in "$@"; do
+          ${cfg.host.systemctl}${managerFlag} stop -- "$unit" 2>/dev/null || true
+        done
+      ''} ${lib.concatStringsSep " " patterns}";
     # The same for a unit that needs no root at all; "+" ExecStartPre/ExecStopPost
     # commands still run privileged.
     unprivilegedServiceConfig =
@@ -638,13 +830,48 @@ let
         RestrictSUIDSGID = true;
         LockPersonality = true;
       };
+    # A direct fetch's lookups past the kill switch, which rejects resolved's and nscd's own
+    # queries with no tunnel up: glibc asks resolved's upstreams itself, if it lists any.
+    ownLookups =
+      pkgs:
+      pkgs.writeShellScript "proxy-suite-own-lookups" ''
+        if ${pkgs.gnugrep}/bin/grep -qs '^nameserver' ${resolvedUpstreams}; then
+          if [ -S /run/nscd/socket ]; then ${pkgs.util-linux}/bin/mount --bind /dev/null /run/nscd/socket || true; fi
+          ${pkgs.util-linux}/bin/mount --bind ${resolvedUpstreams} /etc/resolv.conf || true
+        fi
+        exec "$@"
+      '';
+    killSwitchOwnLookups =
+      pkgs:
+      let
+        copy = "${runtimeDir}/proxy-suite-own-lookups.conf";
+      in
+      lib.optionalAttrs killSwitchEnabled {
+        ExecStartPre = [
+          "+${pkgs.writeShellScript "proxy-suite-own-lookups" ''
+            if ${pkgs.gnugrep}/bin/grep -qs '^nameserver' ${resolvedUpstreams}; then
+              ${pkgs.coreutils}/bin/install -m 0644 ${resolvedUpstreams} ${copy}.$$ && ${pkgs.coreutils}/bin/mv -f ${copy}.$$ ${copy}
+            else
+              ${pkgs.coreutils}/bin/rm -f ${copy}
+            fi
+          ''}"
+        ];
+        BindReadOnlyPaths = [ "-${copy}:/etc/resolv.conf" ];
+        InaccessiblePaths = [ "-/run/nscd" ];
+      };
     # For a unit that stays root but works in a directory the userControl group writes to:
     # the file system read-only but for its own State-, Runtime- and private Tmp
     # directories, so a symlink the group plants there leads root's writes nowhere else.
+    # (No ProtectKernelModules: preStarts modprobe.)
     rootInSharedDirConfig = lib.optionalAttrs cfg.host.privileged {
       ProtectSystem = "strict";
       ProtectHome = true;
       PrivateTmp = true;
+      PrivateDevices = true;
+      ProtectKernelTunables = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
     };
     # POSIX ACLs for the groups in userControl.groups, which cannot own a file the way
     # userControl.group does. Shell text, for root.
@@ -700,7 +927,12 @@ let
       zapret2 = 300;
     };
 
+    # Root's alone to write: state.json, and rules/ for sing-box. The autoProxy scope's
+    # group reads it; what members ask of the prober goes to the spool instead.
     autoProxyStateDir = "${stateDir}/autoproxy";
+    # `proxy-ctl proxy auto learn|forget|relearn|clear`: a file per request, in a sticky
+    # directory, so no member takes away or rewrites another's. Root reads and removes them.
+    autoProxySpoolDir = "${stateDir}/autoproxy-requests";
 
     # Runtime outbound control. The spool dirs hold one proxy URL per file and are
     # group-writable when userControl is on, so proxy-ctl edits them without sudo;
@@ -710,6 +942,8 @@ let
     runtimeSubscriptionsDir = "${stateDir}/subscriptions.d";
     # inbounds.runtime: users/<name>.json and listeners/<tag>.json (scripts/inbound_runtime.py).
     runtimeInboundsDir = "${stateDir}/inbounds.d";
+    # Its lock, made by root outside the spool, where no member can swap it.
+    runtimeInboundsLock = "${runtimeDir}/proxy-suite-inbounds-runtime.lock";
     # Per-app profiles added with `proxy-ctl apps add`: <name>.json, next to the declared ones.
     runtimeAppsDir = "${stateDir}/apps.d";
     # Shell function for the scripts that read those spools as root. $1 a file: in a spool,
@@ -800,6 +1034,12 @@ let
       ipv6 = "fd66:21::${lib.toLower (lib.toHexString (slot + 2))}";
     };
     perAppTunClashApiPort = 19180;
+    # The DNS forwarders of per-app TUN and TProxy apps (proxy-suite-per-app-<route>-dns): the
+    # route's at the base, pin slot n's at base + 1 + n; they ask perAppDnsUpstream with its mark.
+    perAppTproxyDnsBasePort = 19200;
+    perAppTunDnsBasePort = 19220;
+    # TEST-NET-1: no real resolver, and in none of the ranges the routes leave alone.
+    perAppDnsUpstream = "192.0.2.53";
     # sing-box's fake IP caches, one per TUN config; the start script hands it to the backend.
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Downloaded proxy.routing.ruleSets, one file each, written by the service user.
@@ -878,6 +1118,7 @@ in
     globalTproxy
     tproxyLanSysctl
     killSwitchEnabled
+    killSwitchDirectFallbacks
     ruleSets
     ruleSetsEnabled
     perAppRoutingTun
@@ -949,6 +1190,10 @@ in
     proxyInboundsServerSource
     proxyInboundsSelfSources
     proxyInboundsGuardPrivate
+    proxyInboundsLoopback
+    hopPorts
+    proxyInboundsHostPorts
+    proxyInboundsHostClosedPorts
     proxyInboundsGuardStrategy
     proxyInboundViaTags
     proxyInboundViaOutbounds

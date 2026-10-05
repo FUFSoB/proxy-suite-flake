@@ -10,6 +10,7 @@
 
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -92,6 +93,24 @@ in
         (import ./service {
           inherit lib pkgs cfg;
           inherit (assembly) context;
+        })
+
+        # Settings that work, but less safely than they look. Every host type has assertions;
+        # warnings, not all of them.
+        (lib.optionalAttrs (options ? warnings) {
+          warnings =
+            let
+              inbounds = derived.proxyInboundsCfg;
+              serverSource = inbounds.routing.serverSource;
+            in
+            lib.optional
+              (
+                derived.proxyInboundsEnabled
+                && inbounds.serverPorts != [ ]
+                && serverSource.ipv4 == null
+                && serverSource.ipv6 == null
+              )
+              "proxy-suite: inbounds.serverPorts without inbounds.routing.serverSource: inbound users reach those services from this host's own address, which they may trust (a mail server relaying for its own host relays for every user then)";
         })
 
         (lib.mkIf (cfg.zapret.engine == "zapret-discord-youtube" && cfg.zapret.enable) (

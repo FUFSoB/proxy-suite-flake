@@ -84,8 +84,9 @@ The tray app shows the same, and switches with a click.
 - `wrapEnv` sets the proxy variables for one program only, so the rest of the system keeps
   its direct routing. `protocol = "all"` sets both kinds, for a program whose choice you
   do not know.
-- The kill switch guards whichever global tunnel is on (TUN or the VPN), and does nothing
-  while both are off.
+- The kill switch guards whichever global tunnel is on (TUN or the VPN). It is up from boot,
+  so the internet stays blocked until one of them starts; turning a tunnel off with
+  `proxy-ctl` lifts it.
 - While global TUN is on, per-app `tun` profiles run the app as it is. Everything already goes
   through the proxy then.
 - See [Wrap programs with the proxy](../wrap-apps.md) for the helpers, and

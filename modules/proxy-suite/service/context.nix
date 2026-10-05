@@ -113,6 +113,10 @@ let
       ip
       nft
       ;
+    # NixOS's firewall loads the tables in constants.persistedNftDir itself (hosts/nixos.nix).
+    firewallIncludesTables = cfg.host.privileged && cfg.host.kind == "nixos";
+    # Fetches subscriptions through the tunnel (subscriptions.nix): no daemon, never exempt.
+    subscriptionFetchUser = "proxy-suite-fetch";
     # Filled in below; lazily, so the sub-modules can read each other's results.
     inherit scripts perAppRouting;
   };

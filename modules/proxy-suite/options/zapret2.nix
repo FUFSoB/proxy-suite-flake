@@ -38,7 +38,7 @@ in
     };
 
     blobs = mkOption {
-      type = types.attrsOf types.str;
+      type = types.attrsOf (types.strMatching "[^[:space:]]+");
       default = { };
       description = "Extra fake payloads by name (blob=<name>): a file in zapret2's files/fake, or an absolute path.";
       example = {
@@ -47,14 +47,15 @@ in
     };
 
     domains = mkOption {
-      type = types.listOf types.str;
+      # Each becomes one nfqws2 argument: whitespace would make more.
+      type = types.listOf (types.strMatching "[^[:space:]]+");
       default = [ ];
       description = "Domains always treated as blocked. At runtime: `proxy-ctl zapret auto add`.";
       example = [ "rutracker.org" ];
     };
 
     excludeDomains = mkOption {
-      type = types.listOf types.str;
+      type = types.listOf (types.strMatching "[^[:space:]]+");
       default = [ ];
       description = "Domains never touched or learned. At runtime: `proxy-ctl zapret auto exclude`.";
       example = [ "bank.example.com" ];

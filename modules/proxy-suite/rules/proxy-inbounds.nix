@@ -9,7 +9,8 @@
   proxyInboundsSelfSources,
   proxyInboundsRuntimeEnabled,
   proxyInboundsRuntimeVias,
-  proxyInboundRuntimePorts,
+  proxyInboundsHostPorts,
+  proxyInboundsLoopback,
   zapretDirectRules,
 }:
 
@@ -34,17 +35,24 @@ let
   # A blocked listener stays blocked: neither serverAddress nor the proxy exceptions open it.
   exceptionInboundTags = map (ib: ib.tag) (builtins.filter (ib: ib.via != "block") proxyInbounds);
 
-  # Only Tor reaches .onion: to the local proxy, whose own rule sends it there. First, so no
-  # IP rule before it has XRay look the name up, which would leak it to a resolver.
-  onionRule = lib.optional proxyInboundsRouteOnion (forException {
-    type = "field";
-    ruleTag = "inbound-tor-onion";
-    domain = [ "domain:onion" ];
-    inboundTag = map (ib: ib.tag) (
-      builtins.filter (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds
-    );
-    outboundTag = "proxy";
-  });
+  # .onion goes to the local proxy, which hands it to Tor; first, so no IP rule looks it up.
+  # An address with an .onion SNI keeps its listener's via (mkSniffGuard).
+  onionListeners = builtins.filter (
+    ib: ib.via != "block" && ib.listener.type != "amneziawg"
+  ) proxyInbounds;
+  onionRule =
+    lib.optionals (proxyInboundsRouteOnion && proxyInboundsResolveInSingBox) (
+      mkSniffGuard "inbound-tor-onion-sniffed" [ "domain:onion" ] onionListeners runtimeOpenVias { }
+    )
+    ++ lib.optional proxyInboundsRouteOnion (forException {
+      type = "field";
+      ruleTag = "inbound-tor-onion";
+      domain = [ "domain:onion" ];
+      inboundTag = map (ib: ib.tag) (
+        builtins.filter (ib: ib.via != "block" && ib.listener.type != "amneziawg") proxyInbounds
+      );
+      outboundTag = "proxy";
+    });
 
   blockPrivateRule = lib.optional proxyInboundsCfg.routing.blockPrivate {
     type = "field";
@@ -70,30 +78,37 @@ let
 
   # Only the ports clients dial there, and the ones listed as public: the rest of this host
   # (wildcard services the firewall keeps from the internet) must not be reachable through it.
-  serverAddressPorts = lib.unique (
-    map (ib: if ib.listener.sharePort != null then ib.listener.sharePort else ib.listener.port) (
-      # AmneziaWG is UDP to the interface, never relayed through XRay.
-      builtins.filter (ib: ib.listener.type != "amneziawg") proxyInbounds
-    )
-    ++ lib.optionals proxyInboundsCfg.subscriptions.enable [
-      80
-      443
-    ]
-    ++ proxyInboundsCfg.serverPorts
-    ++ proxyInboundRuntimePorts
-  );
+  # An allow toward "direct" only: hostFenceRules below refuse the rest there.
+  serverAddressPorts = proxyInboundsHostPorts;
+
+  # XRay routes a UDP session by its first packet, so no exception leads to plain "direct"
+  # over UDP: IP rules go to outbounds whose finalRules allow only those addresses, name rules
+  # are held to TCP.
+  exceptionTarget =
+    field: ipOutbound:
+    if field == "ip" then
+      { outboundTag = ipOutbound; }
+    else
+      {
+        outboundTag = "direct";
+        network = "tcp";
+      };
 
   # Names and IPs in rules of their own: XRay ANDs the fields of one rule.
   mkServerAddressRule =
     ruleTag: field: items:
-    lib.optional (items != [ ] && any exceptionInboundTags) (forException {
-      type = "field";
-      inherit ruleTag;
-      ${field} = items;
-      inboundTag = exceptionInboundTags;
-      port = serverPortList;
-      outboundTag = "direct";
-    });
+    lib.optional (items != [ ] && any exceptionInboundTags) (
+      forException (
+        {
+          type = "field";
+          inherit ruleTag;
+          ${field} = items;
+          inboundTag = exceptionInboundTags;
+          port = serverPortList;
+        }
+        // exceptionTarget field "direct-server"
+      )
+    );
 
   # Sniffing is routeOnly (proxy_inbound.py): a name rule also matches a connection to an IP
   # whose TLS SNI or HTTP Host carries that name, and "direct" then dials the IP, from this
@@ -249,13 +264,17 @@ let
 
   mkZapretRule =
     ruleTag: field: items:
-    lib.optional (zapretDirectEnabled && items != [ ]) (forDefault {
-      type = "field";
-      inherit ruleTag;
-      ${field} = items;
-      inboundTag = defaultInboundTags;
-      outboundTag = "direct";
-    });
+    lib.optional (zapretDirectEnabled && items != [ ]) (
+      forDefault (
+        {
+          type = "field";
+          inherit ruleTag;
+          ${field} = items;
+          inboundTag = defaultInboundTags;
+        }
+        // exceptionTarget field "direct-zapret"
+      )
+    );
 
   zapretDomains = map (domain: "domain:${domain}") zapretDirectRules.domains;
   # Under IPOnDemand the guard would take every zapret name too: the domain rule stays off.
@@ -314,9 +333,66 @@ let
           ip = [ "geoip:private" ];
         }
       ];
+
+  # The "direct" outbound's fence around this host, whose own addresses it reaches past the
+  # firewall: only the ports above. The start script adds its interfaces' addresses.
+  hostAddresses =
+    proxyInboundsLoopback
+    ++ lib.filter (range: range != null) [
+      proxyInboundsCfg.routing.serverSource.ipv4
+      proxyInboundsCfg.routing.serverSource.ipv6
+    ]
+    ++ serverIps;
+  hostFenceRules =
+    lib.optional (serverAddressPorts != [ ]) {
+      action = "allow";
+      ip = hostAddresses;
+      port = serverPortList;
+      _hostAddresses = true;
+    }
+    ++ [
+      {
+        action = "block";
+        ip = hostAddresses;
+        _hostAddresses = true;
+      }
+    ];
 in
 {
-  inherit xrayInboundRules selfFinalRules;
+  inherit xrayInboundRules selfFinalRules hostFenceRules;
+  # The names whose rules send a connection past its listener's via (this host, zapret's
+  # sites, .onion): matched only on the address the client asked for, never a sniffed name.
+  sniffDomainsExcluded = lib.unique (
+    serverNameDomains
+    ++ lib.optionals zapretDirectEnabled zapretDomains
+    ++ lib.optional (onionListeners != [ ]) "domain:onion"
+  );
+  # The outbounds the IP exceptions above lead to: each dials its own addresses alone. The
+  # start script puts "direct"'s fence around this host ahead of their rules.
+  exceptionOutbounds =
+    lib.optional (serverIps != [ ] && serverAddressPorts != [ ] && any exceptionInboundTags) {
+      protocol = "freedom";
+      tag = "direct-server";
+      settings.finalRules = [
+        {
+          action = "allow";
+          ip = serverIps;
+          port = serverPortList;
+        }
+        { action = "block"; }
+      ];
+    }
+    ++ lib.optional (zapretDirectEnabled && zapretDirectRules.ips != [ ]) {
+      protocol = "freedom";
+      tag = "direct-zapret";
+      settings.finalRules = [
+        {
+          action = "allow";
+          ip = zapretDirectRules.ips;
+        }
+        { action = "block"; }
+      ];
+    };
   # Names of this host sent direct with no guard (IPOnDemand, and no IP aliases): a warning.
   unguardedServerNames = lib.optionals (!serverNameGuarded) serverNames;
 }

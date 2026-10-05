@@ -25,3 +25,6 @@
     del(.domains[$e.key])
     | .slowWant[$e.key] = {host: $e.value.host, tried: ($e.value.tried // [$e.value.exit])})
 | .slowSkip = ((.slowSkip // {}) | with_entries(select(.value > $now)))
+# Bounded, as the backlog: each crawling name a client loads would be an entry otherwise.
+| if (.slowHits | length) > 5000 then .slowHits |= (to_entries | sort_by(-.value.n) | .[:5000] | from_entries) else . end
+| if (.slowWant | length) > 500 then .slowWant |= (to_entries | .[:500] | from_entries) else . end

@@ -2,6 +2,7 @@
 
 let
   inherit (lib) mkEnableOption mkOption types;
+  inherit (import ./lib.nix { inherit lib; }) addressOrCidrType interfaceType;
 in
 {
   options.services.proxy-suite.proxy.tproxy = {
@@ -32,7 +33,7 @@ in
     };
 
     localSubnets = mkOption {
-      type = types.listOf types.str;
+      type = types.listOf addressOrCidrType;
       default = [ "192.168.0.0/16" ];
       description = "Subnets that skip the proxy, such as your LAN and VM bridges (DNS still goes through it). IPv6 works too.";
       example = [
@@ -43,7 +44,7 @@ in
     };
 
     lanInterfaces = mkOption {
-      type = types.listOf types.str;
+      type = types.listOf interfaceType;
       default = [ ];
       description = ''
         LAN interfaces whose devices use this host as their gateway. Their TCP and UDP goes through the

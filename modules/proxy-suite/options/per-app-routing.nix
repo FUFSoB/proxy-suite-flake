@@ -3,11 +3,16 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   t = import ./types.nix { inherit lib; };
-  inherit (import ./lib.nix { inherit lib; }) int;
+  inherit (import ./lib.nix { inherit lib; })
+    int
+    addressOrCidrType
+    interfaceType
+    ipv4CidrType
+    ;
   localSubnets =
     description:
     mkOption {
-      type = types.listOf types.str;
+      type = types.listOf addressOrCidrType;
       default = [ "192.168.0.0/16" ];
       inherit description;
       example = [
@@ -64,15 +69,15 @@ in
       localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
 
       interface = mkOption {
-        type = types.str;
+        type = interfaceType;
         default = "psperapptun0";
         description = "Interface name.";
       };
 
       address = mkOption {
-        type = types.str;
+        type = ipv4CidrType;
         default = "172.20.0.1/30";
-        description = "Interface address (CIDR).";
+        description = "Interface IPv4 address (CIDR).";
       };
 
       mtu = int 1400 "Interface MTU.";

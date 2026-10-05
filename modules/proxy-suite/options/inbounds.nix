@@ -61,11 +61,26 @@ in
         Ports of this host's other services that clients reach through the tunnel on
         `serverAddress` and `serverAliases`, such as mail, beside the listeners' own. Direct
         like those: a connection to this host from itself skips its firewall, so list only
-        what the firewall already opens to the internet. TCP and UDP alike.
+        what the firewall already opens to the internet. TCP and UDP alike. Any other port on
+        any address of this host is refused where the inbounds dial "direct" themselves; the
+        addresses are read as the inbounds start, so restart them after one changes (DHCP).
+        Without `routing.serverSource` these connections come from this host's own address,
+        which its services may trust: a mail server that relays for its own host (Postfix's
+        default `mynetworks`) relays for every inbound user then. Set `serverSource`, or keep
+        such services from trusting this host's own addresses.
       '';
       example = literalExpression "config.networking.firewall.allowedTCPPorts";
     };
 
+    accessLog = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Log every connection, with the user, their address and the site, to the journal of
+        proxy-suite-inbounds: who went where, for anyone who can read the journal. On with
+        `proxy.autoProxy` whatever this says, which learns from those lines.
+      '';
+    };
     openFirewall = bool true "Open the firewall for every listener not on loopback.";
     shareLinks = bool true "Generate client share links for `proxy-ctl inbounds link`. Readable by root, and by `userControl.group` with the secrets scope.";
 
@@ -111,7 +126,12 @@ in
       proxy = t.routingFields "that clients always reach through the local proxy, whatever the listener's `via`";
 
       blockRu = bool true ''Block Russian destinations (geosite "category-ru", geoip "ru").'';
-      blockPrivate = bool true "Block private and loopback addresses, so clients cannot reach this host's LAN or local services.";
+      blockPrivate = bool true ''
+        Block private and loopback addresses, so clients cannot reach this host's LAN or local
+        services. Off, the LAN is open but this host is not. Either way, this host's own
+        addresses (loopback, and its public ones as its interfaces carry them at start) are
+        reachable only on the listener ports and `serverPorts`, whichever `via` a client takes.
+      '';
 
       zapretDirect = bool true "Send zapret hostlist sites direct, so this host's zapret unblocks them. Only for the default `via`. With a direct listener or the XRay backend, only by IP: XRay matches names by what a client puts in its handshake, whatever address it connects to.";
 
@@ -229,7 +249,10 @@ in
         default = [ ];
         description = ''
           `dest` values a runtime listener's fallbacks may use, such as a decoy site. A
-          fallback to a `listener` must name another runtime listener.
+          fallback to a `listener` must name another runtime listener. A runtime listener's
+          `reality.dest` may be any public site on port 443; one on another port, on this host
+          or on a private network must be listed here. Its `hysteria.masquerade` must be a
+          public http(s) site, on port 80 or 443 unless its `host:port` is listed here.
         '';
         example = [ "127.0.0.1:8080" ];
       };

@@ -49,6 +49,10 @@ let
     in
     ''
       chain listener_${toString index} {
+          # Cloud instance metadata (credentials, IAM tokens): for this host alone, never
+          # for its clients, "lan" or not.
+          ip daddr { ${lib.concatStringsSep ", " derived.constants.cloudMetadata.ipv4} } drop
+          ip6 daddr { ${lib.concatStringsSep ", " derived.constants.cloudMetadata.ipv6} } drop
           fib daddr type { local, broadcast, multicast } ${verdict}
           ip daddr $RESERVED_IP ${verdict}
           # Not in RESERVED_IP, whose other users route it by the local subnets instead.
@@ -97,6 +101,13 @@ let
     }
   '';
 
+  # The table swapped in whole, in one transaction, also after a firewall reload flushed it.
+  nftReplaceFile = pkgs.writeText "proxy-suite-routing" ''
+    table inet ${nftTable}
+    delete table inet ${nftTable}
+    include "${nftRulesFile}"
+  '';
+
   routingDown =
     lib.concatMapStrings
       (family: ''
@@ -129,6 +140,10 @@ let
 
     ${stop}
 
+    # Before any interface is up: its iifname matches already, so no client packet comes
+    # in ahead of the confinement.
+    ${nft} -f ${nftRulesFile}
+
     PYTHONPATH=${scriptsDir} ${python3} ${scriptsDir}/awg_inbound.py prepare \
       --spec ${proxyInboundsSpecFile} --awg ${awg} --runtime-dir "$RUNTIME_DIRECTORY" \
       > "$RUNTIME_DIRECTORY/interfaces"
@@ -153,8 +168,6 @@ let
         ${ip} ${family} rule add pref ${toString awgInboundRulePriority} iif ${lib.escapeShellArg listener.interface} fwmark ${toString awgInboundFwmark} table ${toString awgInboundRouteTable}
       '') listeners}
     '') ([ "-4" ] ++ lib.optional ipv6 "-6")}
-
-    ${nft} -f ${nftRulesFile}
   '';
 in
 {
@@ -180,9 +193,19 @@ in
 
     services.${unitName} = {
       description = "proxy-suite AmneziaWG inbound interfaces";
-      after = [ "network-online.target" ];
+      # After nftables, whose start flushes what came before it on flushRuleset hosts.
+      after = [
+        "network-online.target"
+        "nftables.service"
+      ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
+      # Put back after a firewall reload that flushed the ruleset, and restarted along with a
+      # restart of nftables, which a reload hook never hears of.
+      unitConfig = {
+        ReloadPropagatedFrom = [ "nftables.service" ];
+        PartOf = [ "nftables.service" ];
+      };
       path = [
         awgCfg.toolsPackage
         awgCfg.userspacePackage
@@ -199,6 +222,7 @@ in
         StateDirectory = "proxy-suite";
         UMask = "0077";
         ExecStart = start;
+        ExecReload = "${nft} -f ${nftReplaceFile}";
         ExecStop = stop;
         LockPersonality = true;
         ProtectClock = true;

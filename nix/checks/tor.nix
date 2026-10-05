@@ -179,10 +179,11 @@ let
   guardRuntime = pkgs.runCommand "proxy-suite-tor-guard-check" { nativeBuildInputs = [ pkgs.jq ]; } ''
     echo '{"inbounds":[],"outbounds":[],"dns":{"rules":[]},"route":{"rules":[]}}' |
       jq --slurpfile obs <(echo '[]') --argjson auth_enabled false --arg user "" --arg password "" \
-        --argjson route_enabled true --argjson route_rules "$(cat ${guardRouteRules})" \
+        --argjson route_enabled true --slurpfile route_rules ${guardRouteRules} \
         --arg route_final proxy --arg dns_final remote --argjson clear_dns_rules false \
-        --argjson probe_inbounds '[]' --argjson autoproxy_rule_sets '[]' --argjson autoproxy_rules '[]' \
-        --argjson probe_pin_rules '[{"inbound":["probe-in-0"],"outbound":"direct"}]' \
+        --slurpfile probe_inbounds <(echo '[]') --slurpfile autoproxy_rule_sets <(echo '[]') \
+        --slurpfile autoproxy_rules <(echo '[]') \
+        --slurpfile probe_pin_rules <(echo '[{"inbound":["probe-in-0"],"outbound":"direct"}]') \
         -f ${guardFilter} > rules.json
     jq -e '
       .route.rules as $r
@@ -381,16 +382,20 @@ in
       true
     )
     (
+      # After the loopback guard, which every route mode keeps first.
       assert
-        xrayRouting.xrayRouteModeRules.common == [
-          {
-            type = "field";
-            ruleTag = "tor-onion";
-            domain = [ "domain:onion" ];
-            outboundTag = "tor";
-          }
-        ]
-        && lib.head xrayRouting.xrayRoutingRules == lib.head xrayRouting.xrayRouteModeRules.common;
+        lib.last xrayRouting.xrayRouteModeRules.common == {
+          type = "field";
+          ruleTag = "tor-onion";
+          domain = [ "domain:onion" ];
+          outboundTag = "tor";
+        }
+        &&
+          lib.take (builtins.length xrayRouting.xrayRouteModeRules.common) xrayRouting.xrayRoutingRules
+          == xrayRouting.xrayRouteModeRules.common
+        # Sniffing must not turn a transparent client's connection into one to this host.
+        && (lib.head xrayRouting.xrayRoutingRules).ruleTag == "guard-loopback-ip"
+        && (lib.head xrayRouting.xrayRoutingRules).outboundTag == "block";
       true
     )
     (
@@ -448,10 +453,12 @@ in
       true
     )
 
-    # Tor runs as the service user, which TUN and TProxy let through, and keeps its keys private.
+    # Tor runs as a user of its own, which TUN and TProxy let through as they do the service
+    # user, and keeps its keys private: no other daemon's compromise reaches its control
+    # socket or onion key.
     (
       assert
-        singBoxTorUnit.serviceConfig.User == "proxy-suite-daemon"
+        singBoxTorUnit.serviceConfig.User == "proxy-suite-tor"
         && singBoxTorUnit.serviceConfig.StateDirectory == "proxy-suite/tor"
         && singBoxTorUnit.serviceConfig.StateDirectoryMode == "0700";
       true
@@ -470,15 +477,22 @@ in
     )
     # The control socket is Tor's alone, with userControl or without: with it the group could
     # publish any loopback port as an onion service. `proxy-ctl tor newnym` goes through a
-    # root unit, which polkit's "services" scope may start.
+    # unit running as Tor's own user, which polkit's "services" scope may start.
     (
       assert
-        (services controlled).proxy-suite-tor.serviceConfig.Group == "proxy-suite-daemon"
+        (services controlled).proxy-suite-tor.serviceConfig.Group == "proxy-suite-tor"
         && hasInfix "mkdir -p -m 0700" (torStartOf controlled)
         && !(hasInfix "ControlSocketsGroupWritable" (torStartOf controlled))
         && (services controlled) ? proxy-suite-tor-newnym
+        && (services controlled).proxy-suite-tor-newnym.serviceConfig.User == "proxy-suite-tor"
+        && (services controlled).proxy-suite-tor-newnym.serviceConfig.NoNewPrivileges
+        &&
+          (services controlled).proxy-suite-tor-newnym.serviceConfig.RestrictAddressFamilies == [
+            "AF_UNIX"
+          ]
         && hasInfix "\"proxy-suite-tor-newnym.service\"" (controlled.config.security.polkit.extraConfig)
-        && singBoxTorUnit.serviceConfig.Group == "proxy-suite-daemon"
+        && singBoxTorUnit.serviceConfig.Group == "proxy-suite-tor"
+        && builtins.elem "proxy-suite-tor" singBox.config.services.proxy-suite.internal.systemUsers
         && !(singBoxTorUnit.serviceConfig ? ExecStartPre)
         &&
           (mkProxyCtlDerived singBox).wrapperEnv.TOR_CONTROL_SOCKET == "/run/proxy-suite-tor/control/socket";
@@ -499,9 +513,17 @@ in
     (
       assert
         hasInfix "Socks5Proxy 127.0.0.1:1080" viaProxyStart
-        && hasInfix ''echo "Socks5ProxyUsername "local-user'' viaProxyStart
+        && hasInfix "echo 'Socks5ProxyUsername \"local-user\"'" viaProxyStart
         && hasInfix ''"$CREDENTIALS_DIRECTORY/proxy-password"'' viaProxyStart
         && builtins.elem "proxy-password:/run/secrets/local-proxy-password" viaProxyTor.serviceConfig.LoadCredential;
+      true
+    )
+    # Through the local proxy Tor still runs as its own user, which must exist.
+    (
+      assert
+        viaProxyTor.serviceConfig.User == "proxy-suite-tor"
+        && viaProxy.config.users.users.proxy-suite-tor.isSystemUser
+        && viaProxy.config.users.groups ? proxy-suite-tor;
       true
     )
 

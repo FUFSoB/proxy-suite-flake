@@ -73,7 +73,6 @@ let
       family = "-6";
       table = perAppRoutingTun.routeTable;
     }}
-    ${nft} -f ${perAppTunChainFile}
     ${perAppTunWaitForInterface}
     # The backend may not have brought the link up yet, and routes via a down link fail
     # with "Device for nexthop is not up".
@@ -84,7 +83,8 @@ let
     ${ip} -4 route replace "$tun_route_prefix" dev ${lib.escapeShellArg perAppRoutingTun.interface} src "$tun_addr" table ${toString perAppRoutingTun.routeTable}
     # No uplink src, as in xrayTunUpScript: it goes stale when the uplink address changes.
     ${ip} -4 route replace default dev ${lib.escapeShellArg perAppRoutingTun.interface} table ${toString perAppRoutingTun.routeTable}
-    ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    # Cleared above, so it goes in; if it did not, marked apps would leave by the main table.
+    ${ip} -4 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
     ${
       if ipv6 then
         ''
@@ -100,6 +100,8 @@ let
         ''
     }
     ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true
+    # The marking last, once its routes are in (as tproxyUpScript).
+    ${nft} -f ${perAppTunChainFile}
   '';
 
   perAppTunDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
@@ -140,6 +142,27 @@ let
     ${builders.flushResolvedCaches}
   '';
 
+  # After a firewall reload that flushed the ruleset: the marking alone (the routes stay).
+  # The users' rules go back in with their own units' reload, ordered after this one.
+  perAppTunReloadScript = pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -euo pipefail
+    ${builders.mkNftReplaceTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tun";
+      file = perAppTunChainFile;
+    }}
+  '';
+  perAppTproxyReloadScript = pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -euo pipefail
+    ${builders.mkNftReplaceTable {
+      inherit nft;
+      family = "inet";
+      table = "proxy_suite_per_app_tproxy";
+      file = perAppTproxyRulesFile;
+    }}
+  '';
+
   perAppTproxyUpScript = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
 
@@ -154,13 +177,14 @@ let
       table = perAppRoutingTproxy.routeTable;
     }}
 
-    ${nft} -f ${perAppTproxyRulesFile}
+    # The route first, then the marking (as tproxyUpScript).
     ${builders.mkTproxyRoutingUp {
       inherit ip;
       inherit ipv6;
       fwmark = perAppRoutingTproxy.fwmark;
       table = perAppRoutingTproxy.routeTable;
     }}
+    ${nft} -f ${perAppTproxyRulesFile}
   '';
 
   perAppTproxyDownScript = pkgs.writeShellScript "proxy-suite-per-app" ''
@@ -181,8 +205,10 @@ in
 {
   inherit
     perAppTunUpScript
+    perAppTunReloadScript
     perAppTunDownScript
     perAppTproxyUpScript
+    perAppTproxyReloadScript
     perAppTproxyDownScript
     ;
 }

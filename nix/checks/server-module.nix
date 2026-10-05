@@ -76,6 +76,12 @@ in
     (ok (failedAssertions ipServer == [ ]))
     (ok (failedAssertions domainServer == [ ]))
     (ok (failedAssertions diskoServer == [ ]))
+    # SSH on the REALITY port: refused, not left for the two to fight over at boot.
+    (ok (
+      failedAssertions (mkServer {
+        sshPort = 443;
+      }) != [ ]
+    ))
 
     # disko: btrfs subvolumes, compressed, the swap file, and GRUB on the disk once.
     (ok (diskoFs."/".fsType == "btrfs" && builtins.elem "subvol=@" diskoFs."/".options))

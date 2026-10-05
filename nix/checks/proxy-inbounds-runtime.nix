@@ -46,6 +46,8 @@ pkgs.testers.runNixOSTest {
           inbounds = {
             enable = true;
             inherit serverAddress;
+            # The origin is this host's own web server: through the tunnel only as a listed port.
+            serverPorts = [ 80 ];
             routing.via = "direct";
             openFirewall = true;
             users = {
@@ -74,6 +76,16 @@ pkgs.testers.runNixOSTest {
         services.nginx = {
           enable = true;
           virtualHosts."origin".locations."/".return = "200 'served-from-origin'";
+          # On every address, kept from the internet by the firewall alone.
+          virtualHosts."internal" = {
+            listen = [
+              {
+                addr = "0.0.0.0";
+                port = 8080;
+              }
+            ];
+            locations."/".return = "200 'internal-only'";
+          };
         };
         networking.firewall.allowedTCPPorts = [ 80 ];
         # Written at boot, so the listener's spec carries only the paths.
@@ -149,6 +161,17 @@ pkgs.testers.runNixOSTest {
             "curl -sS --fail --max-time 15 --proxy socks5h://127.0.0.1:1080"
             " http://127.0.0.1/ 2>&1"
         )
+        # Nor into a port of its own the firewall closes: "direct" would dial it over lo. The
+        # fence carries the addresses its interfaces had at start, the private one too.
+        cfg = "/run/proxy-suite-inbounds/config.json"
+        server.succeed(f"jq -e '[.outbounds[] | select(.tag == \"direct\") | .settings.finalRules[] | select(.ip and (.ip | index(\"${serverPrivateAddress}\")))] | length == 2' {cfg}")
+        server.succeed(f"jq -e '[.. | objects | select(has(\"_hostAddresses\"))] == []' {cfg}")
+        server.succeed("curl -sS --fail --max-time 5 http://${serverAddress}:8080/ | grep -q internal-only")
+        client.fail("curl -sS --fail --max-time 5 http://${serverAddress}:8080/")
+        client.fail(
+            "curl -sS --fail --max-time 15 --proxy socks5h://127.0.0.1:1080"
+            " http://${serverAddress}:8080/ 2>&1"
+        )
 
     with subtest("share links are generated and readable by proxy-ctl"):
         links = "/run/proxy-suite-inbounds/links.json"
@@ -171,13 +194,17 @@ pkgs.testers.runNixOSTest {
         # The reload's restart returns once the start script is forked: config.json is
         # gone until it renders it again.
         server.wait_until_succeeds(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\", \"friend\"]' {cfg}")
-        server.succeed("proxy-ctl inbounds add rt vless --port 9001 --user friend --user tester")
+        server.succeed("proxy-ctl inbounds add rt vless --port 9001 --user friend")
         server.wait_for_open_port(9001)
         server.succeed("proxy-ctl inbounds users | grep friend | grep -q rt")
-        # Refused, and nothing else disturbed.
+        # Refused, and nothing else disturbed. A declared user's uuid stays off a plain listener.
         server.fail("proxy-ctl inbounds add far vless --port 30000 --user friend")
+        server.fail("proxy-ctl inbounds add clear vless --port 9002 --user tester")
+        server.fail("proxy-ctl inbounds bind tester rt")
         server.fail("proxy-ctl inbounds bind tester vless-in")
         server.succeed("test ! -e /var/lib/proxy-suite/inbounds.d/listeners/far.json")
+        server.succeed("test ! -e /var/lib/proxy-suite/inbounds.d/listeners/clear.json")
+        server.succeed("jq -e '.users | index(\"tester\") == null' /var/lib/proxy-suite/inbounds.d/listeners/rt.json")
         # The runtime user's link works from the client, as a runtime outbound there. XRay
         # refuses plain VLESS to a public IP, so it dials the private one.
         link = server.succeed("proxy-ctl inbounds link rt friend").strip()

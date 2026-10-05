@@ -383,6 +383,23 @@ class AmneziaWgConfigTests(unittest.TestCase):
                 amneziawg_config._read_limited(str(spool / "fifo.conf"))
             self.assertEqual(amneziawg_config._read_limited(str(spool / "plain.conf")), BASE_CONFIG)
 
+    def test_global_render_from_the_spool_drops_a_privileged_listen_port(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            spool = directory / "spool"
+            spool.mkdir()
+            config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1").replace(
+                "Address =", "ListenPort = 53\nAddress ="
+            )
+            (spool / "g.conf").write_text(config)
+            out = directory / "out.conf"
+            for mode, kept in ((0o700, True), (0o770, False)):
+                spool.chmod(mode)
+                argv = ["amneziawg-config", "--config", str(spool / "g.conf"), "--output", str(out), "--fwmark", "51820"]
+                with self.subTest(mode=oct(mode)), patch.object(sys, "argv", argv):
+                    self.assertEqual(amneziawg_config.main(), 0)
+                    self.assertEqual("ListenPort = 53" in out.read_text(), kept)
+
     def test_declarative_awg3_and_secret_files(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -499,6 +516,66 @@ class AmneziaWgConfigTests(unittest.TestCase):
         # The peer is untouched.
         self.assertIn("Endpoint = vpn.example.com:51820", rendered)
 
+    def test_outbound_render_leaves_the_main_table_alone(self):
+        # A prefix on Address is a connected route in the main table, Table = off or not, and
+        # a privileged ListenPort is a port taken from the host: a spool entry gets neither.
+        config = BASE_CONFIG.replace(
+            "Address = 10.8.0.2/32",
+            "Address = 1.0.0.1/1, 128.0.0.1/1 # all of it\naddress = fd00::2/1\nListenPort = 53",
+        )
+        rendered = amneziawg_config.as_outbound(config, 2)
+        self.assertEqual(
+            amneziawg_config.section_values(rendered, "interface", "address"),
+            ["1.0.0.1/32, 128.0.0.1/32", "fd00::2/128"],
+        )
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "listenport"), [])
+        kept = amneziawg_config.as_outbound(config.replace("ListenPort = 53", "ListenPort = 51820"), 2)
+        self.assertEqual(amneziawg_config.section_values(kept, "interface", "listenport"), ["51820"])
+        with self.assertRaises(ConfigError):
+            amneziawg_config.as_outbound(BASE_CONFIG.replace("10.8.0.2/32", "not-an-address"), 2)
+        # A declared profile keeps its prefix.
+        self.assertEqual(
+            amneziawg_config.section_values(
+                amneziawg_config.as_outbound(BASE_CONFIG.replace("10.8.0.2/32", "10.8.0.2/24"), 2, host_addresses=False),
+                "interface",
+                "address",
+            ),
+            ["10.8.0.2/24"],
+        )
+
+    def test_commented_headers_are_written_plainly(self):
+        # awg-quick takes "[Peer] # home vps" for [Peer]: so does everything here.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "c.conf"
+            source.write_text(
+                BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+                .replace("[Interface]", "[Interface] # laptop", 1)
+                .replace("[Peer]", "[peer] # home vps", 1)
+            )
+            config = prepare({"kind": "configFile", "path": str(source)})
+        self.assertIn("[Interface]\n", config)
+        self.assertIn("[Peer]\n", config)
+        self.assertNotIn("# home vps", config)
+
+    def test_headers_awg_quick_would_read_otherwise_are_refused(self):
+        # awg-quick cuts a header's comment first: "[Interface] #" opens an Interface section
+        # the rewrites would miss, with its Table, Address and DNS reaching the host.
+        for extra in ("[Interface] #\nTable = auto\n", "[Interface]#x\nDNS = 1.1.1.1\n", "[Interface]\nMTU = 1280\n"):
+            with self.subTest(extra=extra), self.assertRaises(ConfigError):
+                amneziawg_config.validate_config(BASE_CONFIG.replace("[Peer]", extra + "[Peer]", 1))
+        with self.assertRaises(ConfigError):
+            amneziawg_config.validate_config(BASE_CONFIG.replace("Address", "SaveConf\u0130g = true\nAddress", 1))
+
+    def test_outbound_render_leaves_no_second_table_or_fwmark(self):
+        # awg-quick takes the last line of a key: a later "Table = auto" would route the host.
+        config = BASE_CONFIG.replace(
+            "Address = 10.8.0.2/32",
+            "Address = 10.8.0.2/32\nTable = 1234\nFwMark = 1\nTable = auto\nfwmark = 0",
+        )
+        rendered = amneziawg_config.as_outbound(config, 2)
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "table"), ["off"])
+        self.assertEqual(amneziawg_config.section_values(rendered, "interface", "fwmark"), ["2"])
+
     def test_dns_servers_skip_search_domains(self):
         config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1, corp.example,2606:4700::1111")
         self.assertEqual(amneziawg_config.dns_servers(config), ["1.1.1.1", "2606:4700::1111"])
@@ -543,6 +620,14 @@ class AmneziaWgConfigTests(unittest.TestCase):
             rendered,
             "[Peer]\nEndpoint = [2001:db8::7]:51820\n[Peer]\nEndpoint = 192.0.2.1:1\nendpoint = [2001:db8::1]:2\n[Peer]\nEndpoint = gone.invalid:3\n",
         )
+
+    def test_wireproxy_listener_takes_the_hop_login(self):
+        config = BASE_CONFIG.replace("$PRIMARY_DNS,$SECONDARY_DNS", "1.1.1.1")
+        rendered = amneziawg_config.as_wireproxy(config, "127.0.0.1:18700", 2, ("hop", "0123abcd"))
+        self.assertIn("[Socks5]\nBindAddress = 127.0.0.1:18700\nUsername = hop\nPassword = 0123abcd\n", rendered)
+        self.assertNotIn("Username", amneziawg_config.as_wireproxy(config, "127.0.0.1:18700", 2))
+        with self.assertRaises(ConfigError):
+            amneziawg_config.as_wireproxy(config, "127.0.0.1:18700", 2, ("hop", "a\nb"))
 
     def test_endpoint_override(self):
         # Only the first peer's Endpoint; a config without one cannot be overridden.

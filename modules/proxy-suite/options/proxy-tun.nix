@@ -2,21 +2,22 @@
 
 let
   inherit (lib) mkEnableOption mkOption types;
+  inherit (import ./lib.nix { inherit lib; }) interfaceType ipv4CidrType;
 in
 {
   options.services.proxy-suite.proxy.tun = {
     enable = mkEnableOption "global TUN mode";
 
     interface = mkOption {
-      type = types.str;
+      type = interfaceType;
       default = "singtun0";
       description = "TUN interface name.";
     };
 
     address = mkOption {
-      type = types.str;
+      type = ipv4CidrType;
       default = "172.19.0.1/30";
-      description = "TUN interface address (CIDR).";
+      description = "TUN interface IPv4 address (CIDR).";
     };
 
     mtu = mkOption {

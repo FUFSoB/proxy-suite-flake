@@ -109,12 +109,17 @@ in
       true
     )
 
-    # Setter unit is present and writes into /run.
+    # Setter unit is present and writes into /run: its directory outlives each run, and is
+    # the one place a root unit the group starts may write.
     (
       let
         setterSvc = routeModeFixture.config.systemd.services."proxy-suite-route-mode@";
       in
-      assert !(setterSvc.serviceConfig ? RuntimeDirectory);
+      assert setterSvc.serviceConfig.RuntimeDirectory == "proxy-suite";
+      assert setterSvc.serviceConfig.RuntimeDirectoryPreserve == "yes";
+      assert setterSvc.serviceConfig.ProtectSystem == "strict";
+      assert setterSvc.serviceConfig.NoNewPrivileges;
+      assert !(setterSvc.serviceConfig ? ReadWritePaths);
       assert pkgs.lib.hasInfix "/run/proxy-suite/route-mode" routeModeSetterScript;
       # One case arm lists every mode the setter accepts.
       assert pkgs.lib.hasInfix "default | whitelist | blacklist | all-proxy | all-bypass)"

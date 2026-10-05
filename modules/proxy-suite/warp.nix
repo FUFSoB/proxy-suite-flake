@@ -38,7 +38,7 @@ let
       # Fallback: a third-party generator registers from abroad and hands the profile back.
       # curl follows HTTPS_PROXY when it is set.
       generate() {
-        body=$(${pkgs.curl}/bin/curl -fsS --max-time 60 -A proxy-suite \
+        body=$(${pkgs.curl}/bin/curl -fsS --max-time 60 --proto-redir =https -A proxy-suite \
           ${lib.escapeShellArg w.generatorUrl}) || return 1
         case "$body" in
           "[Interface]"*) printf '%s\n' "$body" ;;
@@ -65,8 +65,14 @@ let
           proxied() {
             HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" "$@"
           }
-          proxied register || register${fallbacks}${
-            lib.optionalString (w.generatorUrl != null) " || proxied generate"
+          ${
+            # Direct, as the service user: past the kill switch (killSwitch.directFallbacks).
+            if derived.killSwitchEnabled && !cfg.killSwitch.directFallbacks then
+              "proxied register${lib.optionalString (w.generatorUrl != null) " || proxied generate"}"
+            else
+              "proxied register || register${fallbacks}${
+                lib.optionalString (w.generatorUrl != null) " || proxied generate"
+              }"
           }
         ''
       else
@@ -132,6 +138,16 @@ in
                 echo "proxy-suite: waiting for the WARP profile at $profile" >&2
                 until [ -s "$profile" ]; do sleep 5; done
               fi
+              # Root reads a profile in the service user's directory through no symlink, FIFO or endless
+              # file; one in a directory of root's (a secret's symlink) as it is.
+              if [ "$(${pkgs.coreutils}/bin/stat -L -c %u -- "$(${pkgs.coreutils}/bin/dirname -- "$profile")")" != 0 ]; then
+                (umask 077 && ${pkgs.coreutils}/bin/dd if="$profile" iflag=nofollow,nonblock bs=65536 count=1 status=none \
+                  > "$RUNTIME_DIRECTORY/warp-profile.conf") || {
+                  echo "proxy-suite: the WARP profile at $profile is not a regular file" >&2
+                  exit 1
+                }
+                profile="$RUNTIME_DIRECTORY/warp-profile.conf"
+              fi
             '';
             inherit (d)
               tunnelPort
@@ -152,20 +168,27 @@ in
             # Retried until it registers. Not a oneshot: a slow or failed registration must not
             # hold up or fail a switch.
             startLimitIntervalSec = 0;
-            serviceConfig = unprivilegedServiceConfig [ ] // {
-              Type = "simple";
-              RemainAfterExit = true;
-              Restart = "on-failure";
-              RestartSec = 30;
-              StateDirectory = "proxy-suite/${d.stateSubdir}";
-              StateDirectoryMode = "0700";
-              WorkingDirectory = "${derived.constants.stateDir}/${d.stateSubdir}";
-              UMask = "0077";
-              LoadCredential = lib.optional (
-                cfg.proxy.enable && withProxyAuth
-              ) "proxy-password:${passwordSource}";
-              ExecStart = registerScript;
-            };
+            # Its direct lookups work under the kill switch: a global WARP profile waits on it.
+            # Through the proxy, wgcf hands the name over.
+            serviceConfig =
+              unprivilegedServiceConfig [ ]
+              // lib.optionalAttrs (!cfg.proxy.enable || cfg.killSwitch.directFallbacks) (
+                derived.constants.killSwitchOwnLookups pkgs
+              )
+              // {
+                Type = "simple";
+                RemainAfterExit = true;
+                Restart = "on-failure";
+                RestartSec = 30;
+                StateDirectory = "proxy-suite/${d.stateSubdir}";
+                StateDirectoryMode = "0700";
+                WorkingDirectory = "${derived.constants.stateDir}/${d.stateSubdir}";
+                UMask = "0077";
+                LoadCredential = lib.optional (
+                  cfg.proxy.enable && withProxyAuth
+                ) "proxy-password:${passwordSource}";
+                ExecStart = registerScript;
+              };
           };
 
           # Only pulls registration in: a simple unit gives the profile no ordering guarantee.

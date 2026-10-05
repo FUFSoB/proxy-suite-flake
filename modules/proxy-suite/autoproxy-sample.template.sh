@@ -7,7 +7,8 @@ if [ -z "$clash_api" ]; then
   echo "sing-box has no Clash API (selection = \"first\"?); nothing to sample"
   exit 0
 fi
-install -d -m @stateDirMode@ "$state_dir"
+# Before appending to samples by name: on an old install, a member may have left a link.
+@migrate@ "$state_dir" "${AUTOPROXY_SPOOL_DIR:-@spoolDir@}"
 
 # Eleven snapshots a second apart: ten one-second deltas per connection.
 lines=$(

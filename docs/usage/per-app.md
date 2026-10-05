@@ -109,8 +109,11 @@ services.proxy-suite = {
   the global mode already carries its traffic. `proxy-ctl` prints a note when it does. So
   does `--via`, except that an "interface" AmneziaWG outbound still takes the app under a
   global TProxy or AmneziaWG profile.
-- If `/etc/resolv.conf` points only at a local resolver (such as systemd-resolved on
-  127.0.0.53), the app's DNS queries skip its route. `proxy-ctl` warns about this.
+- With `tun` and `tproxy`, the app's DNS queries go through its route wherever its resolver
+  is, a local one (such as systemd-resolved on 127.0.0.53) or the LAN router. Lookups glibc
+  hands to nscd (NixOS's default) do not: nscd resolves them itself, outside the route.
+  `proxy-ctl` warns when nscd runs. Apps that resolve names themselves are not affected:
+  programs built with Go, and browsers using their own resolver or DNS-over-HTTPS.
 - The app follows your [routing rules](./routing.md) like any other proxied traffic.
 
 ## See also

@@ -13,9 +13,83 @@
   grepBin,
   findBin,
   headBin,
+  systemctl,
 }:
 
 let
+  # The hold: what a per-app slice sends unmarked is turned away, in a table no backend
+  # touches, so a backend restart or crash holds the apps rather than letting them out
+  # directly. It goes with the user's unit, not its restart, and mirrors the route's exceptions.
+  holdTable = "proxy_suite_per_app_hold";
+  # nftables.nix's RESERVED_IP and RESERVED_IP6, which the TUN and TProxy chains leave alone.
+  reserved4 = [
+    "10.0.0.0/8"
+    "100.64.0.0/10"
+    "127.0.0.0/8"
+    "169.254.0.0/16"
+    "172.16.0.0/12"
+    "192.0.0.0/24"
+    "224.0.0.0/4"
+    "240.0.0.0/4"
+    "255.255.255.255/32"
+  ];
+  reserved6 = [
+    "::/128"
+    "::1/128"
+    "::ffff:0:0/96"
+    "fc00::/7"
+    "fe80::/10"
+    "ff00::/8"
+  ];
+  nftSet = items: "{ ${lib.concatStringsSep ", " items} }";
+  # As shell words in double quotes, printed one per line: a mark of "$mark" is the shell's.
+  # Every route marks lookups wherever the resolver is, loopback's too. `allow`: what goes
+  # unmarked, in either family.
+  mkHoldBodies =
+    {
+      # The marks the route's packets carry, as shell text (a number, or "$mark").
+      marks,
+      allow,
+    }:
+    let
+      # Not merely "no mark": since Linux 5.17 CAP_NET_RAW sets one (ping -m), so a held app
+      # could mark its way out. A kernel AmneziaWG interface's own encapsulated packets keep
+      # the app's socket with the interface's FwMark: the via route lists that mark too.
+      unmarked = "meta mark != { ${lib.concatStringsSep ", " marks} }";
+      reject = "reject with icmpx admin-prohibited";
+      allow4 = builtins.filter (cidr: !lib.hasInfix ":" cidr) allow;
+      allow6 = builtins.filter (lib.hasInfix ":") allow;
+      bodies = [
+        "${unmarked} meta l4proto { tcp, udp } th dport 53 ${reject}"
+        "${unmarked} ct direction != reply ip daddr != ${nftSet allow4} ${reject}"
+        "${unmarked} ct direction != reply ip6 daddr != ${nftSet allow6} ${reject}"
+      ];
+    in
+    "printf '%s\\n' ${lib.concatMapStringsSep " " (body: "\"${body}\"") bodies}";
+  tunHold =
+    mark:
+    mkHoldBodies {
+      marks = [ mark ];
+      allow = reserved4 ++ reserved6 ++ perAppRoutingTun.localSubnets;
+    };
+  tproxyHold =
+    mark:
+    mkHoldBodies {
+      marks = [ mark ];
+      allow = reserved4 ++ reserved6 ++ perAppRoutingTproxy.localSubnets;
+    };
+  # Deletes the rules of one comment from a chain, if the table is there.
+  dropRulesByComment = table: chain: comment: ''
+    handles=$(${nft} -a list chain ${table} ${chain} 2>/dev/null \
+      | ${grepBin} -F "comment \"${comment}\"" \
+      | ${awk} '{ print $NF }' || true)
+    if [ -n "$handles" ]; then
+      while IFS= read -r handle; do
+        [ -n "$handle" ] || continue
+        ${nft} delete rule ${table} ${chain} handle "$handle" || true
+      done <<< "$handles"
+    fi
+  '';
   # `prelude` runs first and may set what the rest reads: a template whose instance carries
   # more than the uid turns its $1 into the uid and sets the shell variables that `nftTable`,
   # `markRule` and `sliceNameArg` (the slice's name, as shell text) then name.
@@ -30,6 +104,8 @@ let
       sliceLabel,
       markRule,
       prelude ? "",
+      # Shell text printing the hold's rule bodies (mkHoldBodies); null: no hold.
+      hold ? null,
     }:
     pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
@@ -58,6 +134,22 @@ let
       fi
       cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
       cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
+      ${lib.optionalString (hold != null) ''
+        # The hold first: from here on, nothing of the app leaves unmarked.
+        hold_comment="$rule_comment_prefix-hold"
+        ${dropRulesByComment "inet ${holdTable}" "output" "$hold_comment"}
+        {
+          printf '%s\n' "add table inet ${holdTable}" \
+            "add chain inet ${holdTable} output { type filter hook output priority filter; policy accept; }"
+          # In a subshell: `hold` may be a case statement over several lines.
+          (
+            ${hold}
+          ) | while IFS= read -r body; do
+            printf 'add rule inet ${holdTable} output socket cgroupv2 level %s "%s" %s comment "%s"\n' \
+              "$cgroup_level" "$cgroup_path" "$body" "$hold_comment"
+          done
+        } | ${nft} -f -
+      ''}
 
       handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
         | ${grepBin} -F "comment \"$rule_comment_prefix-mark\"" \
@@ -81,12 +173,24 @@ let
       nftTable,
       nftChain,
       prelude ? "",
+      # Whether the start put a hold in (mkUserRuleStart).
+      hold ? false,
+      # The unit this runs in, as shell text.
+      unitName ? ''"proxy-suite-${name}-user@$uid.service"'',
     }:
     pkgs.writeShellScript "proxy-suite-per-app" ''
       set -euo pipefail
       ${prelude}
       uid="$1"
       rule_comment_prefix="proxy-suite-${name}-user-$uid"
+      ${lib.optionalString hold ''
+        # Its restart (the backend's restart or crash, through Requires=, or a switch) keeps the
+        # hold, a job of that type until the stop half is done: the app waits for its marking.
+        if ! ${systemctl} list-jobs --no-legend ${unitName} \
+          | ${awk} '$3 == "restart" { found = 1 } END { exit !found }'; then
+          ${dropRulesByComment "inet ${holdTable}" "output" "$rule_comment_prefix-hold"}
+        fi
+      ''}
       handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
         | ${grepBin} -F "comment \"$rule_comment_prefix-mark\"" \
         | ${awk} '{ print $NF }' || true)
@@ -107,28 +211,32 @@ let
     sliceName = perAppTunSliceName;
     sliceLabel = "app TUN";
     markRule = "meta mark set ${toString perAppRoutingTun.fwmark} ct mark set ${toString perAppRoutingTun.fwmark}";
+    hold = tunHold (toString perAppRoutingTun.fwmark);
   };
   perAppTunUserRuleStop = mkUserRuleStop {
     name = "per-app-tun";
     nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tun";
     nftChain = "app_mark";
+    hold = true;
   };
 
   perAppTproxyUserRuleStart = mkUserRuleStart {
     name = "per-app-tproxy";
     nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tproxy";
-    nftChain = "output";
+    nftChain = "app_mark";
     sliceName = perAppTproxySliceName;
     sliceLabel = "app TProxy";
     markRule = "meta mark set ${toString perAppRoutingTproxy.fwmark} ct mark set ${toString perAppRoutingTproxy.fwmark}";
+    hold = tproxyHold (toString perAppRoutingTproxy.fwmark);
   };
   perAppTproxyUserRuleStop = mkUserRuleStop {
     name = "per-app-tproxy";
     nftFamily = "inet";
     nftTable = "proxy_suite_per_app_tproxy";
-    nftChain = "output";
+    nftChain = "app_mark";
+    hold = true;
   };
 
   perAppZapretUserRuleStart = mkUserRuleStart {
@@ -148,7 +256,13 @@ let
   };
 in
 {
-  inherit mkUserRuleStart mkUserRuleStop;
+  inherit
+    mkUserRuleStart
+    mkUserRuleStop
+    mkHoldBodies
+    tunHold
+    tproxyHold
+    ;
   inherit
     perAppTunUserRuleStart
     perAppTunUserRuleStop

@@ -44,7 +44,7 @@
           "172.19.0.1/30"
           checkConstants.globalTunIPv6Address
         ];
-      assert tunInbound.sniffing.destOverride == [ "fakedns" ];
+      assert tunInbound.sniffing.destOverride == [ "fakedns+others" ];
       assert tunInbound.sniffing.metadataOnly == false;
       assert xrayTunConfig.routing.domainStrategy == "IPIfNonMatch";
       assert tunHasFinalRuleTag;
@@ -99,11 +99,13 @@
       assert pkgs.lib.hasInfix
         "rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}"
         xrayTunUpScript;
+      # Both families, but IPv6 only where the kernel has it (ipv6.disable=1 refuses every -6).
+      assert pkgs.lib.hasInfix "if [ -e /proc/net/if_inet6 ]; then families+=(-6); fi" xrayTunUpScript;
       assert pkgs.lib.hasInfix
-        "-6 rule add pref ${toString checkConstants.xrayTunPerAppTunRulePriority} fwmark 16 table 101"
+        ''"$family" rule add pref ${toString checkConstants.xrayTunPerAppTunRulePriority} fwmark 16 table 101''
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
-        "-6 rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}"
+        ''"$family" rule add pref ${toString checkConstants.tunAutoRouteRulePriority} not fwmark 2 table ${toString checkConstants.tunAutoRouteTableIndex}''
         xrayTunUpScript;
       assert pkgs.lib.hasInfix
         ''"$family" rule add pref ${toString checkConstants.xrayTunMarkBypassRulePriority} fwmark 2 lookup main''

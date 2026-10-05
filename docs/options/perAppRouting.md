@@ -141,7 +141,7 @@ Firewall mark for wrapped apps’ traffic\.
 
 Subnets that skip the proxy (DNS still goes through it)\.
 
-**Type:** list of string\
+**Type:** list of IPv4 or IPv6 address or CIDR\
 **Default:** `[ "192.168.0.0/16" ]`\
 **Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
 
@@ -164,9 +164,9 @@ Whether to enable per-app TUN\.
 <a id="services-proxy-suite-perapprouting-tun-address"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.address
 
-Interface address (CIDR)\.
+Interface IPv4 address (CIDR)\.
 
-**Type:** string\
+**Type:** IPv4 CIDR\
 **Default:** `"172.20.0.1/30"`
 
 <a id="services-proxy-suite-perapprouting-tun-fwmark"></a>
@@ -182,7 +182,7 @@ Firewall mark for wrapped apps’ traffic\.
 
 Interface name\.
 
-**Type:** string\
+**Type:** network interface name\
 **Default:** `"psperapptun0"`
 
 <a id="services-proxy-suite-perapprouting-tun-localsubnets"></a>
@@ -190,7 +190,7 @@ Interface name\.
 
 Subnets that skip the proxy (DNS still goes through it)\.
 
-**Type:** list of string\
+**Type:** list of IPv4 or IPv6 address or CIDR\
 **Default:** `[ "192.168.0.0/16" ]`\
 **Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
 
@@ -217,7 +217,7 @@ Subnets an app run ` --via ` an AmneziaWG interface (an “interface” outbound
 profile) still reaches directly; DNS still goes through the tunnel\. Every other
 address goes through it, private ones included, as the server may serve them\.
 
-**Type:** list of string\
+**Type:** list of IPv4 or IPv6 address or CIDR\
 **Default:** `[ "192.168.0.0/16" ]`\
 **Example:** `[ "192.168.0.0/16" "10.0.0.0/8" ]`
 

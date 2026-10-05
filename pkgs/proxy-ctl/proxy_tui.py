@@ -5,9 +5,10 @@ What it shows and does lives in proxy_model, shared with proxy-suite-gui; this i
 
 import faulthandler
 import os
-import shlex
+import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import traceback
@@ -73,8 +74,11 @@ def trace_path():
 
 def open_trace():
     try:
-        fd = os.open(trace_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-        if os.fstat(fd).st_uid != os.getuid():  # someone else's file in a shared /tmp
+        # Nonblocking: a fifo planted there does not hang the open.
+        fd = os.open(trace_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        st = os.fstat(fd)
+        # Someone else's file in a shared /tmp, or a hard link to one of ours (root's under sudo).
+        if st.st_uid != os.getuid() or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             os.close(fd)
             return None
         return os.fdopen(fd, "a", buffering=1)
@@ -152,8 +156,21 @@ CELL_STYLES = {
 }
 
 
+def printable(text):
+    """Control characters shown, not obeyed: rows carry what subscriptions and the userControl group wrote."""
+    return ctl._UNPRINTABLE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+
+_SGR = re.compile(r"(\x1b\[[0-9;]*m)")
+
+
+def printable_ansi(text):
+    """printable, but colors kept: Text.from_ansi drops only the escapes it knows."""
+    return "".join(part if i % 2 else printable(part) for i, part in enumerate(_SGR.split(text)))
+
+
 def cell(name, value):
-    value = "" if value is None else str(value)
+    value = "" if value is None else printable(str(value))
     if name == "state":
         return Text(f"{STATE_ICONS.get(value, '?')} {value}", style=STATE_STYLES.get(value, ""))
     return Text(value, style=CELL_STYLES.get(value, ""))
@@ -228,7 +245,7 @@ class Confirm(Dialog):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Run this?", classes="dialog-title")
-            yield Label(self.command, markup=False)
+            yield Label(printable(self.command), markup=False)
             yield hint(("y/enter run", "dismiss(True)"), ("n/esc cancel", "dismiss(False)"))
 
 
@@ -250,7 +267,7 @@ class Menu(Dialog):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog menu"):
-            yield Label(self.heading, classes="dialog-title", markup=False)
+            yield Label(printable(self.heading), classes="dialog-title", markup=False)
             yield Choices(
                 *(Option(Text.assemble((f"{model.display_key(a.key):<8}", ACCENT), a.label), id=str(i)) for i, a in enumerate(self.actions))
             )
@@ -289,11 +306,11 @@ class Output(Dialog):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog output"):
-            yield Label(self.heading, classes="dialog-title", markup=False)
+            yield Label(printable(self.heading), classes="dialog-title", markup=False)
             # Follow a streaming command; show finished text from its top.
             log = RichLog(wrap=self.wrap, min_width=1, markup=False, auto_scroll=self.initial is None)
             if self.initial is not None:
-                text = self.initial if isinstance(self.initial, Text) else Text.from_ansi(self.initial)
+                text = self.initial if isinstance(self.initial, Text) else Text.from_ansi(printable_ansi(self.initial))
                 self.text.append(text.plain)
                 log.write(text)
             yield log
@@ -301,7 +318,7 @@ class Output(Dialog):
 
     def write(self, line):
         if self.is_attached:
-            text = Text.from_ansi(line)
+            text = Text.from_ansi(printable_ansi(line))
             self.text.append(text.plain)
             self.query_one(RichLog).write(text)
 
@@ -567,7 +584,7 @@ class ProxyTui(App):
         if sort := self.sorts.get(tab_id):
             rows = sorted(rows, key=lambda r: _natural(r.get(sort[0])), reverse=sort[1])
         widget = self.main.query_one(f"#{tab_id}-summary", Static)
-        _update(widget, Text(summary))
+        _update(widget, Text(printable(summary)))
         widget.display = bool(summary)
         self.rows[tab_id] = {r["key"]: r for r in rows}
         tab, table = self.tabs[tab_id], self.table(tab_id)
@@ -639,7 +656,7 @@ class ProxyTui(App):
         self.perform(self.tabs[self.active_tab()].actions[index], self.selected_row())
 
     def on_paste(self, event):
-        """The terminal's paste, bracketed: whatever it carries is added to the tab it lands on.
+        """The terminal's paste, bracketed: whatever it carries is added to the tab it lands on, once confirmed.
         A prompt or a dialog takes its own paste, so this only fires on the table."""
         if self.screen is not self.main:
             return
@@ -648,7 +665,9 @@ class ProxyTui(App):
         if argv is None:
             self.feedback(what, False)
         else:
-            self.run_argv("run", argv, stdin)
+            # Asked first: a web page can put a link in the clipboard, and one stray paste
+            # would have root fetch its subscription.
+            self.push_screen(Confirm(model.shown(argv, stdin=stdin)), lambda ok: ok and self.run_argv("run", argv, stdin))
 
     def action_where(self):
         self.perform(model.WHERE, None)
@@ -722,7 +741,7 @@ class ProxyTui(App):
                 self.feedback(f"Cannot run that: {e}", False)
                 return
             if model.needs_confirm(action, row):
-                self.push_screen(Confirm(f"proxy-ctl {shlex.join(argv)}"), lambda ok: ok and self.run_argv(action.mode, argv, stdin))
+                self.push_screen(Confirm(model.shown(argv)), lambda ok: ok and self.run_argv(action.mode, argv, stdin))
             else:
                 self.run_argv(action.mode, argv, stdin)
 
@@ -739,7 +758,7 @@ class ProxyTui(App):
 
     def run_argv(self, mode, argv, stdin=None):
         """stdin: text proxy-ctl reads (argv says "-"); only for runs that stay in the TUI."""
-        command = f"proxy-ctl {shlex.join(argv)}"
+        command = model.shown(argv)  # only shown: credentials blanked
         if mode in ("suspend", "pause"):
             self.foreground(mode, [CTL, *argv])
             return
@@ -752,7 +771,7 @@ class ProxyTui(App):
 
     def foreground(self, mode, argv):
         with self.suspend():
-            ctl._run_foreground(argv)
+            ctl._run_foreground(argv, env=model.app_env() if argv[1:2] in (["apps"], ["wrap"]) else None)
             if mode == "pause":
                 try:
                     input("\n[enter] back to proxy-tui")
@@ -783,14 +802,15 @@ class ProxyTui(App):
             for line in out:
                 dialog.write(line)
         last = Text.from_ansi(next((line for line in reversed(out) if line.strip()), "")).plain.strip()
-        message = f"{last}  ({command})" if last else command
+        # The bar is on screen for anyone to see: a link in it, copied or in an error, blanked.
+        message = f"{model.redact(last)}  ({command})" if last else command
         self.last_output = (command, "\n".join(out))
         if status == -signal.SIGTERM and dialog:
             self.feedback(f"stopped: {command}", False)
             return
         if copy and not status and last:
             self.copy_to_clipboard(last)
-            message = f"copied: {last}"
+            message = f"copied: {model.redact(last)}"
         if status:
             message = f"exit {status}: {message}"
             if dialog:
@@ -811,7 +831,7 @@ class ProxyTui(App):
             return
         (mode, argv, *rest), self.retry = self.retry, None
         stdin = rest[0] if rest else None
-        command = f"sudo proxy-ctl {shlex.join(argv)}"
+        command = model.shown(argv, "sudo")
         root_argv = model.elevated(argv, "sudo")
         # sudo asks on the terminal, so the run happens there; the output comes back as usual.
         out = []
@@ -833,7 +853,8 @@ class ProxyTui(App):
                 old = signal.signal(signal.SIGINT, signal.SIG_IGN)
                 try:
                     for line in p.stdout:
-                        print(line, end="", flush=True)
+                        # Through a pipe proxy-ctl leaves its output as it is: shown, not obeyed.
+                        print(printable(line), end="", flush=True)
                         out.append(line.rstrip("\n"))
                     status = p.wait()
                 finally:
@@ -860,7 +881,7 @@ class ProxyTui(App):
     def feedback(self, message, ok=None, hints=()):
         """The bar is one line: what to press next is pinned, so only the message is ellipsized."""
         icon, style = {True: ("✓ ", "green"), False: ("✗ ", "red"), None: ("", "")}[ok]
-        text = Text(icon + message, style=style, no_wrap=True, overflow="ellipsis")
+        text = Text(icon + printable(message), style=style, no_wrap=True, overflow="ellipsis")
         if tail := "".join(f"  · {h}" for h in hints):
             text.truncate(max(len(icon) + 1, self.size.width - 2 - len(tail)), overflow="ellipsis")
             text.append(tail, ACCENT)  # a rich style: the theme's ansi_* names are markup, not rich colors

@@ -107,7 +107,7 @@ in
 
     # Authenticated mixed inbound is injected at runtime.
     (
-      assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat "'' localProxyAuthStartScript;
+      assert pkgs.lib.hasInfix ''LOCAL_PROXY_PASSWORD="$(cat '' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix "BACKEND_JQ_FILTER=" localProxyAuthStartScript;
       assert pkgs.lib.hasInfix ''-f "$BACKEND_JQ_FILTER"'' localProxyAuthStartScript;
       assert pkgs.lib.hasInfix "--arg user local-user" localProxyAuthStartScript;

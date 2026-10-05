@@ -112,7 +112,8 @@ proxy-ctl restart         # restart what is running
 In a terminal, `proxy-ctl logs` follows in [`lnav`](https://lnav.org): it follows while at
 the bottom, scrolling back pauses it, `G` follows again, `e`/`E` jump between errors, `/`
 searches, and `q` or Ctrl-C quits. `:enable-word-wrap` wraps long lines, and lnav remembers
-it for the next time. Piped, it is plain `journalctl -f`.
+it for the next time. Without lnav ([`tools.lnav.enable`](../options/tools.md#services-proxy-suite-tools-lnav-enable),
+off on Nix-on-Droid) it follows in `less`. Piped, it is plain `journalctl -f`.
 
 ## See also
 

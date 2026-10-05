@@ -94,9 +94,19 @@ in
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig =
-      derived.constants.unprivilegedServiceConfig [
-        "net_bind_service"
-      ]
+      # Not proxy-suite-daemon, whose traffic gets past TUN, TProxy and the kill switch whatever
+      # bypassTransparentProxy says: the bypass goes by the cgroup mark below.
+      builtins.removeAttrs
+        (derived.constants.unprivilegedServiceConfig [
+          "net_bind_service"
+        ])
+        [
+          "User"
+          "Group"
+        ]
+      // lib.optionalAttrs cfg.host.privileged {
+        DynamicUser = true;
+      }
       // {
         ExecStart = startScript;
         LoadCredential = lib.optional (t.secretFile != null) "tg_ws_proxy_secret:${t.secretFile}";

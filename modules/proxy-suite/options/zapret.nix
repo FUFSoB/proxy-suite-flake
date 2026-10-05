@@ -3,7 +3,7 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   t = import ./types.nix { inherit lib; };
-  inherit (import ./lib.nix { inherit lib; }) list bool;
+  inherit (import ./lib.nix { inherit lib; }) list bool addressOrCidrType;
 in
 {
   options.services.proxy-suite.zapret = {
@@ -44,7 +44,9 @@ in
     # Shared by both engines: a netfilter-level bypass, not an engine-specific concept.
     cidrExemption = {
       enable = mkEnableOption "skipping zapret for some subnets, such as NATed VMs it would break";
-      cidrs = list "Subnets zapret skips." [ "192.168.123.0/24" ];
+      cidrs = list "Subnets zapret skips." [ "192.168.123.0/24" ] // {
+        type = types.listOf addressOrCidrType;
+      };
     };
 
     zapret-discord-youtube = {

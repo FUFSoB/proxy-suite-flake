@@ -214,6 +214,24 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Two listeners on one port: whichever binds second fails, and with it SSH may go.
+    assertions = [
+      {
+        assertion =
+          let
+            taken = [
+              80
+              cfg.sshPort
+              cfg.ports.reality
+              cfg.ports.tls
+              cfg.ports.ws
+            ];
+          in
+          lib.unique taken == taken;
+        message = "proxy-suite server: sshPort, ports.reality, ports.tls, ports.ws and 80 (ACME) must all differ";
+      }
+    ];
+
     disko.devices =
       lib.mkIf cfg.disko.enable
         (import ./disk-layout.nix {

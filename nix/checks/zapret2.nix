@@ -116,8 +116,16 @@ in
       in
       assert gc.Type == "notify" && sc.Type == "notify";
       assert gc.Restart == "on-failure" && sc.Restart == "on-failure";
-      assert lib.hasSuffix "stop_fw" gc.ExecStopPost;
+      assert lib.hasSuffix "stop_fw" (builtins.head gc.ExecStopPost);
       assert builtins.length sc.ExecStopPost == 2;
+      # Root in a directory the zapret scope writes to: a symlink there must not reach
+      # /proc/sys, /sys or devices. Hence also the conntrack sysctl outside it ("+").
+      assert gc.ProtectKernelTunables && gc.PrivateDevices && sc.ProtectKernelTunables;
+      # And put back as it was on stop, not forced to 0.
+      assert
+        lib.hasPrefix "-+" gc.ExecStartPost
+        && lib.hasSuffix "-proxy-suite-zapret2-liberal" gc.ExecStartPost;
+      assert lib.hasSuffix "-proxy-suite-zapret2-liberal" (lib.last gc.ExecStopPost);
       true
     )
 
@@ -286,6 +294,13 @@ in
           end
           assert(key("a.b.foo.co.uk", "3") == "b.foo.co.uk")
           assert(key("1.2.3.4", "2", true) == "standard")
+          -- What detect.lua must never learn: a suffix takes every site under it.
+          for _, host in ipairs({ "com", "co.uk", "CO.UK.", "localhost" }) do
+            assert(proxy_suite_is_public_suffix(host), host)
+          end
+          for _, host in ipairs({ "example.com", "foo.co.uk", "github.io" }) do
+            assert(not proxy_suite_is_public_suffix(host), host)
+          end
           assert(key("www.google.com", nil) == "standard")
         '
         # What nfqws2's learner and z2k's detector miss: flaky sites, stalled transfers,
@@ -293,7 +308,8 @@ in
         # proxy routes by: works, unfixable, blocked by address.
         mkdir -p detect
         touch detect/verdicts.tsv
-        DETECT=$(grep -oE '/nix/store/[^ ]+-detect\.lua' "${z2kRuntime}/config") WORK="$PWD/detect" \
+        PSL=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-public-suffix-hostkey\.lua' "${z2kRuntime}/config") \
+          DETECT=$(grep -oE '/nix/store/[^ ]+-detect\.lua' "${z2kRuntime}/config") WORK="$PWD/detect" \
           PROXY_SUITE_ZAPRET2_VERDICTS="$PWD/detect/verdicts.tsv" lua ${./zapret2/detect-test.lua}
         # nfqws2 finds the verdicts file by its environment; the last profile watches
         # connections for addresses blocked outright.
@@ -427,7 +443,9 @@ in
         grep -qF -- '[[ $last =~ ^[0-9]+$ ]] || last=0' ${cutoffProbe}
         if grep -qF -- '$((now - $(cat ts' ${cutoffProbe}; then exit 1; fi
         # The group's probe request comes through requests/, not the directory root works in.
-        grep -qF -- 'if [ -e requests/force ]; then' ${cutoffProbe}
+        grep -qF -- 'if [ -e requests/force ] || [ -L requests/force ]; then' ${cutoffProbe}
+        # Whatever a member left under the name goes, a directory too: set -e stopped every run.
+        grep -qF -- 'rm -rf -- requests/force' ${cutoffProbe}
 
         # Cut-off networks without a name become the proxy's rule-set; named ones stay with zapret2.
         rules=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2 asn.txt' ${cutoffProbe} | cut -d' ' -f1)

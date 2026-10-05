@@ -3,6 +3,8 @@ if (typeof unit !== "string" || @verbs@.indexOf(verb) === -1) {
   return null;
 }
 var known = @units@.indexOf(unit) !== -1;
+// One of the subject's own per-app marking units, rather than one every user shares.
+var own = false;
 var templates = @templates@;
 for (var i = 0; !known && i < templates.length; i++) {
   var template = templates[i];
@@ -25,6 +27,7 @@ for (var i = 0; !known && i < templates.length; i++) {
     if (owner !== uid) {
       return null;
     }
+    own = true;
   }
   known = true;
 }
@@ -39,6 +42,9 @@ for (var prefix in scopeByUnitPrefix) {
     scope = scopeByUnitPrefix[prefix];
     break;
   }
+}
+if (scope === "perApp" && !own && @sharedVerbs@.indexOf(verb) === -1) {
+  return null;
 }
 // Any of the subject's groups that holds the scope.
 var groupScopes = @groupScopes@;

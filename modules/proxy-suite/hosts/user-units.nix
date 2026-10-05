@@ -9,6 +9,8 @@
   runtimeDir,
   stateDir,
   hostPath ? null,
+  # Off under proxy-suitectl: the scripts call it by path, and nothing needs systemd's tools.
+  withSystemd ? true,
 }:
 
 let
@@ -71,13 +73,15 @@ let
   iniSection = section: lib.mapAttrs (_: iniValue) (lib.filterAttrs (_: v: v != null) section);
 
   # As NixOS's service `path` default.
-  defaultPath = with pkgs; [
-    coreutils
-    findutils
-    gnugrep
-    gnused
-    systemd
-  ];
+  defaultPath =
+    with pkgs;
+    [
+      coreutils
+      findutils
+      gnugrep
+      gnused
+    ]
+    ++ lib.optional withSystemd systemd;
 
   # As NixOS: "@" is not allowed in a store path name.
   jobScript =

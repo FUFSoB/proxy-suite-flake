@@ -104,7 +104,19 @@ in
       # `proxy-ctl zapret cutoff probe` drops its `force` file in requests/ instead.
       StateDirectoryMode = "0755";
     }
-    // constants.rootInSharedDirConfig;
+    // constants.rootInSharedDirConfig
+    # z2k-detect's raw sockets, marks and nft table (NET_*); requests/, which the group writes
+    # (DAC_*, FOWNER).
+    // lib.optionalAttrs cfg.host.privileged {
+      CapabilityBoundingSet = [
+        "CAP_NET_RAW"
+        "CAP_NET_ADMIN"
+        "CAP_DAC_OVERRIDE"
+        "CAP_DAC_READ_SEARCH"
+        "CAP_FOWNER"
+      ];
+      NoNewPrivileges = true;
+    };
   };
 
   tmpfiles = [

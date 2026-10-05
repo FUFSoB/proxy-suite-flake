@@ -73,10 +73,9 @@ let
     if fakeDnsOnly then
       {
         enabled = true;
-        destOverride = [ "fakedns" ];
-        # Fake IPs only live in memory: after a restart an app still holding one gets its
-        # domain back from TLS/HTTP/QUIC instead of a dead end. Real IPs are left alone;
-        # the cost is up to 200 ms before a server-speaks-first protocol (SSH, SMTP) starts.
+        # Fake IPs map back to names; real addresses (DoH, stale caches, a restart's lost fake IPs)
+        # get theirs sniffed. Costs up to 200 ms before a server-speaks-first protocol starts.
+        destOverride = [ "fakedns+others" ];
         metadataOnly = false;
       }
     else
@@ -136,12 +135,46 @@ let
     }
     // target tag;
 
+  # No loopback by any name (sniffed, fake DNS, one resolving there): as the daemon it would
+  # reach the hops the nft guard keeps from other users. dns.*'s loopback resolver stays.
+  loopbackDnsPorts = lib.unique (
+    map (upstream: upstream.port) (
+      builtins.filter
+        (
+          upstream:
+          lib.hasPrefix "127." upstream.address
+          || builtins.elem upstream.address [
+            "::1"
+            "localhost"
+          ]
+        )
+        [
+          proxyCfg.dns.local
+          proxyCfg.dns.remote
+        ]
+    )
+  );
+  directFinalRules = lib.optionals constants.privileged (
+    lib.optional (loopbackDnsPorts != [ ]) {
+      action = "allow";
+      ip = derived.proxyInboundsLoopback;
+      port = lib.concatMapStringsSep "," toString loopbackDnsPorts;
+    }
+    ++ [
+      {
+        action = "block";
+        ip = derived.proxyInboundsLoopback;
+        blockDelay = 0;
+      }
+    ]
+  );
+
   directOutbound =
     useOutboundRoutingMark:
     {
       protocol = "freedom";
       tag = "direct";
-      settings = { };
+      settings = lib.optionalAttrs (directFinalRules != [ ]) { finalRules = directFinalRules; };
     }
     // lib.optionalAttrs useOutboundRoutingMark {
       streamSettings.sockopt.mark = globalTproxy.proxyMark;
@@ -160,8 +193,14 @@ let
       enableUrlTest ? proxyCfg.selection == "urltest",
       domainStrategy ? "IPIfNonMatch",
       enableTunFakeDns ? false,
+      # A loopback port of this config's own, where dns-out hands the queries XRay's resolver
+      # does not answer (HTTPS, MX, TXT, SRV...) to dns.remote through the proxy.
+      remoteDnsBridgePort ? null,
     }:
     let
+      remote = proxyCfg.dns.remote;
+      # With routing.default = "direct" they keep going where they were sent, as all else does.
+      remoteDnsBridge = remoteDnsBridgePort != null && proxyCfg.routing.default == "proxy";
       tunSniffing = mkSniffing { fakeDnsOnly = enableTunFakeDns; };
       tproxyInboundTags = [ "tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "tproxy-in6";
       # Every config takes packets for any destination, DNS included.
@@ -195,13 +234,64 @@ let
                   qType = "2-27,29-65535";
                 }
               ];
+          }
+          # "direct" would forward the query past routing and the kill switch: to the bridge
+          # instead, which routing takes through the proxy.
+          // lib.optionalAttrs remoteDnsBridge {
+            address = "127.0.0.1";
+            port = remoteDnsBridgePort;
+            network = if remote.type == "udp" then "udp" else "tcp";
           };
         }
       ];
+      remoteDnsBridgeInbound = lib.optional remoteDnsBridge {
+        tag = "dns-remote-in";
+        protocol = "tunnel";
+        listen = "127.0.0.1";
+        port = remoteDnsBridgePort;
+        # dns.remote as it is: pure XRay, the only user of this template, refuses "tls"
+        # (service-assertions.nix), as XRay's DNS has no DoT.
+        settings = {
+          inherit (remote) address port;
+          allowedNetwork = "tcp,udp";
+        };
+      };
+      remoteDnsBridgeRule = lib.optional remoteDnsBridge (
+        {
+          type = "field";
+          inboundTag = [ "dns-remote-in" ];
+          ruleTag = "dns-remote-bridge";
+        }
+        // target "proxy"
+      );
+      # inbounds.routing.blockPrivate for the names the server's listeners hand mixed-in, which
+      # this config looks up again (as backend-filter-private-guard.template.jq for sing-box).
+      inboundsPrivateGuard =
+        lib.optional
+          (
+            enableMixed
+            && derived.pureXrayEnabled
+            && derived.proxyInboundsEnabled
+            && derived.proxyInboundsNeedLocalProxy
+          )
+          {
+            type = "field";
+            ruleTag = "inbounds-private-guard";
+            inboundTag = [ "mixed-in" ];
+            # Without blockPrivate, this host's loopback still, as the "direct" via's fence.
+            ip =
+              if derived.proxyInboundsCfg.routing.blockPrivate then
+                [ "geoip:private" ]
+              else
+                derived.proxyInboundsLoopback;
+            outboundTag = "block";
+          };
       routingRules =
-        dnsUpstreamRules
+        remoteDnsBridgeRule
+        ++ dnsUpstreamRules
         ++ lib.optional enableTun (dnsHijackRule [ "tun-in" ])
         ++ lib.optional enableTProxy (dnsHijackRule tproxyInboundTags)
+        ++ inboundsPrivateGuard
         ++ rules.xrayRoutingRules
         ++ [ (finalRule (if (proxyCfg.routing.default == "proxy") then "proxy" else "direct")) ];
     in
@@ -249,7 +339,8 @@ let
             userLevel = 0;
           };
           sniffing = tunSniffing;
-        };
+        }
+        ++ remoteDnsBridgeInbound;
       outbounds = dnsOutbounds ++ [
         (directOutbound useOutboundRoutingMark)
         {
@@ -294,6 +385,8 @@ in
     enableMixed = true;
     enableTProxy = constants.privileged;
     useOutboundRoutingMark = constants.privileged;
+    # Pure XRay only, where the hybrid sidecar's DNS bridge ports are free.
+    remoteDnsBridgePort = constants.xrayDnsBridgePorts.socks;
   };
 
   tun = mkConfig {
@@ -304,6 +397,7 @@ in
     tunMtu = globalTun.mtu;
     useOutboundRoutingMark = true;
     enableTunFakeDns = true;
+    remoteDnsBridgePort = constants.xrayDnsBridgePorts.tun;
   };
 
   perAppTun = mkConfig {
@@ -314,5 +408,6 @@ in
     tunMtu = perAppRoutingTun.mtu;
     useOutboundRoutingMark = true;
     enableTunFakeDns = true;
+    remoteDnsBridgePort = constants.xrayDnsBridgePorts.perAppTun;
   };
 }

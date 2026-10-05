@@ -44,8 +44,20 @@ proxy-ctl killswitch off      # lift the kill switch without stopping the tunnel
 
 ## Good to know
 
-- The kill switch blocks outgoing traffic while the tunnel restarts or after it fails, so
-  nothing leaks. LAN, DHCP and NTP stay open. Turning the tunnel off lifts it.
+- The kill switch blocks outgoing traffic from boot until the tunnel is up, while it restarts
+  and after it fails, so nothing leaks. LAN, DHCP and the time daemon's NTP stay open.
+  Subscriptions are fetched through the tunnel; only if that fails are they fetched
+  directly, so the proxy can come up from a cold cache. The subscription host then sees
+  your address. Turning the tunnel off with `proxy-ctl` lifts the kill switch until the
+  next boot or tunnel start.
+- With TUN or a global AmneziaWG profile, the kill switch also holds forwarded traffic
+  (Docker, libvirt, podman) to the LAN while the tunnel is down. TProxy diverts only
+  `proxy.tproxy.lanInterfaces`, so in TProxy mode other containers and VMs bypass the proxy
+  whether the tunnel is up or not. With TProxy alone the kill switch lets them through, and
+  with TUN or AmneziaWG also configured it cuts them off in TProxy mode.
+- Networks the kill switch should leave open besides the private ranges, such as a routed
+  IPv6 prefix on a VM bridge, go in `killSwitch.allowedSubnets`. It defaults to
+  `proxy.tproxy.localSubnets`, so what TProxy leaves out stays reachable.
 - If the uplink has no IPv6, set `proxy.dns.strategy = "ipv4_only"` (sing-box). Otherwise
   direct IPv6 connections hang instead of falling back to IPv4.
 - `proxy.tproxy.localSubnets` lists networks that skip TProxy. Add your LAN and VM bridges if

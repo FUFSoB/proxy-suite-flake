@@ -37,6 +37,7 @@ let
   ];
 
   guiPackage = ".*/[^/]*proxy-suite-gui(-[0-9.]+)?$";
+  inherit (import ./read-generated.nix) readDerivation;
 in
 {
   assertions = [
@@ -61,19 +62,35 @@ in
       true
     )
     (
-      # pkexec of this proxy-ctl, and only it, keeps the admin password for a while.
+      # pkexec of this proxy-ctl, and only it, keeps the admin password for a while: an action
+      # of its own, not a rule on org.freedesktop.policykit.exec, whose kept authorization
+      # would cover any program the GUI ran through pkexec next.
       let
-        rules = guiFixture.config.security.polkit.extraConfig;
+        cfg = guiFixture.config;
+        actions = cfg.services.proxy-suite.internal.polkit.actions;
+        policy = readDerivation actions."io.github.FUFSoB.ProxySuite.proxy-ctl.policy";
+        proxyCtl = builtins.head (
+          builtins.filter (p: builtins.match ".*/[^/]*-proxy-ctl$" p != null) (
+            map (p: builtins.unsafeDiscardStringContext (toString p)) cfg.environment.systemPackages
+          )
+        );
+        has = text: builtins.match ".*${text}.*" (builtins.unsafeDiscardStringContext policy) != null;
       in
-      assert guiFixture.config.security.polkit.enable;
+      assert cfg.security.polkit.enable;
       # nixpkgs 26.11+: no setuid pkexec unless asked for, and without it pkexec refuses to run.
+      assert cfg.security.wrappers ? pkexec && cfg.security.wrappers.pkexec.enable;
       assert
-        guiFixture.config.security.wrappers ? pkexec && guiFixture.config.security.wrappers.pkexec.enable;
-      assert
-        builtins.match ''.*action\.lookup\("program"\) === "/nix/store/[^"]*proxy-ctl/bin/proxy-ctl".*AUTH_ADMIN_KEEP.*'' rules
-        != null;
-      assert
-        builtins.match ".*AUTH_ADMIN_KEEP.*" tuiOffFixture.config.security.polkit.extraConfig == null;
+        builtins.match ".*(policykit\\.exec|AUTH_ADMIN_KEEP).*" cfg.security.polkit.extraConfig == null;
+      # The path the GUI runs proxy-ctl by, which pkexec matches after realpath.
+      assert has
+        ''<annotate key="org\.freedesktop\.policykit\.exec\.path">${proxyCtl}/bin/proxy-ctl</annotate>'';
+      # Never kept: a kept grant is the whole session's, and proxy-ctl as root runs commands.
+      assert has "<allow_active>auth_admin</allow_active>";
+      assert has "<allow_any>auth_admin</allow_any>";
+      assert has "<allow_inactive>auth_admin</allow_inactive>";
+      # Where NixOS's polkitd reads actions: the system profile's share/polkit-1/actions.
+      assert packagePathMatches cfg.environment.systemPackages ".*-proxy-suite-polkit-actions$";
+      assert tuiOffFixture.config.services.proxy-suite.internal.polkit.actions == { };
       true
     )
     (

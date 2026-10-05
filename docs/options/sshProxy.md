@@ -64,8 +64,8 @@ Extra OpenSSH arguments\.
 <a id="services-proxy-suite-sshproxy-hostkey"></a>
 ## services\.proxy-suite\.sshProxy\.hostKey
 
-Accepted host keys, for sing-box\. List every key ` ssh-keyscan ` prints, since the key type
-is negotiated\.
+Accepted host keys, for sing-box, and for OpenSSH without ` knownHostsFile `\. List every
+key ` ssh-keyscan ` prints, since the key type is negotiated\.
 
 **Type:** list of string\
 **Default:** `[ ]`\
@@ -74,7 +74,7 @@ is negotiated\.
 <a id="services-proxy-suite-sshproxy-hostkeyfile"></a>
 ## services\.proxy-suite\.sshProxy\.hostKeyFile
 
-Known-hosts file to read host keys from (sing-box)\. Takes priority over ` hostKey `\.
+Known-hosts file to read host keys from (sing-box, and OpenSSH without ` knownHostsFile `)\. Takes priority over ` hostKey `\.
 
 **Type:** null or string\
 **Default:** `null`\
@@ -109,7 +109,9 @@ Address of the OpenSSH SOCKS5 listener\.
 <a id="services-proxy-suite-sshproxy-listener-port"></a>
 ## services\.proxy-suite\.sshProxy\.listener\.port
 
-Port of the OpenSSH SOCKS5 listener\.
+Port of the OpenSSH SOCKS5 listener\. It takes no login: where it is the XRay backend’s
+hop (` asOutbound `) on a host with root, only proxy-suite’s daemons and root may
+connect to it\. A standalone tunnel stays open to every local user\.
 
 **Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `1091`
@@ -143,17 +145,20 @@ SSH login user\.
 <a id="services-proxy-suite-sshproxy-serviceuser"></a>
 ## services\.proxy-suite\.sshProxy\.serviceUser
 
-User that runs OpenSSH\. The default is sandboxed; ` null ` runs it as root\.
+User that runs OpenSSH\. The default is sandboxed; ` null ` runs it as root\. Another user’s
+traffic gets past the kill switch, all of it: never a login user’s\.
 
-**Type:** null or string matching the pattern \[^\[:space:]]+\
+**Type:** null or string matching the pattern \[a-z_]\[a-z0-9_-]\*\[$]?\
 **Default:** `"proxy-suite-daemon"`\
 **Example:** `"proxy"`
 
 <a id="services-proxy-suite-sshproxy-stricthostkeychecking"></a>
 ## services\.proxy-suite\.sshProxy\.strictHostKeyChecking
 
-OpenSSH host key policy\.
+OpenSSH host key policy\. “yes” needs the server’s keys: ` knownHostsFile `, or else
+` hostKeyFile ` or ` hostKey `\. “accept-new” takes whatever key the first connection
+meets, which anyone on the way can answer then\.
 
 **Type:** one of “yes”, “accept-new”, “no”\
-**Default:** `"accept-new"`\
-**Example:** `"yes"`
+**Default:** `"yes"`\
+**Example:** `"accept-new"`

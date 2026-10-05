@@ -13,6 +13,7 @@ let
     mkOption
     types
     ;
+  inherit (import ./lib.nix { inherit lib; }) hostType;
 in
 {
   options.services.proxy-suite.proxy = {
@@ -51,15 +52,17 @@ in
       default = config.services.proxy-suite.host.enableIPv6;
       defaultText = literalExpression "config.networking.enableIPv6";
       description = ''
-        Route IPv6 through TUN and TProxy too. When off, TProxy ignores IPv6 and the TUNs block
-        it, so apps fall back to IPv4. If the uplink has no IPv6, also set
-        `proxy.dns.strategy = "ipv4_only"`, or direct IPv6 connections hang instead of falling back.
+        Route IPv6 through TUN and TProxy too. When off, TProxy refuses IPv6 past the LAN and
+        on-link prefixes and the TUNs block it, so apps fall back to IPv4. If the uplink has no
+        IPv6, also set `proxy.dns.strategy = "ipv4_only"`, or direct IPv6 connections hang
+        instead of falling back.
       '';
     };
 
     listener = {
       address = mkOption {
-        type = types.str;
+        # Also a line of proxychains' config.
+        type = hostType;
         default = "127.0.0.1";
         description = ''Address of the local SOCKS5/HTTP proxy. Use "0.0.0.0" only to expose it to the network.'';
       };
@@ -116,7 +119,11 @@ in
       probesPerRun = mkOption {
         type = types.ints.positive;
         default = 200;
-        description = "Maximum destinations probed per run. The rest wait for the next run, most-used first.";
+        description = ''
+          Maximum destinations probed per run: of those asked for with `proxy-ctl proxy auto
+          learn`, and again of those queued from traffic. The rest wait for the next run, the
+          queued ones most-used first. A run also ends after two hours, its probes kept.
+        '';
       };
 
       maxExits = mkOption {

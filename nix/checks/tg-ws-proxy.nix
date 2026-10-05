@@ -76,8 +76,10 @@ in
     # Global TUN/TProxy bypass mark keeps relay traffic out of transparent capture.
     (
       assert !(tgWithGlobalTunServiceConfig ? SocketMark);
-      # The relay runs as the service user; only the bypass scripts are privileged.
-      assert tgWithGlobalTunServiceConfig.User == "proxy-suite-daemon";
+      # The relay runs as a user of its own, not the backends' (whose files and traffic
+      # exemptions it would share); only the bypass scripts are privileged.
+      assert !(tgWithGlobalTunServiceConfig ? User);
+      assert tgWithGlobalTunServiceConfig.DynamicUser;
       assert tgWithGlobalTunServiceConfig.ExecStartPre == "+${tgWithGlobalTunModule.bypassUpScript}";
       assert tgWithGlobalTunServiceConfig.ExecStopPost == "+${tgWithGlobalTunModule.bypassDownScript}";
       assert pkgs.lib.hasInfix "\"system.slice/proxy-suite-tg-ws-proxy.service\" meta mark set 4"

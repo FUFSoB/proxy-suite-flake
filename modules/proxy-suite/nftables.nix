@@ -8,6 +8,7 @@
 let
   inherit (import ./derived.nix { inherit lib cfg; })
     constants
+    killSwitchEnabled
     awgGlobalProfiles
     awgGlobalAvailable
     awgRuntimeGlobal
@@ -32,9 +33,9 @@ let
     meta mark { ${lib.concatMapStringsSep ", " toString perAppViaMarks} } return
   '';
 
-  # Shared across all three nftables rule files that do IP routing.
+  # Shared across the rule files; redefine, as the firewall's ruleset includes several at once.
   reservedIpBlock = ''
-    define RESERVED_IP = {
+    redefine RESERVED_IP = {
         10.0.0.0/8,
         100.64.0.0/10,
         127.0.0.0/8,
@@ -45,7 +46,7 @@ let
         240.0.0.0/4,
         255.255.255.255/32
     }
-    define RESERVED_IP6 = {
+    redefine RESERVED_IP6 = {
         ::/128,
         ::1/128,
         ::ffff:0:0/96,
@@ -86,7 +87,16 @@ let
   # Devices using this host as their gateway, past the destinations nobody diverts.
   tproxyLanLines = lib.optionalString (globalTproxy.lanInterfaces != [ ]) (
     mkTproxyLines "iifname ${lanInterfaceSet} " " meta mark set ${toString globalTproxy.fwmark}"
+    + tproxyIPv6RefuseLine "iifname ${lanInterfaceSet} "
   );
+  # Without proxy.ipv6 nothing takes IPv6: marked all the same, it meets the unreachable
+  # route mkTproxyRoutingUp puts in the table, and apps fall back to IPv4; on-link prefixes
+  # still go by the main table.
+  tproxyIPv6RefuseLine =
+    prefix:
+    lib.optionalString (!proxyCfg.ipv6) ''
+      ${prefix}meta nfproto ipv6 meta mark set ${toString globalTproxy.fwmark}
+    '';
   perAppTproxyLocalSubnetLines = mkLocalSubnetLines perAppTproxy.localSubnets;
 
   # Without ipv6, IPv6 packets are left alone, as if the table were still `ip`.
@@ -94,11 +104,27 @@ let
     lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 "
   }meta l4proto { tcp, udp }";
   # Both listeners share the port; `tproxy ip`/`tproxy ip6` only match their own family.
-  mkTproxyLinesTo = port: prefix: suffix: ''
-    ${prefix}meta l4proto { tcp, udp } tproxy ip to 127.0.0.1:${toString port}${suffix}
-    ${lib.optionalString proxyCfg.ipv6 "${prefix}meta l4proto { tcp, udp } tproxy ip6 to [::1]:${toString port}${suffix}"}
+  # `mark` before the tproxy: with no listener tproxy ends the rule, and an unmarked gateway
+  # client's packet would be forwarded out direct.
+  mkTproxyLinesTo = port: prefix: mark: ''
+    ${prefix}meta nfproto ipv4 meta l4proto { tcp, udp }${mark} tproxy ip to 127.0.0.1:${toString port}
+    ${lib.optionalString proxyCfg.ipv6 "${prefix}meta nfproto ipv6 meta l4proto { tcp, udp }${mark} tproxy ip6 to [::1]:${toString port}"}
   '';
   mkTproxyLines = mkTproxyLinesTo globalTproxy.port;
+  # The families a TProxy mark carries into the proxy.
+  tproxyMarkedFamilies = lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 ";
+
+  # A marked packet leaving by another interface: its ip rule is gone (`ip rule flush`, a
+  # VPN tool) and the main table sends it out the uplink, past the kill switch, which lets
+  # marked packets by. `match`: TProxy without proxy.ipv6 sends on-link IPv6 out marked.
+  mkMisroutedGuard = mark: interfaces: match: ''
+    chain misrouted {
+        type filter hook postrouting priority filter; policy accept;
+        ${match}meta mark ${toString mark} oifname != { ${
+          lib.concatMapStringsSep ", " (i: ''"${i}"'') interfaces
+        } } drop
+    }
+  '';
 
   nftablesRulesFile = pkgs.writeText "proxy-suite-routing" ''
         ${reservedIpBlock}
@@ -112,12 +138,11 @@ let
                   fib daddr type local return
         ${tproxyLocalSubnetLines}
         ${tproxyLanLines}
-                  # Packets re-entering via loopback after output marking should not
-                  # be skipped just because the host has an RFC1918 source address.
-                  iifname != "lo" ip saddr $RESERVED_IP return
-                  iifname != "lo" ip6 saddr $RESERVED_IP6 return
-        ${mkTproxyLines "" " meta mark set ${toString globalTproxy.fwmark}"}
+                  # Past lanInterfaces, only what the output chain below marked: a neighbour
+                  # routing through this host is never handed the proxy's exits.
+        ${mkTproxyLines "meta mark ${toString globalTproxy.fwmark} " ""}
               }
+    ${killSwitchForwardTag}
               chain output {
                   type route hook output priority mangle; policy accept;
         ${reservedLines}
@@ -126,11 +151,42 @@ let
                   # Replies to connections from outside, and proxy-suite's own daemons (the
                   # inbound XRay dials unmarked, lacking CAP_NET_ADMIN), leave as they are.
                   ct direction reply return
-                  meta skuid "${serviceUser}" return
+                  meta skuid ${constants.ownTrafficUsersNft} return
     ${tgWsProxyBypassMarkLine}${perAppViaMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
+    ${tproxyIPv6RefuseLine ""}
               }
+    ${mkMisroutedGuard globalTproxy.fwmark [ "lo" ] tproxyMarkedFamilies}
           }
   '';
+
+  # A marked app's lookup of a loopback resolver would be answered outside the route: the
+  # forwarder on `dnsPort` asks again through it. `everywhere`: every lookup (TProxy's case).
+  mkDnsRedirect =
+    {
+      mark,
+      dnsPort,
+      everywhere ? false,
+    }:
+    let
+      lookup = "meta mark ${toString mark} meta l4proto { tcp, udp } th dport 53";
+      to = "redirect to :${toString dnsPort}";
+    in
+    if everywhere then
+      ''
+        chain dns_redirect {
+            type nat hook output priority dstnat; policy accept;
+            ${lookup} ip daddr != ${constants.perAppDnsUpstream} ${to}
+            ${lookup} meta nfproto ipv6 ${to}
+        }
+      ''
+    else
+      ''
+        chain dns_redirect {
+            type nat hook output priority dstnat; policy accept;
+            ${lookup} ip daddr 127.0.0.0/8 ${to}
+            ${lookup} ip6 daddr ::1 ${to}
+        }
+      '';
 
   # Per-app TProxy, and a pin slot of it (perAppRouting.via): `mark` on the app's packets, which
   # the backend takes on `port`.
@@ -139,10 +195,15 @@ let
       table,
       mark,
       port,
+      dnsPort,
     }:
     ''
           ${reservedIpBlock}
             table inet ${table} {
+                # The per-user cgroup mark rules are added here at runtime (user-rules.nix).
+                # Defined first: a jump only resolves to a chain nft has already read.
+                chain app_mark {
+                }
                 chain prerouting {
                     type filter hook prerouting priority mangle; policy accept;
           ${reservedLines}
@@ -160,13 +221,23 @@ let
 
                 chain output {
                     type route hook output priority mangle; policy accept;
-          ${reservedLines}
-          ${perAppTproxyLocalSubnetLines}
                     meta mark ${toString globalTproxy.proxyMark} return
                     ct direction reply return
       ${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}              ct mark ${toString mark} meta mark set ${toString mark}
-                    meta mark ${toString mark} return
+                    # The DNS forwarder's own queries carry the mark on the socket alone: the
+                    # connection takes it too, for prerouting to restore.
+                    meta mark ${toString mark} ct mark set ${toString mark} return
+                    # A lookup goes through the route wherever its resolver is (dns_redirect).
+                    meta l4proto { tcp, udp } th dport 53 goto app_mark
+          ${reservedLines}
+          ${perAppTproxyLocalSubnetLines}
+                    goto app_mark
                 }
+      ${mkDnsRedirect {
+        inherit mark dnsPort;
+        everywhere = true;
+      }}
+      ${mkMisroutedGuard mark [ "lo" ] tproxyMarkedFamilies}
             }
     '';
 
@@ -174,6 +245,7 @@ let
     table = "proxy_suite_per_app_tproxy";
     mark = perAppTproxy.fwmark;
     inherit (globalTproxy) port;
+    dnsPort = constants.perAppTproxyDnsBasePort;
   });
   perAppPinTproxyRulesFiles = lib.genList (
     slot:
@@ -181,6 +253,7 @@ let
       table = "proxy_suite_per_app_via_tproxy_${toString slot}";
       mark = constants.perAppPinTproxyFwmarkBase + slot;
       port = constants.perAppPinTproxyPortBase + slot;
+      dnsPort = constants.perAppTproxyDnsBasePort + 1 + slot;
     })
   ) (if perAppPinTproxy then perAppPinSlots else 0);
 
@@ -196,31 +269,79 @@ let
   ++ lib.optional tgWsProxyBypassEnabled tgWsProxyCfg.fwmark
   ++ lib.optional awgGlobalAvailable constants.awgGlobalFwmark
   ++ perAppViaMarks
-  ++ lib.optionals perAppPinTproxy (
-    lib.genList (slot: constants.perAppPinTproxyFwmarkBase + slot) perAppPinSlots
-  )
+  ++ killSwitchPinTproxyMarks
   ++ lib.optionals perAppPinTun (
     lib.genList (slot: constants.perAppPinTunFwmarkBase + slot) perAppPinSlots
+  )
+  # zapret's fakes and split segments carry its desync marks; rejected, split connections stall.
+  ++ lib.optionals cfg.zapret.enable [
+    1073741824 # 0x40000000, the global instance's (zapret2's, and zapret v1's default)
+    536870912 # 0x20000000
+  ]
+  ++ lib.optionals zapretApp.enable [
+    134217728 # 0x8000000, the per-app instance's (zapret/packages.nix, zapret2.nix)
+    67108864 # 0x4000000
+  ];
+  killSwitchPinTproxyMarks = lib.optionals perAppPinTproxy (
+    lib.genList (slot: constants.perAppPinTproxyFwmarkBase + slot) perAppPinSlots
   );
+  # TProxy's marks carry only the families it takes into the proxy; without proxy.ipv6 a
+  # marked IPv6 packet leaving at all is on-link or lost its ip rule.
+  killSwitchTproxyMarks = [
+    globalTproxy.fwmark
+  ]
+  ++ lib.optional perAppTproxy.enable perAppTproxy.fwmark
+  ++ killSwitchPinTproxyMarks;
+  killSwitchMarkLines =
+    let
+      set = marks: "{ ${lib.concatMapStringsSep ", " toString (lib.unique marks)} }";
+    in
+    if proxyCfg.ipv6 then
+      "meta mark ${set killSwitchMarks} accept"
+    else
+      ''
+        meta mark ${set (lib.subtractLists killSwitchTproxyMarks killSwitchMarks)} accept
+        meta nfproto ipv4 meta mark ${set killSwitchTproxyMarks} accept
+      '';
   awgGlobalInterfaces =
     lib.mapAttrsToList (_: profile: profile.interfaceName) awgGlobalProfiles
     ++ lib.optional awgRuntimeGlobal cfg.amneziaWg.runtime.interfaceName;
   globalTunEnabled = proxyCfg.enable && proxyCfg.tun.enable;
+  # Forwarded traffic (containers, VMs) follows the routes TUN and a global AmneziaWG profile
+  # take over, and leaves by the uplink once they go: held to the LAN until one is back.
+  # TProxy diverts none of it, so while TProxy is up (its table tags it) it passes.
+  killSwitchForward = globalTunEnabled || awgGlobalAvailable;
+  killSwitchForwardTag = lib.optionalString (killSwitchEnabled && killSwitchForward) ''
+    chain forward {
+        type filter hook forward priority mangle; policy accept;
+        ${
+          lib.optionalString (globalTproxy.lanInterfaces != [ ]) "iifname != ${lanInterfaceSet} "
+        }meta mark set meta mark or ${toString constants.killSwitchForwardMark}
+    }
+  '';
+  killSwitchTunnelInterfaces =
+    lib.optional globalTunEnabled proxyCfg.tun.interface
+    ++ lib.optionals awgGlobalAvailable awgGlobalInterfaces;
   killSwitchAllowLines = ''
     ip daddr $RESERVED_IP accept
     ip6 daddr $RESERVED_IP6 accept
     ${lib.concatMapStrings (cidr: ''
       ${ipFamily cidr} daddr ${cidr} accept
-    '') globalTproxy.localSubnets}
+    '') cfg.killSwitch.allowedSubnets}
     ct direction reply accept
   '';
   killSwitchRulesFile = pkgs.writeText "proxy-suite-routing" ''
     ${reservedIpBlock}
     table inet proxy_suite_killswitch {
+        # The time daemons' uids, added by the up script: nft refuses a rule naming a user
+        # that does not exist.
+        set time_sync_uids {
+            type uid
+        }
         chain output {
             type filter hook output priority filter; policy accept;
             oifname "lo" accept
-            meta skuid "${serviceUser}" accept
+            meta skuid ${constants.ownTrafficUsersNft} accept
     ${lib.optionalString globalTunEnabled ''
       oifname "${proxyCfg.tun.interface}" accept
       # sing-box's auto_redirect hands DNS to the TUN by rewriting it to the TUN's peer,
@@ -235,20 +356,34 @@ let
     ${lib.optionalString (
       cfg.sshProxy.enable && sshProxyUser != null && sshProxyUser != serviceUser
     ) ''meta skuid "${sshProxyUser}" accept''}
-            meta mark { ${lib.concatMapStringsSep ", " toString (lib.unique killSwitchMarks)} } accept
+    ${killSwitchMarkLines}
             # A lookup the proxy did not take would name every site to the LAN resolver.
             meta l4proto { tcp, udp } th dport 53 reject with icmpx admin-prohibited
     ${killSwitchAllowLines}
-            # DHCP keeps the uplink, NTP the clock that TLS depends on.
-            udp dport { 67, 68, 123 } accept
+            # DHCP keeps the uplink, NTP the clock TLS needs: from privileged ports or time daemons
+            # only, so no app's port-123 request learns the uplink address.
+            meta nfproto ipv4 udp sport 68 udp dport 67 accept
+            meta nfproto ipv6 udp sport 546 udp dport 547 accept
+            udp sport 123 udp dport 123 accept
+            meta skuid @time_sync_uids udp dport 123 accept
             reject with icmpx admin-prohibited
         }
-    ${lib.optionalString (globalTproxy.lanInterfaces != [ ]) ''
-      # Gateway clients: what TProxy does not divert is forwarded, to the LAN only.
+    ${lib.optionalString (killSwitchForward || globalTproxy.lanInterfaces != [ ]) ''
+      # Gateway clients: what TProxy does not divert goes to the LAN only. Containers and VMs
+      # too while no TUN or AmneziaWG tunnel, nor TProxy, is up.
       chain forward {
           type filter hook forward priority filter; policy accept;
+      ${lib.optionalString killSwitchForward ''
+        oifname { ${lib.concatMapStringsSep ", " (i: ''"${i}"'') killSwitchTunnelInterfaces} } accept
+        ${lib.optionalString globalTproxy.enable "meta mark and ${toString constants.killSwitchForwardMark} != 0 accept"}
+      ''}
       ${killSwitchAllowLines}
-          iifname ${lanInterfaceSet} reject with icmpx admin-prohibited
+      ${
+        if killSwitchForward then
+          "reject with icmpx admin-prohibited"
+        else
+          "iifname ${lanInterfaceSet} reject with icmpx admin-prohibited"
+      }
       }
     ''}
     }
@@ -276,6 +411,7 @@ let
     {
       table,
       mark,
+      dnsPort,
       snat ? null,
     }:
     ''
@@ -304,6 +440,11 @@ let
       '') perAppTun.localSubnets}
                     goto app_mark
                 }
+      ${mkDnsRedirect { inherit mark dnsPort; }}
+      ${mkMisroutedGuard mark [
+        "lo"
+        perAppTun.interface
+      ] ""}
       ${lib.optionalString (snat != null) ''
         chain postrouting {
             type nat hook postrouting priority srcnat; policy accept;
@@ -317,12 +458,14 @@ let
   perAppTunChainFile = pkgs.writeText "proxy-suite-routing" (mkPerAppTunChain {
     table = "proxy_suite_per_app_tun";
     mark = perAppTun.fwmark;
+    dnsPort = constants.perAppTunDnsBasePort;
   });
   perAppPinTunChainFiles = lib.genList (
     slot:
     pkgs.writeText "proxy-suite-routing" (mkPerAppTunChain {
       table = "proxy_suite_per_app_via_tun_${toString slot}";
       mark = constants.perAppPinTunFwmarkBase + slot;
+      dnsPort = constants.perAppTunDnsBasePort + 1 + slot;
       snat = constants.perAppPinTunSource slot;
     })
   ) (if perAppPinTun then perAppPinSlots else 0);

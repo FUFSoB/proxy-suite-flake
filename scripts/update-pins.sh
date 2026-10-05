@@ -48,8 +48,14 @@ gh_api() {
 # Xray-core was already on v26.9.9, and 404s for amneziawg-go).
 latest_tag() {
   local owner=$1 repo=$2 tag
-  tag=$(gh_api "https://api.github.com/repos/${owner}/${repo}/tags?per_page=100" |
-    jq -r '.[].name' | grep -E '^v?[0-9]' | sort -V | tail -n1)
+  # The tag is spliced into a Nix string and an awk replacement: git allows `"`,
+  # `$`, `{` and `&` in ref names, so only plain version-shaped tags pass.
+  local tags
+  tags=$(gh_api "https://api.github.com/repos/${owner}/${repo}/tags?per_page=100" |
+    jq -r '.[].name' | grep -E '^v?[0-9][0-9A-Za-z._+-]*$') || true
+  # sort -V puts v1.0.0-rc1 after v1.0.0: plain numbered tags win where a repo has any.
+  tag=$(grep -E '^v?[0-9]+(\.[0-9]+)*$' <<< "$tags" | sort -V | tail -n1 || true)
+  [[ -n "$tag" ]] || tag=$(sort -V <<< "$tags" | tail -n1)
   [[ -n "$tag" ]] || { echo "unable to resolve latest tag for ${owner}/${repo}" >&2; return 1; }
   printf '%s\n' "$tag"
 }
@@ -185,7 +191,10 @@ for pin in "${PINS[@]}"; do
   if [[ "$current" != "$new" ]]; then
     set_attr "$file" "" "$key" "$new" || { echo "could not write ${key} in ${file}" >&2; exit 1; }
     BUMPED[$key]=1
-    echo "updated ${repo}: ${current} -> ${new}"
+    # The commit the tag names now, for the review: a moved tag shows up as a commit that
+    # is not on the project's history.
+    commit=$(gh_api "https://api.github.com/repos/${owner}/${repo}/commits/${tag_ref}" | jq -r '.sha // empty') || true
+    echo "updated ${repo}: ${current} -> ${new} (commit ${commit:-unknown})"
   fi
   set_attr "$file" "$repo" hash "$hash" || { echo "could not write hash for ${repo}" >&2; exit 1; }
   refresh_vendor_hash "$file" "$repo" "$attr"

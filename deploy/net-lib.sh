@@ -56,6 +56,16 @@ ask() {
   if [[ -n ${3+x} && -z $3 ]]; then
     __optional=true
   fi
+  # Unattended never reads stdin, where it would hang on a terminal or take the default
+  # unseen: a missing answer takes the default, and a question without one fails.
+  if [[ -n ${PSI_UNATTENDED-} ]]; then
+    if [[ -z $__default && $__optional == false ]]; then
+      warn "PSI_UNATTENDED: $__preset is not set, and \"$2\" has no default."
+      exit 1
+    fi
+    printf -v "$1" '%s' "$__default"
+    return 0
+  fi
   if [[ -n ${REMEMBERED[$1]-} ]]; then
     __default=${REMEMBERED[$1]}
   fi
@@ -119,7 +129,8 @@ reject() {
 
 is_ipv4() {
   local IFS=. octet
-  [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  # No leading zeros: bash would read 010 as octal, networkd as written.
+  [[ $1 =~ ^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$ ]] || return 1
   for octet in $1; do ((octet <= 255)) || return 1; done
 }
 
@@ -137,7 +148,7 @@ is_dns_list() {
 mask_to_prefix() {
   local mask=$1 IFS=. octet bits=0
   if [[ $mask =~ ^[0-9]+$ ]]; then
-    ((mask <= 32)) && printf '%s' "$mask" && return 0
+    [[ $mask =~ ^(0|[1-9][0-9]?)$ ]] && ((mask <= 32)) && printf '%s' "$mask" && return 0
     return 1
   fi
   is_ipv4 "$mask" || return 1

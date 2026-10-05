@@ -118,6 +118,13 @@ in
       assert hasInfix ''"proxy-suite-per-app-via-user@" ? instance.split("-")[0]'' (
         polkitConfig allFixture
       );
+      # What every user's apps share a member brings up, never down or through a restart:
+      # that would send the other users' apps out unmarked. Their own marking, either way.
+      assert hasInfix
+        ''if (scope === "perApp" && !own && ["start","reset-failed"].indexOf(verb) === -1) {''
+        (polkitConfig allFixture);
+      assert hasInfix "    own = true;\n  }\n  known = true;" (polkitConfig allFixture);
+      assert hasInfix "\"proxy-suite-per-app-\":\"perApp\"" (polkitConfig allFixture);
       assert groupReadsSecrets allFixture;
       assert hasInfix "chown proxy-suite-daemon:proxy-suite \"$backend_config\"" (socksStart allFixture);
       assert
@@ -126,21 +133,34 @@ in
           "proxy-suite"
           "proxy-suite"
         ];
-      assert (service allFixture "proxy-suite-autoproxy").StateDirectoryMode == "0771";
-      # Root writes by fixed names in that group-writable directory: nowhere else.
+      # The state is root's to write, the group's to read; what members ask for goes to a
+      # sticky spool beside it, where no member takes away another's request.
+      assert (service allFixture "proxy-suite-autoproxy").StateDirectoryMode == "0751";
+      assert builtins.elem "d /var/lib/proxy-suite/autoproxy-requests 3770 root proxy-suite -" (
+        allFixture.config.systemd.tmpfiles.rules
+      );
+      # Root removes what members queued in that group-writable spool: nothing else changes.
       assert builtins.all
         (
           unit:
           let
             c = service allFixture unit;
           in
-          c.ProtectSystem == "strict" && c.ProtectHome && c.PrivateTmp
+          c.ProtectSystem == "strict"
+          && c.ProtectHome
+          && c.PrivateTmp
+          && c.ReadWritePaths == [ "-/var/lib/proxy-suite/autoproxy-requests" ]
         )
         [
           "proxy-suite-autoproxy"
           "proxy-suite-autoproxy-learn"
           "proxy-suite-autoproxy-sample"
         ];
+      # An install from before the spool is made root's before the socks start writes there.
+      assert hasInfix
+        "-proxy-suite-autoproxy-migrate \"$AUTOPROXY_DIR\" /var/lib/proxy-suite/autoproxy-requests"
+        (socksStart allFixture);
+      assert (wrapperEnv allFixture).AUTOPROXY_SPOOL_DIR == "/var/lib/proxy-suite/autoproxy-requests";
       assert builtins.elem "d /var/lib/proxy-suite/outbounds.d 2770 root proxy-suite -" (
         allFixture.config.systemd.tmpfiles.rules
       );
@@ -172,6 +192,9 @@ in
           null
         ];
       assert (service routingOnlyFixture "proxy-suite-autoproxy").StateDirectoryMode == "0751";
+      assert builtins.elem "d /var/lib/proxy-suite/autoproxy-requests 0700 root root -" (
+        routingOnlyFixture.config.systemd.tmpfiles.rules
+      );
       assert builtins.elem "d /var/lib/proxy-suite/outbounds.d 0700 root root -" (
         routingOnlyFixture.config.systemd.tmpfiles.rules
       );
@@ -216,10 +239,18 @@ in
           null
           null
         ];
-      assert (service fixture "proxy-suite-autoproxy").StateDirectoryMode == "0771";
+      assert (service fixture "proxy-suite-autoproxy").StateDirectoryMode == "0751";
       assert derived.userControlExtraGroupsFor "autoProxy" == [ "proxy-admins" ];
+      # The state dir read through its own unit's ACLs; the spool written through
+      # proxy-suite-acls', there before any autoProxy unit has run.
       assert pkgs.lib.hasSuffix "-proxy-suite-autoproxy-acl"
         (service fixture "proxy-suite-autoproxy").ExecStartPre;
+      assert builtins.elem "d /var/lib/proxy-suite/autoproxy-requests 3770 root root -" (
+        fixture.config.systemd.tmpfiles.rules
+      );
+      assert hasInfix
+        "setfacl -R -P -n -m g:proxy-admins:rwX,d:g:proxy-admins:rwX -- /var/lib/proxy-suite/autoproxy-requests"
+        acls;
       # Secrets to proxy-admins alone, still 600 for the primary group.
       assert hasInfix "chmod 600 \"$SHARE_TMP\"" start;
       assert hasInfix "setfacl -m g:proxy-admins:r -- \"$SHARE_TMP\"" start;

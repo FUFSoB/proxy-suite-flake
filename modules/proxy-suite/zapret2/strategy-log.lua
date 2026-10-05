@@ -18,7 +18,8 @@ local function name(hrec)
 end
 
 local function log(hrec, text)
-  io.stderr:write("zapret2: ", name(hrec), ": ", text, "\n")
+  -- The host comes off the wire (a SNI): no control character, so no forged journal line.
+  io.stderr:write("zapret2: ", (tostring(name(hrec)):gsub("%c", "?")), ": ", (tostring(text):gsub("%c", "?")), "\n")
 end
 
 local function of(hrec)

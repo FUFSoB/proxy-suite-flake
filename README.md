@@ -173,7 +173,7 @@ Changes and secrets need root or the userControl group.
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscriptions; update refetches them
-  proxy subs add [tag] <url>             add a subscription (no tag: named after its host)
+  proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
   proxy rulesets [list|update]           rule sets and when they were fetched; update refetches

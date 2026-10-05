@@ -31,6 +31,10 @@ let
     builders
     constants
     ;
+  # A value in a shell comment, on that one line: a newline in a tag (types.str) would end
+  # the comment and run the rest as root.
+  oneLine = value: builtins.replaceStrings [ "\n" "\r" ] [ " " " " ] (toString value);
+
   runtimeDir = "${constants.runtimeDir}/proxy-suite-inbounds";
   linksFile = "${runtimeDir}/links.json";
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
@@ -126,7 +130,7 @@ let
     in
     if urlSource == null then
       ''
-        # via outbound: ${ob.tag} (static xray json)
+        # via outbound: ${oneLine ob.tag} (static xray json)
         OB_JSON=$(cat ${
           pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON (ob.xrayJson // { inherit (ob) tag; }))
         })
@@ -135,7 +139,7 @@ let
       ''
     else
       ''
-        # via outbound: ${ob.tag}
+        # via outbound: ${oneLine ob.tag}
         URL=$(cat ${lib.escapeShellArg urlSource})
         OB_JSON=$(printf '%s' "$URL" | PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${buildOutboundPy} \
           --backend xray --tag ${lib.escapeShellArg ob.tag})
@@ -165,9 +169,12 @@ let
         printf '%s' "$body" > "$SUB_DIR.new/$token"
       done
     chmod -R u=rwX,g=rX,o= "$SUB_DIR.new"
+    # Traverse-only for the group: the web server opens a token by name but can never
+    # list them all (autoindex, a stray directory listing).
+    chmod 0710 "$SUB_DIR.new"
     ${constants.ifPrivileged ''
       ${pkgs.coreutils}/bin/chgrp -R ${lib.escapeShellArg subsCfg.group} "$SUB_DIR.new" ||
-        echo "proxy-suite: group ${subsCfg.group} cannot be given the subscriptions; they stay root-only" >&2''}
+        echo "proxy-suite: group "${lib.escapeShellArg subsCfg.group}" cannot be given the subscriptions; they stay root-only" >&2''}
     rm -rf "$SUB_DIR"
     mv "$SUB_DIR.new" "$SUB_DIR"
     ${jq} -c '[.subscriptions[] | {user, token}]' <<< "$RENDERED" > "${subscriptionsFile}"
@@ -194,11 +201,19 @@ let
 
     INBOUNDS_JSON=$(${jq} -c '.inbounds' <<< "$RENDERED")
 
+    # Every address this host has now, for the direct outbound's fence (rules/proxy-inbounds.nix):
+    # one it gains later is fenced from the next start. Where netlink is closed (Android), the
+    # fence keeps what the configuration knows.
+    if ! HOST_ADDRESSES=$(${ip} -j addr show | ${jq} -c '[.[].addr_info[]?.local | strings] | unique'); then
+      echo "proxy-suite: cannot list this host's addresses; direct reaches any port of those not configured" >&2
+      HOST_ADDRESSES='[]'
+    fi
+
     OUTBOUNDS_JSON='[]'
     ${viaOutboundsBlock}
 
     ${lib.optionalString needsLocalProxyAuth ''
-      LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
+      LOCAL_PROXY_PASSWORD="$(cat ${lib.escapeShellArg localProxyAuthPasswordSource})"
     ''}
 
     # With inbounds.runtime, the routing rules are build-inbound.py's: the template's with the
@@ -216,8 +231,19 @@ let
       } \
       --argjson runtime ${if proxyInboundsRuntimeEnabled then "true" else "false"} \
       --slurpfile rendered <(printf '%s' "$RENDERED") \
+      --argjson host_addresses "$HOST_ADDRESSES" \
       '.inbounds += $ibs[0]
+       | (.outbounds[] | select(.tag == "direct") | .settings.finalRules[] | select(._hostAddresses))
+           |= (.ip += ($host_addresses - .ip) | del(._hostAddresses))
        | .outbounds = $obs[0] + .outbounds
+       # A via outbound that is freedom too (xrayJson, say, for its fragment settings)
+       # dials from this host as "direct" does: the same fence, ahead of its own rules;
+       # all of it but the closing allow of "direct", which would end them.
+       | ([.outbounds[] | select(.tag == "direct") | .settings.finalRules // []] | first // []) as $fence
+       | (.outbounds[] | select(.protocol == "freedom" and .tag != "direct"
+                              and ((.tag // "") | startswith("direct-self") | not)))
+           |= (.settings = ((.settings // {})
+                 | .finalRules = (($fence | map(select(. != {action: "allow"}))) + (.finalRules // []))))
        | if $runtime then
            .routing.rules = $rendered[0].rules
            | .outbounds += $rendered[0].selfOutbounds
@@ -262,7 +288,8 @@ let
       else
         ''
           ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"''}
-          chmod 640 "$RUNTIME_DIR/config.json.tmp"
+          # Without root the group is the user's own primary one, which may be shared.
+          chmod ${if constants.privileged then "640" else "600"} "$RUNTIME_DIR/config.json.tmp"
         ''
     }
     ${constants.grantFileAcl pkgs ''"$RUNTIME_DIR/config.json.tmp"''
@@ -271,26 +298,17 @@ let
     }
     mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
 
-    # The stats API's socket takes this setgid directory's group: XRay cannot chown it.
+    # The stats API's socket: the daemon's and root's alone. Whoever reaches it can reset the
+    # counters, wiping per-user traffic before the collector adds it up; the stats scope
+    # reads the collector's file instead.
     API_DIR=$(dirname ${lib.escapeShellArg constants.inboundStatsApiSocket})
     rm -rf "$API_DIR"
     ${
       if !constants.privileged then
         ''mkdir -m 0700 "$API_DIR"''
-      else if userControlAllows "stats" then
-        ''
-          install -d -m 2750 -o ${constants.serviceUser} -g ${lib.escapeShellArg userControlCfg.group} "$API_DIR" ||
-            install -d -m 2750 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
       else
-        ''install -d -m 2750 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
+        ''install -d -m 0700 -o ${constants.serviceUser} -g ${constants.serviceUser} "$API_DIR"''
     }
-    # userControl.groups with the stats scope: into the directory, and onto the socket XRay
-    # makes in it as its own group is (a default entry; the socket's mode caps it).
-    ${lib.optionalString (constants.privileged && userControlExtraGroupsFor "stats" != [ ]) ''
-      ${pkgs.acl}/bin/setfacl -m ${
-        lib.concatMapStringsSep "," (g: "g:${g}:rx,d:g:${g}:rwx") (userControlExtraGroupsFor "stats")
-      } -- "$API_DIR"
-    ''}
 
     ${writeLinksBlock}
     ${writeSubscriptionsBlock}
@@ -300,7 +318,8 @@ let
   '';
 
   # Adds XRay's counters to the daily totals, read and reset in one call, and notes who
-  # is online. Run by a timer, and by the inbounds' ExecStop, so a restart loses nothing.
+  # is online: .online, for `proxy-ctl inbounds online` without the API. Run by a timer,
+  # and by the inbounds' ExecStop, so a restart loses nothing.
   collectInboundStats = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
     file=${lib.escapeShellArg constants.inboundStatsFile}
@@ -326,18 +345,22 @@ let
     }
     [ -s "$file" ] || echo '{}' > "$file"
     tmp=$(${pkgs.coreutils}/bin/mktemp "$file.XXXXXX")
-    ${jq} --argjson q "$reading" --argjson online "$online" --argjson awg "$awg" \
+    # Slurped, not --argjson: one argument holds at most 128 KiB, which a few hundred users'
+    # counters outgrow, and the reading above already reset them.
+    ${jq} --slurpfile q_ <(printf '%s' "$reading") --slurpfile online_ <(printf '%s' "$online") \
+      --slurpfile awg_ <(printf '%s' "$awg") \
       --arg day "$(${pkgs.coreutils}/bin/date +%F)" \
       --argjson now "$(${pkgs.coreutils}/bin/date +%s)" \
-      -f ${
+      "\$q_[0] as \$q | \$online_[0] as \$online | \$awg_[0] as \$awg | $(< ${
         builtins.path {
           name = "proxy-suite-inbounds";
           path = ../inbound-stats-add.jq;
         }
-      } "$file" > "$tmp"
+      })
+      | .online = (\$online.users // [])" "$file" > "$tmp"
     ${lib.optionalString (userControlAllows "stats") ''
       ${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$tmp" ||
-        echo "proxy-suite: group ${userControlCfg.group} cannot read the stats; they stay root-only" >&2
+        echo "proxy-suite: group "${lib.escapeShellArg userControlCfg.group}" cannot read the stats; they stay root-only" >&2
     ''}
     chmod ${if userControlAllows "stats" then "640" else "600"} "$tmp"
     ${constants.grantFileAcl pkgs ''"$tmp"'' (userControlExtraGroupsFor "stats") "r"}

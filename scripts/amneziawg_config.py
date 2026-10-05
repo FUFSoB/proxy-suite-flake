@@ -389,14 +389,61 @@ def dns_servers(config: str) -> list[str]:
     return servers
 
 
-def as_outbound(config: str, fwmark: int) -> str:
+def _host_addresses(config: str) -> str:
+    """Every [Interface] Address narrowed to the host itself (/32, /128): the kernel routes
+    its prefix in the main table whatever Table says, and an outbound has no use for it."""
+    pattern = re.compile(r"^(\s*Address\s*=\s*)(.*)$", re.IGNORECASE)
+    lines: list[str] = []
+    in_interface = False
+    for line in config.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_interface = stripped.lower() == "[interface]"
+        match = pattern.match(line) if in_interface else None
+        if match:
+            hosts = []
+            for item in match.group(2).split("#", 1)[0].split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                try:
+                    interface = ipaddress.ip_interface(item)
+                except ValueError as exc:
+                    raise ConfigError(f"invalid interface Address '{item}'") from exc
+                hosts.append(f"{interface.ip}/{interface.max_prefixlen}")
+            line = f"{match.group(1)}{', '.join(hosts)}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def _replace_interface_key(config: str, key: str, value: str) -> str:
+    """key set to value, every other line of it gone: wg and awg-quick take the last one,
+    so `Table = 1234` then `Table = auto` would keep auto past a rewrite of the first."""
+    return _set_interface_value(_remove_interface_key(config, key), key, value)
+
+
+def _drop_privileged_listen_port(config: str) -> str:
+    """A privileged ListenPort (53, say), bound by root, would take it from the host's own
+    services: the port goes, and the tunnel takes any."""
+    for value in section_values(config, "interface", "listenport"):
+        if not value.strip().isascii() or not value.strip().isdigit() or int(value.strip()) < 1024:
+            return _remove_interface_key(config, "ListenPort")
+    return config
+
+
+def as_outbound(config: str, fwmark: int, host_addresses: bool = True) -> str:
     """Keep the host's routes and resolver: the proxy binds to the interface instead.
 
-    The mark lets the tunnel's own packets past TUN and TProxy capture.
+    The mark lets the tunnel's own packets past TUN and TProxy capture. host_addresses
+    narrows Address to the host (_host_addresses), for a profile from a shared spool.
     """
     config = _remove_interface_key(config, "DNS")
-    config = _set_interface_value(config, "Table", "off")
-    return _set_interface_value(config, "FwMark", str(fwmark))
+    if host_addresses:
+        config = _host_addresses(config)
+    # Any source port does for an outbound.
+    config = _drop_privileged_listen_port(config)
+    config = _replace_interface_key(config, "Table", "off")
+    return _replace_interface_key(config, "FwMark", str(fwmark))
 
 
 ENDPOINT_LINE = re.compile(r"^(\s*Endpoint\s*=\s*)(\S+):(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -436,7 +483,9 @@ WIREPROXY_LIST_KEYS = {"address", "dns", "allowedips"}
 WIREPROXY_DROPPED_KEYS = FORBIDDEN_WG_QUICK_KEYS | {"table", "fwmark"}
 
 
-def as_wireproxy(config: str, socks_address: str, fwmark: int | None = None) -> str:
+def as_wireproxy(
+    config: str, socks_address: str, fwmark: int | None = None, login: tuple[str, str] | None = None
+) -> str:
     """A wireproxy configuration: the profile, served as a SOCKS5 listener on socks_address.
 
     With fwmark, the tunnel's own packets are marked, to get past TUN and TProxy capture.
@@ -463,6 +512,12 @@ def as_wireproxy(config: str, socks_address: str, fwmark: int | None = None) -> 
         if name == "interface" and fwmark is not None:
             lines.append(f"fwmark = {fwmark}")
     lines.extend(["", "[Socks5]", f"BindAddress = {socks_address}"])
+    # Both, or wireproxy takes no login at all: a password alone is none.
+    if login is not None:
+        user, password = login
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", user) or not re.fullmatch(r"[A-Za-z0-9._-]+", password):
+            raise ConfigError("the SOCKS login must be letters, digits, dot, dash and underscore")
+        lines.extend([f"Username = {user}", f"Password = {password}"])
     return "\n".join(lines) + "\n"
 
 
@@ -703,11 +758,27 @@ def validate_config(config: str, allow_hooks: bool = False) -> None:
     lowered = config.lower()
     if "[interface]" not in lowered or "[peer]" not in lowered:
         raise ConfigError("configuration requires [Interface] and [Peer] sections")
+    # Headers exactly as written, one [Interface]: one the rewrites here miss would let its
+    # Table, Address or DNS reach the host untouched.
+    interfaces = 0
+    for line in config.split("\n"):
+        stripped = line.strip()
+        if not stripped.split("#", 1)[0].strip().startswith("["):
+            continue
+        if stripped.lower() not in ("[interface]", "[peer]"):
+            raise ConfigError(f"unexpected section header {stripped[:40]!r}: only [Interface] and [Peer], alone on their line")
+        interfaces += stripped.lower() == "[interface]"
+    if interfaces != 1:
+        raise ConfigError("configuration needs exactly one [Interface] section")
     if not allow_hooks:
         # Read as awg-quick reads it: lines end at \n, a comment starts at #, and the
         # key is what precedes the first =, or the whole line without one.
         for line in config.split("\n"):
             key = line.split("#", 1)[0].split("=", 1)[0].strip().lower()
+            # A non-ASCII key can fold to one under the shell's case-insensitive match
+            # ("SaveConfİg" is SaveConfig to awg-quick's nocasematch); no real key has one.
+            if not key.isascii():
+                raise ConfigError(f"configuration has a key with non-ASCII characters: {key[:40]!r}")
             if key in FORBIDDEN_WG_QUICK_KEYS:
                 raise ConfigError(
                     f"configuration contains privileged wg-quick directive '{key}'; "
@@ -758,6 +829,18 @@ def rekey_after_time(config: str) -> int:
     return int(values[-1].split("-")[-1])
 
 
+def _normalize_headers(config: str) -> str:
+    """Section headers as awg-quick reads them ("[Peer] # home" opens a Peer section),
+    written plainly so the rewrites here see every section it will."""
+    lines = []
+    for line in config.split("\n"):
+        header = line.split("#", 1)[0].strip().lower()
+        if header in ("[interface]", "[peer]"):
+            line = "[Interface]" if header == "[interface]" else "[Peer]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def prepare(manifest: dict[str, Any]) -> str:
     kind = manifest.get("kind")
     if kind == "configFile":
@@ -769,7 +852,7 @@ def prepare(manifest: dict[str, Any]) -> str:
         config = render_settings(_decode_json_value(manifest.get("settings"), "settings"))
     else:
         raise ConfigError(f"unsupported manifest kind '{kind}'")
-    config = _apply_awg3_mtu_default(config)
+    config = _apply_awg3_mtu_default(_normalize_headers(config))
     if manifest.get("endpoint") is not None:
         config = override_endpoint(config, str(manifest["endpoint"]))
     validate_config(config, bool(manifest.get("allowConfigHooks", False)))
@@ -786,7 +869,7 @@ def import_source(text: str, container: str | None = None) -> tuple[str, dict[st
     name = ""
     if text.startswith("vpn://"):
         data = decode_vpn_link(text)
-        config = extract_vpn_config(data, container)
+        config = _normalize_headers(extract_vpn_config(data, container))
         for key in ("description", "name", "hostName"):
             if isinstance(data.get(key), str) and data[key].strip():
                 name = data[key].strip()
@@ -794,7 +877,7 @@ def import_source(text: str, container: str | None = None) -> tuple[str, dict[st
     elif "[interface]" in text.lower():
         if container:
             raise ConfigError("--container only applies to a vpn:// link")
-        config = _apply_awg3_mtu_default(text + "\n")
+        config = _apply_awg3_mtu_default(_normalize_headers(text + "\n"))
     else:
         raise ConfigError("expected an AmneziaWG .conf or a vpn:// link")
     validate_config(config)
@@ -915,11 +998,20 @@ def main() -> int:
             # Before the outbound rendering drops them: per-app routing sends the app's DNS here.
             write_private(args.dns_out, "".join(f"{server}\n" for server in dns_servers(config)))
         if args.wireproxy is not None:
-            config = as_wireproxy(config, args.wireproxy, args.outbound_fwmark)
+            # The listener's login from the environment (wg-tunnel.nix): argv is public.
+            hop_password = os.environ.get("HOP_PASSWORD", "")
+            login = (os.environ.get("HOP_USER", "hop"), hop_password) if hop_password else None
+            config = as_wireproxy(config, args.wireproxy, args.outbound_fwmark, login)
         elif args.outbound_fwmark is not None:
-            config = as_outbound(config, args.outbound_fwmark)
+            # A declared profile keeps its prefixes; one from a group-writable spool may not
+            # route a range of the host's into its tunnel.
+            shared = args.config is not None and _shared_directory(args.config)
+            config = as_outbound(config, args.outbound_fwmark, host_addresses=shared)
         elif args.fwmark is not None:
-            config = _set_interface_value(config, "FwMark", str(args.fwmark))
+            config = _replace_interface_key(config, "FwMark", str(args.fwmark))
+        if args.wireproxy is None and args.config is not None and _shared_directory(args.config):
+            # A global profile from the group-writable spool, which root's awg-quick brings up.
+            config = _drop_privileged_listen_port(config)
         if args.resolve_endpoints:
             config = resolve_endpoints(config)
         if args.wireproxy is None:

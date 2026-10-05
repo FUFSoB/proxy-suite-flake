@@ -25,15 +25,15 @@ def vmess_url(extra: dict) -> str:
 class BuildOutboundTests(unittest.TestCase):
     def test_vless_reality(self):
         ob = run_parser(
-            "vless://uuid@example.com:443?security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com&sid=abcd"
+            "vless://uuid@example.com:443?security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=chrome&sni=cdn.example.com&sid=abcd"
         )
         self.assertEqual(ob["type"], "vless")
         self.assertEqual(ob["server"], "example.com")
-        self.assertEqual(ob["tls"]["reality"]["public_key"], "pubkey")
+        self.assertEqual(ob["tls"]["reality"]["public_key"], "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc")
 
     def test_vless_reality_germany_main_shape(self):
         ob = run_parser(
-            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
         )
         self.assertEqual(ob["type"], "vless")
         self.assertEqual(ob["server_port"], 443)
@@ -46,7 +46,7 @@ class BuildOutboundTests(unittest.TestCase):
 
     def test_xray_vless_reality_germany_main_shape(self):
         ob = run_xray_parser(
-            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=qq&sni=last.fm&sid=8a54&spx=%2F-%2Fen%2Fgp%2Fbestsellers&flow=xtls-rprx-vision&encryption=none"
         )
         self.assertEqual(ob["protocol"], "vless")
         self.assertEqual(ob["settings"]["address"], "example.com")
@@ -62,13 +62,13 @@ class BuildOutboundTests(unittest.TestCase):
     def test_vless_raw_transport_is_tcp(self):
         # XRay renamed the tcp network to "raw"; it is still plain TCP.
         ob = run_parser(
-            "vless://uuid@example.com:443?type=raw&security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com"
+            "vless://uuid@example.com:443?type=raw&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=chrome&sni=cdn.example.com"
         )
         self.assertNotIn("transport", ob)
 
     def test_at_sign_in_query_does_not_eat_the_host(self):
         ob = run_parser(
-            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey"
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc"
             "&fp=chrome&sni=cdn.example.com&Telegram=@somechannel,@somechannel"
         )
         self.assertEqual(ob["server"], "example.com")
@@ -76,7 +76,7 @@ class BuildOutboundTests(unittest.TestCase):
 
     def test_trailing_path_is_not_part_of_the_port(self):
         ob = run_parser(
-            "vless://uuid@example.com:23576/?type=tcp&security=reality&pbk=pubkey&fp=chrome&sni=cdn.example.com"
+            "vless://uuid@example.com:23576/?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=chrome&sni=cdn.example.com"
         )
         self.assertEqual(ob["server_port"], 23576)
 
@@ -94,21 +94,110 @@ class BuildOutboundTests(unittest.TestCase):
     def test_reality_empty_fingerprint_falls_back_to_chrome(self):
         # sing-box's REALITY client refuses to start without a uTLS block.
         ob = run_parser(
-            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey&fp=&sni=cdn.example.com"
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&fp=&sni=cdn.example.com"
         )
         self.assertEqual(ob["tls"]["utls"]["fingerprint"], "chrome")
 
     def test_xray_only_fingerprint_rejected_for_sing_box(self):
         url = (
-            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=pubkey"
-            "&fp=unsafe&sni=cdn.example.com"
+            "vless://uuid@example.com:443?type=tcp&security=reality&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc"
+            "&fp=hellochrome_120&sni=cdn.example.com"
         )
         with self.assertRaises(ValueError):
             run_parser(url)
         self.assertEqual(
             run_xray_parser(url)["streamSettings"]["realitySettings"]["fingerprint"],
-            "unsafe",
+            "hellochrome_120",
         )
+        # XRay's REALITY refuses the two it takes for plain TLS only.
+        for fp in ("unsafe", "hellogolang", "bogus"):
+            with self.subTest(fp=fp), self.assertRaisesRegex(ValueError, "XRay would refuse"):
+                run_xray_parser(url.replace("hellochrome_120", fp))
+
+    def test_values_a_backend_refuses_to_start_on_are_rejected(self):
+        """Each of these took sing-box check or xray -test down with the whole config;
+        rejected here, a subscription skips just that entry."""
+        reality = (
+            "vless://uuid@example.com:443?security=reality&sni=a.example.com"
+            "&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&sid=ab"
+        )
+        tuic = "tuic://00000000-0000-0000-0000-000000000000:pw@example.com:443"
+        k16 = base64.b64encode(b"k" * 16).decode()
+        cases = [
+            (reality + "&flow=xtls-rprx-direct", "both", "flow"),
+            (reality + "&flow=xtls-rprx-vision-udp443", "sing-box", "flow"),
+            (reality.replace("pbk=SbVK", "pbk=SbV+"), "both", "pbk"),
+            (reality.replace("pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc", "pbk=pubkey"), "both", "pbk"),
+            (reality.replace("sid=ab", "sid=abc"), "both", "sid"),
+            (reality.replace("sid=ab", "sid=0123456789abcdef00"), "both", "sid"),
+            (reality.replace("sid=ab", "sid=zz"), "both", "sid"),
+            (reality + "&spx=nopath", "xray", "spx"),
+            (reality + "&spx=%2F%25zz", "xray", "spx"),
+            (reality + "&spx=%2Fa%01b", "xray", "spx"),
+            (reality.replace("uuid@", "x" * 31 + "@"), "xray", "VLESS id"),
+            ("vless://uuid@example.com:443?type=xhttp&security=tls&mode=bogus", "xray", "xhttp mode"),
+            ("vless://uuid@example.com:443?type=h2&security=tls", "xray", "transport"),
+            ("vless://uuid@example.com:443?type=quic&security=tls", "xray", "transport"),
+            ("trojan://pw@example.com:443?security=tls&fp=bogus", "both", "fingerprint"),
+            (vmess_url({"scy": "aes-128-ctr"}), "sing-box", "VMess security"),
+            (vmess_url({"scy": "bogus"}), "sing-box", "VMess security"),
+            (vmess_url({"id": 123}), "both", "VMess id"),
+            (vmess_url({"id": None}), "xray", "VMess id"),
+            (tuic + "?congestion_control=reno", "sing-box", "congestion_control"),
+            ("tuic://not-a-uuid:pw@example.com:443", "sing-box", "TUIC uuid"),
+            ("hy2://pw@example.com:443?mport=a-b", "both", "mport"),
+            ("hy2://pw@example.com:443?mport=1-70000", "both", "mport"),
+            ("hy2://pw@example.com:443?mport=0-5", "both", "mport"),
+            ("hy2://pw@example.com:443?mport=30000-20000", "both", "mport"),
+            ("hy2://pw@example.com:443?insecure=1&pinSHA256=abcd", "xray", "pinSHA256"),
+            ("trojan://@example.com:443?security=tls", "both", "password is empty"),
+            ("hy2://pw@example.com:443?obfs=salamander", "both", "obfs-password"),
+            ("ss://plain:pw@example.com:8388", "both", "method"),
+            ("ss://aes-128-ctr:pw@example.com:8388", "xray", "method"),
+            ("ss://chacha20-poly1305:pw@example.com:8388", "sing-box", "method"),
+            ("ss://2022-blake3-aes-128-gcm:pw@example.com:8388", "both", "base64 key"),
+            ("ss://2022-blake3-aes-128-gcm:" + base64.b64encode(b"k" * 32).decode() + "@example.com:8388", "both", "base64 key"),
+            (f"ss://2022-blake3-chacha20-poly1305:{k16}%3A{k16}@example.com:8388", "both", "single key"),
+        ]
+        for url, backends, message in cases:
+            for backend in ("sing-box", "xray") if backends == "both" else (backends,):
+                with self.subTest(url=url, backend=backend), self.assertRaisesRegex(ValueError, message):
+                    build_outbound(url, "test-outbound", backend=backend)
+
+    def test_values_one_backend_takes_still_parse(self):
+        reality = (
+            "vless://uuid@example.com:443?security=reality&sni=a.example.com"
+            "&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&sid=0123456789ABCDEF"
+        )
+        self.assertEqual(run_xray_parser(reality + "&flow=xtls-rprx-vision-udp443")["settings"]["flow"],
+                         "xtls-rprx-vision-udp443")
+        self.assertEqual(run_parser(reality)["tls"]["reality"]["short_id"], "0123456789ABCDEF")
+        self.assertEqual(run_xray_parser(vmess_url({"scy": "aes-128-ctr"}))["settings"]["security"], "aes-128-ctr")
+        self.assertEqual(run_parser(vmess_url({"scy": "aes-128-cfb"}))["security"], "aes-128-cfb")
+        # XRay takes a space (and non-ASCII) in spiderX; only control characters and bad escapes kill it.
+        spx = run_xray_parser(reality + "&spx=%2Fa%20b%C3%A9")["streamSettings"]["realitySettings"]["spiderX"]
+        self.assertEqual(spx, "/a b\u00e9")
+        self.assertEqual(run_xray_parser("ss://chacha20-poly1305:pw@example.com:8388")["settings"]["method"],
+                         "chacha20-poly1305")
+        self.assertEqual(run_parser("ss://aes-128-ctr:pw@example.com:8388")["method"], "aes-128-ctr")
+        k16 = base64.b64encode(b"k" * 16).decode()
+        ss2022 = run_parser(f"ss://2022-blake3-aes-128-gcm:{k16}%3A{k16}@example.com:8388")
+        self.assertEqual(ss2022["password"], f"{k16}:{k16}")
+
+    def test_hysteria2_port_hopping_takes_lone_ports(self):
+        # sing-box refuses a bare "443"; it is the one-port range.
+        ob = run_parser("hy2://pw@example.com:443?mport=443, 20000-30000")
+        self.assertEqual(ob["server_ports"], ["443:443", "20000:30000"])
+        remote = run_xray_parser("hy2://pw@example.com:443?mport=443,20000-30000")
+        self.assertEqual(remote["streamSettings"]["finalmask"]["udp"][0]["settings"]["remotePorts"], "443-443,20000-30000")
+
+    def test_hysteria2_pin_replaces_insecure_for_xray(self):
+        pin = ":".join(["AB"] * 32)
+        url = f"hy2://pw@example.com:443?sni=a.example.com&insecure=1&pinSHA256={pin}"
+        tls = run_xray_parser(url)["streamSettings"]["tlsSettings"]
+        self.assertEqual(tls["pinnedPeerCertSha256"], "ab" * 32)
+        # sing-box pins only a public key: the link stays insecure there.
+        self.assertTrue(run_parser(url)["tls"]["insecure"])
 
     def test_reality_without_pbk_is_rejected_clearly(self):
         with self.assertRaisesRegex(ValueError, "pbk"):
@@ -163,6 +252,33 @@ class BuildOutboundTests(unittest.TestCase):
             run_xray_parser(
                 "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&extra="
                 + urllib.parse.quote(extra)
+            )
+
+    def test_xray_xhttp_extra_cannot_set_socket_options(self):
+        # A mark or interface would step around proxy-suite's routing; a dialerProxy chains elsewhere.
+        for extra, left in (
+            ({"downloadSettings": {"address": "dl.example.com", "sockopt": {"mark": 0, "tcpFastOpen": True}}},
+             {"downloadSettings": {"address": "dl.example.com", "sockopt": {"tcpFastOpen": True}}}),
+            ({"downloadSettings": {"sockopt": {"customSockopt": [], "TProxy": "redirect"}}},
+             {"downloadSettings": {"sockopt": {}}}),
+            ({"downloadSettings": {"sockopt": {"dialerProxy": "direct", "interface": "eth0"}}},
+             {"downloadSettings": {"sockopt": {}}}),
+            ({"Mark": 1, "xPaddingBytes": "100-1000"}, {"xPaddingBytes": "100-1000"}),
+            # The Kelvin sign, which Go folds to k as Python's lower() does.
+            ({"downloadSettings": {"sockopt": {"mar\u212a": 0}}}, {"downloadSettings": {"sockopt": {}}}),
+        ):
+            with self.subTest(extra=extra):
+                ob = run_xray_parser(
+                    "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&extra="
+                    + urllib.parse.quote(json.dumps(extra))
+                )
+                self.assertEqual(ob["streamSettings"]["xhttpSettings"]["extra"], left)
+        # Go's JSON decoding folds U+017F to s: XRay reads this as masterKeyLog, so a
+        # non-ASCII key is refused outright.
+        with self.assertRaisesRegex(ValueError, "names local files"):
+            run_xray_parser(
+                "vless://uuid@example.com:443?type=xhttp&security=tls&sni=cdn.example.com&extra="
+                + urllib.parse.quote(json.dumps({"downloadSettings": {"tlsSettings": {"ma\u017fterKeyLog": "/etc/x"}}}))
             )
 
     def test_xray_vless_ech(self):
@@ -245,7 +361,9 @@ class BuildOutboundTests(unittest.TestCase):
         self.assertEqual(ob["tls"]["server_name"], "example.com")
         self.assertEqual(ob["transport"]["headers"]["Host"], "example.com")
         self.assertEqual(ob["transport"]["path"], "/")
-        tuic = run_parser("tuic://uuid:pw@example.com:443?alpn=&congestion_control=&udp_relay_mode=")
+        tuic = run_parser(
+            "tuic://00000000-0000-0000-0000-000000000000:pw@example.com:443?alpn=&congestion_control=&udp_relay_mode="
+        )
         self.assertEqual(tuic["tls"]["alpn"], ["h3"])
         self.assertEqual((tuic["congestion_control"], tuic["udp_relay_mode"]), ("bbr", "native"))
 

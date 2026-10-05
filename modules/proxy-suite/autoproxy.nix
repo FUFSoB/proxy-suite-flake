@@ -7,6 +7,7 @@
   cfg,
   proxyCtl,
   autoProxyStateDir,
+  autoProxySpoolDir,
   runtimeDir,
   journalctl,
   userControlAllows,
@@ -17,14 +18,14 @@ let
   apCfg = cfg.proxy.autoProxy;
   derived = import ./derived.nix { inherit lib cfg; };
   inherit (derived.constants) rootInSharedDirConfig;
-  # The autoProxy scope's groups write the directory: `proxy auto learn` queues there. Those
-  # in userControl.groups through ACLs, which the group bits (the ACL mask) leave open.
-  stateDirMode = if derived.userControlAnyAllows "autoProxy" then "0771" else "0751";
+  # The autoProxy scope's groups read the state (userControl.groups through ACLs), root alone
+  # writes it (autoproxy-migrate.nix sets the mode).
   grantAcl = pkgs.writeShellScript "proxy-suite-autoproxy-acl" (
     derived.constants.grantDirAcl pkgs (lib.escapeShellArg autoProxyStateDir)
       (derived.userControlExtraGroupsFor "autoProxy")
-      "rwX"
+      "rX"
   );
+  migrate = import ./autoproxy-migrate.nix { inherit pkgs; };
   render = import ./autoproxy-render.nix {
     inherit pkgs;
     inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser ifPrivileged;
@@ -36,19 +37,31 @@ let
       inherit path;
     };
 
-  bin = lib.makeBinPath [
-    pkgs.coreutils
-    pkgs.curl
-    pkgs.gawk
-    pkgs.gnugrep
-    pkgs.gnused
-    pkgs.jq
-    pkgs.systemd
-    pkgs.util-linux
-    proxyCtl
-  ];
+  bin = lib.makeBinPath (
+    [
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.findutils
+      pkgs.gawk
+      pkgs.gnugrep
+      pkgs.gnused
+      pkgs.jq
+    ]
+    # journalctl; proxy-suitectl, by path, answers it on its own.
+    ++ lib.optional (cfg.host.serviceManager != "supervisor") pkgs.systemd
+    ++ [
+      pkgs.util-linux
+      proxyCtl
+    ]
+  );
 
   excludePattern = lib.concatStringsSep "|" (map lib.escapeRegex apCfg.exclude);
+
+  # Public suffixes, the private section's too, in the xn-- form names come in: to_reg groups
+  # a host under its registrable domain by them.
+  publicSuffixes =
+    pkgs.runCommand "proxy-suite-autoproxy-public-suffixes" { nativeBuildInputs = [ pkgs.python3 ]; }
+      "python3 ${./zapret2/public-suffixes.py} --private ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat >$out";
 
   # Sets $clash_api (empty when the API is off) and $clash_secret (curl sends it through
   # clash_auth_header, never argv, which every local user can read).
@@ -64,7 +77,8 @@ let
     fillTemplate ./autoproxy-sample.template.sh {
       path = bin;
       stateDir = lib.escapeShellArg autoProxyStateDir;
-      inherit runtimeDir clashApiBlock stateDirMode;
+      spoolDir = lib.escapeShellArg autoProxySpoolDir;
+      inherit runtimeDir clashApiBlock migrate;
       minBytes = toString (300 * 1024);
       slowBelowBytes = toString (apCfg.slowBelowKiBps * 1024);
       slowSampleJq = jqFile ./autoproxy-slow-sample.jq;
@@ -75,41 +89,77 @@ let
     fillTemplate ./autoproxy-run.template.sh {
       path = bin;
       stateDir = lib.escapeShellArg autoProxyStateDir;
+      spoolDir = lib.escapeShellArg autoProxySpoolDir;
       inherit runtimeDir;
       ttlDays = toString apCfg.ttlDays;
-      inherit stateDirMode;
+      inherit migrate;
       editJq = jqFile ./autoproxy-edit.jq;
       inherit render;
       strikeJq = jqFile ./autoproxy-strike.jq;
       roundsJq = jqFile ./autoproxy-rounds.jq;
       interval = apCfg.interval;
       inherit journalctl;
-      excludeHosts = lib.optionalString (excludePattern != "") "grep -vE '(^|\\.)(${excludePattern})$' |";
+      # Quoted whole: escapeRegex leaves a quote or backtick in a name as it is.
+      excludeHosts = lib.optionalString (
+        excludePattern != ""
+      ) "grep -vE ${lib.escapeShellArg "(^|\\.)(${excludePattern})$"} |";
       excludeSampleHosts = lib.optionalString (
         excludePattern != ""
-      ) "grep -vE '(^|\\.)(${excludePattern})'$'\\t' |";
+      ) "grep -vE ${lib.escapeShellArg "(^|\\.)(${excludePattern})"}$'\\t' |";
       slowJudgeJq = jqFile ./autoproxy-slow-judge.jq;
       probesPerRun = toString apCfg.probesPerRun;
+      inherit publicSuffixes;
     }
   );
 
-  # Group: `proxy-ctl proxy auto list|queue` reads state.json, `learn` queues requests.
-  # Set on every unit that declares the directory - systemd re-applies the ownership
-  # on each start.
+  # Group: `proxy-ctl proxy auto list|queue` reads state.json. Set on every unit that
+  # declares the directory - systemd re-applies the ownership on each start.
   stateDirConfig = {
     StateDirectory = "proxy-suite/autoproxy";
     # 0751 and a 027 umask: sing-box (proxy-suite-daemon) reaches the rule-sets through
-    # rules/, which its group reads (autoproxy-render.nix), and nothing else.
-    StateDirectoryMode = stateDirMode;
+    # rules/, which its group reads (autoproxy-render.nix), and nothing else. An existing
+    # directory takes it from autoproxy-migrate.nix: systemd leaves its mode be.
+    StateDirectoryMode = "0751";
     UMask = "0027";
-    # Inside the sandbox below, which keeps a name a member left there from leading it
-    # anywhere else.
     ExecStartPre = "${grantAcl}";
   }
   // lib.optionalAttrs (userControlAllows "autoProxy") { Group = cfg.userControl.group; }
-  # Root writes by fixed names in a directory the group writes to: nowhere else, whatever
-  # a name there points at.
-  // rootInSharedDirConfig;
+  # Root works in the spool members write to: nothing else is writable.
+  // rootInSharedDirConfig
+  // lib.optionalAttrs cfg.host.privileged {
+    ReadWritePaths = [ "-${autoProxySpoolDir}" ];
+    # Nothing it runs (curl, jq, proxy-ctl, systemctl) is setuid.
+    NoNewPrivileges = true;
+    LockPersonality = true;
+    RestrictRealtime = true;
+    # Root for files alone: chgrp, ACLs, the spool and the Clash secret (CHOWN, FOWNER, DAC_*).
+    CapabilityBoundingSet = [
+      "CAP_CHOWN"
+      "CAP_DAC_OVERRIDE"
+      "CAP_DAC_READ_SEARCH"
+      "CAP_FOWNER"
+    ];
+    ProtectKernelModules = true;
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_INET6"
+      "AF_UNIX"
+      "AF_NETLINK"
+    ];
+  };
+
+  # Sticky, so no member takes another's request; setgid for the group. By tmpfiles, so the
+  # group can queue before any unit has run.
+  spoolMode =
+    if userControlAllows "autoProxy" then
+      "3770 root ${cfg.userControl.group}"
+    # userControl.groups only, through ACLs (proxy-suite-acls): the mode keeps them open.
+    else if derived.userControlAnyAllows "autoProxy" then
+      "3770 root root"
+    else if cfg.host.privileged then
+      "0700 root root"
+    else
+      "0700 - -";
 
   mkUnit = description: args: {
     inherit description;
@@ -122,11 +172,16 @@ let
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${runner}${args}";
+      # A run of tarpits must not hold the lock for good; each probe's verdict is saved as it
+      # comes, so one cut short keeps what it learned. Far past any honest run's length.
+      TimeoutStartSec = "2h";
     }
     // stateDirConfig;
   };
 in
 {
+  services.proxy-suite.internal.tmpfiles = [ "d ${autoProxySpoolDir} ${spoolMode} -" ];
+
   services.proxy-suite.internal.services.proxy-suite-autoproxy =
     mkUnit "proxy-suite - find the exit that reaches each destination, and remember it" "";
 
@@ -141,6 +196,8 @@ in
         serviceConfig = {
           Type = "oneshot";
           ExecStart = "${sampler}";
+          # Its timer comes every minute.
+          TimeoutStartSec = "50s";
         }
         // stateDirConfig;
       };

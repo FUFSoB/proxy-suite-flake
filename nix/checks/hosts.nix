@@ -87,6 +87,7 @@ let
     fixture: map (a: a.message) (lib.filter (a: !a.assertion) fixture.config.assertions);
   # Through JSON: derivations stop at their store paths, which is where the scripts get built.
   forced = value: builtins.isString (builtins.toJSON value);
+  packageNamed = name: lib.findFirst (p: lib.getName p == name) null;
 
   proxy = {
     enable = true;
@@ -238,7 +239,12 @@ in
       assert
         smCfg.systemd.services.proxy-suite-socks.serviceConfig.SyslogIdentifier == "proxy-suite-socks";
       assert smCfg.systemd.services ? proxy-suite-tproxy;
+      # No NixOS time daemon options to read: the kill switch tries the usual users.
+      assert builtins.elem "chrony" smCfg.services.proxy-suite.killSwitch.timeSyncUsers;
+      assert builtins.elem "systemd-timesync" smCfg.services.proxy-suite.killSwitch.timeSyncUsers;
       assert smCfg.environment.etc ? "polkit-1/rules.d/50-proxy-suite.rules";
+      # The GUI's pkexec action, where the distribution's polkit (126+) reads it.
+      assert smCfg.environment.etc ? "polkit-1/actions/io.github.FUFSoB.ProxySuite.proxy-ctl.policy";
       assert smCfg.environment.etc ? "systemd/user/proxy-suite-gui.service";
       assert forced smCfg.systemd.services;
       true
@@ -257,6 +263,29 @@ in
       # Android bans apps from netlink's route groups, which stock sing-box subscribes to.
       assert nodCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false;
       assert !(hmCfg.services.proxy-suite.proxy.singBox.package.passthru.rootlessNetlink or false);
+      # Space on a phone: no systemd (proxy-suitectl stands in), lnav or curl-impersonate.
+      assert lib.all
+        (
+          name:
+          let
+            wrapper = (packageNamed name nodCfg.environment.packages).buildCommand;
+          in
+          lib.all (dep: !(lib.hasInfix dep wrapper)) [
+            "-systemd-"
+            "-lnav-"
+            "-curl-impersonate-"
+          ]
+        )
+        [
+          "proxy-ctl"
+          "proxy-tui"
+        ];
+      # Elsewhere they stay.
+      assert lib.all (dep: lib.hasInfix dep (packageNamed "proxy-ctl" hmCfg.home.packages).buildCommand) [
+        "-systemd-"
+        "-lnav-"
+        "-curl-impersonate-"
+      ];
       true
     )
     (

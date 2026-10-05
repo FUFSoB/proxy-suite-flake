@@ -48,13 +48,13 @@ in
       type = types.listOf types.str;
       default = [ ];
       description = ''
-        Accepted host keys, for sing-box. List every key `ssh-keyscan` prints, since the key type
-        is negotiated.
+        Accepted host keys, for sing-box, and for OpenSSH without `knownHostsFile`. List every
+        key `ssh-keyscan` prints, since the key type is negotiated.
       '';
       example = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." ];
     };
 
-    hostKeyFile = path "Known-hosts file to read host keys from (sing-box). Takes priority over `hostKey`." "/root/.ssh/known_hosts";
+    hostKeyFile = path "Known-hosts file to read host keys from (sing-box, and OpenSSH without `knownHostsFile`). Takes priority over `hostKey`." "/root/.ssh/known_hosts";
 
     # The rest only apply to the OpenSSH unit (XRay, or asOutbound = false).
     knownHostsFile = path "Known-hosts file for OpenSSH." "/run/secrets/proxy-suite-ssh-known-hosts";
@@ -65,9 +65,13 @@ in
         "accept-new"
         "no"
       ];
-      default = "accept-new";
-      description = "OpenSSH host key policy.";
-      example = "yes";
+      default = "yes";
+      description = ''
+        OpenSSH host key policy. "yes" needs the server's keys: `knownHostsFile`, or else
+        `hostKeyFile` or `hostKey`. "accept-new" takes whatever key the first connection
+        meets, which anyone on the way can answer then.
+      '';
+      example = "accept-new";
     };
 
     # The local SOCKS5 listener the OpenSSH unit opens.
@@ -81,14 +85,22 @@ in
       port = mkOption {
         type = types.port;
         default = 1091;
-        description = "Port of the OpenSSH SOCKS5 listener.";
+        description = ''
+          Port of the OpenSSH SOCKS5 listener. It takes no login: where it is the XRay backend's
+          hop (`asOutbound`) on a host with root, only proxy-suite's daemons and root may
+          connect to it. A standalone tunnel stays open to every local user.
+        '';
       };
     };
 
     serviceUser = mkOption {
-      type = token;
+      # A user name as nft and systemd take one.
+      type = types.nullOr (types.strMatching "[a-z_][a-z0-9_-]*[$]?");
       default = "proxy-suite-daemon";
-      description = "User that runs OpenSSH. The default is sandboxed; `null` runs it as root.";
+      description = ''
+        User that runs OpenSSH. The default is sandboxed; `null` runs it as root. Another user's
+        traffic gets past the kill switch, all of it: never a login user's.
+      '';
       example = "proxy";
     };
 

@@ -8,6 +8,13 @@
   # (modules/proxy-suite/service/control.nix); proxy_ctl.py reads every name with env().
   env,
   guiRefreshInterval ? 3,
+  # Off where proxy-suitectl runs the units (nix-on-droid): proxy-ctl reaches it through
+  # SUPERVISOR_CTL, and systemd stays out of the closure.
+  withSystemd ? true,
+  # `proxy-ctl logs` follows in less without it.
+  withLnav ? true,
+  # Probes go through plain curl without it.
+  withCurlImpersonate ? true,
   # These four are also passed as derivations: the checks read the files' contents through
   # passthru.proxySuiteCheck, which toString in env would lose.
   subscriptionTagsFile,
@@ -22,6 +29,17 @@ let
     "#!${pkgs.python3}/bin/python3\n" + builtins.readFile ./proxy-ctl/proxy_ctl.py
   );
   wrapperEnv = env;
+  # Probes present a browser's TLS fingerprint: bot protection refuses plain
+  # curl. The newest Chrome profile the package ships, since the set varies by
+  # version; the build fails if there is none.
+  findProbeCurl = lib.optionalString withCurlImpersonate ''
+    probe_curl=$(ls ${pkgs.curl-impersonate}/bin/curl_chrome[0-9]* | grep -E '/curl_chrome[0-9]+$' | sort -V | tail -n 1)
+    [ -x "$probe_curl" ]
+  '';
+  # Unset, proxy_ctl.py probes with the curl on PATH.
+  probeCurlFlag = lib.optionalString withCurlImpersonate (
+    ''--set PROBE_CURL "$probe_curl" \'' + "\n  "
+  );
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") wrapperEnv
   );
@@ -47,12 +65,7 @@ let
       # /run/wrappers/bin first: the store's sudo, earlier on a PATH, refuses to run without setuid.
       wrapProgram "$out/bin/proxy-tui" \
         --prefix PYTHONPATH : ${pythonModules} \
-        --prefix PATH : "${
-          lib.makeBinPath [
-            proxyCtl
-            pkgs.systemd
-          ]
-        }" \
+        --prefix PATH : "${lib.makeBinPath ([ proxyCtl ] ++ lib.optional withSystemd pkgs.systemd)}" \
         --prefix PATH : /run/wrappers/bin ${envFlags}
     '';
   };
@@ -133,11 +146,7 @@ let
         "''${gappsWrapperArgs[@]}" \
         --prefix PYTHONPATH : "${pythonModules}:$out/lib/proxy-suite-gui" \
         --prefix PATH : "${
-          lib.makeBinPath [
-            proxyCtl
-            pkgs.systemd
-            pkgs.qrencode
-          ]
+          lib.makeBinPath ([ proxyCtl ] ++ lib.optional withSystemd pkgs.systemd ++ [ pkgs.qrencode ])
         }" \
         --prefix PATH : /run/wrappers/bin \
         --set PROXY_GUI_ICON_DIR "$out/share/proxy-suite-gui/icons" \
@@ -164,32 +173,28 @@ let
         ;
       script = unwrapped.drvAttrs.text;
     };
-    # Probes present a browser's TLS fingerprint: bot protection refuses plain
-    # curl. The newest Chrome profile the package ships, since the set varies by
-    # version; the build fails if there is none.
     postBuild = ''
       install -Dm644 ${./proxy-ctl/completions/proxy-ctl.bash} \
         "$out/share/bash-completion/completions/proxy-ctl"
       install -Dm644 ${./proxy-ctl/completions/_proxy-ctl} "$out/share/zsh/site-functions/_proxy-ctl"
       install -Dm644 ${./proxy-ctl/completions/proxy-ctl.fish} \
         "$out/share/fish/vendor_completions.d/proxy-ctl.fish"
-      probe_curl=$(ls ${pkgs.curl-impersonate}/bin/curl_chrome[0-9]* | grep -E '/curl_chrome[0-9]+$' | sort -V | tail -n 1)
-      [ -x "$probe_curl" ]
-      wrapProgram "$out/bin/proxy-ctl" \
-        --set PROBE_CURL "$probe_curl" \
-        --set PROXY_CTL_MODULES ${pythonModules} \
+      ${findProbeCurl}wrapProgram "$out/bin/proxy-ctl" \
+        ${probeCurlFlag}--set PROXY_CTL_MODULES ${pythonModules} \
         --prefix PATH : "${
-          lib.makeBinPath [
+          lib.makeBinPath (
             # curl-impersonate's curl_chrome* wrappers are `#!/usr/bin/env bash`.
-            pkgs.bash
-            pkgs.curl
-            pkgs.fzf
-            # `proxy-ctl logs` follows in lnav.
-            pkgs.lnav
-            pkgs.proxychains-ng
-            pkgs.qrencode
-            pkgs.systemd
-          ]
+            lib.optional withCurlImpersonate pkgs.bash
+            ++ [
+              pkgs.curl
+              pkgs.fzf
+              # `proxy-ctl logs` follows in lnav, or in less without it.
+              (if withLnav then pkgs.lnav else pkgs.less)
+              pkgs.proxychains-ng
+              pkgs.qrencode
+            ]
+            ++ lib.optional withSystemd pkgs.systemd
+          )
         }" ${envFlags}
     '';
   };

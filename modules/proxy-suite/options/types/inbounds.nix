@@ -3,7 +3,7 @@
 let
   inherit (lib) mkOption types;
   inherit (import ./amnezia-wg.nix { inherit lib; }) obfuscationType;
-  inherit (import ../lib.nix { inherit lib; }) nullStr;
+  inherit (import ../lib.nix { inherit lib; }) nullStr ipv6CidrType;
 
   # One inbound user, in `inbounds.users` under their name (shown in share links, subscriptions
   # and stats); listeners name the ones they accept.
@@ -73,10 +73,14 @@ let
           '';
         };
 
-        subnet6 = nullStr ''
-          Tunnel IPv6 subnet (ULA). `null`: IPv4 only. With `mode = "lan"` it turns on IPv6
-          forwarding, which stops this host from configuring itself from router advertisements.
-        '' "fd66:66::/64";
+        subnet6 =
+          nullStr ''
+            Tunnel IPv6 subnet (ULA). `null`: IPv4 only. With `mode = "lan"` it turns on IPv6
+            forwarding, which stops this host from configuring itself from router advertisements.
+          '' "fd66:66::/64"
+          // {
+            type = types.nullOr ipv6CidrType;
+          };
 
         privateKeyFile = nullStr "File with the server private key, instead of a generated one." "/run/secrets/awg-server-key";
 

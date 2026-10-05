@@ -103,6 +103,10 @@ Part of the [proxy-suite options reference](./index.md).
         - [ips](#services-proxy-suite-proxy-routing-rules-ips)
         - [outbound](#services-proxy-suite-proxy-routing-rules-outbound)
         - [ruleSets](#services-proxy-suite-proxy-routing-rules-rulesets)
+  - runtimeSubscriptions
+    - [allowHttp](#services-proxy-suite-proxy-runtimesubscriptions-allowhttp)
+    - [allowInsecure](#services-proxy-suite-proxy-runtimesubscriptions-allowinsecure)
+    - [allowPrivateServers](#services-proxy-suite-proxy-runtimesubscriptions-allowprivateservers)
   - [selection](#services-proxy-suite-proxy-selection)
   - [selectionExclude](#services-proxy-suite-proxy-selectionexclude)
   - singBox
@@ -111,6 +115,8 @@ Part of the [proxy-suite options reference](./index.md).
   - [subscriptionUpdateInterval](#services-proxy-suite-proxy-subscriptionupdateinterval)
   - [subscriptions](#services-proxy-suite-proxy-subscriptions)
     - item
+      - [allowInsecure](#services-proxy-suite-proxy-subscriptions-allowinsecure)
+      - [allowPrivateServers](#services-proxy-suite-proxy-subscriptions-allowprivateservers)
       - [detour](#services-proxy-suite-proxy-subscriptions-detour)
       - [tag](#services-proxy-suite-proxy-subscriptions-tag)
       - [url](#services-proxy-suite-proxy-subscriptions-url)
@@ -192,7 +198,8 @@ authentication, even with ` proxy.listener.auth ` set\.
 <a id="services-proxy-suite-proxy-autoproxy-probesperrun"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.probesPerRun
 
-Maximum destinations probed per run\. The rest wait for the next run, most-used first\.
+Maximum destinations probed per run: of those asked for with ` proxy-ctl proxy auto learn `, and again of those queued from traffic\. The rest wait for the next run, the
+queued ones most-used first\. A run also ends after two hours, its probes kept\.
 
 **Type:** positive integer, meaning >0\
 **Default:** `200`
@@ -449,9 +456,10 @@ Subscriptions whose every entry is a member, as the subscription holds them at s
 <a id="services-proxy-suite-proxy-ipv6"></a>
 ## services\.proxy-suite\.proxy\.ipv6
 
-Route IPv6 through TUN and TProxy too\. When off, TProxy ignores IPv6 and the TUNs block
-it, so apps fall back to IPv4\. If the uplink has no IPv6, also set
-` proxy.dns.strategy = "ipv4_only" `, or direct IPv6 connections hang instead of falling back\.
+Route IPv6 through TUN and TProxy too\. When off, TProxy refuses IPv6 past the LAN and
+on-link prefixes and the TUNs block it, so apps fall back to IPv4\. If the uplink has no
+IPv6, also set ` proxy.dns.strategy = "ipv4_only" `, or direct IPv6 connections hang
+instead of falling back\.
 
 **Type:** boolean\
 **Default:** `config.networking.enableIPv6`
@@ -461,7 +469,7 @@ it, so apps fall back to IPv4\. If the uplink has no IPv6, also set
 
 Address of the local SOCKS5/HTTP proxy\. Use “0\.0\.0\.0” only to expose it to the network\.
 
-**Type:** string\
+**Type:** IP address or host name\
 **Default:** `"127.0.0.1"`
 
 <a id="services-proxy-suite-proxy-listener-auth-password"></a>
@@ -837,9 +845,9 @@ Download through the proxy or directly\.
 <a id="services-proxy-suite-proxy-routing-rulesets-name-url"></a>
 ## services\.proxy-suite\.proxy\.routing\.ruleSets\.\<name>\.url
 
-URL of the sing-box rule set\.
+URL of the sing-box rule set (https only)\.
 
-**Type:** string matching the pattern https?://\.+\
+**Type:** string matching the pattern https://\.+\
 **Example:** `"https://example.com/antifilter.srs"`
 
 <a id="services-proxy-suite-proxy-routing-rules"></a>
@@ -921,6 +929,35 @@ Rule sets from ` proxy.routing.ruleSets ` that this rule matches (sing-box and h
 **Default:** `[ ]`\
 **Example:** `[ "antifilter" ]`
 
+<a id="services-proxy-suite-proxy-runtimesubscriptions-allowhttp"></a>
+## services\.proxy-suite\.proxy\.runtimeSubscriptions\.allowHttp
+
+Let subscriptions added at runtime (` proxy-ctl proxy subs add `) be fetched over plain
+http\. Anyone on the way can then add entries of their own\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-runtimesubscriptions-allowinsecure"></a>
+## services\.proxy-suite\.proxy\.runtimeSubscriptions\.allowInsecure
+
+Keep entries of subscriptions added at runtime that turn certificate checks off, as
+` subscriptions.*.allowInsecure ` does for a declared one\. Anyone on the way can then
+stand in for those servers\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-runtimesubscriptions-allowprivateservers"></a>
+## services\.proxy-suite\.proxy\.runtimeSubscriptions\.allowPrivateServers
+
+Keep entries of subscriptions added at runtime whose server is a private address, as
+` subscriptions.*.allowPrivateServers ` does for a declared one\. Whoever can add a
+subscription then picks servers on your network\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-proxy-selection"></a>
 ## services\.proxy-suite\.proxy\.selection
 
@@ -986,6 +1023,31 @@ start, cached, and refreshed on a timer\. ` proxy-ctl proxy subs add ` adds more
 **Default:** `[ ]`\
 **Example:** `[ { tag = "private"; urlFile = "/run/secrets/private-sub-url"; } ]`
 
+<a id="services-proxy-suite-proxy-subscriptions-allowinsecure"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.allowInsecure
+
+Keep entries that turn certificate checks off (` insecure=1 `, for hysteria2 and
+AnyTLS on sing-box), as for a provider with self-signed certificates\. Anyone on the
+way can then stand in for those servers\. Dropped otherwise\. For subscriptions added
+at runtime, see ` proxy.runtimeSubscriptions.allowInsecure `\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-subscriptions-allowprivateservers"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.allowPrivateServers
+
+Keep entries whose server is a private address (10\.0\.0\.0/8, 172\.16\.0\.0/12,
+192\.168\.0\.0/16, 100\.64\.0\.0/10, fc00::/7), such as a subscription served on your own
+network\. Entries pointing at this host (loopback, “localhost”, unspecified) or at a
+link-local or multicast address are dropped either way: whoever serves the list picks
+the servers, and the fastest wins\. Only literal addresses (and “localhost”) are
+checked\. For subscriptions added at runtime, see
+` proxy.runtimeSubscriptions.allowPrivateServers `\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-proxy-subscriptions-detour"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.detour
 
@@ -1047,7 +1109,7 @@ LAN interfaces whose devices use this host as their gateway\. Their TCP and UDP 
 proxy; everything else is forwarded as usual\. Turns on IP forwarding\. Needs the nftables
 firewall on NixOS\.
 
-**Type:** list of string\
+**Type:** list of network interface name\
 **Default:** `[ ]`\
 **Example:** `[ "br0" ]`
 
@@ -1056,7 +1118,7 @@ firewall on NixOS\.
 
 Subnets that skip the proxy, such as your LAN and VM bridges (DNS still goes through it)\. IPv6 works too\.
 
-**Type:** list of string\
+**Type:** list of IPv4 or IPv6 address or CIDR\
 **Default:** `[ "192.168.0.0/16" ]`\
 **Example:** `[ "192.168.0.0/16" "10.0.0.0/8" "fd00::/8" ]`
 
@@ -1095,9 +1157,9 @@ Whether to enable global TUN mode\.
 <a id="services-proxy-suite-proxy-tun-address"></a>
 ## services\.proxy-suite\.proxy\.tun\.address
 
-TUN interface address (CIDR)\.
+TUN interface IPv4 address (CIDR)\.
 
-**Type:** string\
+**Type:** IPv4 CIDR\
 **Default:** `"172.19.0.1/30"`
 
 <a id="services-proxy-suite-proxy-tun-interface"></a>
@@ -1105,7 +1167,7 @@ TUN interface address (CIDR)\.
 
 TUN interface name\.
 
-**Type:** string\
+**Type:** network interface name\
 **Default:** `"singtun0"`
 
 <a id="services-proxy-suite-proxy-tun-mtu"></a>

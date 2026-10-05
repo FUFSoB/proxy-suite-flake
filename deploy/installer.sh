@@ -107,7 +107,8 @@ ask_all() {
   done
   while true; do
     ask SSH_PORT "SSH port" "22"
-    if [[ $SSH_PORT =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) &&
+    # No leading zero: bash would read 0443 as octal, Nix as 443.
+    if [[ $SSH_PORT =~ ^[1-9][0-9]{0,4}$ ]] && ((SSH_PORT <= 65535)) &&
       [[ ! " 80 443 2053 8443 18533 18534 18535 " == *" $SSH_PORT "* ]]; then
       break
     fi
@@ -149,7 +150,7 @@ ask_all() {
     warn "$DOMAIN does not resolve to $PUBLIC_IP (yet). The certificate order retries until it does."
     ask_yes KEEP_DOMAIN "Keep $DOMAIN anyway" "y"
     [[ $KEEP_DOMAIN == true ]] && break
-    unset PSI_DOMAIN PSI_KEEP_DOMAIN
+    retry "Give another domain, or none." DOMAIN KEEP_DOMAIN
     forget KEEP_DOMAIN
   done
 
@@ -174,18 +175,30 @@ ask_all() {
     warn "$REALITY_SNI did not answer over TLS 1.3 from here; REALITY needs TLS 1.3 and HTTP/2."
     ask_yes KEEP_SNI "Keep $REALITY_SNI anyway" "n"
     [[ $KEEP_SNI == true ]] && break
-    unset PSI_REALITY_SNI PSI_KEEP_SNI
+    retry "Give another REALITY site." REALITY_SNI KEEP_SNI
     forget KEEP_SNI
   done
 
   # --- Disk ---------------------------------------------------------------------
   step "Disk"
-  mapfile -t disks < <(lsblk -dnpo NAME,TYPE,RO | awk '$2 == "disk" && $3 == 0 && $1 !~ /\/(zram|loop|sr|fd)[0-9]/ { print $1 }')
+  # The medium this installer runs from, which some VPS panels attach as a writable disk
+  # rather than a CD: erasing it would kill the install halfway.
+  local live_majmin live_disk=""
+  if live_majmin=$(findmnt -no MAJ:MIN /iso 2>/dev/null) && [[ -e /dev/block/$live_majmin ]]; then
+    live_disk=$(lsblk -ndpo PKNAME "/dev/block/$live_majmin" 2>/dev/null || true)
+    [[ -n $live_disk ]] || live_disk=$(readlink -f "/dev/block/$live_majmin")
+  fi
+  mapfile -t disks < <(lsblk -dnpo NAME,TYPE,RO | awk -v live="$live_disk" '$2 == "disk" && $3 == 0 && $1 != live && $1 !~ /\/(zram|loop|sr|fd)[0-9]/ { print $1 }')
   if ((${#disks[@]} == 0)); then
     warn "No writable disk found."
     exit 1
   fi
   lsblk -dpo NAME,SIZE,MODEL "${disks[@]}"
+  # Unattended, the disk to erase is never guessed, even when there is only one.
+  if [[ -n ${PSI_UNATTENDED-} && -z ${PSI_DISK-} ]]; then
+    warn "PSI_UNATTENDED: set PSI_DISK to the disk to erase."
+    exit 1
+  fi
   while true; do
     ask DISK "Disk to install on (ERASED)" "$(if ((${#disks[@]} == 1)); then printf '%s' "${disks[0]}"; fi)"
     [[ -b $DISK && " ${disks[*]} " == *" $DISK "* ]] && break
@@ -260,6 +273,11 @@ fi
   xray uuid >"$MNT$SECRETS_DIR/uuid"
   printf '%s\n' "$private_key" >"$MNT$SECRETS_DIR/reality-key"
 )
+# The SSH host keys, made here rather than by sshd on the first boot, so the first
+# login (with the password, when no key was given) can be checked against them.
+install -d -m 0755 "$MNT/etc/ssh"
+ssh-keygen -q -t ed25519 -N "" -C "root@$HOST_NAME" -f "$MNT/etc/ssh/ssh_host_ed25519_key"
+ssh-keygen -q -t rsa -b 4096 -N "" -C "root@$HOST_NAME" -f "$MNT/etc/ssh/ssh_host_rsa_key"
 short_id=$(openssl rand -hex 8)
 ws_path="/$(openssl rand -hex 6)"
 
@@ -267,6 +285,9 @@ ws_path="/$(openssl rand -hex 6)"
 step "Writing /etc/nixos"
 etc_nixos="$MNT/etc/nixos"
 
+# Root's alone: it names the REALITY shortId and the WS path, which a local user could
+# otherwise read and probe with.
+install -m 0600 /dev/null "$etc_nixos/host.nix"
 cat >"$etc_nixos/host.nix" <<HOST
 # Written by proxy-suite-install on $(date -u +%Y-%m-%d). Edit it, then apply with:
 #   sudo nixos-rebuild switch --flake /etc/nixos
@@ -360,7 +381,9 @@ TMPDIR="$MNT/tmp" nixos-install \
 rm -rf "$MNT/tmp"
 
 step "Setting the admin password"
-password="$(xkcdpass -n 3 --min 4 --max 6 -d -)-$((RANDOM % 90 + 10))"
+# Four words: three of 4-6 letters and two digits come to some 40 bits, which SSH takes
+# guesses against whenever no key was given.
+password="$(xkcdpass -n 4 --min 4 --max 6 -d -)-$((RANDOM % 90 + 10))"
 password=${password,,}
 hash=$(mkpasswd -m yescrypt --stdin <<<"$password")
 nixos-enter --root "$MNT" -- usermod -p "$hash" "$ADMIN_USER"
@@ -374,6 +397,8 @@ cat <<DONE
 
   SSH:       ssh -p $SSH_PORT $ADMIN_USER@$PUBLIC_IP
   User:      $ADMIN_USER
+  Host keys (compare with what ssh shows on the first login):
+$(for key in "$MNT"/etc/ssh/ssh_host_{ed25519,rsa}_key.pub; do printf '    %s\n' "$(ssh-keygen -lf "$key")"; done)
 DONE
 printf '  Password:  \033[1;32m%s\033[0m\n\n' "$password"
 cat <<DONE

@@ -35,6 +35,29 @@ let
       url = nullStr "Subscription URL. Ends up in the Nix store; prefer `urlFile`." "https://example.com/sub/token123";
       urlFile = nullStr "File with the subscription URL." "/run/secrets/proxy-subscription-url";
       detour = detourOption "every entry of this subscription";
+      allowPrivateServers = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Keep entries whose server is a private address (10.0.0.0/8, 172.16.0.0/12,
+          192.168.0.0/16, 100.64.0.0/10, fc00::/7), such as a subscription served on your own
+          network. Entries pointing at this host (loopback, "localhost", unspecified) or at a
+          link-local or multicast address are dropped either way: whoever serves the list picks
+          the servers, and the fastest wins. Only literal addresses (and "localhost") are
+          checked. For subscriptions added at runtime, see
+          `proxy.runtimeSubscriptions.allowPrivateServers`.
+        '';
+      };
+      allowInsecure = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Keep entries that turn certificate checks off (`insecure=1`, for hysteria2 and
+          AnyTLS on sing-box), as for a provider with self-signed certificates. Anyone on the
+          way can then stand in for those servers. Dropped otherwise. For subscriptions added
+          at runtime, see `proxy.runtimeSubscriptions.allowInsecure`.
+        '';
+      };
     };
   };
 

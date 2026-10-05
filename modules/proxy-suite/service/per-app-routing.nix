@@ -34,6 +34,7 @@ let
         findBin
         headBin
         ;
+      inherit (ctx.constants) systemctl;
     }
     // slices
   );

@@ -158,9 +158,10 @@ in
         singBoxStart;
       assert hasInfix "_proxy_suite_record_tag_source plain awg" singBoxStart;
       assert hasInfix "--output \"$profile\"" plainTunnel && !(hasInfix "--outbound-fwmark" plainTunnel);
-      assert hasInfix "warp_outbound.py --tag plain --routing-mark 2" plainTunnel;
+      assert hasInfix "TUNNEL_TAG=plain\n" plainTunnel;
+      assert hasInfix ''warp_outbound.py --tag "$TUNNEL_TAG" --routing-mark 2'' plainTunnel;
       assert hasInfix "listen_port: 18602" plainTunnel;
-      assert hasInfix ''detour: "plain"'' plainTunnel;
+      assert hasInfix "detour: $tag" plainTunnel;
       assert !(services ? proxy-suite-awg-plain-watchdog);
       true
     )

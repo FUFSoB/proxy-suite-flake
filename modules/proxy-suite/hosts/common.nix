@@ -27,14 +27,19 @@ rec {
   };
 
   # One system user per daemon, each in a group of its own, plus the userControl group.
-  systemUsersAndGroups = cfg: {
-    users.users = lib.genAttrs cfg.internal.systemUsers (name: {
-      isSystemUser = true;
-      group = name;
-      description = "proxy-suite daemons";
-    });
-    users.groups = lib.genAttrs (cfg.internal.systemUsers ++ cfg.internal.groups) (_: { });
-  };
+  systemUsersAndGroups =
+    cfg:
+    let
+      users = lib.unique cfg.internal.systemUsers;
+    in
+    {
+      users.users = lib.genAttrs users (name: {
+        isSystemUser = true;
+        group = name;
+        description = "proxy-suite daemons";
+      });
+      users.groups = lib.genAttrs (users ++ cfg.internal.groups) (_: { });
+    };
 
   firewallPortForward = internal: {
     networking.firewall = {
@@ -52,11 +57,12 @@ rec {
       host,
       internal,
       hostPath ? null,
+      withSystemd ? true,
     }:
     let
       units = import ./user-units.nix (
         {
-          inherit lib pkgs;
+          inherit lib pkgs withSystemd;
           inherit (host) runtimeDir;
           stateDir = builtins.dirOf host.stateDir;
         }

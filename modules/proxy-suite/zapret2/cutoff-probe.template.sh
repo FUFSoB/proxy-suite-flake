@@ -11,9 +11,11 @@ for f in asn.txt sni.txt asn.new sni.new proxy.json proxy.json.tmp egress ts for
 done
 touch asn.txt sni.txt
 force=0
-if [ -e requests/force ]; then
+if [ -e requests/force ] || [ -L requests/force ]; then
   force=1
-  rm -f requests/force
+  # Whatever the group left under the name, a directory too: rm -f alone failed on one, and
+  # under set -e every run stopped here.
+  rm -rf -- requests/force
 fi
 now=$(date +%s)
 # Digits only: $(( )) would run what a[$(...)] in it names.

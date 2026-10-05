@@ -66,7 +66,7 @@ File with more bridge lines, one per line\. Blank lines and \# comments are skip
 Bridge lines from https://bridges\.torproject\.org, without the leading “Bridge”\. Setting
 any turns bridges on\.
 
-**Type:** list of string\
+**Type:** list of string matching the pattern \[^ ]\*\
 **Default:** `[ ]`\
 **Example:**
 
@@ -159,7 +159,9 @@ Bridge transport for snowflake\.
 <a id="services-proxy-suite-tor-socksport"></a>
 ## services\.proxy-suite\.tor\.socksPort
 
-Loopback SOCKS port of Tor\.
+Loopback SOCKS port of Tor\. Tor takes no login on it, so with ` asOutbound ` on a host with
+root only proxy-suite’s daemons and root may connect to it; other users reach Tor
+through the proxy’s own listener\.
 
 **Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `18530`

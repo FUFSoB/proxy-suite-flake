@@ -9,6 +9,8 @@
   onionOutbound,
   geodata,
   ruleSets,
+  proxyInboundsLoopback,
+  hopPorts,
 }:
 
 let
@@ -85,6 +87,13 @@ let
   ++ lib.optional (onionOutbound != null) {
     domain_suffix = [ "onion" ];
     outbound = onionOutbound;
+  }
+  # A client asking for 127.0.0.1:<hop> (mixed-in's local users) would have the daemon dial
+  # the loopback hops the nft guard keeps from them.
+  ++ lib.optional (hopPorts != [ ]) {
+    ip_cidr = proxyInboundsLoopback;
+    port = hopPorts;
+    action = "reject";
   };
 
   customRouteRules = map (rule: {
@@ -135,13 +144,15 @@ let
     (mkRulesetRule "proxy" (map remoteTag r.proxy.ruleSets))
   ];
 
+  # Block ahead of the direct lists (category-ru's ad domains are in category-ads-all too);
+  # the user's own proxy lists still come first.
   singBoxRoutingRules =
     commonRules
     ++ lib.concatMap (item: item.entries) customRouteRules
     ++ proxyPrimaryRules
+    ++ blockRules
     ++ directRules
     ++ safetyDirectRules
-    ++ blockRules
     ++ proxyGeoRules;
 
   # DNS follows the routing: a name that goes through the proxy is looked up through it, so

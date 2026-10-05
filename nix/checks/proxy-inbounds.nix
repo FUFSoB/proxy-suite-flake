@@ -949,15 +949,91 @@ let
       true
     )
     (ok ((ruleByTag namedConfig "inbound-server-address-direct").domain == [ "full:vpn.example.ru" ]))
-    # Names that resolve private are refused where XRay dials them itself.
+    # Names that resolve private are refused where XRay dials them itself. This host's own
+    # addresses only on its public ports: "direct" dials them over lo, past the firewall.
+    # The start script adds the interfaces' addresses to the marked rules. XRay's own resolvers
+    # stay reachable on their port, should one be on this host.
     (
+      let
+        hostAddresses = [
+          "127.0.0.0/8"
+          "::1/128"
+          "0.0.0.0/32"
+          "::/128"
+        ];
+      in
       assert
         (lib.findFirst (ob: ob.tag == "direct") null relayConfig.outbounds).settings.finalRules == [
           {
             action = "block";
             ip = [ "geoip:private" ];
           }
+          {
+            action = "allow";
+            ip = [ "1.1.1.1" ];
+            port = "53";
+          }
+          {
+            action = "allow";
+            ip = hostAddresses;
+            port = "443";
+            _hostAddresses = true;
+          }
+          {
+            action = "block";
+            ip = hostAddresses;
+            _hostAddresses = true;
+          }
         ];
+      true
+    )
+    # blockPrivate = false opens the LAN, not the rest of this host.
+    (
+      let
+        rules = (lib.findFirst (ob: ob.tag == "direct") null unguardedConfig.outbounds).settings.finalRules;
+      in
+      assert
+        map (rule: rule.action) rules == [
+          "block"
+          "allow"
+          "allow"
+          "block"
+          "allow"
+        ];
+      # Nor cloud metadata.
+      assert builtins.elem "169.254.169.254" (builtins.elemAt rules 0).ip;
+      assert (builtins.elemAt rules 1).ip == [ "1.1.1.1" ];
+      assert (builtins.elemAt rules 2) ? _hostAddresses && (builtins.elemAt rules 2).port == "443";
+      assert (builtins.elemAt rules 3) ? _hostAddresses && !((builtins.elemAt rules 3) ? port);
+      assert lib.last rules == { action = "allow"; };
+      true
+    )
+    # The serverSource ranges and the IPs of serverAddress and serverAliases are this host's
+    # too; the fence takes the share ports the routing rules do.
+    (
+      let
+        fence =
+          builtins.elemAt
+            (lib.findFirst (ob: ob.tag == "direct") null selfSourceConfig.outbounds).settings.finalRules
+            2;
+      in
+      assert
+        lib.drop 4 fence.ip == [
+          "10.78.0.0/24"
+          "fd78:78:78::/64"
+          "203.0.113.10"
+          "2001:db8::10"
+        ];
+      assert fence.port == (ruleByTag selfSourceConfig "inbound-server-address-direct-ip").port;
+      true
+    )
+    (
+      let
+        startScript = readInboundsStart relayFixture;
+      in
+      assert lib.hasInfix "addr show | " startScript;
+      assert lib.hasInfix "--argjson host_addresses \"$HOST_ADDRESSES\"" startScript;
+      assert lib.hasInfix "select(._hostAddresses)" startScript;
       true
     )
     # Only the listener ports, not every service on this host.
@@ -1149,7 +1225,21 @@ let
     (ok (hasFailed runtimeNoPortsFixture "inbounds.runtime.enable needs inbounds.runtime.ports"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct").port == "443,993,7882-7885"))
     (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").port == "443,993,7882-7885"))
-    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct"))
+    # One allowed UDP packet would carry its whole session direct (XRay routes it once): an
+    # address goes to an outbound dialing those alone, a name over TCP alone.
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct-ip").outboundTag == "direct-server"))
+    (ok ((ruleByTag aliasedConfig "inbound-server-address-direct").network == "tcp"))
+    (ok (
+      (lib.findFirst (ob: ob.tag == "direct-server") null aliasedConfig.outbounds).settings.finalRules
+      == [
+        {
+          action = "allow";
+          ip = (ruleByTag aliasedConfig "inbound-server-address-direct-ip").ip;
+          port = "443,993,7882-7885";
+        }
+        { action = "block"; }
+      ]
+    ))
     (ok (!builtins.elem "inbound-block-ru-domain" (ruleTags unguardedConfig)))
 
     # A per-listener via becomes its own rule; listeners on the default do not.
@@ -1315,6 +1405,18 @@ let
       assert lib.hasInfix "chmod 640 \"$tmp\"" (statsScript controlFixture);
       assert !lib.hasInfix "chgrp" (statsScript relayFixture);
       assert lib.hasInfix "chmod 600 \"$tmp\"" (statsScript relayFixture);
+      # Who is online goes in it too: the API, which can reset the counters, is root's.
+      assert lib.hasInfix ".online = (\\$online.users // [])" (statsScript controlFixture);
+      true
+    )
+    (
+      let
+        startScript = readInboundsStart controlFixture;
+      in
+      assert lib.hasSuffix ",0600" (builtins.head relayConfig.inbounds).listen;
+      assert lib.hasInfix "install -d -m 0700 -o proxy-suite-daemon -g proxy-suite-daemon \"$API_DIR\""
+        startScript;
+      assert !lib.hasInfix "setfacl" startScript;
       true
     )
 

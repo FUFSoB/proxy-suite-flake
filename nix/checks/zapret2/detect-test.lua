@@ -51,6 +51,8 @@ local hrec = { nstrategy = 1, ctstrategy = 50 }
 function automate_host_record() return hrec end
 function z2k_fail_tls_alert() return "z2k" end
 
+-- detect.lua's public suffixes, loaded before it as nfqws2 does.
+dofile(os.getenv("PSL"))
 dofile(os.getenv("DETECT"))
 
 local auto = work .. "/auto.txt"
@@ -233,4 +235,14 @@ end
 assert(verdicts()["149.154.167.99 ip"] == "blocked" and not verdicts()["192.168.1.1 ip"], "blocked by address")
 syn("149.154.167.99", true)
 assert(verdicts()["149.154.167.99 ip"] == "reachable", "an answer clears it")
+-- A wildcard domain whose every fresh name resets: past its share of the list, the site
+-- itself is learned, which covers the rest, rather than one more name of it.
+local f2 = io.open(auto, "a")
+for i = 1, 64 do f2:write("r" .. i .. ".wild.example\n") end
+f2:close()
+for _ = 1, 3 do
+  hello(flow("r65.wild.example"))
+  fire("psln_")
+end
+assert(learned()["wild.example"] and not learned()["r65.wild.example"], "a flooding site learned whole")
 print("detect.lua ok")

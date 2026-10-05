@@ -41,6 +41,35 @@ in
       ];
     };
 
+    runtimeSubscriptions = {
+      allowHttp = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Let subscriptions added at runtime (`proxy-ctl proxy subs add`) be fetched over plain
+          http. Anyone on the way can then add entries of their own.
+        '';
+      };
+      allowInsecure = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Keep entries of subscriptions added at runtime that turn certificate checks off, as
+          `subscriptions.*.allowInsecure` does for a declared one. Anyone on the way can then
+          stand in for those servers.
+        '';
+      };
+      allowPrivateServers = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Keep entries of subscriptions added at runtime whose server is a private address, as
+          `subscriptions.*.allowPrivateServers` does for a declared one. Whoever can add a
+          subscription then picks servers on your network.
+        '';
+      };
+    };
+
     subscriptionUpdateInterval = mkOption {
       type = types.str;
       default = "1d";

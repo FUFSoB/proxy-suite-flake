@@ -38,6 +38,7 @@ let
     ;
   inherit (constants)
     autoProxyStateDir
+    autoProxySpoolDir
     outboundTestPort
     xrayDnsBridgePorts
     xraySidecarPorts
@@ -47,21 +48,19 @@ let
     inherit pkgs;
     inherit (constants) serviceUser ifPrivileged;
   };
+  autoProxyMigrate = import ../autoproxy-migrate.nix { inherit pkgs; };
+  # Who reads the probe listeners' login (`proxy outbounds test`, `proxy auto probe`).
+  # Local proxy auth with userControl off keeps its group as before.
+  probeLoginMainGroup =
+    (!userControlCfg.enable && localProxyAuthEnabled)
+    || userControlAllows "outbounds"
+    || userControlAllows "autoProxy";
+  probeLoginExtraGroups = lib.unique (
+    ctx.userControlExtraGroupsFor "outbounds" ++ ctx.userControlExtraGroupsFor "autoProxy"
+  );
   runBackend = constants.runAsServiceUser pkgs constants.backendCaps;
   userControlGroup = lib.escapeShellArg userControlCfg.group;
   chgrp = "${pkgs.coreutils}/bin/chgrp";
-
-  routeModeBlacklistTail =
-    if pureXrayEnabled then
-      ''
-        + .proxyGeo
-        + .block
-      ''
-    else
-      ''
-        + .block
-        + .proxyGeo
-      '';
 
   # Every route mode is the same four assignments over one jq program on the rule buckets.
   routeModeArms = [
@@ -73,9 +72,10 @@ let
         .common
         + (.custom | map(.entries) | add // [])
         + .proxyPrimary
+        + .block
         + .direct
         + .safetyDirect
-        ${routeModeBlacklistTail}
+        + .proxyGeo
       '';
     }
     {
@@ -86,9 +86,10 @@ let
         .common
         + (.custom | map(.entries) | add // [])
         + .proxyPrimary
+        + .block
         + .direct
         + .safetyDirect
-        ${routeModeBlacklistTail}
+        + .proxyGeo
       '';
     }
     {
@@ -101,8 +102,9 @@ let
         .common
         + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
         + .proxyPrimary
+        + .block
         + .safetyDirect
-        ${routeModeBlacklistTail}
+        + .proxyGeo
       '';
     }
     {
@@ -113,8 +115,8 @@ let
       rules = ''
         .common
         + (.custom | map(select(.category == "block") | .entries) | add // [])
-        + .safetyDirect
         + .block
+        + .safetyDirect
       '';
     }
   ];
@@ -153,6 +155,16 @@ let
   '';
 
   writeProxychainsConfigBlock = ''
+    # proxychains reads its config by words: a password with whitespace in it would come out
+    # as another field, or another line. None then, and proxy-ctl says why.
+    case "''${LOCAL_PROXY_PASSWORD:-}" in
+      *[[:space:]]*)
+        echo "proxy-suite: listener.auth's password has whitespace, which proxychains cannot take; no proxychains config" >&2
+        rm -f "${runtimeProxychainsConfig}"
+        ;;
+      *)
+    # Private from the start: the chmod below would leave a moment where anyone reads it.
+    (umask 077 && : > "${runtimeProxychainsConfig}")
     {
       printf '%s\n' 'strict_chain'
       ${lib.optionalString perAppRoutingCfg.proxychains.quiet "printf '%s\\n' 'quiet_mode'"}
@@ -167,12 +179,15 @@ let
         "$LOCAL_PROXY_PASSWORD"
     } > "${runtimeProxychainsConfig}"
     ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "${runtimeProxychainsConfig}"''}
-    chmod 640 "${runtimeProxychainsConfig}"
+    # Without root the group is the user's own primary one, which may be shared.
+    chmod ${if constants.privileged then "640" else "600"} "${runtimeProxychainsConfig}"
     # It holds the proxy's password: userControl.groups that run apps through proxychains.
     ${constants.grantFileAcl pkgs ''"${runtimeProxychainsConfig}"''
       (ctx.userControlExtraGroupsFor "perApp")
       "r"
     }
+        ;;
+    esac
   '';
 
   mkStartScript =
@@ -209,7 +224,7 @@ let
       ${hybridRuntimeHelpersBlock routingMark xraySidecarPort xrayDnsBridgePort}
       ${subscriptionCacheHelpersBlock}
       ${lib.optionalString enableLocalProxyAuth ''
-        LOCAL_PROXY_PASSWORD="$(cat "${localProxyAuthPasswordSource}")"
+        LOCAL_PROXY_PASSWORD="$(cat ${lib.escapeShellArg localProxyAuthPasswordSource})"
         # The umask stays in the subshell: left set, it also narrowed everything
         # written below, and autoProxy's state.json is group-readable by design.
         (
@@ -238,9 +253,9 @@ let
       AUTOPROXY_RULES_JSON='[]'
       ${lib.optionalString enableAutoProxy ''
         AUTOPROXY_DIR=${lib.escapeShellArg autoProxyStateDir}
-        # 0751: sing-box, running as ${constants.serviceUser}, reaches the rules/ inside;
-        # 0771 with userControl's autoProxy scope, whose group queues learn requests there.
-        install -d -m ${if ctx.userControlAnyAllows "autoProxy" then "0771" else "0751"} "$AUTOPROXY_DIR"
+        # Root's alone, 0751: sing-box, running as ${constants.serviceUser}, reaches the
+        # rules/ inside. An install from before the spool is made so first.
+        ${autoProxyMigrate} "$AUTOPROXY_DIR" ${lib.escapeShellArg autoProxySpoolDir}
         [ -s "$AUTOPROXY_DIR/state.json" ] || echo '{"domains":{},"hosts":{},"exits":{},"backlog":{}}' > "$AUTOPROXY_DIR/state.json"
 
         # direct is always exit 0; state is keyed by tag, so shifting indices are
@@ -249,9 +264,9 @@ let
         PROBE_EXITS_JSON=$(${jq} -c \
           --argjson max ${toString proxyCfg.autoProxy.maxExits} \
           --argjson base ${toString proxyCfg.autoProxy.probeBasePort} \
-          --argjson disabled "''${DISABLED_TAGS_JSON:-[]}" \
+          --slurpfile disabled <(printf '%s' "''${DISABLED_TAGS_JSON:-[]}") \
           --arg dir "$AUTOPROXY_DIR" '
-          (["direct"] + map(select(. != "direct" and (. as $t | $disabled | index([$t]) | not))))[0:$max]
+          (["direct"] + map(select(. != "direct" and (. as $t | $disabled[0] | index([$t]) | not))))[0:$max]
           | to_entries
           | map({i: .key, tag: .value, port: ($base + .key),
                  rule_set: ("autoproxy-" + (.key | tostring)),
@@ -264,8 +279,19 @@ let
 
         PROBE_INBOUNDS_JSON=$(${jq} -c 'map({type: "mixed", tag: ("probe-in-" + (.i | tostring)),
           listen: "127.0.0.1", listen_port: .port})' <<< "$PROBE_EXITS_JSON")
-        PROBE_PIN_RULES_JSON=$(${jq} -c 'map({inbound: ["probe-in-" + (.i | tostring)],
-          outbound: .tag})' <<< "$PROBE_EXITS_JSON")
+        # The hosts probed are ones the inbounds' clients dialed: the direct probe gets their
+        # fence (inbounds.routing.blockPrivate), resolving as a direct dial would.
+        PROBE_PIN_RULES_JSON=$(${jq} -c --argjson fence ${
+          lib.escapeShellArg (
+            builtins.toJSON (
+              if ctx.proxyInboundsCfg.routing.blockPrivate then
+                { ip_is_private = true; }
+              else
+                { ip_cidr = ctx.proxyInboundsLoopback; }
+            )
+          )
+        } '[{inbound: ["probe-in-0"], action: "resolve", server: "local"}, ({inbound: ["probe-in-0"], action: "reject"} + $fence)]
+          + map({inbound: ["probe-in-" + (.i | tostring)], outbound: .tag})' <<< "$PROBE_EXITS_JSON")
         AUTOPROXY_RULE_SETS_JSON=$(${jq} -c 'map({type: "local", format: "source",
           tag: .rule_set, path: .path})' <<< "$PROBE_EXITS_JSON")
         # all-bypass means everything direct; learned exits must not override it.
@@ -280,7 +306,7 @@ let
         # hybrid XRay outbound is a sing-box socks hop whose real server is the sidecar's.
         # A loopback hop (the WARP tunnel, XRay's SSH listener) has no server worth timing.
         ENDPOINTS_TMP="$RUNTIME_DIR/outbound-endpoints.json.tmp"
-        ${jq} -c --slurpfile sidecar <(printf '%s' "''${XRAY_OUTBOUNDS_JSON:-[]}") '
+        (umask 077 && ${jq} -c --slurpfile sidecar <(printf '%s' "''${XRAY_OUTBOUNDS_JSON:-[]}") '
           $sidecar[0] as $sidecar
           | def endpoint:
             if .server then {server, port: .server_port}
@@ -301,7 +327,7 @@ let
              | ($real[.tag] // .) | select(endpoint != null and (endpoint.server | test("^(127\\.|::1$|localhost$)") | not))
              | {key: $tag, value: (endpoint + {network: (if udp then "udp" else "tcp" end)})}]
           | from_entries
-        ' <<< "$OUTBOUNDS_JSON" > "$ENDPOINTS_TMP"
+        ' <<< "$OUTBOUNDS_JSON" > "$ENDPOINTS_TMP")
         # Where each proxy server is: not credentials, but not for every local user either.
         ${
           if userControlCfg.enable || localProxyAuthEnabled then
@@ -336,16 +362,18 @@ let
         ${lib.optionalString (!pureXrayEnabled) ''
           # Delay and download: a loopback listener pinned to a selector over every real
           # exit, switched one outbound at a time through the Clash API.
-          OUTBOUNDS_JSON=$(${jq} -c --argjson tags "$EXIT_TAGS_JSON" \
-            '. + [{type: "selector", tag: "proxy-suite-test", outbounds: $tags}]' <<< "$OUTBOUNDS_JSON")
+          # Slurped, not --argjson: one argument holds at most 128 KiB, less than the tags
+          # of a large subscription.
+          OUTBOUNDS_JSON=$(${jq} -c --slurpfile tags <(printf '%s' "$EXIT_TAGS_JSON") \
+            '. + [{type: "selector", tag: "proxy-suite-test", outbounds: $tags[0]}]' <<< "$OUTBOUNDS_JSON")
           PROBE_INBOUNDS_JSON=$(${jq} -c '. + [{type: "mixed", tag: "proxy-suite-test-in",
             listen: "127.0.0.1", listen_port: ${toString outboundTestPort}}]' <<< "$PROBE_INBOUNDS_JSON")
           PROBE_PIN_RULES_JSON=$(${jq} -c \
             '. + [{inbound: ["proxy-suite-test-in"], outbound: "proxy-suite-test"}]' <<< "$PROBE_PIN_RULES_JSON")
-          ${jq} -n --argjson tags "$EXIT_TAGS_JSON" \
+          ${jq} -n --slurpfile tags <(printf '%s' "$EXIT_TAGS_JSON") \
             --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} '
             {port: ${toString outboundTestPort}, selector: "proxy-suite-test", url: $url,
-             outbounds: ($tags | map({key: ., value: .}) | from_entries)}
+             outbounds: ($tags[0] | map({key: ., value: .}) | from_entries)}
           ' > "$RUNTIME_DIR/outbound-test.json"
           # Tags and a loopback port only.
           chmod 644 "$RUNTIME_DIR/outbound-test.json"
@@ -402,14 +430,25 @@ let
         esac
       ''}
 
+      # Every address this host has now, for the inbounds' guard (backend-filter-private-guard):
+      # dialed from here, a client would reach any port of them past the firewall.
+      HOST_ADDRESSES_JSON='[]'
+      ${lib.optionalString (ctx.proxyInboundsEnabled && ctx.proxyInboundsNeedLocalProxy) ''
+        if ! HOST_ADDRESSES_JSON=$(${pkgs.iproute2}/bin/ip -j addr show | ${jq} -c \
+          '[.[].addr_info[]?.local | strings | if test(":") then . + "/128" else . + "/32" end] | unique'); then
+          echo "proxy-suite: cannot list this host's addresses; the inbounds' clients reach any port of them" >&2
+          HOST_ADDRESSES_JSON='[]'
+        fi
+      ''}
+
       # umask: the file holds credentials until the chmod below; the process
       # substitutions keep them out of the argv every local user can read.
       (umask 077 && ${jq} \
         --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
-        --argjson probe_inbounds "$PROBE_INBOUNDS_JSON" \
-        --argjson probe_pin_rules "$PROBE_PIN_RULES_JSON" \
-        --argjson autoproxy_rule_sets "$AUTOPROXY_RULE_SETS_JSON" \
-        --argjson autoproxy_rules "$AUTOPROXY_RULES_JSON" \
+        --slurpfile probe_inbounds <(printf '%s' "$PROBE_INBOUNDS_JSON") \
+        --slurpfile probe_pin_rules <(printf '%s' "$PROBE_PIN_RULES_JSON") \
+        --slurpfile autoproxy_rule_sets <(printf '%s' "$AUTOPROXY_RULE_SETS_JSON") \
+        --slurpfile autoproxy_rules <(printf '%s' "$AUTOPROXY_RULES_JSON") \
         --argjson auth_enabled ${if enableLocalProxyAuth then "true" else "false"} \
         --arg user ${if enableLocalProxyAuth then lib.escapeShellArg localProxyAuth.username else "''"} \
         ${
@@ -419,23 +458,53 @@ let
             "--arg password ''"
         } \
         --argjson route_enabled "$ROUTE_MODE_ACTIVE" \
-        --argjson route_rules "$ROUTE_RULES_JSON" \
+        --slurpfile route_rules <(printf '%s' "$ROUTE_RULES_JSON") \
         --arg route_final "$ROUTE_FINAL" \
         --arg dns_final "$DNS_FINAL" \
         --argjson clear_dns_rules "$CLEAR_DNS_RULES" \
         --arg xray_loglevel "$XRAY_LOGLEVEL" \
         --arg xray_single_proxy_tag "$XRAY_SINGLE_PROXY_TAG" \
-        --argjson xray_selectable "$SELECTABLE_TAGS_JSON" \
+        --slurpfile xray_selectable <(printf '%s' "$SELECTABLE_TAGS_JSON") \
         --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
+        --argjson host_addresses "$HOST_ADDRESSES_JSON" \
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json")
       ${lib.optionalString excludeServiceUserFromTun ''
         # proxy-suite's own daemons (the inbound XRay, replies to its clients included)
         # stay out of the TUN; the uid is only known on this host.
-        SERVICE_UID=$(${pkgs.coreutils}/bin/id -u ${constants.serviceUser})
-        (umask 077 && ${jq} --argjson uid "$SERVICE_UID" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = [$uid]' \
+        SERVICE_UIDS=$(for service_user in ${lib.escapeShellArgs constants.ownTrafficUsers}; do
+          ${pkgs.coreutils}/bin/id -u "$service_user"
+        done | ${jq} -cs .)
+        (umask 077 && ${jq} --argjson uids "$SERVICE_UIDS" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = $uids' \
           "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next")
         mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
+      ''}
+      ${lib.optionalString (!pureXrayEnabled) ''
+        # The probe and test listeners reach any exit past the routing rules and the kill
+        # switch: a login per start, into jq through its environment (argv is public).
+        if ${jq} -e '[.inbounds[]? | (.tag // "") | select(startswith("probe-in-") or . == "proxy-suite-test-in")] | length > 0' \
+          "$RUNTIME_DIR/config.json" >/dev/null; then
+          PROBE_PASSWORD=$(${pkgs.coreutils}/bin/od -An -tx1 -N16 /dev/urandom | ${pkgs.coreutils}/bin/tr -d ' \n')
+          (umask 077 && PROBE_PASSWORD="$PROBE_PASSWORD" ${jq} '(.inbounds[]? | select((.tag // "") | startswith("probe-in-") or . == "proxy-suite-test-in"))
+            += {users: [{username: "probe", password: $ENV.PROBE_PASSWORD}]}' \
+            "$RUNTIME_DIR/config.json" > "$RUNTIME_DIR/config.json.next")
+          mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json"
+          (umask 077 && printf 'probe:%s\n' "$PROBE_PASSWORD" > "$RUNTIME_DIR/probe-login.tmp")
+          unset PROBE_PASSWORD
+          ${
+            # Only to the groups that test outbounds or probe for autoProxy: to any other the
+            # login is a way out direct, past the routing rules and the kill switch.
+            if probeLoginMainGroup then
+              ''
+                ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${lib.escapeShellArg userControlCfg.group} "$RUNTIME_DIR/probe-login.tmp"''}
+                chmod ${if constants.privileged then "640" else "600"} "$RUNTIME_DIR/probe-login.tmp"
+              ''
+            else
+              ''chmod 600 "$RUNTIME_DIR/probe-login.tmp"''
+          }
+          ${constants.grantFileAcl pkgs ''"$RUNTIME_DIR/probe-login.tmp"'' probeLoginExtraGroups "r"}
+          mv "$RUNTIME_DIR/probe-login.tmp" "$RUNTIME_DIR/probe-login"
+        fi
       ''}
       # The Clash API lists every connection and switches outbounds. Loopback alone lets
       # every local user at it, and every web page too (sing-box allows any origin): a
@@ -472,7 +541,9 @@ let
           else
             ''
               ${constants.ifPrivileged ''${chgrp} ${constants.serviceUser} "$backend_config"''}
-              chmod 640 "$backend_config"
+              # Without root the group is the user's own primary one, which may be shared
+              # (users): the owner alone then.
+              chmod ${if constants.privileged then "640" else "600"} "$backend_config"
             ''
         }
         ${constants.grantFileAcl pkgs ''"$backend_config"'' (ctx.userControlExtraGroupsFor "secrets") "r"}

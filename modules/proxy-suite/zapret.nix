@@ -26,7 +26,8 @@ let
         ;
     })
     awgServiceNames
-    perAppConflicts
+    perAppRefuseUnderGlobal
+    daemonSandbox
     perAppZapretMarkUpScript
     perAppZapretMarkDownScript
     ;
@@ -46,6 +47,7 @@ let
     ;
 
   iptables = "${pkgs.iptables}/bin/iptables";
+  ip6tables = "${pkgs.iptables}/bin/ip6tables";
 
   zapretCommonPreStart = package: ''
     ${package}/opt/zapret/init.d/sysv/zapret stop || true
@@ -59,22 +61,24 @@ let
     fi
   '';
 
+  # An IPv6 range to iptables failed the script (set -e), and every range after it with it.
+  tablesFor = cidr: if lib.hasInfix ":" cidr then ip6tables else iptables;
   exemptStart = ''
     set -euo pipefail
   ''
   + lib.concatMapStrings (cidr: ''
-    while ${iptables} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
-    while ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
-    ${iptables} -t mangle -I FORWARD 1 -d ${cidr} -j RETURN
-    ${iptables} -t mangle -I POSTROUTING 1 -s ${cidr} -j RETURN
+    while ${tablesFor cidr} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
+    while ${tablesFor cidr} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
+    ${tablesFor cidr} -t mangle -I FORWARD 1 -d ${cidr} -j RETURN
+    ${tablesFor cidr} -t mangle -I POSTROUTING 1 -s ${cidr} -j RETURN
   '') zapretCfg.cidrExemption.cidrs;
 
   exemptStop = ''
     set +e
   ''
   + lib.concatMapStrings (cidr: ''
-    while ${iptables} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
-    while ${iptables} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
+    while ${tablesFor cidr} -t mangle -D FORWARD -d ${cidr} -j RETURN 2>/dev/null; do :; done
+    while ${tablesFor cidr} -t mangle -D POSTROUTING -s ${cidr} -j RETURN 2>/dev/null; do :; done
   '') zapretCfg.cidrExemption.cidrs;
 in
 {
@@ -100,24 +104,36 @@ in
         extraServiceConfig = {
           ExecReload = "${globalZapretPackage}/opt/zapret/init.d/sysv/zapret restart";
           Environment = globalZapretEnv;
-        };
+        }
+        // daemonSandbox;
       });
 
   services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
     lib.mkIf perAppZapretCfg.enable
-      (mkOneshotService {
-        description = "proxy-suite per-app-routing zapret backend";
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        conflicts = perAppConflicts ++ awgServiceNames;
-        preStart = zapretCommonPreStart perAppZapretPackage;
-        runtimeDirectory = "proxy-suite-per-app-zapret";
-        execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
-        execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
-        execStartPre = "${perAppZapretMarkUpScript}";
-        execStopPost = "${perAppZapretMarkDownScript}";
-        extraServiceConfig.Environment = perAppZapretEnv;
-      });
+      (
+        lib.mkMerge [
+          (mkOneshotService {
+            description = "proxy-suite per-app-routing zapret backend";
+            after = [ "network-online.target" ];
+            wants = [ "network-online.target" ];
+            preStart = zapretCommonPreStart perAppZapretPackage;
+            runtimeDirectory = "proxy-suite-per-app-zapret";
+            execStart = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret start";
+            execStop = "${perAppZapretPackage}/opt/zapret/init.d/sysv/zapret stop";
+            execStartPre = "${perAppZapretMarkUpScript}";
+            execStopPost = "${perAppZapretMarkDownScript}";
+            extraServiceConfig = {
+              Environment = perAppZapretEnv;
+            }
+            // daemonSandbox;
+          })
+          {
+            # Ahead of everything, preStart's script among them (mkBefore there): under a global
+            # mode nothing of it runs, not even the queue's firewall rules.
+            serviceConfig.ExecStartPre = lib.mkOrder 400 [ perAppRefuseUnderGlobal ];
+          }
+        ]
+      );
 
   services.proxy-suite.internal.services.proxy-suite-zapret-vm-exempt =
     lib.mkIf (zapretGlobalEnabled && zapretCfg.cidrExemption.enable)

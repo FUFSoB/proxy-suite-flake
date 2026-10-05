@@ -435,7 +435,8 @@ def build_share_link(
         params["flow"] = listener["flow"]
     _apply_variant(params, variant, listener_type)
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    return f"{listener_type}://{secret}@{endpoint}?{query}#{fragment}"
+    # A trojan password may hold @, #, ? or %; a vless uuid comes through unchanged.
+    return f"{listener_type}://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 
 
 def render_amneziawg_inbound(listener: dict) -> dict:
@@ -568,6 +569,12 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
     for listener in spec["listeners"]:
         onion = onion_address if listener["tag"] in spec.get("onionListeners", []) else ""
         rendered = build_listener(listener, server_address, spec.get("shareLinks", True), onion)
+        sniffing = rendered["inbound"].get("sniffing")
+        raw = listener.get("xrayJson") is not None or listener.get("jsonFile") is not None
+        if isinstance(sniffing, dict) and not raw and spec.get("sniffDomainsExcluded"):
+            # Names routing sends past the via (rules/proxy-inbounds.nix): matched on the
+            # address the client asked for only, never on what its handshake claims.
+            sniffing["domainsExcluded"] = list(spec["sniffDomainsExcluded"])
         inbounds.append(rendered["inbound"])
         variants = [(rendered["links"], {})]
         for name, variant_links in rendered.get("variantLinks") or []:

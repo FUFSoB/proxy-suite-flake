@@ -23,6 +23,7 @@ Update the module option docs there instead of editing these files by hand.
 | [userControl](./userControl.md) | Let a group use `proxy-ctl` without root. |
 | [gui](./gui.md) | The desktop app with a tray icon. |
 | [tui](./tui.md) | The `proxy-tui` terminal UI. |
+| [tools](./tools.md) | Heavy helpers `proxy-ctl` can do without: lnav and curl-impersonate. |
 
 <a id="services-proxy-suite-enable"></a>
 ## services\.proxy-suite\.enable
@@ -69,6 +70,7 @@ services.proxy-suite = {
     refreshInterval = 3;
   };
   inbounds = {
+    accessLog = false;
     enable = false;
     listeners = { };
     openFirewall = true;
@@ -109,7 +111,12 @@ services.proxy-suite = {
     users = { };
   };
   killSwitch = {
+    allowedSubnets = config.services.proxy-suite.proxy.tproxy.localSubnets;
+    directFallbacks = true;
     enable = false;
+    timeSyncUsers = ‹the users of the enabled timesyncd, chrony, ntp and openntpd on NixOS; elsewhere
+[ "systemd-timesync" "chrony" "_chrony" "ntp" "ntpsec" ]
+›;
   };
   perAppRouting = {
     createDefaultProfiles = false;
@@ -228,6 +235,11 @@ services.proxy-suite = {
       ruleSets = { };
       rules = [ ];
     };
+    runtimeSubscriptions = {
+      allowHttp = false;
+      allowInsecure = false;
+      allowPrivateServers = false;
+    };
     selection = "first";
     selectionExclude = [ ];
     singBox = {
@@ -281,7 +293,7 @@ services.proxy-suite = {
       user = null;
     };
     serviceUser = "proxy-suite-daemon";
-    strictHostKeyChecking = "accept-new";
+    strictHostKeyChecking = "yes";
   };
   tgWsProxy = {
     bufferKiB = 256;
@@ -309,6 +321,14 @@ services.proxy-suite = {
     proxyProtocol = false;
     secret = null;
     secretFile = null;
+  };
+  tools = {
+    curlImpersonate = {
+      enable = ‹true, false on nix-on-droid›;
+    };
+    lnav = {
+      enable = ‹true, false on nix-on-droid›;
+    };
   };
   tor = {
     asOutbound = false;

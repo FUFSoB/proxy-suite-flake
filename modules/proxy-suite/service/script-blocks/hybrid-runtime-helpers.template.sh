@@ -55,7 +55,9 @@ _proxy_suite_write_xray_sidecar_config() {
   if [ "$(@jq@ 'length' <<< "$XRAY_OUTBOUNDS_JSON")" -eq 0 ]; then
     return 0
   fi
-  @jq@ -n \
+  # umask: the file holds every XRay outbound's credentials until the start script's
+  # chmod, in a runtime directory others can list.
+  (umask 077 && @jq@ -n \
     --arg loglevel "$XRAY_LOGLEVEL" \
     --argjson dns_port "$XRAY_SIDECAR_DNS_PORT" \
     --argjson port "$XRAY_SIDECAR_PORT" \
@@ -92,5 +94,5 @@ _proxy_suite_write_xray_sidecar_config() {
         domainStrategy: "AsIs",
         rules: ($route_rules[0] + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])
       }
-    }' > "$RUNTIME_DIR/xray-sidecar.json"
+    }' > "$RUNTIME_DIR/xray-sidecar.json")
 }

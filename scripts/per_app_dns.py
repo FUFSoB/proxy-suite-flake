@@ -6,11 +6,15 @@ on 127.0.0.53 has a loopback source, which the kernel never routes out of a real
 
 With no route in the interface's table the mark meets an unreachable rule, so a lookup fails
 rather than leaving any other way.
+
+Per-app TUN and TProxy use it too, a port per mark (--listen): there a lookup of a resolver on
+loopback is sent on into the route, where the backend's DNS hijack answers it.
 """
 
 import argparse
 import asyncio
 import os
+import re
 import socket
 import struct
 import sys
@@ -19,11 +23,18 @@ TIMEOUT = 4.0
 MAX_MESSAGE = 65535
 
 
+# The source address of the queries sent on (--bind): on a TProxy route's local route the
+# kernel would pick the destination as the source, and the reply would not come back.
+BIND: dict[int, str] = {}
+
+
 def upstream_socket(server: str, kind: int, mark: int) -> socket.socket:
     family = socket.AF_INET6 if ":" in server else socket.AF_INET
     sock = socket.socket(family, kind)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
+        if family in BIND:
+            sock.bind((BIND[family], 0))
         sock.setblocking(False)
     except OSError:
         sock.close()
@@ -131,28 +142,64 @@ def notify_ready():
         sock.sendall(b"READY=1")
 
 
-async def serve(port: int, mark: int, servers: list[str]):
+def listen_spec(item: str) -> tuple[int, int]:
+    """PORT:MARK, ASCII digits only (str.isdigit also takes "²", which int() then refuses)."""
+    match = re.fullmatch(r"([0-9]+):([0-9]+)", item)
+    if not match or not 1 <= int(match[1]) <= 65535 or int(match[2]) >= 2**32:
+        raise argparse.ArgumentTypeError(f"{item!r}: not PORT:MARK (port 1-65535, a 32-bit mark)")
+    return int(match[1]), int(match[2])
+
+
+async def serve(listeners: list[tuple[int, int]], servers: list[str]):
     loop = asyncio.get_running_loop()
-    for host in ("127.0.0.1", "::1"):
-        try:
-            await loop.create_datagram_endpoint(lambda: UdpListener(servers, mark), local_addr=(host, port))
-            await asyncio.start_server(tcp_handler(servers, mark), host, port)
-        except OSError as exc:
-            # IPv6 may be off.
-            if host == "127.0.0.1":
-                raise
-            print(f"per-app-dns: not on [{host}]:{port}: {exc}", file=sys.stderr)
+    for port, mark in listeners:
+        for host in ("127.0.0.1", "::1"):
+            try:
+                await loop.create_datagram_endpoint(
+                    lambda mark=mark: UdpListener(servers, mark), local_addr=(host, port)
+                )
+                await asyncio.start_server(tcp_handler(servers, mark), host, port)
+            except OSError as exc:
+                # IPv6 may be off.
+                if host == "127.0.0.1":
+                    raise
+                print(f"per-app-dns: not on [{host}]:{port}: {exc}", file=sys.stderr)
     notify_ready()
     await asyncio.Event().wait()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--mark", type=int, required=True)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--mark", type=int)
+    parser.add_argument(
+        "--listen",
+        action="append",
+        default=[],
+        type=listen_spec,
+        metavar="PORT:MARK",
+        help="another port, whose lookups are sent on with this mark; repeatable",
+    )
+    parser.add_argument(
+        "--bind",
+        action="append",
+        default=[],
+        metavar="ADDRESS",
+        help="the source address of the queries sent on, one per family",
+    )
     parser.add_argument("servers", nargs="*", help="resolver addresses, asked in order")
     args = parser.parse_args()
-    asyncio.run(serve(args.port, args.mark, args.servers))
+    for address in args.bind:
+        BIND[socket.AF_INET6 if ":" in address else socket.AF_INET] = address
+    listeners = []
+    if args.port is not None or args.mark is not None:
+        if args.port is None or args.mark is None:
+            parser.error("--port and --mark go together")
+        listeners.append((args.port, args.mark))
+    listeners.extend(args.listen)
+    if not listeners:
+        parser.error("nothing to listen on: --port and --mark, or --listen")
+    asyncio.run(serve(listeners, args.servers))
     return 0
 
 

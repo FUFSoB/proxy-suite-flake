@@ -13,7 +13,7 @@ check_runtime() {
     --arg user "" \
     --arg password "" \
     --argjson route_enabled true \
-    --argjson route_rules '[]' \
+    --slurpfile route_rules <(echo '[]') \
     --arg route_final "proxy" \
     --arg dns_final "remote" \
     --argjson clear_dns_rules false \

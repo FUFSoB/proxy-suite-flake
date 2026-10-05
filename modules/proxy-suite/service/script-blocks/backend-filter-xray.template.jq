@@ -13,7 +13,8 @@ def xray_rewrite_proxy_rule($single_tag):
   end;
 def xray_preserved_rules:
   [.routing.rules[]
-   | select((.ruleTag? // "") | . == "dns-hijack" or . == "dns-upstream-direct" or . == "dns-upstream-remote")];
+   | select((.ruleTag? // "") | . == "dns-hijack" or . == "dns-upstream-direct" or . == "dns-upstream-remote"
+       or . == "inbounds-private-guard" or . == "inbounds-host-guard")];
 def xray_final_rule($tag; $single_tag):
   if $tag == "proxy" and "@selectionMode@" == "urltest" then
     {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)
@@ -42,7 +43,9 @@ def xray_pin_server_names:
     else .dns.servers += [.dns.servers[] | select((.tag? // "") == "local")
                           | . + {domains: ($names | map("full:" + .)), skipFallback: true}]
     end;
-.outbounds = ($obs[0] + .outbounds)
+# Slurped (a list of one), not an argument: it grows with the rules.
+$route_rules[0] as $route_rules
+| .outbounds = ($obs[0] + .outbounds)
   | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
   | if $auth_enabled then
       (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"
@@ -65,10 +68,24 @@ def xray_pin_server_names:
   # too: name the rest instead. Disabling is a runtime decision, so always.
   # ponytail: selectors are prefixes still, so "de" also takes in an excluded "de-hop";
   # rename one of them if that matters.
-  | if $ARGS.named.xray_selectable == null then . else
-      ($ARGS.named.xray_selectable | map("proxy-suite-ob-" + .)) as $candidates
+  # Slurped (a list of one), not an argument: every tag of a large subscription.
+  | ($ARGS.named.xray_selectable // [null])[0] as $selectable
+  | if $selectable == null then . else
+      ($selectable | map("proxy-suite-ob-" + .)) as $candidates
       | if .routing.balancers then .routing.balancers |= map(.selector = $candidates) else . end
       | if .observatory then .observatory.subjectSelector = $candidates else . end
+    end
+  # This host's own addresses, on every port but those its inbounds' clients may reach there,
+  # just after the inbounds' guard: dialed from here, its public one would reach a service
+  # the firewall keeps from the internet (the start script lists them).
+  | ($ARGS.named.host_addresses // []) as $own
+  | (.routing.rules | map((.ruleTag? // "") == "inbounds-private-guard") | index(true)) as $at
+  | if $own == [] or $at == null or "@hostClosedPorts@" == "" then . else
+      .routing.rules |= [.[] | select((.ruleTag? // "") != "inbounds-host-guard")]
+      | .routing.rules = .routing.rules[:$at + 1]
+          + [{type: "field", ruleTag: "inbounds-host-guard", inboundTag: ["mixed-in"], ip: $own,
+              port: "@hostClosedPorts@", outboundTag: "block"}]
+          + .routing.rules[$at + 1:]
     end
   | if $xray_single_proxy_tag == "" then
       .

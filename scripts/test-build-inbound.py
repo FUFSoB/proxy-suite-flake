@@ -58,7 +58,7 @@ def reality(**overrides):
         "serverNames": ["www.microsoft.com"],
         "privateKey": "private-key",
         "privateKeyFile": None,
-        "publicKey": "public-key",
+        "publicKey": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
         "shortIds": ["0123abcd"],
         "xver": 0,
     }
@@ -69,11 +69,11 @@ def reality(**overrides):
 def multi_user_shadowsocks(**overrides):
     spec = {
         "type": "shadowsocks",
-        "serverPassword": "server-psk",
+        "serverPassword": "c2VydmVyLXBzay0wMDAwMA==",
         "serverPasswordFile": None,
         "users": [
-            {"name": "a", "password": "psk-a", "passwordFile": None},
-            {"name": "b", "password": "psk-b", "passwordFile": None},
+            {"name": "a", "password": "cHNrLWEtcHNrLWEtcHNrLQ==", "passwordFile": None},
+            {"name": "b", "password": "cHNrLWItcHNrLWItcHNrLQ==", "passwordFile": None},
         ],
     }
     spec.update(overrides)
@@ -224,18 +224,18 @@ class RenderInboundTests(unittest.TestCase):
 
     def test_shadowsocks_single_user_uses_password(self):
         ib = render_xray_inbound(
-            listener(type="shadowsocks", users=[{"name": "", "password": "psk", "passwordFile": None}])
+            listener(type="shadowsocks", users=[{"name": "", "password": "cHNrLXBzay1wc2stcHNrLQ==", "passwordFile": None}])
         )
-        self.assertEqual(ib["settings"]["password"], "psk")
+        self.assertEqual(ib["settings"]["password"], "cHNrLXBzay1wc2stcHNrLQ==")
         self.assertEqual(ib["settings"]["method"], "2022-blake3-aes-128-gcm")
         self.assertEqual(ib["settings"]["network"], "tcp,udp")
 
     def test_shadowsocks_multi_user_has_server_key_and_clients(self):
         ib = render_xray_inbound(multi_user_shadowsocks())
-        self.assertEqual(ib["settings"]["password"], "server-psk")
+        self.assertEqual(ib["settings"]["password"], "c2VydmVyLXBzay0wMDAwMA==")
         self.assertEqual(
             ib["settings"]["clients"],
-            [{"password": "psk-a", "email": "a"}, {"password": "psk-b", "email": "b"}],
+            [{"password": "cHNrLWEtcHNrLWEtcHNrLQ==", "email": "a"}, {"password": "cHNrLWItcHNrLWItcHNrLQ==", "email": "b"}],
         )
 
     def test_shadowsocks_multi_user_needs_server_key(self):
@@ -262,7 +262,7 @@ class ShareLinkTests(unittest.TestCase):
         self.assertTrue(link.startswith("vless://uuid-1@vpn.example.com:443?"))
         params = link_params(link)
         self.assertEqual(params["security"], "reality")
-        self.assertEqual(params["pbk"], "public-key")
+        self.assertEqual(params["pbk"], "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc")
         self.assertEqual(params["sid"], "0123abcd")
         self.assertEqual(params["sni"], "www.microsoft.com")
         self.assertEqual(params["flow"], "xtls-rprx-vision")
@@ -291,7 +291,7 @@ class ShareLinkTests(unittest.TestCase):
         params = link_params(build_share_link(dict(target, front=reality_front), "1.2.3.4"))
         self.assertEqual(
             (params["security"], params["pbk"], params["sni"], params["sid"]),
-            ("reality", "public-key", "www.microsoft.com", "0123abcd"),
+            ("reality", "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc", "www.microsoft.com", "0123abcd"),
         )
 
     def test_reality_link_without_public_key_fails(self):
@@ -365,17 +365,17 @@ class ShareLinkTests(unittest.TestCase):
 
     def test_shadowsocks_link_is_sip002(self):
         spec = listener(
-            type="shadowsocks", method="aes-128-gcm", users=[{"name": "", "password": "psk", "passwordFile": None}]
+            type="shadowsocks", method="aes-128-gcm", users=[{"name": "", "password": "cHNrLXBzay1wc2stcHNrLQ==", "passwordFile": None}]
         )
         link = build_share_link(spec, "vpn.example.com")
         userinfo = link[len("ss://") :].split("@", 1)[0]
         userinfo += "=" * (-len(userinfo) % 4)
         decoded = base64.urlsafe_b64decode(userinfo).decode()
-        self.assertEqual(decoded, "aes-128-gcm:psk")
+        self.assertEqual(decoded, "aes-128-gcm:cHNrLXBzay1wc2stcHNrLQ==")
 
     def test_shadowsocks_2022_link_is_percent_encoded(self):
         link = build_share_link(multi_user_shadowsocks(serverPassword="a+b/c="), "vpn.example.com")
-        self.assertTrue(link.startswith("ss://2022-blake3-aes-128-gcm:a%2Bb%2Fc%3D%3Apsk-a@"), link)
+        self.assertTrue(link.startswith("ss://2022-blake3-aes-128-gcm:a%2Bb%2Fc%3D%3AcHNrLWEtcHNrLWEtcHNrLQ%3D%3D@"), link)
 
 
     def test_http_link_over_tls_is_https(self):
@@ -414,7 +414,7 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(settings["id"], "uuid-1")
         self.assertEqual(settings["flow"], "xtls-rprx-vision")
         rs = ob["streamSettings"]["realitySettings"]
-        self.assertEqual(rs["publicKey"], "public-key")
+        self.assertEqual(rs["publicKey"], "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc")
         self.assertEqual(rs["shortId"], "0123abcd")
         self.assertEqual(rs["serverName"], "www.microsoft.com")
 
@@ -545,32 +545,35 @@ class RoundTripTests(unittest.TestCase):
             )
 
     def test_trojan_round_trip(self):
-        link = build_share_link(
-            listener(
-                type="trojan",
-                users=[{"name": "", "password": "pw", "passwordFile": None}],
-                tls={"enable": False, "certificateFile": "/c", "keyFile": "/k", "serverName": None},
-            ),
-            "vpn.example.com",
-        )
-        ob = build_outbound(link, "round-trip", backend="sing-box")
-        self.assertEqual(ob["type"], "trojan")
-        self.assertEqual(ob["password"], "pw")
+        # A declared password may hold what a URL gives meaning to.
+        for password in ("pw", "p@ss#w?rd/%"):
+            link = build_share_link(
+                listener(
+                    type="trojan",
+                    users=[{"name": "", "password": password, "passwordFile": None}],
+                    tls={"enable": False, "certificateFile": "/c", "keyFile": "/k", "serverName": None},
+                ),
+                "vpn.example.com",
+            )
+            ob = build_outbound(link, "round-trip", backend="sing-box")
+            self.assertEqual(ob["type"], "trojan")
+            self.assertEqual(ob["password"], password)
+            self.assertEqual(ob["server"], "vpn.example.com")
 
     def test_shadowsocks_round_trip(self):
         link = build_share_link(
-            listener(type="shadowsocks", users=[{"name": "", "password": "psk", "passwordFile": None}]),
+            listener(type="shadowsocks", users=[{"name": "", "password": "cHNrLXBzay1wc2stcHNrLQ==", "passwordFile": None}]),
             "vpn.example.com",
         )
         ob = build_outbound(link, "round-trip", backend="sing-box")
         self.assertEqual(ob["type"], "shadowsocks")
         self.assertEqual(ob["method"], "2022-blake3-aes-128-gcm")
-        self.assertEqual(ob["password"], "psk")
+        self.assertEqual(ob["password"], "cHNrLXBzay1wc2stcHNrLQ==")
 
     def test_shadowsocks_multi_user_round_trip(self):
         link = build_share_link(multi_user_shadowsocks(), "vpn.example.com", 1)
         ob = build_outbound(link, "round-trip", backend="sing-box")
-        self.assertEqual(ob["password"], "server-psk:psk-b")
+        self.assertEqual(ob["password"], "c2VydmVyLXBzay0wMDAwMA==:cHNrLWItcHNrLWItcHNrLQ==")
 
     def test_vmess_round_trip(self):
         link = build_share_link(listener(type="vmess"), "vpn.example.com")
@@ -580,6 +583,17 @@ class RoundTripTests(unittest.TestCase):
 
 
 class BuildInboundsTests(unittest.TestCase):
+    def test_exception_names_are_never_sniffed(self):
+        # A name routing sends direct is matched on what the client dials, not on the SNI
+        # it sends to some other host.
+        excluded = ["full:vpn.example.com", "domain:google.com"]
+        spec = {"listeners": [listener(tag="a", reality=reality())], "sniffDomainsExcluded": excluded}
+        ib = build_inbounds(spec, "vpn.example.com")["inbounds"][0]
+        self.assertEqual(ib["sniffing"]["domainsExcluded"], excluded)
+        self.assertTrue(ib["sniffing"]["routeOnly"])
+        ib = build_inbounds({"listeners": [listener(tag="a", reality=reality())]}, "vpn.example.com")["inbounds"][0]
+        self.assertNotIn("domainsExcluded", ib["sniffing"])
+
     def test_spec_renders_inbounds_and_links(self):
         spec = {
             "serverAddress": "vpn.example.com",
@@ -599,10 +613,21 @@ class BuildInboundsTests(unittest.TestCase):
 
     def test_client_outbound_falls_back_to_xray(self):
         link = build_share_link(
-            listener(transport={"type": "xhttp", "path": "/p", "host": None, "mode": "auto", "serviceName": ""}),
+            listener(
+                transport={"type": "xhttp", "path": "/p", "host": None, "mode": "auto", "serviceName": ""},
+                tls={"enable": True, "certificateFile": "/c", "keyFile": "/k", "serverName": "vpn.example.com"},
+            ),
             "vpn.example.com",
         )
         self.assertEqual(client_outbound(link, "x")["protocol"], "vless")
+
+    def test_client_outbound_none_for_plaintext_vless_xray_refuses(self):
+        # XRay refuses VLESS in the clear to a public server, and sing-box has no XHTTP.
+        link = build_share_link(
+            listener(transport={"type": "xhttp", "path": "/p", "host": None, "mode": "auto", "serviceName": ""}),
+            "vpn.example.com",
+        )
+        self.assertIsNone(client_outbound(link, "x"))
 
     def test_xhttp_mode_reaches_the_inbound_and_the_link(self):
         spec = listener(

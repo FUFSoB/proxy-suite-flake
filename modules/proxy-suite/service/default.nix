@@ -102,6 +102,10 @@ let
     ++ lib.optional cfg.whitelistBypass.enable {
       path = "${constants.stateDir}/whitelist-bypass";
       scope = "whitelistBypass";
+    }
+    ++ lib.optional cfg.proxy.autoProxy.enable {
+      path = constants.autoProxySpoolDir;
+      scope = "autoProxy";
     };
 
   serviceUnits = import ./units.nix {
@@ -122,7 +126,12 @@ let
     import ../autoproxy.nix {
       inherit lib pkgs cfg;
       inherit (control) proxyCtl;
-      inherit (constants) autoProxyStateDir runtimeDir journalctl;
+      inherit (constants)
+        autoProxyStateDir
+        autoProxySpoolDir
+        runtimeDir
+        journalctl
+        ;
       inherit userControlAllows;
     }
   );
@@ -140,8 +149,17 @@ let
         # health/ takes hints from watchdogs; groups-state.json is for the front ends.
         RuntimeDirectory = "proxy-suite-outbound-groups";
         RuntimeDirectoryMode = "0755";
+      }
+      // lib.optionalAttrs cfg.host.privileged {
+        # health/ is the watchdogs' (root's and the service user's) to write to, not every
+        # local user's. Made here, with the capabilities the watcher lacks.
+        ExecStartPre = "+${pkgs.coreutils}/bin/install -d -m 1730 -o root -g ${constants.serviceUser} ${constants.runtimeDir}/proxy-suite-outbound-groups/health";
+      }
+      // {
         NoNewPrivileges = true;
         PrivateTmp = true;
+        # Root without capabilities still owns the disks' device nodes.
+        PrivateDevices = true;
         ProtectSystem = "strict";
         ProtectHome = true;
         ProtectClock = true;
@@ -176,6 +194,8 @@ let
         CapabilityBoundingSet = [ "" ];
         NoNewPrivileges = true;
         PrivateTmp = true;
+        # Root without capabilities still owns the disks' device nodes.
+        PrivateDevices = true;
         ProtectSystem = "strict";
         ProtectHome = true;
         ProtectClock = true;
@@ -242,8 +262,10 @@ lib.mkMerge [
     services.proxy-suite.internal = {
       # The GUI's pkexec needs its setuid wrapper.
       polkit.pkexecWrapper = lib.mkIf (cfg.enable && cfg.gui.enable) true;
-      # See constants.serviceUser.
-      systemUsers = [ constants.serviceUser ];
+      # See constants.serviceUser; and the subscription fetcher's (subscriptions.nix).
+      systemUsers =
+        constants.ownTrafficUsers
+        ++ lib.optional (constants.privileged && proxyEnabled) context.ctx.subscriptionFetchUser;
 
       packages = [
         control.proxyCtl
@@ -289,13 +311,17 @@ lib.mkMerge [
         # carry a mark whose table has no route back. Only those: the LAN is not trusted.
         (lib.mkIf (tproxyLanSysctl != { }) (
           let
-            rules = lib.concatMapStrings (interface: ''
-              iifname "${interface}" meta mark ${toString globalTproxy.fwmark} accept
-            '') globalTproxy.lanInterfaces;
+            rules =
+              extra:
+              lib.concatMapStrings (interface: ''
+                iifname "${interface}" meta mark ${toString globalTproxy.fwmark}${extra} accept
+              '') globalTproxy.lanInterfaces;
           in
           {
-            extraInputRules = rules;
-            extraReversePathFilterRules = rules;
+            # Into the backend's transparent socket alone: while it restarts, the mark would
+            # otherwise let a gateway client into any of this host's own listeners.
+            extraInputRules = rules " socket transparent 1";
+            extraReversePathFilterRules = rules "";
           }
         ))
       ];
@@ -306,18 +332,12 @@ lib.mkMerge [
       );
 
       polkit.enable = lib.mkIf (cfg.enable && (userControlEnabled || cfg.gui.enable)) true;
-      # The GUI's "Retry as Root" and root toggle run proxy-ctl through pkexec: one
-      # admin password then covers the next few minutes, as sudo's does in the TUI.
+      # The GUI's "Retry as Root" runs proxy-ctl through pkexec (polkit.nix), by the path
+      # proxy_model.elevated uses.
+      polkit.actions = lib.mkIf (cfg.enable && cfg.gui.enable) {
+        "${polkit.proxyCtlActionId}.policy" = polkit.mkProxyCtlAction "${control.proxyCtl}/bin/proxy-ctl";
+      };
       polkit.rules = lib.mkMerge [
-        (lib.mkIf (cfg.enable && cfg.gui.enable) ''
-          polkit.addRule(function(action, subject) {
-            if (action.id === "org.freedesktop.policykit.exec" &&
-                action.lookup("program") === "${control.proxyCtl}/bin/proxy-ctl") {
-              return polkit.Result.AUTH_ADMIN_KEEP;
-            }
-            return null;
-          });
-        '')
         (lib.mkIf (cfg.enable && userControlEnabled) ''
           polkit.addRule(function(action, subject) {
             if (!(${polkit.userControlPolkitMember})) {
@@ -355,6 +375,18 @@ lib.mkMerge [
             "${constants.runtimeInboundsDir}/users"
             "${constants.runtimeInboundsDir}/listeners"
           ]
+        ))
+        # inbound_runtime.py's lock, outside the spool the members write to; it opens it
+        # read-only and never makes it, so it must be here first.
+        (lib.mkIf (cfg.enable && derived.proxyInboundsRuntimeEnabled && constants.privileged) (
+          [
+            "f ${constants.runtimeInboundsLock} 0640 root ${
+              if userControlAllows "inbounds" then userControlCfg.group else "root"
+            } -"
+          ]
+          ++ map (g: "a+ ${constants.runtimeInboundsLock} - - - - g:${g}:r") (
+            derived.userControlExtraGroupsFor "inbounds"
+          )
         ))
         # Per-app profiles added at runtime: read by everyone who runs apps, written with the
         # perApp scope.
@@ -436,6 +468,33 @@ lib.mkMerge [
         "proxy-suite: no outbounds or subscriptions are declared; the proxy will not start"
         + " until one is added with `proxy-ctl proxy outbounds add`"
       )
+      # On Android every app reaches loopback: one that finds the proxy there learns its exit,
+      # or tells whoever asks that this phone runs one.
+      ++ lib.optional (cfg.host.kind == "nix-on-droid" && proxyEnabled && !localProxyAuthEnabled) (
+        "proxy-suite: proxy.listener takes no login, and on Android every app can use it;"
+        + " set proxy.listener.auth"
+      )
+      # Tor's SOCKS port and OpenSSH's -D take no login: without the nftables guard
+      # (constants.daemonMetadataGuard), every local user reaches those exits.
+      ++
+        lib.optional
+          (
+            !constants.privileged
+            && (
+              derived.torOutboundEnabled || (derived.sshProxyOutboundEnabled && !derived.sshProxyNativeOutbound)
+            )
+          )
+          (
+            "proxy-suite: without root, nothing keeps other local users (on Android, other apps) off"
+            + " the loopback SOCKS ports of ${
+               lib.concatStringsSep " and " (
+                 lib.optional derived.torOutboundEnabled "Tor (tor.socksPort)"
+                 ++ lib.optional (
+                   derived.sshProxyOutboundEnabled && !derived.sshProxyNativeOutbound
+                 ) "the OpenSSH tunnel (sshProxy.listener.port)"
+               )
+             }: neither takes a login. sing-box dials SSH natively, with no listener"
+          )
       ++
         lib.optional
           (
@@ -452,15 +511,30 @@ lib.mkMerge [
             + " anyone who reaches the port uses your outbounds; set listener.auth, or keep it off the"
             + " firewall's allowed ports"
           )
-      # The prober and proxy-ctl's outbound test dial these without credentials.
+      # OpenSSH's -D takes no login at all.
       ++
         lib.optional
-          (proxyEnabled && localProxyAuthEnabled && proxyCfg.autoProxy.enable && !pureXrayEnabled)
           (
-            "proxy-suite: proxy.listener.auth does not cover autoProxy's loopback listeners"
-            + " (ports ${toString proxyCfg.autoProxy.probeBasePort}-${
-               toString (proxyCfg.autoProxy.probeBasePort + proxyCfg.autoProxy.maxExits - 1)
-             } and ${toString constants.outboundTestPort}): every local user reaches your exits through them"
+            cfg.sshProxy.enable
+            && !(
+              lib.hasPrefix "127." cfg.sshProxy.listener.address
+              || cfg.sshProxy.listener.address == "::1"
+              || cfg.sshProxy.listener.address == "localhost"
+            )
+          )
+          (
+            "proxy-suite: sshProxy.listener.address is ${cfg.sshProxy.listener.address}: its SOCKS port takes"
+            + " no login, so anyone who reaches it uses the SSH server; keep it on loopback, or off the"
+            + " firewall's allowed ports"
+          )
+      ++
+        lib.optional
+          (
+            cfg.warp.enable && cfg.warp.generatorUrl != null && !lib.hasPrefix "https://" cfg.warp.generatorUrl
+          )
+          (
+            "proxy-suite: warp.generatorUrl is not https://: anyone on the way can hand back a profile"
+            + " of their own, and the WARP traffic goes to them"
           )
       # rules/proxy-inbounds.nix guards the names of this host only where XRay leaves names
       # unresolved, or where IP aliases catch a name that resolves here first.

@@ -6,30 +6,41 @@ mode=${1:-full}
 
 # Overridable to rehearse a run against a scratch copy; the units never set them.
 state_dir=${AUTOPROXY_STATE_DIR:-@stateDir@}
+spool=${AUTOPROXY_SPOOL_DIR:-@spoolDir@}
 export PROBE_EXITS_FILE=${PROBE_EXITS_FILE:-@runtimeDir@/proxy-suite-socks/probe-exits.json}
 index=$PROBE_EXITS_FILE
 state="$state_dir/state.json"
-requests="$state_dir/requests"
-edits="$state_dir/edits"
 now=$(date +%s)
 ttl=$(( @ttlDays@ * 86400 ))
 
-install -d -m @stateDirMode@ "$state_dir"
+@migrate@ "$state_dir" "$spool"
 
 # Timer runs and learn requests take turns on the state.
 exec 9> "$state_dir/lock"
 flock 9
 
-# Leftovers of a run that died partway; taken requests go back in line.
+# Leftovers of a run that died partway.
 rm -f "$state_dir/verdicts.json" "$state_dir/proxied-domains.txt" "$state".?????? "$state_dir/samples.taking"
-for queue in "$requests" "$edits"; do
-  if [ -e "$queue.taking" ]; then
-    cat "$queue.taking" >> "$queue"
-    rm -f "$queue.taking"
-    # Made here by root: the group appends to it too.
-    chmod 0660 "$queue"
-  fi
-done
+
+# `proxy-ctl proxy auto` requests: a file each in the spool, named to sort by time. Sets
+# taken to queue $1's files, oldest first.
+take() {
+  local f
+  taken=()
+  for f in "$spool/$1".*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    taken+=("$f")
+  done
+}
+# A spool file, read through no symlink, never blocking on a FIFO, 64 KiB at most.
+read_queue() {
+  dd if="$1" iflag=nofollow,nonblock,fullblock bs=64K count=1 status=none 2>/dev/null || true
+}
+# Taken files go one argv at a time (xargs): a member can queue more of them than one
+# command line holds, which would fail every run from then on.
+drop_taken() {
+  [ "${#taken[@]}" -eq 0 ] || printf '%s\0' "${taken[@]}" | xargs -0 rm -rf --
+}
 
 if [ -e "$state" ] && ! jq -e 'type == "object"' "$state" > /dev/null 2>&1; then
   echo "$state is unreadable; set aside as $state.broken, starting fresh" >&2
@@ -55,8 +66,8 @@ update() {
 # Before anything else, and even with the proxy stopped: its start renders the
 # rule-sets from the state again.
 edited=""
-if [ -s "$edits" ]; then
-  mv -f "$edits" "$edits.taking"
+take edits
+for f in "${taken[@]}"; do
   while read -r op dom; do
     case "$op" in
       forget)
@@ -71,9 +82,11 @@ if [ -s "$edits" ]; then
       *) continue ;;
     esac
     edited=1
-  done < "$edits.taking"
-  rm -f "$edits.taking"
-fi
+  done < <(read_queue "$f")
+  # Once applied: a run killed before this applies it again, to the same end. -r: a
+  # directory a member left under such a name would fail the run each time.
+  rm -rf -- "$f"
+done
 
 if [ ! -r "$index" ]; then
   echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
@@ -91,6 +104,16 @@ if [ -r "$inventory" ]; then
   done < <(jq -r --slurpfile inv "$inventory" '($inv[0].disabled // []) as $off
     | (.domains // {}) | to_entries[] | select(.value.exit as $e | $off | index([$e]))
     | "\(.key)\t\(.value.exit)"' "$state")
+fi
+# Once: routes learned under a public suffix (a whole workers.dev) before to_reg knew the
+# list, to be learned again per site.
+if ! jq -e '.suffixesForgotten' "$state" > /dev/null; then
+  while read -r dom; do
+    update --arg op forget --arg d "$dom" -f @editJq@
+    echo "forgot $dom: a public suffix, not one site"
+    edited=1
+  done < <(jq -r '(.domains // {}) | keys[]' "$state" | grep -xFf @publicSuffixes@ || true)
+  update '.suffixesForgotten = true'
 fi
 [ -z "$edited" ] || @render@ "$index" "$state"
 
@@ -132,28 +155,50 @@ record() {
       end' <<<"$3")
 }
 
-# Prefixes each host line with "registrable-domain<TAB>".
-# ponytail: last two labels, or three under a short list of two-label
-# suffixes. Switch to the Public Suffix List if a domain gets merged wrongly.
+# Prefixes each host line with "registrable-domain<TAB>", by the public suffix list (private
+# section too: foo.workers.dev is a site). A public suffix itself is no site: skipped.
 to_reg() {
-  awk -F'\t' '
+  awk -F'\t' -v list=@publicSuffixes@ '
     BEGIN {
-      n = split("co.uk org.uk ac.uk gov.uk com.au net.au org.au co.jp ne.jp or.jp com.br com.tr co.kr com.cn com.hk co.in co.za com.ua com.mx co.nz", s, " ")
-      for (i = 1; i <= n; i++) two[s[i]] = 1
+      while ((getline rule < list) > 0) {
+        if (substr(rule, 1, 1) == "!") exc[substr(rule, 2)] = 1
+        else if (substr(rule, 1, 2) == "*.") wild[substr(rule, 3)] = 1
+        else exact[rule] = 1
+      }
     }
     {
-      n = split($1, l, ".")
+      host = tolower($1)
+      n = split(host, l, ".")
       if (n < 2) next
-      k = (n >= 3 && (l[n - 1] "." l[n]) in two) ? l[n - 2] "." l[n - 1] "." l[n] : l[n - 1] "." l[n]
+      # Labels in the longest public suffix: an exception rule, an exact one, or a
+      # wildcard over the rest; none at all is the implicit "*".
+      s = 1
+      for (i = 1; i <= n; i++) {
+        c = l[i]
+        for (j = i + 1; j <= n; j++) c = c "." l[j]
+        rest = substr(c, length(l[i]) + 2)
+        if (c in exc) { s = n - i; break }
+        if ((c in exact) || (rest != "" && rest in wild)) { s = n - i + 1; break }
+      }
+      if (s >= n) next
+      k = l[n - s]; for (j = n - s + 1; j <= n; j++) k = k "." l[j]
       print k "\t" $0
     }'
 }
 
 # The pinned direct listener, since TUN/TProxy capture --noproxy too.
 direct_url=$(jq -r '.[0] | "http://127.0.0.1:\(.port)"' "$index")
+# The probe listeners' login, drawn per start (start-scripts.nix): to curl through a
+# config on a pipe, as argv is public.
+probe_login="$(dirname "$index")/probe-login"
+probe_curlrc() {
+  if [ -r "$probe_login" ]; then
+    printf 'proxy-user = "%s"\n' "$(tr -d '\r\n"\\' < "$probe_login")"
+  fi
+}
 
 # --- 1. verdicts are about this host's address; drop them if it changed ---
-egress=$(curl -sS -f --proxy "$direct_url" --max-time 10 https://api.ipify.org 2>/dev/null || true)
+egress=$(curl -sS -f -K <(probe_curlrc) --proxy "$direct_url" --max-time 10 https://api.ipify.org 2>/dev/null || true)
 # An error page or a captive portal must not pass for a new address: anything
 # that is not one discards every verdict this host learned.
 [[ "$egress" =~ ^[0-9a-fA-F.:]+$ ]] || egress=""
@@ -166,8 +211,11 @@ fi
 # --- 2. which network (AS) each exit leaves from, once per TTL ---
 while IFS=$'\t' read -r tag port; do
   at=$(jq -r --arg t "$tag" '.exits[$t].at // 0' "$state")
+  # Digits only: a state.json from when the group could write it may hold anything, and
+  # $(( )) would run what a[$(...)] names.
+  [[ "$at" =~ ^[0-9]{1,12}$ ]] || at=0
   [ $(( now - at )) -ge "$ttl" ] || continue
-  info=$(curl -sS --proxy "http://127.0.0.1:$port" --max-time 10 https://ipinfo.io/json 2>/dev/null || true)
+  info=$(curl -sS -K <(probe_curlrc) --proxy "http://127.0.0.1:$port" --max-time 10 https://ipinfo.io/json 2>/dev/null || true)
   ip=$(jq -r '.ip // empty' <<<"$info" 2>/dev/null || true)
   asn=$(jq -r '(.org // "") | split(" ")[0]' <<<"$info" 2>/dev/null || true)
   [ -n "$ip" ] || continue
@@ -269,7 +317,11 @@ if [ "$mode" = full ]; then
           first: (.[$e.key].first // $now)
         } end))
     | .backlog |= with_entries(select(.value.first + $ttl > $now
-        and $s.domains[.value.domain].exit == null))'
+        and $s.domains[.value.domain].exit == null))
+    # Bounded, as every distinct name dialled is an entry; the most dialled stay.
+    | if (.backlog | length) > 5000 then
+        .backlog |= (to_entries | sort_by(-.value.hits) | .[:5000] | from_entries)
+      else . end'
 
   # --- 4b. what the sampler saw crawl (see autoproxy-slow-judge.jq) ---
   if [ -s "$state_dir/samples" ]; then
@@ -324,19 +376,36 @@ if [ "$mode" = full ]; then
         echo "slow $dom: crawls ${was:+via $was}${was:-directly}, and no other exit reaches it; left direct"
         update --arg d "$dom" --argjson until $(( now + ttl )) '.slowSkip[$d] = $until | del(.slowWant[$d])'
       fi
-    done < <(jq -r '(.slowWant // {}) | to_entries[]
+    # A few per run, each probed via every exit: the rest wait for the next run rather
+    # than hold the lock for hours.
+    done < <(jq -r '(.slowWant // {}) | to_entries[:20][]
       | "\(.key)\t\(.value.host)\t\(.value.tried | join(","))"' "$state")
 
     [ "$(jq -c '.domains' "$state")" = "$before" ] || publish
   fi
 fi
 
-# --- 5. probe: requests (uncapped), then broken routes, then the backlog ---
+# --- 5. probe: requests, then broken routes, then the backlog ---
 asked=()
-if [ -s "$requests" ]; then
-  mv -f "$requests" "$requests.taking"
-  mapfile -t asked < <(grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' "$requests.taking" | to_reg || true)
-  rm -f "$requests.taking"
+take requests
+if [ "${#taken[@]}" -gt 0 ]; then
+  mapfile -t asked < <(
+    for f in "${taken[@]}"; do
+      read_queue "$f"
+      echo
+    done | grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' | awk '!seen[$0]++' | to_reg || true
+  )
+  drop_taken
+fi
+# probesPerRun of them at most: a member could queue hosts by the hundred thousand, each a
+# probe holding the lock. The rest go back to the spool, for the next run.
+if [ "${#asked[@]}" -gt @probesPerRun@ ]; then
+  rest=$(mktemp "$spool/.requests.XXXXXX")
+  printf '%s\n' "${asked[@]:@probesPerRun@}" | cut -f2 > "$rest"
+  chmod 0640 "$rest"
+  mv -fT "$rest" "$spool/requests.$(date +%s%N).$$"
+  echo "$(( ${#asked[@]} - @probesPerRun@ )) requested host(s) past probesPerRun wait for the next run"
+  asked=("${asked[@]:0:@probesPerRun@}")
 fi
 backlog=()
 if [ "$mode" = full ]; then

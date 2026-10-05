@@ -176,7 +176,9 @@ let
         # O_NOFOLLOW: the spool is group-writable.
         slot=$(${pkgs.coreutils}/bin/dd if="${runtimeOutboundsDir}/$profile_name.iface" iflag=nofollow,nonblock status=none 2>/dev/null | ${pkgs.coreutils}/bin/head -n 1 || true)
       fi
-      if [[ ! $slot =~ ^[0-9]+$ ]] || (( slot >= ${toString awgRuntimeIfaceSlots} )); then
+      # No leading zero (bash reads it as octal) and three digits at most (a long one wraps
+      # around in bash arithmetic): an out-of-range table reaches `ip route flush` as root.
+      if [[ ! $slot =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( slot >= ${toString awgRuntimeIfaceSlots} )); then
         echo "proxy-suite: AmneziaWG outbound '$profile_name' needs a slot in 0-${
           toString (awgRuntimeIfaceSlots - 1)
         } in $profile_name.iface" >&2
@@ -258,7 +260,7 @@ let
         fi
         echo "$slot" > "$slot_file"
       fi
-      if [[ ! $slot =~ ^[0-9]+$ ]]; then
+      if [[ ! $slot =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( slot >= ${toString derived.constants.awgAppSlots} )); then
         echo "proxy-suite: AmneziaWG profile '$profile_name' is not up for apps" >&2
         exit 1
       fi
@@ -387,6 +389,7 @@ let
     fwmark=$(${awgCfg.toolsPackage}/bin/awg show ${lib.escapeShellArg profile.interfaceName} fwmark)
     # Off when the profile routes nothing by default (a table of its own, or Table=off).
     if [[ "$fwmark" != off ]]; then
+      ${awgIPv6FallbackUp}
       ${serverUdpRulesUp}
       ${pkgs.nftables}/bin/nft -f - <<EOF
     table inet ${repliesTable profile} {
@@ -406,6 +409,30 @@ let
   repliesDown = profile: ''
     ${pkgs.nftables}/bin/nft delete table inet ${repliesTable profile} 2>/dev/null || true
     ${serverUdpRulesDown}
+    ${awgIPv6FallbackDown}
+  '';
+
+  # A global profile without IPv6 (AllowedIPs 0.0.0.0/0 alone): IPv6 unreachable rather than
+  # out the uplink, behind the main table's more specific routes. $fwmark: the interface's.
+  ip6 = "${pkgs.iproute2}/bin/ip -6";
+  awgIPv6FallbackUp = ''
+    table=$((fwmark))
+    if [ -e /proc/net/if_inet6 ] && [ -z "$(${ip6} route show default table "$table" 2>/dev/null)" ]; then
+      ${ip6} route replace unreachable default table "$table"
+      ${ip6} rule add not fwmark "$table" table "$table"
+      ${ip6} rule add table main suppress_prefixlength 0
+    fi
+  '';
+  # The interface (and its fwmark) may be gone: found by the rule naming its mark as its
+  # table and that table's unreachable default, which awg-quick's never has.
+  awgIPv6FallbackDown = ''
+    while read -r mark table; do
+      [[ $mark =~ ^(0x[0-9a-f]+|[0-9]+)$ && $table =~ ^[0-9]+$ ]] && (( mark == table )) || continue
+      ${ip6} route show table "$table" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q '^unreachable default' || continue
+      while ${ip6} rule del not fwmark "$table" table "$table" 2>/dev/null; do :; done
+      ${ip6} rule del table main suppress_prefixlength 0 2>/dev/null || true
+      ${ip6} route flush table "$table" 2>/dev/null || true
+    done < <(${ip6} rule show 2>/dev/null | ${pkgs.gawk}/bin/awk '$2 == "not" && $5 == "fwmark" && $7 == "lookup" { print $6, $8 }')
   '';
 
   # awg-quick turns src_valid_mark on for a default route and never back off; left on, it
@@ -447,18 +474,9 @@ let
       }
   '';
 
-  # Under the kill switch, glibc would hand the Endpoint lookup to nscd or systemd-resolved,
-  # whose own queries the kill switch rejects. With both out of the way it asks resolved's
-  # upstreams itself, under the unit's group, and awg-quick gets the Endpoint as an address.
-  ownLookups = pkgs.writeShellScript "proxy-suite-awg" ''
-    mount=${pkgs.util-linux}/bin/mount
-    # Best effort: at worst the lookup goes the usual way.
-    if [ -S /run/nscd/socket ]; then $mount --bind /dev/null /run/nscd/socket || true; fi
-    if [ -s /run/systemd/resolve/resolv.conf ]; then
-      $mount --bind /run/systemd/resolve/resolv.conf /etc/resolv.conf || true
-    fi
-    exec "$@"
-  '';
+  # The Endpoint lookup under the kill switch, under the unit's group: awg-quick gets it as
+  # an address.
+  ownLookups = derived.constants.ownLookups pkgs;
 
   # A global profile, or an "interface" outbound: a unit for a declared profile (staticSpec),
   # or the template the runtime ones start from (runtimeSpec). `conflicts`: the global units
@@ -527,6 +545,9 @@ let
           ${spec.release or ""}
         }
         trap cleanup ERR
+        # Stopped (or conflicted out) during the handshake wait: no ExecStop follows a start
+        # that never finished, so what is up so far would stay up with the unit inactive.
+        trap 'cleanup; exit 143' TERM INT
 
         ${awgCommon.modprobe}
 
@@ -604,7 +625,6 @@ let
             "proxy-suite-tun.service"
             "proxy-suite-tproxy.service"
             "proxy-suite-zapret.service"
-            "proxy-suite-per-app-zapret.service"
             "proxy-suite-zapret-vm-exempt.service"
           ];
         }
@@ -640,7 +660,15 @@ let
           (withArg prepare)
         ]
         ++ lib.optionals (!outbound && derived.awgRuntimeGlobal) [ (withArg stopRuntimeProfiles) ]
-        ++ lib.optionals (cfg.proxy.enable && !outbound) [ proxyBypassUp ];
+        ++ lib.optionals (cfg.proxy.enable && !outbound) [ proxyBypassUp ]
+        # Per-app zapret and this profile's copy for apps have nothing to add once it is up,
+        # and never take it down themselves (constants.refuseUnderGlobal).
+        ++ lib.optionals (!outbound) [
+          (derived.constants.stopPerAppUnits pkgs [
+            "proxy-suite-per-app-zapret.service"
+            "proxy-suite-awg-app@${if spec.template then "%i" else name}.service"
+          ])
+        ];
         ExecStart = withArg start;
         ExecStop = withArg stop;
       }
@@ -696,7 +724,7 @@ let
     unit = "proxy-suite-awg-tunnel@";
     runtimeDirectory = "proxy-suite-awg-tunnel-%i";
     engine = "userspace";
-    tag = "$TUNNEL_TAG";
+    # `profile` sets $TUNNEL_TAG.
     tunnelPort = "$TUNNEL_PORT";
     execArgs = " %i";
     # The sync unit starts one per entry.
@@ -716,7 +744,7 @@ let
       fi
       # O_NOFOLLOW: the spool is group-writable, and the port is echoed back on error.
       TUNNEL_PORT=$(${pkgs.coreutils}/bin/dd if="${runtimeOutboundsDir}/$TUNNEL_TAG.port" iflag=nofollow,nonblock status=none 2>/dev/null | ${pkgs.coreutils}/bin/head -n 1 || true)
-      if [[ ! $TUNNEL_PORT =~ ^[0-9]+$ ]] || (( TUNNEL_PORT < ${toString awgRuntimeTunnelBasePort} || TUNNEL_PORT > ${toString runtimeTunnelLastPort} )); then
+      if [[ ! $TUNNEL_PORT =~ ^[1-9][0-9]{0,4}$ ]] || (( TUNNEL_PORT < ${toString awgRuntimeTunnelBasePort} || TUNNEL_PORT > ${toString runtimeTunnelLastPort} )); then
         echo "proxy-suite: AmneziaWG outbound '$TUNNEL_TAG' needs a port in ${toString awgRuntimeTunnelBasePort}-${toString runtimeTunnelLastPort} in $TUNNEL_TAG.port" >&2
         exit 1
       fi
@@ -790,7 +818,14 @@ let
         # moves off it now rather than at its next test.
         hint() {
           local health="${runtimeDir}/proxy-suite-outbound-groups/health"
-          [[ -d $health ]] && ${pkgs.coreutils}/bin/touch "$health/$profile_name" 2>/dev/null || true
+          local hint="$health/$profile_name"
+          [[ -d $health ]] || return 0
+          # Never through a symlink the service user's group left: O_EXCL (noclobber), touch -h.
+          if [[ -e $hint || -L $hint ]]; then
+            ${pkgs.coreutils}/bin/touch -h "$hint" 2>/dev/null || true
+          else
+            (set -C; : > "$hint") 2>/dev/null || true
+          fi
         }
         ${lib.optionalString egressProbe ''
           new_session() {
@@ -971,7 +1006,18 @@ in
     (lib.mapAttrs' (
       name: profile:
       lib.nameValuePair (serviceName name) (
-        mkService (staticSpec name profile) (allProfileConflicts name)
+        lib.mkMerge [
+          (mkService (staticSpec name profile) (allProfileConflicts name))
+          {
+            # Ordered (one way, by name) so the old profile's cleanup of table 51820 ends before the
+            # new one starts; Conflicts= alone lets them overlap.
+            after = lib.optionals (builtins.elem name globalProfileNames) (
+              map (other: "${serviceName other}.service") (
+                builtins.filter (other: other < name) globalProfileNames
+              )
+            );
+          }
+        ]
       )
     ) interfaceProfiles)
     (lib.mapAttrs' (
@@ -983,8 +1029,8 @@ in
         (mkService runtimeSpec (map (other: "${serviceName other}.service") globalProfileNames))
         {
           wants = [ "proxy-suite-awg-watchdog@%i.service" ];
-          # The kill switch cannot order itself after instances it does not know.
-          before = [ killSwitchUnit ];
+          # After the declared ones it conflicts with: their stop goes first (as above).
+          after = map (other: "${serviceName other}.service") globalProfileNames;
         }
       ];
       "proxy-suite-awg-watchdog@" = mkWatchdog runtimeSpec;
@@ -998,10 +1044,13 @@ in
         (mkService appSpec [ ])
         {
           wants = [ "proxy-suite-awg-app-watchdog@%i.service" ];
-          # The profile up globally, declared or added with `awg add`.
-          conflicts = [
-            "proxy-suite-awg-%i.service"
-            "proxy-suite-awg@%i.service"
+          # Not while the profile is up globally, declared or added with `awg add`: that
+          # carries the apps already, and takes this one down as it starts.
+          serviceConfig.ExecStartPre = lib.mkBefore [
+            (derived.constants.refuseUnderGlobal pkgs [
+              "proxy-suite-awg-%i.service"
+              "proxy-suite-awg@%i.service"
+            ])
           ];
           # Up only while proxy-ctl runs apps through it, which starts it again.
           serviceConfig.Restart = lib.mkForce "no";

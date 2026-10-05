@@ -300,6 +300,17 @@ let
       (!derived.sshProxyNativeOutbound || cfg.sshProxy.hostKey != [ ] || cfg.sshProxy.hostKeyFile != null)
       "proxy-suite: sshProxy.hostKey or sshProxy.hostKeyFile is required when sshProxy.asOutbound = true with a SingBox or hybrid backend, because SingBox verifies host keys by value and an empty list accepts any key. Point hostKeyFile at a known-hosts file, or list every key from `ssh-keyscan -p <server.port> <server.host>` in hostKey -- the host key algorithm is negotiated, so a single pinned key fails the handshake when the server picks another algorithm."
     )
+    # OpenSSH's own: with "yes" and no key known, it would refuse every connection.
+    (mkAssertion
+      (
+        !(cfg.sshProxy.enable && derived.sshProxyUnitEnabled)
+        || cfg.sshProxy.strictHostKeyChecking != "yes"
+        || cfg.sshProxy.knownHostsFile != null
+        || cfg.sshProxy.hostKeyFile != null
+        || cfg.sshProxy.hostKey != [ ]
+      )
+      "proxy-suite: sshProxy needs the server's host keys (knownHostsFile, hostKeyFile or hostKey, from `ssh-keyscan -p <server.port> <server.host>`), or strictHostKeyChecking = \"accept-new\" to trust whatever key the first connection meets"
+    )
     (mkAssertion (!proxyEnabled || invalidRoutingTargets == [ ])
       "proxy-suite: routing.rules reference unknown outbound tag(s): ${lib.concatStringsSep ", " invalidRoutingTargets}"
     )
@@ -588,6 +599,17 @@ let
     )
     (requireEnabled proxyInboundsEnabled (proxyInbounds != [ ] || derived.proxyInboundsRuntimeEnabled)
       "proxy-suite: inbounds.enable requires at least one entry in inbounds.listeners, or inbounds.runtime.enable"
+    )
+    # Each range is sized for any sane config, not for every one: a second listener on a
+    # port fails its unit, and whatever routes to it goes nowhere.
+    (uniqueValues true reservedLoopbackPorts
+      "proxy-suite: two of proxy-suite's own loopback listeners share a port (${
+        lib.concatMapStringsSep ", " toString (
+          lib.unique (
+            builtins.filter (port: lib.count (p: p == port) reservedLoopbackPorts > 1) reservedLoopbackPorts
+          )
+        )
+      }): too many AmneziaWG outbounds, AmneziaWG listeners or whitelistBypass joiners for their ranges"
     )
     # Runtime listeners bind only there: clear of what is bound here already.
     (mkAssertion
@@ -1042,6 +1064,31 @@ let
       )
       "proxy-suite: AmneziaWG inbounds listeners route with table ${toString derived.constants.awgInboundRouteTable}, which proxy.tproxy.routeTable or a perAppRouting routeTable also uses"
     )
+    # The tables proxy-suite numbers itself, which an option must not name too: each start
+    # flushes and refills its own.
+    (
+      let
+        c = derived.constants;
+        slots = base: n: lib.genList (i: base + i) n;
+        internal =
+          map (ob: ob.routeTable) derived.awgInterfaceOutbounds
+          ++ lib.optionals derived.awgRuntimeIfaceOutbounds (
+            slots c.awgRuntimeIfaceTableBase c.awgRuntimeIfaceSlots
+          )
+          ++ lib.optionals derived.perAppPinTproxy (slots c.perAppPinTproxyTableBase derived.perAppPinSlots)
+          ++ lib.optionals derived.perAppPinTun (slots c.perAppPinTunTableBase derived.perAppPinSlots)
+          ++ lib.optionals derived.perAppViaProfiles (slots c.awgAppTableBase c.awgAppSlots);
+        named =
+          lib.optional globalTproxy.enable globalTproxy.routeTable
+          ++ lib.optional perAppRoutingTun.enable perAppRoutingTun.routeTable
+          ++ lib.optional perAppRoutingTproxy.enable perAppRoutingTproxy.routeTable;
+        taken = builtins.filter (t: builtins.elem t internal) named;
+      in
+      mkAssertion (taken == [ ])
+        "proxy-suite: route table ${
+          lib.concatMapStringsSep ", " toString taken
+        } (proxy.tproxy.routeTable or a perAppRouting routeTable) is one proxy-suite uses itself: AmneziaWG interface outbounds take ${toString c.awgOutboundRouteTableBase} up, runtime ones ${toString c.awgRuntimeIfaceTableBase} up, pin slots ${toString c.perAppPinTproxyTableBase} and ${toString c.perAppPinTunTableBase} up, apps through AmneziaWG profiles ${toString c.awgAppTableBase} up"
+    )
   ]
   ++ lib.concatMap (
     ib:
@@ -1240,6 +1287,16 @@ let
   ) derived.torOnionInbounds;
   whitelistBypassCfg = cfg.whitelistBypass;
   whitelistBypassAssertions = [
+    # They become unit names, outbound tags and file names, spliced into the units' scripts.
+    (mkAssertion
+      (
+        !whitelistBypassCfg.enable
+        || lib.all (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name != null) (
+          builtins.attrNames whitelistBypassCfg.joiners ++ builtins.attrNames whitelistBypassCfg.creators
+        )
+      )
+      "proxy-suite: whitelistBypass.joiners and .creators names must be letters, digits, '.', '_' and '-', starting with a letter or digit"
+    )
     (requireEnabled (
       derived.whitelistBypassJoiners != [ ]
     ) proxyEnabled "proxy-suite: whitelistBypass.joiners requires proxy.enable = true")
@@ -1319,8 +1376,15 @@ let
       "proxy-suite: tor.socksPort ${toString torCfg.socksPort} collides with another proxy-suite listener"
     )
   ];
+  # zapret2.blobs' names go into nfqws2's argv as --blob=<name>:@<file>.
+  blobNameAssertions = map (
+    name:
+    mkAssertion (builtins.match "[A-Za-z0-9._-]+" name != null)
+      "proxy-suite: zapret.zapret2.blobs name '${name}' must be letters, digits, dot, dash and underscore"
+  ) (builtins.attrNames cfg.zapret.zapret2.blobs);
 in
 rootlessAssertions
+++ blobNameAssertions
 ++ featureAssertions
 ++ torAssertions
 ++ whitelistBypassAssertions

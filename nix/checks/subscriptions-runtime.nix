@@ -134,12 +134,77 @@ in
       true
     )
 
-    # The fetcher's output must land in the cache, not after a stray newline.
+    # Private servers are kept only for a declared subscription that opts in: the flag rides
+    # both entry points to the fetcher; runtime subscriptions and the rest never pass it.
     (
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"''
+      let
+        generated = import ./read-generated.nix;
+        fixture = evalProxySuite [
+          {
+            system.stateVersion = "26.05";
+            services.proxy-suite = {
+              enable = true;
+              proxy = {
+                enable = true;
+                backend = "sing-box";
+                subscriptions = [
+                  {
+                    tag = "lan";
+                    url = "https://sub.lan.example/token";
+                    allowPrivateServers = true;
+                  }
+                  {
+                    tag = "community";
+                    url = "https://example.com/sub/token";
+                  }
+                ];
+              };
+            };
+          }
+        ];
+        unitScript =
+          unit: generated.readDerivation fixture.config.systemd.services.${unit}.serviceConfig.ExecStart;
+        linesWith =
+          infix: script: builtins.filter (pkgs.lib.hasInfix infix) (pkgs.lib.splitString "\n" script);
+        flagged = pkgs.lib.hasInfix " --allow-private-servers";
+        flaggedOnly =
+          call: script:
+          builtins.all flagged (linesWith "${call} lan " script)
+          && linesWith "${call} lan " script != [ ]
+          && !(builtins.any flagged (linesWith "${call} community " script))
+          && !(builtins.any flagged (linesWith ''${call} "$RUNTIME_SUB_TAG"'' script));
+        start = unitScript "proxy-suite-socks";
+        update = unitScript "proxy-suite-subscription-update";
+      in
+      assert flaggedOnly "_proxy_suite_load_subscription" start;
+      assert flaggedOnly "_proxy_suite_fetch_subscription" update;
+      assert pkgs.lib.hasInfix ''_proxy_suite_fetch_subscription "$tag" "$src" "''${@:3}"'' start;
+      # Both the fetch through the tunnel and the kill switch's direct retry.
+      assert pkgs.lib.hasInfix
+        ''_proxy_suite_run_fetcher tunnel "$tag" "$src" "$cache_tmp" "$links_tmp" "''${@:3}"''
+        update;
+      assert pkgs.lib.hasInfix
+        ''_proxy_suite_run_fetcher direct "$tag" "$src" "$cache_tmp" "$links_tmp" "''${@:3}"''
+        update;
+      # Through the tunnel too, the subscription server's answer is not parsed as root.
+      assert pkgs.lib.hasInfix
+        "setpriv --reuid=proxy-suite-fetch --regid=proxy-suite-fetch --clear-groups"
+        update;
+      # Runtime ones over https only, unless the admin allows http.
+      assert pkgs.lib.hasInfix
+        ''_proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC" --https-only''
+        update;
+      true
+    )
+
+    # The fetcher's output must land in the cache, not after a stray newline; each fetch in
+    # a temporary file of its own, which start scripts running at once do not share.
+    (
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-fd 3 "$@" > "$cache_tmp" 3> "$links_tmp"''
         subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-out "$links.tmp" > "$cache.tmp"''
+      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-fd 3 "$@" > "$cache_tmp" 3> "$links_tmp"''
         subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix ''tmp=$(mktemp "$1.XXXXXX")'' subscriptionOnlyUpdateScript;
       true
     )
 

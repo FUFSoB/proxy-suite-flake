@@ -65,6 +65,8 @@ let
   };
   inherit (coreProxyChecks) ruDefaultConfig;
 
+  optionTypeChecks = import ./option-types.nix { inherit checkLib minimal; };
+
   routeModeChecks = import ./route-mode.nix {
     inherit checkLib;
     inherit
@@ -342,6 +344,7 @@ let
     ++ guiChecks.assertions
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
+    ++ optionTypeChecks.assertions
     ++ perAppRoutingChecks.assertions
     ++ perAppRoutingAwgChecks.assertions
     ++ serverModuleChecks.assertions

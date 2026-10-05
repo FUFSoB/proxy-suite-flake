@@ -30,33 +30,71 @@ local NOREPLY_MS = 4000
 local STALL_MS = 6000
 local SYN_MS = 3500
 
+-- Names in it come off the wire (a SNI): a newline would forge journal lines of its own.
 local function say(text)
-  io.stderr:write("zapret2: ", text, "\n")
+  io.stderr:write("zapret2: ", (tostring(text):gsub("%c", "?")), "\n")
 end
 
 -- --- verdicts --------------------------------------------------------------------------
 
 local VERDICTS = os.getenv("PROXY_SUITE_ZAPRET2_VERDICTS")
 local status = {} -- "name proto" -> its last kind, so each change is written once
+local status_count = 0
+-- Names past which no new one gets a verdict: every unanswered address a page dials would
+-- add one for good (and a /32 to the proxy's rules), each read back whole on the next.
+local MAX_VERDICT_KEYS = 20000
+local verdicts_full = false
+-- Of them, addresses (ps_syn's), which a page can make by the thousand: never all of them.
+local MAX_IP_VERDICT_KEYS = 2000
+local ip_count = 0
+local ip_full = false
 
 -- The last verdicts, as the file has them now: proxy-ctl's retries land there too.
 local function reload()
   local f = VERDICTS and io.open(VERDICTS, "r")
   if not f then return end
-  status = {}
+  status, status_count, ip_count = {}, 0, 0
   for line in f:lines() do
     local kind, name, proto = line:match("^(%w+)\t([^\t]+)\t([^\t]*)")
-    if kind then status[name .. " " .. proto] = kind end
+    if kind then
+      local key = name .. " " .. proto
+      if status[key] == nil then
+        status_count = status_count + 1
+        if proto == "ip" then ip_count = ip_count + 1 end
+      end
+      status[key] = kind
+    end
   end
   f:close()
 end
 reload()
 
+-- A name as a rule can take it: the SNI comes from the wire, raw, and a tab or newline in it
+-- would forge lines of its own in the verdicts and lists.
+local function plain(name)
+  return type(name) == "string" and name:match("^[%w%.%-_:]+$") ~= nil
+end
+
 local function verdict(kind, name, proto, note)
+  if not plain(name) then return end
   local key = name .. " " .. proto
   if not VERDICTS or status[key] == kind then return end
   reload()
   if status[key] == kind then return end
+  if status[key] == nil and status_count >= MAX_VERDICT_KEYS then
+    if not verdicts_full then say("no verdict for " .. name .. ": " .. VERDICTS .. " holds " .. MAX_VERDICT_KEYS .. " names already") end
+    verdicts_full = true
+    return
+  end
+  if status[key] == nil and proto == "ip" and ip_count >= MAX_IP_VERDICT_KEYS then
+    if not ip_full then say("no verdict for " .. name .. ": " .. VERDICTS .. " holds " .. MAX_IP_VERDICT_KEYS .. " addresses already") end
+    ip_full = true
+    return
+  end
+  if status[key] == nil then
+    status_count = status_count + 1
+    if proto == "ip" then ip_count = ip_count + 1 end
+  end
   status[key] = kind
   local f = io.open(VERDICTS, "a")
   if not f then return end
@@ -193,10 +231,67 @@ end
 
 local stalled = {} -- host -> a transfer of it was cut short, within the window
 
+-- A name a site can have: two labels at least, none empty, and not a public suffix (com,
+-- co.uk), which would take every site under it.
+local function learnable(host)
+  if not plain(host) or host:find("^%.") or host:find("%.$") or host:find("%.%.") or not host:find("%.") then
+    return false
+  end
+  return not proxy_suite_is_public_suffix(host)
+end
+
+-- Learned names, and verdicts' names, past which no new one is taken: a wildcard domain's
+-- fresh names would grow the lists without end. Real use stays far below.
+local MAX_AUTO_LINES = 20000
+
+local function bounded(t, count)
+  if count > 4096 then return {}, 1 end
+  return t, count
+end
+local learned_count, stalled_count = 0, 0
+local auto_full = false
+
+-- The site a name belongs to: the public suffix and one label more (example.co.uk).
+local function registrable(host)
+  local labels = {}
+  for label in host:gmatch("[^.]+") do labels[#labels + 1] = label end
+  for i = #labels - 1, 1, -1 do
+    local candidate = table.concat(labels, ".", i)
+    if not proxy_suite_is_public_suffix(candidate) then return candidate end
+  end
+  return host
+end
+
+-- Names of one site past which the site itself is learned instead, so one wildcard domain
+-- cannot fill the list.
+local MAX_NAMES_PER_SITE = 64
+
 local function learn(host, arg, n)
+  if not learnable(host) then return end
+  local site = registrable(host)
+  if site ~= host and learnable(site) then
+    local same, tail = 0, "." .. site
+    for _, line in ipairs(lines(arg.auto)) do
+      if line:sub(-#tail) == tail then same = same + 1 end
+    end
+    if same >= MAX_NAMES_PER_SITE then
+      say(site .. " has " .. same .. " names learned: learning the site instead of " .. host)
+      host = site
+    end
+  end
+  if not learned[host] then
+    learned, learned_count = bounded(learned, learned_count + 1)
+  end
   learned[host] = true
   if stalled[host] then verdict("stalls", host, "cutoff", "learned from transfers cut short") end
-  if covered(host, lines(arg.auto)) then return end
+  local auto = lines(arg.auto)
+  if covered(host, auto) then return end
+  if #auto >= MAX_AUTO_LINES then
+    if not auto_full then say("not learning " .. host .. ": " .. arg.auto .. " holds " .. MAX_AUTO_LINES .. " names already") end
+    auto_full = true
+    return
+  end
+  auto_full = false
   local f = io.open(arg.auto, "a")
   if not f then
     say("cannot learn " .. host .. ": " .. arg.auto .. " is not writable")
@@ -227,7 +322,10 @@ local function failure(st, arg, why, stall)
   st.counted = true
   local host = st.host
   if learned[host] or excluded(host, arg) then return end
-  if stall then stalled[host] = true end
+  if stall and not stalled[host] then
+    stalled, stalled_count = bounded(stalled, stalled_count + 1)
+    stalled[host] = true
+  end
   local n, need = tally(host, tonumber(arg.time) or 300), tonumber(arg.fails) or 3
   if arg.log then say(host .. ": " .. why .. " (" .. n .. "/" .. need .. " to learn)") end
   if n >= need then learn(host, arg, n) end

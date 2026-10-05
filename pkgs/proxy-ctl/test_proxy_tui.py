@@ -116,6 +116,37 @@ class TuiTest(unittest.TestCase):
                 if (tab.id, action.key) not in same_meaning:
                     self.assertNotIn(action.key, screen, f"{tab.id}: {action.label}")
 
+    def test_untrusted_text_is_shown_not_obeyed(self):
+        """An escape in a row (OSC 52 sets the clipboard) reaches the screen as text, root's included."""
+        evil = "a\x1b]52;c;aGk=\x07\x9bb"
+        self.assertEqual(tui.cell("host", evil).plain, "a\\x1b]52;c;aGk=\\x07\\x9bb")
+        self.assertEqual(tui.cell("state", "\x1b[2J").plain, "? \\x1b[2J")
+        tab = mock.Mock(columns=[("host", "Host")])
+        self.assertNotIn("\x1b", tui.detail(tab, {"host": evil}, []).plain)
+        self.assertEqual(tui.printable("a\tb\nc"), "a\tb\nc")
+        # Output keeps its colors and nothing else.
+        text = tui.Text.from_ansi(tui.printable_ansi(f"\x1b[31mred\x1b[0m {evil}"))
+        self.assertEqual(text.plain, "red a\\x1b]52;c;aGk=\\x07\\x9bb")
+        self.assertTrue(text.spans)
+
+    def test_trace_file_is_only_ever_our_own(self):
+        with tempfile.TemporaryDirectory() as run, mock.patch.dict(tui.os.environ, {"XDG_RUNTIME_DIR": run}):
+            path, other = tui.trace_path(), tui.os.path.join(run, "other")
+            with tui.open_trace() as trace:
+                trace.write("ok\n")
+            # A hard link to a file of ours (root's, under sudo) is not written through.
+            open(other, "w").close()
+            tui.os.unlink(path)
+            tui.os.link(other, path)
+            self.assertIsNone(tui.open_trace())
+            tui.os.unlink(path)
+            tui.os.symlink(other, path)
+            self.assertIsNone(tui.open_trace())
+            tui.os.unlink(path)
+            tui.os.mkfifo(path)  # and a fifo neither hangs it nor is written
+            self.assertIsNone(tui.open_trace())
+            self.assertEqual(tui.os.path.getsize(other), 0)
+
     def test_failed_load_keeps_the_tui_going(self, rows=None):
         async def run():
             tui_trace = tempfile.TemporaryDirectory()
@@ -146,9 +177,19 @@ class TuiTest(unittest.TestCase):
                 await self.settle(app, pilot)
                 app.main.query_one("#tabs", tui.TabbedContent).active = "outbounds"
                 await self.settle(app, pilot)
+                # Nothing is added before a yes: a web page can plant a link in the clipboard.
                 app.post_message(events.Paste("vless://u@de.test:443#DE"))
                 await pilot.pause()
-                self.assertEqual(self.ran.pop(), ["proxy", "outbounds", "add", "vless://u@de.test:443#DE"])
+                self.assertIsInstance(app.screen, tui.Confirm)
+                self.assertEqual(app.screen.command, "proxy-ctl proxy outbounds add - < vless://***@de.test:443#DE")
+                await pilot.press("n")
+                await pilot.pause()
+                self.assertEqual(self.ran, [])
+                app.post_message(events.Paste("vless://u@de.test:443#DE"))
+                await pilot.pause()
+                await pilot.press("y")
+                await pilot.pause()
+                self.assertEqual(self.ran.pop(), (["proxy", "outbounds", "add", "-"], "vless://u@de.test:443#DE"))
                 # Whatever else was in the clipboard runs nothing, and the bar says why.
                 app.post_message(events.Paste("ftp://a.test/x"))
                 await pilot.pause()
@@ -158,6 +199,9 @@ class TuiTest(unittest.TestCase):
                 self.env["AWG_RUNTIME_OUTBOUNDS"] = "1"
                 conf = "[Interface]\nPrivateKey = k\n[Peer]\nPublicKey = p"
                 app.post_message(events.Paste(conf))
+                await pilot.pause()
+                self.assertNotIn("PrivateKey", app.screen.command)
+                await pilot.press("y")
                 await pilot.pause()
                 self.assertEqual(self.ran.pop(), (["proxy", "outbounds", "add", "-"], conf))
 
@@ -281,10 +325,10 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(app.screen.query_one(tui.Choices).highlighted, 1)
             await pilot.press("escape")
 
-            # Prompts: add takes "<tag> <url>".
+            # Prompts: add takes "<tag> <url>", the URL on stdin.
             await pilot.press("n", *"x vless://h", "enter")
             await pilot.pause()
-            self.assertEqual(self.ran.pop(), ["proxy", "outbounds", "add", "x", "vless://h"])
+            self.assertEqual(self.ran.pop(), (["proxy", "outbounds", "add", "x", "-"], "vless://h"))
             # A prompt remembers what was typed into it last.
             await pilot.press("n")
             await pilot.pause()

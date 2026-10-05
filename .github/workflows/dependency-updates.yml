@@ -10,9 +10,11 @@ on:
         type: boolean
         default: false
 
+# Read-only by default: the job that runs fetched code (flake updates, update-pins.sh, nix
+# builds and checks) never holds a token that can push. Only the last job may, and it runs
+# nothing it fetched: it applies the first job's diff and opens the pull request.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: dependency-updates
@@ -21,12 +23,18 @@ concurrency:
 jobs:
   update-dependencies:
     runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.changes.outputs.has_changes }}
     steps:
+      # No token left in .git/config for the steps that run fetched code (flake updates,
+      # update-pins.sh, nix builds); create-pull-request authenticates on its own.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v22
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Decide whether nixpkgs should be updated
         id: nixpkgs_gate
@@ -112,9 +120,62 @@ jobs:
           } > "$RUNNER_TEMP/pr-body.md"
           cat "$RUNNER_TEMP/pr-body.md" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create or update pull request
+      # The changes as a patch, new files included, for the job that may push.
+      - name: Export the changes
         if: steps.changes.outputs.has_changes == 'true'
-        uses: peter-evans/create-pull-request@v8
+        run: |
+          set -euo pipefail
+          git add -A -- flake.lock '*.nix'
+          git diff --cached --binary > "$RUNNER_TEMP/dependency-updates.patch"
+          cp "$RUNNER_TEMP/pr-body.md" "$RUNNER_TEMP/dependency-updates.md"
+
+      - name: Upload the changes
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-updates
+          path: |
+            ${{ runner.temp }}/dependency-updates.patch
+            ${{ runner.temp }}/dependency-updates.md
+          retention-days: 1
+
+      - name: No dependency changes
+        if: steps.changes.outputs.has_changes != 'true'
+        run: echo "No dependency updates detected."
+
+  open-pull-request:
+    needs: update-dependencies
+    if: needs.update-dependencies.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the changes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dependency-updates
+          path: ${{ runner.temp }}/dependency-updates
+
+      # Data only: git applies the diff; nothing from it runs.
+      - name: Apply the changes
+        run: |
+          set -euo pipefail
+          git apply --index "$RUNNER_TEMP/dependency-updates/dependency-updates.patch"
+          # The commit takes the whole index, whatever add-paths says: refuse a patch
+          # that reaches past the lock file and the Nix files the updates and nix fmt touch.
+          if git diff --cached --name-only | grep -vxE 'flake\.lock|.+\.nix'; then
+            echo "The patch changes files other than flake.lock and *.nix (above)." >&2
+            exit 1
+          fi
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           branch: ci/update-dependencies
           delete-branch: false
@@ -124,11 +185,7 @@ jobs:
             *.nix
           commit-message: "chore(deps): refresh flake inputs and pinned sources"
           title: "chore(deps): refresh flake inputs and pinned sources"
-          body-path: ${{ runner.temp }}/pr-body.md
+          body-path: ${{ runner.temp }}/dependency-updates/dependency-updates.md
           labels: |
             dependencies
             nix
-
-      - name: No dependency changes
-        if: steps.changes.outputs.has_changes != 'true'
-        run: echo "No dependency updates detected."

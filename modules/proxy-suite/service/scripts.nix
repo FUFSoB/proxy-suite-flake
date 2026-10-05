@@ -148,6 +148,11 @@ let
       mkSubscriptionLoadHelperBlock
       runtimeSubscriptionsBlock
       ;
+    # What the start script adds after the runtime outbounds: one of theirs named like these
+    # would fail the backend's start, every outbound with it.
+    laterTags = sctx.effectiveOutboundTags ++ sctx.groupTags;
+    singBoxBin = if pureXrayEnabled then null else sctx.singBox;
+    xrayBin = if xrayEnabled then sctx.xray else null;
   };
   inherit (outboundScripts) mkOutboundScript;
 
@@ -161,6 +166,13 @@ let
       proxyInboundsGuardPrivate
       proxyInboundsGuardStrategy
       ;
+    proxyInboundsBlockPrivate = proxyInboundsCfg.routing.blockPrivate;
+    inherit (ctx) proxyInboundsLoopback proxyInboundsHostClosedPorts;
+    listenerExposed =
+      let
+        address = proxyCfg.listener.address;
+      in
+      !(lib.hasPrefix "127." address || address == "::1" || address == "localhost");
     userDnsRules = proxyCfg.dns.singBox.rules;
     awgRuntimeDnsServer =
       if ctx.awgRuntimeIfaceOutbounds then

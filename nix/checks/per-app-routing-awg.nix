@@ -51,7 +51,10 @@ let
   viaDns = generated.readDerivation perAppRouting.viaDns;
   appCopy = services."proxy-suite-awg-app@";
   viaFile = builtins.fromJSON (generated.readDerivation perAppRouting.perAppViaFile);
+  viaUserRule = generated.readDerivation perAppRouting.viaUserRule;
   viaUserStart = generated.readDerivation perAppRouting.viaUserStart;
+  viaRetire = generated.readDerivation perAppRouting.viaRetire;
+  viaReapply = generated.readDerivation perAppRouting.viaReapply;
   anchor = fixture.config.systemd.user.services."proxy-suite-per-app-via-anchor@";
   dePrepare = generated.readDerivation (
     builtins.head services.proxy-suite-awg-de.serviceConfig.ExecStartPre
@@ -100,7 +103,7 @@ let
   pinTproxyUp = generated.readDerivation pinPerApp.pinUp.tproxy;
   pinTproxyDown = generated.readDerivation pinPerApp.pinDown.tproxy;
   pinTunUp = generated.readDerivation pinPerApp.pinUp.tun;
-  pinUserStart = generated.readDerivation pinPerApp.viaUserStart;
+  pinUserStart = generated.readDerivation pinPerApp.viaUserRule;
   pinTproxyConfig = checkLib.mkTProxyConfig pinFixture;
   pinTunConfig = checkLib.mkPerAppTunConfig pinFixture;
   pinNft = import ../../modules/proxy-suite/nftables.nix {
@@ -152,12 +155,39 @@ in
     )
     # Each user's apps, in the outbound's slice; the slice from a user unit.
     (
-      assert hasInfix "^([0-9]+)-((awg|app|tproxy|tun)-[0-9a-f]+)$" viaUserStart;
-      assert hasInfix "nft_chain=app_mark" viaUserStart;
-      assert hasInfix ''-name "$slice_name"'' viaUserStart;
-      assert hasInfix "meta mark set $mark ct mark set $mark" viaUserStart;
+      assert hasInfix "^([0-9]+)-((awg|app|tproxy|tun)-[0-9a-f]+)$" viaUserRule;
+      assert hasInfix "nft_chain=app_mark" viaUserRule;
+      assert hasInfix ''-name "$slice_name"'' viaUserRule;
+      assert hasInfix "meta mark set $mark ct mark set $mark" viaUserRule;
       assert anchor.serviceConfig.Slice == "proxy-suite-per-app-via-%i.slice";
       assert services ? "proxy-suite-per-app-via-user@";
+      true
+    )
+    # The via unit is every user's: perApp members only start it (polkit.nix), and the last
+    # user's unit takes it down, under the lock a rule goes in by, so none lands in a table
+    # on its way out. A restart puts the users' rules back in its fresh table.
+    (
+      let
+        user = services."proxy-suite-per-app-via-user@".serviceConfig;
+        lock = ''exec 8>>"/run/proxy-suite-per-app-via/users-$key.lock"'';
+      in
+      assert pkgs.lib.hasSuffix " %i" user.ExecStopPost;
+      # Not on its own restart, nor through a switch's stop and start.
+      assert hasInfix ''$3 == "restart"'' viaRetire;
+      assert !services."proxy-suite-per-app-via-user@".serviceConfig.X-RestartIfChanged;
+      assert hasInfix lock viaUserStart && hasInfix lock viaRetire;
+      assert hasInfix ''show --property=ActiveState --value "$via_unit") != active'' viaUserStart;
+      assert hasInfix ''via_unit="proxy-suite-per-app-via@$key.service"'' viaRetire;
+      assert hasInfix ''via_unit="proxy-suite-per-app-via-''${key%%-*}@''${key#*-}.service"'' viaRetire;
+      assert hasInfix "--state=active,activating,reloading" viaRetire;
+      assert hasInfix "-v self=\"proxy-suite-per-app-via-user@$1.service\" '$1 != self')" viaRetire;
+      # The profile brought up for the apps after the via unit, whose stop reads its slot.
+      assert
+        builtins.match ''.*stop "\$via_unit".*stop "proxy-suite-awg-app@\$tag\.service".*'' viaRetire
+        != null;
+      assert pkgs.lib.hasSuffix " %i" via.serviceConfig.ExecStartPost;
+      assert hasInfix ''"proxy-suite-per-app-via-user@*-''${1:-}.service"'' viaReapply;
+      assert hasInfix "--state=active " viaReapply;
       true
     )
     # Global TProxy and the kill switch let the apps' mark past.
@@ -175,9 +205,11 @@ in
     (
       assert appCopy.wantedBy == [ ];
       assert appCopy.serviceConfig.Restart == "no";
-      assert
-        builtins.elem "proxy-suite-awg-%i.service" appCopy.conflicts
-        && builtins.elem "proxy-suite-awg@%i.service" appCopy.conflicts;
+      # Never up with the profile itself, and never taking it down: refused while it is up.
+      assert (appCopy.conflicts or [ ]) == [ ];
+      assert hasInfix "proxy-suite-awg-%i.service proxy-suite-awg@%i.service" (
+        builtins.head appCopy.serviceConfig.ExecStartPre
+      );
       assert builtins.elem "proxy-suite-awg-app-watchdog@%i.service" appCopy.wants;
       assert services."proxy-suite-awg-app-watchdog@".bindsTo == [ "proxy-suite-awg-app@%i.service" ];
       assert appCopy.serviceConfig.RuntimeDirectory == "proxy-suite-awg-app-%i";
@@ -198,8 +230,15 @@ in
       assert pinServices ? "proxy-suite-per-app-via-tproxy@";
       assert pinServices."proxy-suite-per-app-via-tproxy@".partOf == [ "proxy-suite-socks.service" ];
       assert pinServices."proxy-suite-per-app-via-tun@".partOf == [ "proxy-suite-per-app-tun.service" ];
-      assert builtins.elem "proxy-suite-tproxy.service"
-        pinServices."proxy-suite-per-app-via-tun@".conflicts;
+      # Restarted with the backend, the slot's table comes back empty: the users' rules too.
+      assert pkgs.lib.hasSuffix " tun-%i"
+        pinServices."proxy-suite-per-app-via-tun@".serviceConfig.ExecStartPost;
+      assert pkgs.lib.hasSuffix " tproxy-%i"
+        pinServices."proxy-suite-per-app-via-tproxy@".serviceConfig.ExecStartPost;
+      # Under a global mode it stays down rather than take the mode down.
+      assert (pinServices."proxy-suite-per-app-via-tun@".conflicts or [ ]) == [ ];
+      assert pkgs.lib.hasInfix "proxy-suite-tproxy.service proxy-suite-tun.service"
+        pinServices."proxy-suite-per-app-via-tun@".serviceConfig.ExecStartPre;
       assert pinServices ? "proxy-suite-per-app-via-user@";
       # The kernel path's unit only with an "interface" AmneziaWG outbound to take.
       assert !(pinServices ? "proxy-suite-per-app-via@");
@@ -248,7 +287,7 @@ in
       );
       # The user rule units find the slot a pin holds.
       assert hasInfix "^([0-9]+)-((awg|app|tproxy|tun)-[0-9a-f]+)$" pinUserStart;
-      assert hasInfix "nft_chain=output" pinUserStart;
+      assert hasInfix "nft_chain=app_mark" pinUserStart;
       assert hasInfix "23168" (checkLib.mkNftRules pinFixture "killSwitchRulesFile");
       true
     )
@@ -264,6 +303,18 @@ in
               outbound = "nl";
             }
           ];
+        };
+      }
+    ))
+    # A table a pin slot takes for itself, named by an option too: the two would flush each
+    # other's routes.
+    (rejectsProxySuite "route table 170 (proxy.tproxy.routeTable" (
+      pinConfig
+      // {
+        proxy = pinConfig.proxy // {
+          tproxy = pinConfig.proxy.tproxy // {
+            routeTable = 170;
+          };
         };
       }
     ))

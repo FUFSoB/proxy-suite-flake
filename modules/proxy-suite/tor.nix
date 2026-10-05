@@ -9,7 +9,15 @@
 
 let
   t = derived.torCfg;
-  inherit (derived.constants) unprivilegedServiceConfig;
+  inherit (derived.constants) torUser;
+  # As the service user's, but Tor's own user: shares nothing with the inbounds or backend.
+  unprivilegedServiceConfig =
+    caps:
+    derived.constants.unprivilegedServiceConfig caps
+    // lib.optionalAttrs privileged {
+      User = torUser;
+      Group = torUser;
+    };
   inherit (cfg.host) privileged;
 
   inherit (derived.localProxy) auth;
@@ -26,11 +34,11 @@ let
   viaProxy = t.upstream == "proxy";
   withProxyAuth = viaProxy && derived.localProxy.authEnabled;
   bridgesEnabled = t.bridges.lines != [ ] || t.bridges.file != null;
+  # A torrc string: Tor unescapes \\ and \" inside the quotes.
+  torQuote = s: ''"${builtins.replaceStrings [ "\\" "\"" ] [ "\\\\" "\\\"" ] s}"'';
 
-  # The control socket is Tor's own (and root's): with it, one can publish any loopback
-  # port as an onion service, point Tor at another upstream, or read the proxy password
-  # from its config. userControl's group asks for a new identity through
-  # proxy-suite-tor-newnym instead.
+  # The control socket is Tor's own user's: userControl's group asks for a new identity
+  # through proxy-suite-tor-newnym instead.
   controlSocket = derived.constants.torControlSocket;
   newnymScript = pkgs.writeShellScript "proxy-suite-tor-newnym" ''
     set -euo pipefail
@@ -121,8 +129,12 @@ let
       echo "DataDirectory $STATE_DIRECTORY"
       echo "ControlSocket unix:$RUNTIME_DIRECTORY/control/socket"
       ${lib.optionalString withProxyAuth ''
-        echo "Socks5ProxyUsername "${lib.escapeShellArg auth.username}
-        printf 'Socks5ProxyPassword %s\n' "$(${pkgs.coreutils}/bin/head -n1 "$CREDENTIALS_DIRECTORY/proxy-password")"
+        # Quoted: bare, a "#" would start a comment, a leading quote open a string and a
+        # trailing backslash join the next line on.
+        echo ${lib.escapeShellArg "Socks5ProxyUsername ${torQuote auth.username}"}
+        password=$(${pkgs.coreutils}/bin/head -n1 "$CREDENTIALS_DIRECTORY/proxy-password")
+        password=''${password//\\/\\\\}
+        printf 'Socks5ProxyPassword "%s"\n' "''${password//\"/\\\"}"
       ''}
       ${lib.optionalString (t.bridges.file != null) ''
         ${pkgs.gnused}/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d' \
@@ -141,6 +153,9 @@ let
   '';
 in
 {
+  # Whatever the upstream: only its exemption from TUN and TProxy depends on it.
+  services.proxy-suite.internal.systemUsers = lib.optional privileged torUser;
+
   services.proxy-suite.internal.services.proxy-suite-tor = {
     description = "proxy-suite - Tor";
     after = [ "network-online.target" ] ++ lib.optional viaProxy "proxy-suite-socks.service";
@@ -154,8 +169,8 @@ in
         Type = "simple";
         ExecStart = startScript;
         ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
-        # The service user is excluded from TUN and TProxy capture, which is what keeps
-        # tor's own connections out of the proxy.
+        # Unless upstream = "proxy", its user is kept out of TUN and TProxy
+        # (constants.ownTrafficUsers), and with it Tor's own connections.
         StateDirectory = "proxy-suite/tor";
         StateDirectoryMode = "0700";
         RuntimeDirectory = "proxy-suite-tor";
@@ -173,15 +188,18 @@ in
   };
 
   # `proxy-ctl tor newnym` for userControl's group ("services" scope), which cannot open
-  # the control socket. Root.
+  # the control socket. As Tor's own user: root without capabilities could not even enter
+  # the 0700 control directory.
   services.proxy-suite.internal.services.proxy-suite-tor-newnym = lib.mkIf privileged {
     description = "proxy-suite - new Tor circuits for new connections";
     after = [ "proxy-suite-tor.service" ];
     # Only a running Tor: this never starts one.
     unitConfig.Requisite = [ "proxy-suite-tor.service" ];
-    serviceConfig = {
+    serviceConfig = unprivilegedServiceConfig [ ] // {
       Type = "oneshot";
       ExecStart = newnymScript;
+      # A filesystem socket is all it opens.
+      RestrictAddressFamilies = [ "AF_UNIX" ];
     };
   };
 }

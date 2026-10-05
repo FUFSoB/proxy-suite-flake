@@ -89,7 +89,7 @@ Whether to enable skipping zapret for some subnets, such as NATed VMs it would b
 
 Subnets zapret skips\.
 
-**Type:** list of string\
+**Type:** list of IPv4 or IPv6 address or CIDR\
 **Default:** `[ ]`\
 **Example:** `[ "192.168.123.0/24" ]`
 
@@ -411,7 +411,7 @@ UDP packets sent, with at most ` udpIn ` replies, that count as a failure\.
 
 Extra fake payloads by name (blob=\<name>): a file in zapret2’s files/fake, or an absolute path\.
 
-**Type:** attribute set of string\
+**Type:** attribute set of string matching the pattern \[^\[:space:]]+\
 **Default:** `{ }`\
 **Example:** `{ tls_clienthello = "/etc/proxy-suite/my_clienthello.bin"; }`
 
@@ -449,7 +449,7 @@ Log everything nfqws2 does to the journal, every packet included\. Very verbose:
 
 Domains always treated as blocked\. At runtime: ` proxy-ctl zapret auto add `\.
 
-**Type:** list of string\
+**Type:** list of string matching the pattern \[^\[:space:]]+\
 **Default:** `[ ]`\
 **Example:** `[ "rutracker.org" ]`
 
@@ -458,7 +458,7 @@ Domains always treated as blocked\. At runtime: ` proxy-ctl zapret auto add `\.
 
 Domains never touched or learned\. At runtime: ` proxy-ctl zapret auto exclude `\.
 
-**Type:** list of string\
+**Type:** list of string matching the pattern \[^\[:space:]]+\
 **Default:** `[ ]`\
 **Example:** `[ "bank.example.com" ]`
 

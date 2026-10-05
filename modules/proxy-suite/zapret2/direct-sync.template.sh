@@ -13,10 +13,12 @@ export PATH=@path@
 dir=$1
 out=$2
 
+# The zapret scope's group writes these: never through a symlink it left (to a file only
+# root may read, which would land in the world-readable rule-sets), nor into a FIFO.
 lists() {
   local f
   for f in "$@"; do
-    [ -r "$f" ] && cat "$f"
+    [ -r "$f" ] && dd if="$f" iflag=nofollow,nonblock status=none 2>/dev/null
   done
   true
 }
@@ -31,15 +33,28 @@ write() {
 }
 
 # nfqws hostlists: one host per line, "#" comments, "^" for the name alone.
-hosts='def hosts: split("\n") | map(gsub("^\\s+|\\s+$"; "") | ascii_downcase | ltrimstr("^"))
-  | map(select(. != "" and (startswith("#") | not)));
+# The zapret scope can write them, and an entry sing-box cannot take (999.1.1.1, ::/0,
+# fe80::1%eth0) would fail the rule-set and the proxy with it: only an address or a name.
+hosts='def octet: "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+  def ipv4: test("^(" + octet + "\\.){3}" + octet + "$");
+  def ipv6: test("^[0-9a-f:]+$") and test(":::") == false
+    and (split("::") | length) <= 2
+    and (split(":") | map(select(. != "")) | length <= 8 and all(length <= 4))
+    and (test("::") or (split(":") | length) == 8)
+    and test("^:[^:]|[^:]:$") == false;
+  # Two labels at least: a bare "com" would send the whole TLD past the proxy.
+  def hostname: test("^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+$")
+    and test("^[0-9.]+$") == false and length <= 253;
+  def valid: ipv4 or ipv6 or hostname;
+  def hosts: split("\n") | map(gsub("^\\s+|\\s+$"; "") | ascii_downcase | ltrimstr("^"))
+    | map(select(. != "" and (startswith("#") | not) and valid));
   def ip: test("^[0-9.]+$|:");
   def cidr: map(. + (if test(":") then "/128" else "/32" end));
   # A name and a site key cover each other either way round: www.notion.so and notion.so.
   def covers($b): . as $a | $a == $b or ($a | endswith("." + $b)) or ($b | endswith("." + $a));
   # "kind<TAB>name<TAB>proto<TAB>...", the last per name and proto.
   # The zapret scope'"'"'s group can write the file: only names a rule can take.
-  def verdicts: split("\n") | map(split("\t") | select(length >= 3 and (.[1] | test("^[a-z0-9.-]+$|^[0-9a-f:.]+$"))))
+  def verdicts: split("\n") | map(split("\t") | select(length >= 3 and (.[1] | test("^[a-z0-9.-]+$|^[0-9a-f:.]+$") and valid)))
     | reduce .[] as $v ({}; .[$v[1] + "\t" + $v[2]] = $v[0])
     | to_entries | map({name: (.key | split("\t")[0]), proto: (.key | split("\t")[1]), kind: .value});
   def named($kind; $proto): map(select(.kind == $kind and .proto == $proto) | .name);'

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """proxy_model without a front end: the status line and the tray menu turn state into the right proxy-ctl argv."""
 
+import base64
 import contextlib
 import io
 import json
 import os
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
+import zlib
 from unittest import mock
 
 import proxy_ctl as ctl
@@ -212,7 +216,8 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(keys(vk)["Q"].argv(vk), ["wl", "link", "vk", "--qr"])
             self.assertEqual(keys(vk)["N"].argv(vk), ["wl", "new", "vk"])
             self.assertEqual(keys(vk)["a"].argv(vk, "/tmp/c.json", {}), ["wl", "auth", "vk", "/tmp/c.json"])
-            self.assertEqual(keys(home)["j"].argv(home, " abc-def ", {}), ["wl", "join", "home", "abc-def"])
+            self.assertEqual(keys(home)["j"].argv(home, " abc-def ", {}), ["wl", "join", "home", "-"])
+            self.assertEqual(keys(home)["j"].stdin(home, " abc-def "), "abc-def")
             self.assertNotIn("N", keys(dion))  # a fixed link: its linkFile sets the call
             self.assertNotIn("A", keys(vk))  # VK logs in only in a browser
             self.assertEqual(keys(dion)["A"].argv(dion), ["wl", "auth", "dion"])
@@ -317,16 +322,18 @@ class ModelTest(unittest.TestCase):
 
     def test_paste_argv(self):
         paste = model.paste_argv
-        self.assertEqual(paste("outbounds", " vless://u@de.test:443#DE\n")[0], ["proxy", "outbounds", "add", "vless://u@de.test:443#DE"])
+        # Links and JSON carry credentials: on stdin, never in argv (ps, pkexec's log).
+        self.assertEqual(paste("outbounds", " vless://u@de.test:443#DE\n"), (["proxy", "outbounds", "add", "-"], "", "vless://u@de.test:443#DE"))
         # The tab pasted onto does not matter for an unambiguous link.
-        self.assertEqual(paste("services", "ss://x@a.test:8388")[0], ["proxy", "outbounds", "add", "ss://x@a.test:8388"])
-        self.assertEqual(paste("services", '{"type": "socks",\n "server": "1.2.3.4"}')[0][:3], ["proxy", "outbounds", "add"])
+        self.assertEqual(paste("services", "ss://x@a.test:8388"), (["proxy", "outbounds", "add", "-"], "", "ss://x@a.test:8388"))
+        json_text = '{"type": "socks",\n "server": "1.2.3.4"}'
+        self.assertEqual(paste("services", json_text), (["proxy", "outbounds", "add", "-"], "", json_text))
         # http(s) is both a subscription and an HTTP proxy: the tab decides.
-        self.assertEqual(paste("subs", "https://sub.test/s")[0], ["proxy", "subs", "add", "https://sub.test/s"])
-        self.assertEqual(paste("services", "https://sub.test/s")[0], ["proxy", "subs", "add", "https://sub.test/s"])
-        self.assertEqual(paste("outbounds", "https://u:p@proxy.test:8443")[0], ["proxy", "outbounds", "add", "https://u:p@proxy.test:8443"])
+        self.assertEqual(paste("subs", "https://sub.test/s?token=t"), (["proxy", "subs", "add", "-"], "", "https://sub.test/s?token=t"))
+        self.assertEqual(paste("services", "https://sub.test/s")[0], ["proxy", "subs", "add", "-"])
+        self.assertEqual(paste("outbounds", "https://u:p@proxy.test:8443"), (["proxy", "outbounds", "add", "-"], "", "https://u:p@proxy.test:8443"))
         # A bare host means something only where a tab collects hosts.
-        self.assertEqual(paste("zapret", "blocked.example")[0], ["zapret", "auto", "add", "blocked.example"])
+        self.assertEqual(paste("zapret", "blocked.example"), (["zapret", "auto", "add", "blocked.example"], "", None))
         self.assertEqual(paste("autoproxy", "blocked.example")[0], ["proxy", "auto", "learn", "blocked.example"])
         for tab, text, why in [
             ("outbounds", "", "Nothing to paste."),
@@ -386,8 +393,8 @@ class ModelTest(unittest.TestCase):
         outbound_add = next(a for a in next(t for t in model.TABS if t.id == "outbounds").actions if a.key == "n")
         self.assertEqual(outbound_add.argv(None, "de vpn://AAAA", {}), ["proxy", "outbounds", "add", "de", "-"])
         self.assertEqual(outbound_add.stdin(None, "de vpn://AAAA"), "vpn://AAAA")
-        self.assertEqual(outbound_add.argv(None, "de vless://x", {}), ["proxy", "outbounds", "add", "de", "vless://x"])
-        self.assertIsNone(outbound_add.stdin(None, "de vless://x"))
+        self.assertEqual(outbound_add.argv(None, "de vless://x", {}), ["proxy", "outbounds", "add", "de", "-"])
+        self.assertEqual(outbound_add.stdin(None, "de vless://x"), "vless://x")
 
     def test_popen_feeds_stdin(self):
         with mock.patch.object(model, "CTL", "cat"):
@@ -396,6 +403,18 @@ class ModelTest(unittest.TestCase):
                 with p.stdout:
                     self.assertEqual(p.stdout.read(), out)
                 p.wait()
+
+    def test_output_lines_end_soon_after_stop(self):
+        # A quiet process (root's `logs -f`) stops being read without waiting for its next line.
+        p = subprocess.Popen(["sh", "-c", "printf 'a\\r\\nb\\rc\\n'; exec sleep 30"], stdout=subprocess.PIPE, text=True, start_new_session=True)
+        self.addCleanup(lambda: (os.killpg(p.pid, signal.SIGKILL), p.wait()))
+        lines = model.output_lines(p, poll=0.05)
+        self.assertEqual([next(lines), next(lines), next(lines)], ["a", "b", "c"])
+        p.proxy_suite_stopped = True
+        started = time.monotonic()
+        self.assertEqual(list(lines), [])
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertTrue(p.stdout.closed)
 
     def test_load_tab(self):
         tab = next(t for t in model.TABS if t.id == "outbounds")
@@ -407,7 +426,8 @@ class ModelTest(unittest.TestCase):
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
             self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["p", "t", "ctrl+t", "T", "n", "g", "y", "plus", "minus", "h", "H", "x", "s", "c", "Q", "J", "k", "K", "V"])
         chain = next(a for a in tab.actions if a.key == "h")
-        self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", '{"type": "socks"}', "--detour", "b"])
+        self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", "-", "--detour", "b"])
+        self.assertEqual(chain.stdin(rows[1], 'c {"type": "socks"}'), '{"type": "socks"}')
         # Probe exits go by the backend's tag.
         probe = next(a for a in tab.actions if a.key == "P")
         with mock.patch.object(ctl, "env", lambda name, default="": "1" if name == "AUTOPROXY_ENABLED" else ""), mock.patch.object(ctl, "_backend_tags", lambda: {"b": "b-backend"}):
@@ -485,12 +505,45 @@ class ModelTest(unittest.TestCase):
         subs = next(t for t in model.TABS if t.id == "subs")
         add = next(a for a in subs.actions if a.key == "n")
         self.assertIn("[tag]", add.prompt)
-        self.assertEqual(add.argv(None, "https://x.test/s", {}), ["proxy", "subs", "add", "https://x.test/s"])
-        self.assertEqual(add.argv(None, " work  https://x.test/s ", {}), ["proxy", "subs", "add", "work", "https://x.test/s"])
+        # The URL, token and all, on stdin.
+        self.assertEqual((add.argv(None, "https://x.test/s", {}), add.stdin(None, "https://x.test/s")), (["proxy", "subs", "add", "-"], "https://x.test/s"))
+        self.assertEqual((add.argv(None, " work  https://x.test/s ", {}), add.stdin(None, " work  https://x.test/s ")), (["proxy", "subs", "add", "work", "-"], "https://x.test/s"))
+        # Only a tag: proxy-ctl says what is missing.
+        self.assertEqual((add.argv(None, "work", {}), add.stdin(None, "work")), (["proxy", "subs", "add", "work"], None))
         outbounds = next(t for t in model.TABS if t.id == "outbounds")
         add = next(a for a in outbounds.actions if a.key == "n")
-        # JSON has spaces in it: all one argument.
-        self.assertEqual(add.argv(None, '{"type": "socks"}', {}), ["proxy", "outbounds", "add", '{"type": "socks"}'])
+        # JSON has spaces in it: all of it on stdin.
+        self.assertEqual((add.argv(None, '{"type": "socks"}', {}), add.stdin(None, '{"type": "socks"}')), (["proxy", "outbounds", "add", "-"], '{"type": "socks"}'))
+
+    def test_shown_commands_hide_credentials(self):
+        argv = ["proxy", "outbounds", "add", "de", "vless://uuid-1@de.test:443?security=reality&pbk=K&sid=S#DE"]
+        self.assertEqual(model.shown(argv, "pkexec"), "pkexec proxy-ctl proxy outbounds add de 'vless://***@de.test:443?security=***&pbk=***&sid=***#DE'")
+        self.assertEqual(model.redact("https://sub.test/api?token=abc and ss://a2V5@h:1"), "https://sub.test/api?token=*** and ss://***@h:1")
+        self.assertEqual(model.redact("vmess://eyJhZGQiOiJ4In0= then"), "vmess://***@x then")
+        # Nothing to hide: as it was.
+        self.assertEqual(model.shown(["proxy", "subs", "add", "-"]), "proxy-ctl proxy subs add -")
+        self.assertEqual(model.redact("https://example.com/path"), "https://example.com/path")
+        # The token in a subscription URL's path, and links that are one blob: an AmneziaWG
+        # vpn:// carries the private key, a legacy ss:// the password.
+        self.assertEqual(model.redact("https://s.test/sub/0123456789abcdef0123456789abcdef"), "https://s.test/sub/***")
+        self.assertEqual(model.redact("https://s.test/0123456789abcdef0123456789abcdef"), "https://s.test/***")
+        self.assertEqual(model.redact("vpn://AAAAAbbbbbCCCCddddEEEE"), "vpn://***")
+        self.assertEqual(model.redact("ss://YWVzLTEyOC1nY206cGFzc0BoOjE=#n"), "ss://***@h:1")
+        # The server, never the rest: a blob without one shows none.
+        vmess = base64.b64encode(json.dumps({"add": "de.test", "port": 443, "id": "uuid-secret", "ps": "DE"}).encode()).decode()
+        self.assertEqual(model.redact(f"vmess://{vmess}"), "vmess://***@de.test:443")
+        self.assertEqual(model.redact("ss://" + base64.b64encode(b"aes-128-gcm:12345").decode()), "ss://***")
+        conf = json.dumps({"containers": [{"awg": {"last_config": json.dumps({"config": "[Interface]\nPrivateKey = k\n[Peer]\nEndpoint = vpn.test:51820\n"})}}]}).encode()
+        vpn = base64.urlsafe_b64encode(len(conf).to_bytes(4, "big") + zlib.compress(conf)).decode().rstrip("=")
+        self.assertEqual(model.redact(f"vpn://{vpn}"), "vpn://***@vpn.test:51820")
+        self.assertEqual(model.redact("socks5://h.test:1080"), "socks5://h.test:1080")
+        # A paste's confirmation shows where its stdin points, credentials blanked.
+        subs = ["proxy", "subs", "add", "-"]
+        self.assertEqual(model.shown(subs, stdin="https://evil.test/s?token=t"), "proxy-ctl proxy subs add - < https://evil.test/s?token=***")
+        self.assertEqual(model.shown(subs, stdin="https://evil.test/sub/0123456789abcdef0123456789abcdef"), "proxy-ctl proxy subs add - < https://evil.test/sub/***")
+        self.assertEqual(model.shown(["awg", "add", "-"], stdin="vpn://AAAAAbbbbb"), "proxy-ctl awg add - < vpn://***")
+        self.assertEqual(model.shown(["awg", "add", "-"], stdin="[Interface]\nPrivateKey = k"), "proxy-ctl awg add - < <a config>")
+        self.assertEqual(model.shown(["proxy", "outbounds", "add", "-"], stdin='{"uuid": "u"}'), "proxy-ctl proxy outbounds add - < <an outbound's JSON>")
 
     def test_autoproxy_forget_relearn_clear(self):
         tab = next(t for t in model.TABS if t.id == "autoproxy")

@@ -288,11 +288,16 @@ in
       assert builtins.elem "proxy-suite-tun.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-tproxy.service" homeService.conflicts;
       assert builtins.elem "proxy-suite-zapret.service" homeService.conflicts;
-      assert builtins.elem "proxy-suite-per-app-zapret.service" homeService.conflicts;
+      # Per-app zapret never takes a global profile down: the profile stops it as it starts.
+      assert !(builtins.elem "proxy-suite-per-app-zapret.service" homeService.conflicts);
+      assert pkgs.lib.hasInfix "proxy-suite-per-app-zapret.service proxy-suite-awg-app@home.service" (
+        pkgs.lib.last homeService.serviceConfig.ExecStartPre
+      );
       assert workService.wantedBy == [ ];
       assert homeService.serviceConfig.NoNewPrivileges;
-      # Rendering, then stopping any profile added at runtime: they share an interface.
-      assert builtins.length homeService.serviceConfig.ExecStartPre == 2;
+      # Rendering, stopping any profile added at runtime (they share an interface), then
+      # per-app zapret and the profile's copy for apps.
+      assert builtins.length homeService.serviceConfig.ExecStartPre == 3;
       assert pkgs.lib.hasInfix "proxy-suite-awg@*.service" (
         generated.readDerivation (builtins.elemAt homeService.serviceConfig.ExecStartPre 1)
       );
@@ -365,11 +370,13 @@ in
         withGlobalTun.config.systemd.services.proxy-suite-tproxy.conflicts;
       assert builtins.elem "proxy-suite-awg-home.service"
         withGlobalTun.config.systemd.services.proxy-suite-zapret.conflicts;
-      assert builtins.elem "proxy-suite-awg-home.service"
-        withGlobalTun.config.systemd.services.proxy-suite-per-app-zapret.conflicts;
+      assert
+        !(builtins.elem "proxy-suite-awg-home.service" withGlobalTun.config.systemd.services.proxy-suite-per-app-zapret.conflicts);
+      assert builtins.any (pkgs.lib.hasInfix "proxy-suite-awg-home.service")
+        withGlobalTun.config.systemd.services.proxy-suite-per-app-zapret.serviceConfig.ExecStartPre;
       assert builtins.elem "proxy-suite-socks.service" withGlobalAwgService.after;
       assert builtins.elem "proxy-suite-socks.service" withGlobalAwgService.wants;
-      assert builtins.length withGlobalAwgStartPre == 3;
+      assert builtins.length withGlobalAwgStartPre == 4;
       assert pkgs.lib.hasInfix "rule add" withGlobalAwgBypassUp;
       assert pkgs.lib.hasInfix "pref 8998" withGlobalAwgBypassUp;
       assert pkgs.lib.hasInfix "fwmark 2 lookup main" withGlobalAwgBypassUp;
@@ -385,7 +392,8 @@ in
     (
       assert runtimeTemplate.wantedBy == [ ];
       assert builtins.elem "proxy-suite-awg-watchdog@%i.service" runtimeTemplate.wants;
-      assert builtins.elem "proxy-suite-killswitch.service" runtimeTemplate.before;
+      # Not before it: the kill switch comes up ahead of the network these wait for.
+      assert !builtins.elem "proxy-suite-killswitch.service" runtimeTemplate.before;
       assert builtins.elem "proxy-suite-killswitch.service" runtimeTemplate.wants;
       assert builtins.elem "proxy-suite-tun.service" runtimeTemplate.conflicts;
       assert runtimeTemplate.serviceConfig.Group == "proxy-suite-awg";
@@ -435,9 +443,10 @@ in
       assert runtimeCtl.awgProfiles == [ ];
       # Declared profiles only in a configuration that turns the runtime ones off.
       assert !(awgOnlyNoRuntime.config.systemd.services ? "proxy-suite-awg@");
+      # Rendering, and taking down the per-app units it carries for.
       assert
         builtins.length awgOnlyNoRuntime.config.systemd.services.proxy-suite-awg-home.serviceConfig.ExecStartPre
-        == 1;
+        == 2;
       true
     )
   ]

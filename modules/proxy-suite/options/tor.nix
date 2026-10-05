@@ -73,12 +73,17 @@ in
     socksPort = mkOption {
       type = types.port;
       default = 18530;
-      description = "Loopback SOCKS port of Tor.";
+      description = ''
+        Loopback SOCKS port of Tor. Tor takes no login on it, so with `asOutbound` on a host with
+        root only proxy-suite's daemons and root may connect to it; other users reach Tor
+        through the proxy's own listener.
+      '';
     };
 
     bridges = {
       lines = mkOption {
-        type = types.listOf types.str;
+        # One torrc line each: a newline would add directives of its own.
+        type = types.listOf (types.strMatching "[^\n]*");
         default = [ ];
         description = ''
           Bridge lines from https://bridges.torproject.org, without the leading "Bridge". Setting

@@ -68,6 +68,10 @@ rec {
         ExecStart = execStart;
         Restart = "on-failure";
         RestartSec = 5;
+        # Backing off to two minutes: a unit that cannot come up would refetch what it lacks
+        # every 5 s for good.
+        RestartSteps = 5;
+        RestartMaxDelaySec = 120;
         RuntimeDirectory = runtimeDirectory;
       }
       // lib.optionalAttrs (stateDirectory != null) { StateDirectory = stateDirectory; }
@@ -128,11 +132,13 @@ rec {
       execStart,
       execStop,
     }:
-    mkOneshotService {
+    # Requires=: holds the shared backend up (StopWhenUnneeded=) and restarts this with it,
+    # its crash included. Restarted by a switch, not stopped and started: a stop drops the hold.
+    lib.recursiveUpdate (mkOneshotService {
       inherit description execStart execStop;
       requires = [ "${backendService}.service" ];
       after = [ "${backendService}.service" ];
-    };
+    }) { serviceConfig."X-StopIfChanged" = false; };
 
   mkAnchorService =
     sliceName: description:
@@ -199,6 +205,19 @@ rec {
     }:
     ''
       ${nft} delete table ${family} ${table} 2>/dev/null || true
+    '';
+
+  # A table's rules file swapped in whole, in one transaction: for a reload after the
+  # firewall flushed the ruleset, where a delete-then-load would leave a gap.
+  mkNftReplaceTable =
+    {
+      nft,
+      family,
+      table,
+      file,
+    }:
+    ''
+      { printf '%s\n' "table ${family} ${table}" "delete table ${family} ${table}"; cat ${file}; } | ${nft} -f -
     '';
 
   mkIpRuleDeleteByFwmark =
@@ -275,11 +294,15 @@ rec {
             ;
         }}
         ${mkIpLocalDefaultRouteDelete { inherit ip family table; }}
+        ${ip} ${family} route del unreachable default table ${toString table} 2>/dev/null || true
       '')
       [
         "-4"
         "-6"
-      ];
+      ]
+    + ''
+      while ${ip} -6 rule del fwmark ${toString fwmark} table main suppress_prefixlength 0 2>/dev/null; do :; done
+    '';
 
   mkTproxyRoutingUp =
     {
@@ -291,7 +314,17 @@ rec {
     lib.concatMapStrings (family: ''
       ${ip} ${family} route replace local default dev lo table ${toString table}
       ${ip} ${family} rule add fwmark ${toString fwmark} table ${toString table}
-    '') ([ "-4" ] ++ lib.optional ipv6 "-6");
+    '') ([ "-4" ] ++ lib.optional ipv6 "-6")
+    # Without proxy.ipv6, marked IPv6 would leave directly: unreachable instead, so apps fall
+    # back to IPv4. Not where the kernel has no IPv6 at all. On-link IPv6 still goes by main
+    # (suppress_prefixlength 0: any route but its default); added last, it is looked at first.
+    + lib.optionalString (!ipv6) ''
+      if [ -e /proc/net/if_inet6 ]; then
+        ${ip} -6 route replace unreachable default table ${toString table}
+        ${ip} -6 rule add fwmark ${toString fwmark} table ${toString table}
+        ${ip} -6 rule add fwmark ${toString fwmark} table main suppress_prefixlength 0
+      fi
+    '';
 
   mkIpLinkDelete =
     {

@@ -80,7 +80,8 @@ let
       onionOutbound
       ;
     inherit (cfg) geodata;
-    inherit (derived) ruleSets;
+    inherit (derived) ruleSets proxyInboundsLoopback;
+    hopPorts = lib.optionals cfg.host.privileged derived.hopPorts;
   };
   inherit (singBoxRules)
     geositeRuleSets
@@ -101,7 +102,7 @@ let
       customRuleCategory
       onionOutbound
       ;
-    inherit (derived) selectionMode;
+    inherit (derived) selectionMode proxyInboundsLoopback;
   };
   inherit (xrayRules) xrayRoutingRules xrayRouteModeRules;
 

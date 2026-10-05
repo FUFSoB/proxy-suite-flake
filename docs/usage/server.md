@@ -148,6 +148,9 @@ Without root, members of `userControl.group` need the `inbounds` scope.
 
 - Clients cannot reach this host's LAN or Russian sites by default
   (`inbounds.routing.blockPrivate`, `blockRu`).
+- Through "direct", clients reach this host itself only on the listeners' ports and
+  `inbounds.serverPorts` (80/443 with subscriptions), whatever it listens on. Its addresses
+  are read when the inbounds start: restart them after the address changes.
 - With `routing.via = "proxy"` (the default), client traffic goes through this host's own
   proxy instead, following its routing. That needs `proxy.enable`. A listener can also exit
   through one outbound with `via = "<tag>"`.

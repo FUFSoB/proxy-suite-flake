@@ -36,10 +36,37 @@ in
   );
 
   # The transparent backends steer the same packets; a per-app zapret instance replaces them.
-  perAppConflicts = [
-    "proxy-suite-tproxy.service"
-    "proxy-suite-tun.service"
-  ];
+  # The zapret units run as root: capabilities bounded to what the init scripts and nfqws
+  # use, and no new privileges (nfqws narrows itself further).
+  daemonSandbox = lib.optionalAttrs cfg.host.privileged {
+    NoNewPrivileges = true;
+    CapabilityBoundingSet = [
+      "CAP_NET_ADMIN"
+      "CAP_NET_RAW"
+      "CAP_SETUID"
+      "CAP_SETGID"
+      "CAP_SETPCAP"
+      "CAP_SYS_MODULE"
+      "CAP_CHOWN"
+      "CAP_FOWNER"
+      "CAP_DAC_OVERRIDE"
+      "CAP_KILL"
+    ];
+    LockPersonality = true;
+    RestrictRealtime = true;
+  };
+  # The per-app instance's ExecStartPre: it has nothing to add under a global mode, which
+  # it never displaces (constants.refuseUnderGlobal); those take it down as they start.
+  perAppRefuseUnderGlobal = derived.constants.refuseUnderGlobal pkgs (
+    [
+      "proxy-suite-tproxy.service"
+      "proxy-suite-tun.service"
+    ]
+    ++ map (name: "proxy-suite-awg-${name}.service") (
+      builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
+    )
+    ++ lib.optional derived.awgRuntimeGlobal "proxy-suite-awg@*.service"
+  );
 
   perAppZapretMarkUpScript = pkgs.writeShellScript scriptName ''
     set -euo pipefail

@@ -44,6 +44,14 @@ local function public_suffix_nld(host, nld)
   return key
 end
 
+-- For detect.lua (a chunk of its own): whether host is itself a public suffix, or a single
+-- label, which no site is.
+function proxy_suite_is_public_suffix(host)
+  local labels = {}
+  for label in host:lower():gsub("%.$", ""):gmatch("[^.]+") do labels[#labels + 1] = label end
+  return #labels <= suffix_labels(labels)
+end
+
 local standard = standard_hostkey
 if type(standard) ~= "function" then
   error("proxy-suite: zapret-auto.lua no longer defines standard_hostkey")

@@ -59,6 +59,18 @@ grep -qx "$(printf 'own-vps\tproxy.outbounds')" words
 run inbounds link > /dev/null
 env AWG_PROFILES_FILE=/nonexistent python3 "$proxy_ctl" __complete awg on
 
+# A candidate is whatever a group member named a file: never shell code to whoever completes.
+mkdir -p fake
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' 'ok-tag' '\$(touch pwned)' '\`touch pwned\`'" > fake/proxy-ctl
+chmod +x fake/proxy-ctl
+PATH="$PWD/fake:$PATH" bash -c 'source @bashCompletion@; COMP_WORDS=(proxy-ctl proxy outbounds rm ""); COMP_CWORD=4; _proxy_ctl; printf "%s\n" "${COMPREPLY[@]}"' > completed
+[ ! -e pwned ] || { echo "bash completion ran a candidate" >&2; exit 1; }
+grep -qx ok-tag completed
+mkdir -p spool
+touch 'spool/$(touch pwned).url' spool/fine.url
+env RUNTIME_OUTBOUNDS_DIR="$PWD/spool" python3 "$proxy_ctl" __complete proxy outbounds rm | cut -f1 > words
+! grep -q 'pwned' words || { echo "__complete offered shell code" >&2; exit 1; }
+
 # Every shell's completion file at least parses.
 bash -n @bashCompletion@
 @zsh@/bin/zsh -n @zshCompletion@

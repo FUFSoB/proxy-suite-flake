@@ -9,6 +9,7 @@ Part of the [proxy-suite options reference](./index.md).
 - inbounds
   - [enable](#services-proxy-suite-inbounds-enable)
   - [package](#services-proxy-suite-inbounds-package)
+  - [accessLog](#services-proxy-suite-inbounds-accesslog)
   - [listeners](#services-proxy-suite-inbounds-listeners)
     - `<name>`
       - [acceptProxyProtocol](#services-proxy-suite-inbounds-listeners-name-acceptproxyprotocol)
@@ -171,6 +172,16 @@ XRay package that runs the inbounds, whichever client backend is used\.
 **Type:** package\
 **Default:** proxy-suite’s ` xray ` (` pkgs/xray.nix `)\
 **Example:** `pkgs.xray`
+
+<a id="services-proxy-suite-inbounds-accesslog"></a>
+## services\.proxy-suite\.inbounds\.accessLog
+
+Log every connection, with the user, their address and the site, to the journal of
+proxy-suite-inbounds: who went where, for anyone who can read the journal\. On with
+` proxy.autoProxy ` whatever this says, which learns from those lines\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-listeners"></a>
 ## services\.proxy-suite\.inbounds\.listeners
@@ -531,7 +542,7 @@ clients the rest\.
 Tunnel IPv6 subnet (ULA)\. ` null `: IPv4 only\. With ` mode = "lan" ` it turns on IPv6
 forwarding, which stops this host from configuring itself from router advertisements\.
 
-**Type:** null or string\
+**Type:** null or IPv6 CIDR\
 **Default:** `null`\
 **Example:** `"fd66:66::/64"`
 
@@ -1106,7 +1117,10 @@ Open the firewall for every listener not on loopback\.
 <a id="services-proxy-suite-inbounds-routing-blockprivate"></a>
 ## services\.proxy-suite\.inbounds\.routing\.blockPrivate
 
-Block private and loopback addresses, so clients cannot reach this host’s LAN or local services\.
+Block private and loopback addresses, so clients cannot reach this host’s LAN or local
+services\. Off, the LAN is open but this host is not\. Either way, this host’s own
+addresses (loopback, and its public ones as its interfaces carry them at start) are
+reachable only on the listener ports and ` serverPorts `, whichever ` via ` a client takes\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -1228,7 +1242,10 @@ fallbacks\. Members of ` userControl.group ` need the “inbounds” scope\.
 ## services\.proxy-suite\.inbounds\.runtime\.fallbackDests
 
 ` dest ` values a runtime listener’s fallbacks may use, such as a decoy site\. A
-fallback to a ` listener ` must name another runtime listener\.
+fallback to a ` listener ` must name another runtime listener\. A runtime listener’s
+` reality.dest ` may be any public site on port 443; one on another port, on this host
+or on a private network must be listed here\. Its ` hysteria.masquerade ` must be a
+public http(s) site, on port 80 or 443 unless its ` host:port ` is listed here\.
 
 **Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string)\
 **Default:** `[ ]`\
@@ -1336,7 +1353,13 @@ covers that name and every name under it, for a host behind a wildcard record\.
 Ports of this host’s other services that clients reach through the tunnel on
 ` serverAddress ` and ` serverAliases `, such as mail, beside the listeners’ own\. Direct
 like those: a connection to this host from itself skips its firewall, so list only
-what the firewall already opens to the internet\. TCP and UDP alike\.
+what the firewall already opens to the internet\. TCP and UDP alike\. Any other port on
+any address of this host is refused where the inbounds dial “direct” themselves; the
+addresses are read as the inbounds start, so restart them after one changes (DHCP)\.
+Without ` routing.serverSource ` these connections come from this host’s own address,
+which its services may trust: a mail server that relays for its own host (Postfix’s
+default ` mynetworks `) relays for every inbound user then\. Set ` serverSource `, or keep
+such services from trusting this host’s own addresses\.
 
 **Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]±\[0-9]+)\
 **Default:** `[ ]`\

@@ -24,6 +24,7 @@ import random
 import re
 import resource
 import shlex
+import shutil
 import signal
 import socket
 import socketserver
@@ -38,6 +39,7 @@ SUPERVISOR_DIR = os.environ.get("PROXY_SUITE_SUPERVISOR_DIR") or os.path.join(
 MANIFEST = os.environ.get("PROXY_SUITE_MANIFEST", "")
 SOCKET = os.path.join(SUPERVISOR_DIR, "control.sock")
 LOCK = os.path.join(SUPERVISOR_DIR, "daemon.lock")
+GROUPS = os.path.join(SUPERVISOR_DIR, "groups.json")
 LOG_DIR = os.path.join(SUPERVISOR_DIR, "logs")
 CREDENTIALS_DIR = os.path.join(SUPERVISOR_DIR, "credentials")
 LOG_LIMIT = 1024 * 1024
@@ -141,15 +143,174 @@ def append_log(unit, text):
                 os.replace(path, path + ".1")
         except OSError:
             pass
-        with open(path, "a", encoding="utf-8") as f:
-            for line in text.splitlines() or [""]:
-                f.write(f"{time.time():.6f}\t{line}\n")
+        # A full disk loses the line, nothing else: raised, it would end pump() and block the unit.
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                for line in text.splitlines() or [""]:
+                    f.write(f"{time.time():.6f}\t{line}\n")
+        except OSError:
+            pass
 
 
 def pump(unit, stream):
     for raw in iter(stream.readline, b""):
         append_log(unit, raw.decode(errors="replace").rstrip("\n"))
     stream.close()
+
+
+# --- process groups -------------------------------------------------------------
+
+
+def proc_stat(pid):
+    """(state, process group, start time in clock ticks since boot) of a process, or None once it is gone."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            # After the last ")": comm may hold spaces and parentheses itself.
+            fields = f.read().rsplit(b")", 1)[1].split()
+        return fields[0].decode(), int(fields[2]), int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def wait_exit(proc, timeout=None):
+    """proc's status (as Popen.returncode), None on timeout, left unreaped (WNOWAIT): its zombie
+    keeps the group's id from reuse while the group is killed. ChildProcessError once reaped."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        info = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | (0 if deadline is None else os.WNOHANG))
+        if info is not None:
+            return info.si_status if info.si_code == os.CLD_EXITED else -info.si_status
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.05)
+
+
+def private_dir(path):
+    """Made 0700, or tightened to it: makedirs leaves an existing one's mode alone."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def clear_credentials(units=None):
+    """Drops what LoadCredential copied for units (or all), which a daemon killed outright left."""
+    try:
+        names = os.listdir(CREDENTIALS_DIR)
+    except OSError:
+        return
+    for name in names:
+        if units is None or name in units:
+            shutil.rmtree(os.path.join(CREDENTIALS_DIR, name), ignore_errors=True)
+
+
+class Groups:
+    """The process groups the daemon started, on disk as {unit: [[pgid, start time], ...]}: a
+    daemon killed outright leaves them running, and the next one ends them first (end_orphans)."""
+
+    def __init__(self, path=GROUPS):
+        self.path = path
+        self.lock = threading.Lock()
+        self.groups = {}
+
+    def add(self, unit, pid):
+        # Not reaped yet, so readable even if it already exited.
+        stat = proc_stat(pid)
+        if stat is None:
+            return
+        with self.lock:
+            self.groups.setdefault(unit, []).append([pid, stat[2]])
+            self.save()
+
+    def remove(self, pid):
+        """On reap: with its leader gone, end_orphans would skip the record anyway."""
+        with self.lock:
+            changed = False
+            for unit, entries in list(self.groups.items()):
+                kept = [e for e in entries if e[0] != pid]
+                if len(kept) != len(entries):
+                    changed = True
+                    if kept:
+                        self.groups[unit] = kept
+                    else:
+                        del self.groups[unit]
+            if changed:
+                self.save()
+
+    def save(self):
+        tmp = f"{self.path}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.groups, f)
+            os.replace(tmp, self.path)  # atomic: a daemon killed mid-write leaves the last whole record
+        except OSError as e:
+            print(f"proxy-suitectl: cannot record process groups: {e}", file=sys.stderr)
+
+
+def end_orphans(path=GROUPS, grace=5, units=None):
+    """Ends the groups a dead daemon left running (of units, or all), under the daemon lock. Only
+    a leader still running with its recorded start time: a reused pid is left alone."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            recorded = json.load(f)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as e:
+        print(f"proxy-suitectl: cannot read {path}: {e}", file=sys.stderr)
+        recorded = {}
+    ended, kept = [], {}
+    for unit, entries in recorded.items() if isinstance(recorded, dict) else ():
+        if units is not None and unit not in units:
+            kept[unit] = entries
+            continue
+        for entry in entries if isinstance(entries, list) else ():
+            try:
+                pgid, started = int(entry[0]), int(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            stat = proc_stat(pgid)
+            if pgid <= 1 or stat is None or stat[0] == "Z" or stat[1] != pgid or stat[2] != started:
+                continue
+            try:
+                append_log(unit, f"proxy-suitectl: stopping process group {pgid}, left running by a supervisor that died")
+            except OSError:
+                pass
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+                ended.append(pgid)
+            except OSError:
+                pass
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and any((s := proc_stat(p)) and s[0] != "Z" for p in ended):
+        time.sleep(0.1)
+    # The rest of each group too: its id stays taken while any member is left.
+    for pgid in ended:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
+    if kept:
+        groups = Groups(path)
+        groups.groups = kept
+        groups.save()
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def end_orphans_unsupervised(units=None):
+    """stop and shutdown with no daemon to ask: a killed one's services stop here, under its lock."""
+    try:
+        lock = open(LOCK, "a")
+    except OSError:
+        return
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return  # a daemon is starting: it ends them itself, and its own are not ours to touch
+        end_orphans(units=units)
+        clear_credentials(units)
 
 
 # --- units ----------------------------------------------------------------------
@@ -244,6 +405,7 @@ class Supervisor:
         self.timers = {}
         self.paths = {}
         self.guard = threading.RLock()
+        self.groups = Groups()
         self.started_at = time.time()
         self.booted = False
         self.quit = threading.Event()
@@ -266,6 +428,11 @@ class Supervisor:
                 unit = self.units[name] = Unit(name, definition)
             return unit
 
+    def unit_list(self):
+        """The units now, to loop over: instance() adds to them from other threads."""
+        with self.guard:
+            return list(self.units.values())
+
     # specifiers and commands
 
     def specifiers(self, unit, text):
@@ -287,9 +454,9 @@ class Supervisor:
         return re.sub(r"%(.)", lambda m: table.get(m.group(1), m.group(0)), text)
 
     def environment(self, unit):
-        env = dict(os.environ)
-        for key in ("PROXY_SUITE_SUPERVISOR_DIR", "PROXY_SUITE_MANIFEST", "NOTIFY_SOCKET"):
-            env.pop(key, None)
+        # What a service manager hands its services, not the starting shell's (https_proxy,
+        # LD_PRELOAD); the unit's own Environment comes next.
+        env = {key: value for key, value in os.environ.items() if _inherited(key)}
         for entry in as_list(unit.service.get("Environment")):
             for item in shlex.split(str(entry)):
                 if "=" in item:
@@ -307,7 +474,8 @@ class Supervisor:
         if not entries:
             return
         target = self.credentials_dir(unit)
-        os.makedirs(target, mode=0o700, exist_ok=True)
+        private_dir(CREDENTIALS_DIR)
+        private_dir(target)
         for entry in entries:
             ident, _, source = str(entry).partition(":")
             source = self.specifiers(unit, source or ident)
@@ -370,6 +538,7 @@ class Supervisor:
             start_new_session=True,
             umask=int(str(umask), 8) if umask is not None else -1,
         )
+        self.groups.add(unit.name, proc.pid)
         threading.Thread(target=pump, args=(unit.name, proc.stdout), daemon=True).start()
         return proc, ignore
 
@@ -385,6 +554,7 @@ class Supervisor:
                 continue
             unit.current = proc
             status = proc.wait()
+            self.groups.remove(proc.pid)
             unit.current = None
             if status and not ignore:
                 append_log(unit.name, f"proxy-suitectl: {key} exited with status {status}")
@@ -393,22 +563,28 @@ class Supervisor:
 
     @staticmethod
     def kill_group(proc, sig):
+        # Not once reaped: its pid, the group's id, may lead another group by now.
+        if proc is None or proc.returncode is not None:
+            return
         try:
             os.killpg(proc.pid, sig)
         except (ProcessLookupError, PermissionError):
             pass
 
     def terminate(self, proc):
-        if proc is None:
-            return
+        if proc is None or proc.returncode is not None:
+            return  # reaped by watch(), which ended the group then
         self.kill_group(proc, signal.SIGTERM)
         try:
-            proc.wait(STOP_TIMEOUT)
-        except subprocess.TimeoutExpired:
+            if wait_exit(proc, STOP_TIMEOUT) is None:
+                self.kill_group(proc, signal.SIGKILL)
+                wait_exit(proc)
+            # What the main process left behind in its group, before the reap frees the group's id.
             self.kill_group(proc, signal.SIGKILL)
-            proc.wait()
-        # What the main process left behind in its group.
-        self.kill_group(proc, signal.SIGKILL)
+        except ChildProcessError:
+            pass
+        proc.wait()
+        self.groups.remove(proc.pid)
 
     # jobs
 
@@ -445,52 +621,67 @@ class Supervisor:
         with unit.job:
             if restarting and (unit.state != AUTO_RESTART or unit.cancel.is_set()):
                 return 0
-            if unit.state in (ACTIVE, ACTIVATING) or (unit.state == AUTO_RESTART and not restarting):
+            if unit.state in (ACTIVE, ACTIVATING):
                 return 0 if unit.state != ACTIVATING else self.wait_settled(unit)
+            if unit.state == AUTO_RESTART:
+                # Started now, not left down until RestartSec is up: this wakes watch() out of its wait.
+                unit.cancel.set()
             unit.stopping = False
             unit.cancel.clear()
             unit.last_activated = time.time()
             unit.set_state(ACTIVATING)
-            service = unit.service
-            kind = service.get("Type", "simple")
             try:
-                self.load_credentials(unit)
-            except OSError as e:
-                append_log(unit.name, f"proxy-suitectl: LoadCredential: {e}")
+                return self._activate(unit)
+            except Exception as e:
+                # Left activating, the unit would hold every later start in wait_settled for good.
+                append_log(unit.name, f"proxy-suitectl: {e}")
+                main, unit.main = unit.main, None
+                self.terminate(main)
                 return self.fail(unit, "resources")
-            if not self.run_commands(unit, "ExecStartPre"):
+
+    def _activate(self, unit):
+        service = unit.service
+        kind = service.get("Type", "simple")
+        try:
+            self.load_credentials(unit)
+        except OSError as e:
+            append_log(unit.name, f"proxy-suitectl: LoadCredential: {e}")
+            return self.fail(unit, "resources")
+        if not self.run_commands(unit, "ExecStartPre"):
+            return self.fail(unit, "exit-code")
+        if kind in ("oneshot", "forking"):
+            if not self.run_commands(unit, "ExecStart"):
                 return self.fail(unit, "exit-code")
-            if kind in ("oneshot", "forking"):
-                if not self.run_commands(unit, "ExecStart"):
-                    return self.fail(unit, "exit-code")
-                if unit.stopping:
-                    return 0
-                if not self.run_commands(unit, "ExecStartPost"):
-                    return self.fail(unit, "exit-code")
-                unit.result = "success"
-                if service.get("RemainAfterExit") or kind == "forking":
-                    unit.set_state(ACTIVE)
-                else:
-                    self.run_commands(unit, "ExecStopPost")
-                    self.drop_credentials(unit)
-                    unit.set_state(INACTIVE)
+            if unit.stopping:
                 return 0
-            commands = as_list(service.get("ExecStart"))
-            try:
-                proc, _ = self.spawn(unit, commands[0]) if commands else (None, False)
-            except OSError as e:
-                append_log(unit.name, f"proxy-suitectl: ExecStart: {e}")
-                return self.fail(unit, "exit-code")
-            if proc is None:
-                return self.fail(unit, "resources")
-            unit.main = proc
-            threading.Thread(target=self.watch, args=(unit, proc), daemon=True).start()
-            if not self.run_commands(unit, "ExecStartPost", {"MAINPID": str(proc.pid)}):
-                self.terminate(proc)
+            if not self.run_commands(unit, "ExecStartPost"):
                 return self.fail(unit, "exit-code")
             unit.result = "success"
-            unit.set_state(ACTIVE)
+            if service.get("RemainAfterExit") or kind == "forking":
+                unit.set_state(ACTIVE)
+            else:
+                self.run_commands(unit, "ExecStopPost")
+                self.drop_credentials(unit)
+                unit.set_state(INACTIVE)
             return 0
+        commands = as_list(service.get("ExecStart"))
+        try:
+            proc, _ = self.spawn(unit, commands[0]) if commands else (None, False)
+        except OSError as e:
+            append_log(unit.name, f"proxy-suitectl: ExecStart: {e}")
+            return self.fail(unit, "exit-code")
+        if proc is None:
+            return self.fail(unit, "resources")
+        unit.main = proc
+        threading.Thread(target=self.watch, args=(unit, proc), daemon=True).start()
+        if not self.run_commands(unit, "ExecStartPost", {"MAINPID": str(proc.pid)}):
+            # Not watch()'s exit to handle: it would run the stop commands again and turn FAILED into a restart.
+            unit.main = None
+            self.terminate(proc)
+            return self.fail(unit, "exit-code")
+        unit.result = "success"
+        unit.set_state(ACTIVE)
+        return 0
 
     def wait_settled(self, unit):
         with unit.done:
@@ -506,17 +697,27 @@ class Supervisor:
 
     def watch(self, unit, proc):
         """After the main process exits on its own: stop commands, then Restart=."""
-        status = proc.wait()
+        try:
+            status = wait_exit(proc)
+        except ChildProcessError:
+            return  # reaped by stop() or a failed start, which took it from unit.main and ended its group
+        # Reaped only under unit.job, as terminate() does, so neither signals a pid the other freed.
         with unit.job:
-            if unit.stopping or unit.main is not proc:
+            if unit.main is not proc:
                 return
             service = unit.service
             unit.main = None
-            if status == 0 and service.get("RemainAfterExit"):
-                return
+            remain = status == 0 and service.get("RemainAfterExit") and not unit.stopping
+            if not remain:
+                # What it left behind, before the reap: once the leader is reaped and its group
+                # empties, the pid is free, and a later killpg could hit a new group of that id.
+                self.kill_group(proc, signal.SIGKILL)
+            proc.wait()
+            self.groups.remove(proc.pid)
+            if remain or unit.stopping:
+                return  # a stop() under way runs the stop commands
             env = {"SERVICE_RESULT": "success" if status == 0 else "exit-code", "EXIT_STATUS": str(status)}
             self.run_commands(unit, "ExecStop", env)
-            self.kill_group(proc, signal.SIGKILL)
             self.run_commands(unit, "ExecStopPost", env)
             restart = service.get("Restart", "no")
             again = restart == "always" or (restart in ("on-failure", "on-abnormal", "on-abort") and status != 0)
@@ -543,15 +744,18 @@ class Supervisor:
         unit.stopping = True
         unit.cancel.set()
         # Bound to this one: they go first.
-        for other in list(self.units.values()):
+        for other in self.unit_list():
             if other is not unit and other.state != INACTIVE:
                 if unit.name in map(full_name, as_list(other.unit.get("PartOf")) + as_list(other.unit.get("BindsTo"))):
                     self.stop(other.name)
-        if unit.current is not None:
-            self.kill_group(unit.current, signal.SIGTERM)
+        # Read once: run_commands clears it from the activating thread.
+        self.kill_group(unit.current, signal.SIGTERM)
         with unit.job:
             unit.stopping = True
             if unit.state in (INACTIVE, FAILED, AUTO_RESTART):
+                if unit.state == AUTO_RESTART:
+                    # A restart keeps them; one that will not come leaves none behind.
+                    self.drop_credentials(unit)
                 unit.set_state(INACTIVE)
                 return 0
             unit.set_state(DEACTIVATING)
@@ -691,6 +895,16 @@ class Supervisor:
                     os.chmod(fields[1], mode)
                 except OSError as e:
                     print(f"proxy-suitectl: tmpfiles: {fields[1]}: {e}", file=sys.stderr)
+            # C <path> <mode> - - - <source>: a copy where there is no file yet (the empty rule
+            # sets sing-box needs before their first download; without them it never starts).
+            elif len(fields) >= 7 and fields[0] == "C" and not os.path.lexists(fields[1]):
+                mode = int(fields[2], 8) if fields[2] != "-" else 0o644
+                try:
+                    os.makedirs(os.path.dirname(fields[1]) or ".", exist_ok=True)
+                    shutil.copyfile(fields[6], fields[1])
+                    os.chmod(fields[1], mode)
+                except OSError as e:
+                    print(f"proxy-suitectl: tmpfiles: {fields[1]}: {e}", file=sys.stderr)
 
     def boot_units(self):
         """The units a login would start, services ordered by After=."""
@@ -726,18 +940,19 @@ class Supervisor:
         old = self.manifest
         self.manifest = load_manifest(self.manifest_path)
         if not restart_changed:
-            for unit in self.units.values():
+            for unit in self.unit_list():
                 unit.definition = self.definition(unit.name) or unit.definition
             return 0
         self.make_tmpfiles()
         status = 0
-        for unit in list(self.units.values()):
+        for unit in self.unit_list():
             new = self.definition(unit.name)
             running = unit.state not in (INACTIVE, FAILED)
             if new is None:
                 if running:
                     self.stop(unit.name)
-                del self.units[unit.name]
+                with self.guard:
+                    self.units.pop(unit.name, None)
             elif new != unit.definition:
                 unit.definition = new
                 if running:
@@ -766,7 +981,7 @@ class Supervisor:
             timer.active = False
         for watch in self.paths.values():
             watch.active = False
-        active = [u for u in self.units.values() if u.state not in (INACTIVE, FAILED)]
+        active = [u for u in self.unit_list() if u.state not in (INACTIVE, FAILED)]
         for unit in sorted(active, key=lambda u: u.last_activated or 0, reverse=True):
             self.stop(unit.name)
         self.quit.set()
@@ -870,7 +1085,7 @@ def handle(supervisor, request):
             status = status or result
         return status, ""
     if verb == "reset-failed":
-        for unit in supervisor.units.values():
+        for unit in supervisor.unit_list():
             if unit.state == FAILED and (not units or unit.name in map(full_name, units)):
                 unit.set_state(INACTIVE)
         return 0, ""
@@ -891,7 +1106,7 @@ def handle(supervisor, request):
     if verb == "list-timers":
         return 0, json.dumps(supervisor.list_timers(units))
     if verb == "status":
-        names = units or [u.name for u in supervisor.units.values()]
+        names = units or [u.name for u in supervisor.unit_list()]
         status = 0
         for name in names:
             props = supervisor.properties(name)
@@ -925,14 +1140,18 @@ def handle(supervisor, request):
 
 
 def serve(manifest_path=None):
-    os.makedirs(SUPERVISOR_DIR, mode=0o700, exist_ok=True)
-    os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
+    private_dir(SUPERVISOR_DIR)
+    private_dir(LOG_DIR)
     lock = open(LOCK, "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         print("proxy-suitectl: the supervisor is already running", file=sys.stderr)
         return 0
+    # Before anything starts: what a killed daemon left running holds the ports its successors want.
+    end_orphans()
+    clear_credentials()
+    private_dir(CREDENTIALS_DIR)
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     try:
         resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
@@ -1010,7 +1229,8 @@ def start_daemon():
     if not MANIFEST or not os.path.exists(MANIFEST):
         print(f"proxy-suitectl: no manifest at {MANIFEST or '(unset)'}: switch the configuration first", file=sys.stderr)
         sys.exit(1)
-    os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
+    private_dir(SUPERVISOR_DIR)
+    private_dir(LOG_DIR)
     with open(log_path("supervisor"), "a") as log:
         subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), "daemon"],
@@ -1083,6 +1303,9 @@ def offline(verb, units, options):
         supervisor = Supervisor()
     except (OSError, ValueError):
         supervisor = None
+    if verb in ("stop", "shutdown"):
+        # Nothing is active as far as a daemon knows, but one killed outright may have left them running.
+        end_orphans_unsupervised([full_name(u) for u in units] if verb == "stop" else None)
     if verb in ("stop", "try-restart", "reset-failed", "daemon-reload", "shutdown", "reload"):
         return 0, ""
     if supervisor is None:
@@ -1173,8 +1396,28 @@ def read_entries(unit, since=None):
     return entries
 
 
+# Control characters but tab: C0, DEL and C1, as proxy_ctl shows them.
+_UNPRINTABLE = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
+
+
+# The variables services keep from the supervisor's environment: identity, locale and time zone
+# data, temporary and runtime directories, the CA bundle, Android's and proot's. PATH as a default.
+INHERITED_ENV = {
+    "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "LOCALE_ARCHIVE", "TZ", "TZDIR", "TMPDIR", "XDG_RUNTIME_DIR", "PATH",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE", "CURL_CA_BUNDLE",
+}
+INHERITED_ENV_PREFIXES = ("LC_", "ANDROID_", "PROOT_")
+
+
+def _inherited(key):
+    return key in INHERITED_ENV or key.startswith(INHERITED_ENV_PREFIXES)
+
+
 def format_entry(entry, fmt):
+    """A log line to print, escape sequences shown rather than obeyed: a unit's output can quote
+    a subscription server's text."""
     at, unit, text = entry
+    text = _UNPRINTABLE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
     if fmt == "cat":
         return text
     stamp = datetime.datetime.fromtimestamp(at).strftime("%b %d %H:%M:%S")

@@ -8,6 +8,7 @@
   customRuleCategory,
   onionOutbound,
   selectionMode,
+  proxyInboundsLoopback,
 }:
 
 let
@@ -117,19 +118,43 @@ let
     (xrayGeoIPRules "proxy-geoip" "proxy" r.proxy.geoips)
   ];
 
-  # Kept by every route mode, like sing-box's common rules.
-  xrayCommonRules = lib.optional (onionOutbound != null) (
-    mkXrayRule "tor-onion" { domain = [ "domain:onion" ]; } onionOutbound
-  );
+  # Sniffing (and the TUN's fake DNS) puts a name in place of where a client connected: a
+  # TProxy LAN client's "Host: 127.0.0.1:2375", or a container's lvh.me through the TUN, must
+  # not reach this host's loopback. Names resolved only at the dial are the direct
+  # outbound's finalRules' (config-templates/xray.nix). No "::ffff:127.0.0.0/104": XRay
+  # refuses its whole config over it.
+  xrayTransparentInbounds = [
+    "tproxy-in"
+    "tproxy-in6"
+    "tun-in"
+  ];
+  xrayLoopbackGuardRules = [
+    (mkXrayRule "guard-loopback-ip" {
+      inboundTag = xrayTransparentInbounds;
+      ip = proxyInboundsLoopback;
+    } "block")
+    (mkXrayRule "guard-loopback-domain" {
+      inboundTag = xrayTransparentInbounds;
+      domain = [ "domain:localhost" ];
+    } "block")
+  ];
 
+  # Kept by every route mode, like sing-box's common rules.
+  xrayCommonRules =
+    xrayLoopbackGuardRules
+    ++ lib.optional (onionOutbound != null) (
+      mkXrayRule "tor-onion" { domain = [ "domain:onion" ]; } onionOutbound
+    );
+
+  # Block ahead of the direct lists, as sing-box has it (rules/sing-box.nix).
   xrayRoutingRules =
     xrayCommonRules
     ++ lib.concatMap (item: item.entries) xrayCustomRouteRules
     ++ xrayProxyPrimaryRules
+    ++ xrayBlockRules
     ++ xrayDirectRules
     ++ xraySafetyDirectRules
-    ++ xrayProxyGeoRules
-    ++ xrayBlockRules;
+    ++ xrayProxyGeoRules;
 
   xrayRouteModeRules = {
     common = xrayCommonRules;

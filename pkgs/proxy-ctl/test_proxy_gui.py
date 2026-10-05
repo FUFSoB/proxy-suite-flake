@@ -109,28 +109,50 @@ class GuiTest(unittest.TestCase):
     def test_root_toggle_reads_too(self):
         """A tab only root can read goes through pkexec when the toggle is on, and one refusal stops the asking."""
         tab = model.Tab("x", "X", model.ROW, [], list)
-        app = types.SimpleNamespace(root_read_refused=False)
+        app = types.SimpleNamespace(root_read_refused=False, root_reads={})
         denied = ([], "✗ Cannot read /x - join the proxy-suite group, or re-run with sudo.")
         asked = []
 
         def as_root(result):
             return mock.patch.object(model, "load_tab_as_root", lambda tab, via: asked.append(via) or result)
 
-        load = lambda elevated: gui.ProxySuiteGui.load_tab(app, tab, {}, elevated)
+        load = lambda elevated, fresh=False: gui.ProxySuiteGui.load_tab(app, tab, {}, elevated, fresh)
         with mock.patch.object(model, "load_tab", lambda tab, states: denied), mock.patch.object(model.os, "geteuid", lambda: 1000):
             with as_root(([{"key": "a"}], "")):
                 self.assertIn("Ctrl+E", load(False)[1])
                 self.assertEqual(asked, [])
                 self.assertEqual(load(True), ([{"key": "a"}], ""))
                 self.assertEqual(asked, ["pkexec"])
+                # A refresh shows that read again: pkexec asks for the password every time.
+                rows, summary = load(True)
+                self.assertEqual(rows, [{"key": "a"}])
+                self.assertIn("F5 to read again", summary)
+                self.assertEqual(asked, ["pkexec"])
             with as_root((None, "authentication cancelled")):
-                self.assertIn("As root: authentication cancelled", load(True)[1])
-                self.assertIn("Ctrl+E twice", load(True)[1])
+                self.assertIn("As root: authentication cancelled", load(True, fresh=True)[1])
+                self.assertIn("Ctrl+E twice", load(True, fresh=True)[1])
                 self.assertEqual(len(asked), 2)
         with mock.patch.object(model, "load_tab", lambda tab, states: ([], "Nothing here yet.")), as_root(None):
             app.root_read_refused = False
             self.assertEqual(load(True), ([], "Nothing here yet."))  # readable: no pkexec
             self.assertEqual(len(asked), 2)
+
+    def test_paste_asks_first(self):
+        """A web page can plant a link in the clipboard: Ctrl+V only asks, and runs on yes."""
+        ran, asked = [], []
+        app = types.SimpleNamespace(
+            run_argv=lambda mode, argv, win, stdin=None: ran.append((argv, stdin)),
+            confirm=lambda argv, then, parent, stdin=None: asked.append((argv, then, stdin)),
+        )
+        win = types.SimpleNamespace(app=app, toast=lambda text: None)
+        clipboard = types.SimpleNamespace(read_text_finish=lambda result: "https://evil.test/s")
+        page = types.SimpleNamespace(tab=types.SimpleNamespace(id="subs"))
+        gui.Window.pasted(win, page, clipboard, None)
+        self.assertEqual(ran, [])
+        [(argv, then, stdin)] = asked
+        self.assertEqual((argv, stdin), (["proxy", "subs", "add", "-"], "https://evil.test/s"))
+        then()
+        self.assertEqual(ran, [(["proxy", "subs", "add", "-"], "https://evil.test/s")])
 
     def test_every_tray_icon_is_drawn(self):
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")

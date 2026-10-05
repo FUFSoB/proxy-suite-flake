@@ -56,6 +56,13 @@ let
       constants.readSourceFunction = _: ''
         _proxy_suite_read_source() { cat -- "$1"; }
       '';
+      # The hop login, in the build directory.
+      constants.hopUser = "hop";
+      constants.hopLoginFile = "hop-login";
+      constants.ensureHopLogin =
+        _: pkgs.writeShellScript "proxy-suite-hop-login" "[ -s hop-login ] || printf s3cret > hop-login";
+      # The build runs as its own user: no one to drop to.
+      constants.runAsServiceUser = _: _: "";
       pureXrayEnabled = false;
       collapseNamedOutbounds = null;
       backend = null;
@@ -68,6 +75,7 @@ let
       mkSubscriptionBlock = null;
       mkSubscriptionLoadHelperBlock = null;
       runtimeSubscriptionsBlock = null;
+      singBoxBin = "${pkgs.sing-box}/bin/sing-box";
     };
 in
 {
@@ -377,6 +385,65 @@ in
         }
       );
 
+  # The runner's spool, as members fill it: read through no link or FIFO, and emptied of
+  # what it took; and an install from before it, whose state dir the group wrote to.
+  autoproxy-spool =
+    let
+      runner = pkgs.writeShellScript "proxy-suite-autoproxy" (
+        fillTemplate ../../modules/proxy-suite/autoproxy-run.template.sh {
+          # The build dir's stub/ first: proxy-ctl answers every probe.
+          path = "$PWD/stub:${
+            pkgs.lib.makeBinPath [
+              pkgs.coreutils
+              pkgs.curl
+              pkgs.findutils
+              pkgs.gawk
+              pkgs.gnugrep
+              pkgs.gnused
+              pkgs.jq
+              pkgs.util-linux
+            ]
+          }";
+          stateDir = "/nonexistent";
+          spoolDir = "/nonexistent";
+          runtimeDir = "/nonexistent";
+          ttlDays = "30";
+          migrate = import ../../modules/proxy-suite/autoproxy-migrate.nix { inherit pkgs; };
+          editJq = ../../modules/proxy-suite/autoproxy-edit.jq;
+          render = pkgs.writeShellScript "proxy-suite-autoproxy-render" (
+            fillTemplate ../../modules/proxy-suite/autoproxy-render.template.sh {
+              path = pkgs.lib.makeBinPath [
+                pkgs.coreutils
+                pkgs.jq
+              ];
+              serviceUser = "proxy-suite-daemon";
+              groupArg = "";
+            }
+          );
+          strikeJq = ../../modules/proxy-suite/autoproxy-strike.jq;
+          roundsJq = ../../modules/proxy-suite/autoproxy-rounds.jq;
+          interval = "1h";
+          journalctl = "false";
+          excludeHosts = "";
+          excludeSampleHosts = "";
+          slowJudgeJq = ../../modules/proxy-suite/autoproxy-slow-judge.jq;
+          probesPerRun = "5";
+          publicSuffixes =
+            pkgs.runCommand "proxy-suite-autoproxy-public-suffixes" { nativeBuildInputs = [ pkgs.python3 ]; }
+              "python3 ${../../modules/proxy-suite/zapret2/public-suffixes.py} --private ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat >$out";
+        }
+      );
+    in
+    pkgs.runCommand "proxy-suite-autoproxy-spool-check" {
+      nativeBuildInputs = [
+        pkgs.coreutils
+        pkgs.diffutils
+        pkgs.findutils
+        pkgs.gnugrep
+        pkgs.jq
+      ];
+    } (fillTemplate ./repo/autoproxy-spool.template.sh { inherit runner; });
+
   # A probe that exits 0 printing nothing: jq reads "" as no input at all, so the
   # "error" guard downstream saw "" instead of "error" and let it through to
   # `--argjson r ""`, which failed every autoProxy run until the state changed.
@@ -488,9 +555,12 @@ in
       echo '{"type": "tor", "executable_path": "/tmp/x"}' > obd/tor.json
       echo '{"type": "ssh", "server": "h", "private_key_path": "/root/.ssh/id_ed25519"}' > obd/ssh.json
       echo '{"type": "vless", "server": "h", "tls": {"enabled": true, "certificate_path": "/etc/shadow"}}' > obd/cert.json
+      # A field the backend does not know would fail its whole start: this one alone goes.
+      echo '{"type": "socks", "server": "127.0.0.1", "server_prot": 1080}' > obd/typo.json
       ${loadRuntime} 2> err
       cat err
       jq -e '[.[].tag] == ["ok", "ws"]' outbounds.json > /dev/null
+      grep -q "runtime outbound 'typo' is not one the backend takes" err
       grep -q "runtime outbound 'tor' names local files or programs (executable_path, type: tor)" err
       grep -q "runtime outbound 'ssh' names local files or programs (private_key_path)" err
       grep -q "runtime outbound 'cert' names local files or programs (certificate_path)" err

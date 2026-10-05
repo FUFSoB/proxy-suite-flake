@@ -12,7 +12,8 @@ failed=0
 # DNS rules read.
 fetch() {
   local name=$1 url=$2 path=$3 dns=$4 format=$5 detour=$6 tmp dnsTmp
-  local args=(--fail --silent --show-error --location --max-time 120 --max-filesize 64M)
+  # --proto-redir: a redirect to http would let the path pick the rules.
+  local args=(--fail --silent --show-error --location --proto-redir =https --max-time 120 --max-filesize 64M)
   [ "$detour" = proxy ] && args+=("${proxy[@]}")
   tmp=$(@coreutils@/bin/mktemp "$path.XXXXXX") || { failed=1; return; }
   dnsTmp=$(@coreutils@/bin/mktemp "$dns.XXXXXX") || { rm -f "$tmp"; failed=1; return; }

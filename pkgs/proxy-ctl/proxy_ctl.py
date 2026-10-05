@@ -4,7 +4,10 @@ Configuration arrives through the environment the Nix wrapper sets.
 """
 
 import base64
+import contextlib
 import datetime
+import errno
+import fcntl
 import getpass
 import http.client
 import importlib
@@ -94,7 +97,7 @@ Changes and secrets need root or the userControl group.
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
   proxy subs [list|update]               subscriptions; update refetches them
-  proxy subs add [tag] <url>             add a subscription (no tag: named after its host)
+  proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
   proxy rulesets [list|update]           rule sets and when they were fetched; update refetches
@@ -263,6 +266,24 @@ def read_text(path):
         return f.read()
 
 
+# Lists the zapret and outbounds groups write to: zapret's learned hosts run to thousands of
+# lines, never to this.
+SHARED_TEXT_MAX_BYTES = 16 * 1024 * 1024
+
+
+def read_shared_text(path, limit=SHARED_TEXT_MAX_BYTES):
+    """A file in a directory a group writes to: regular, not through a symlink, at most limit
+    bytes, else OSError. A member's link, FIFO or /dev/zero must not be read by root's run."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", path)
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        raise OSError(errno.EFBIG, "file too large", path)
+    return data.decode("utf-8", errors="replace")
+
+
 def lines(text):
     """Lines the way awk and grep see them: a missing final newline is fine."""
     if not text:
@@ -324,7 +345,8 @@ def _spool_write(path, text="", mode=0o640):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.chmod(tmp, mode)
+            # By fd: a member may swap tmp for a symlink before a chmod by path.
+            os.fchmod(f.fileno(), mode)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -332,6 +354,55 @@ def _spool_write(path, text="", mode=0o640):
         except OSError:
             pass
         raise
+
+
+LOCK_WAIT = 10
+
+
+def _lock_path(path):
+    return os.path.join(os.path.dirname(path) or ".", f".{os.path.basename(path)}.lock")
+
+
+@contextlib.contextmanager
+def _file_lock(path):
+    """flock on .<name>.lock over a read-modify-write of path, so two proxy-ctl don't drop each
+    other's change. Yields whether it is held: no lock file to be had means unlocked, as before."""
+    lock = _lock_path(path)
+    deadline = time.monotonic() + LOCK_WAIT
+    while True:
+        # Read-only and O_NOFOLLOW: flock needs no more, and the directory may be the group's.
+        try:
+            fd = os.open(lock, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o660)
+        except OSError:
+            yield False
+            return
+        try:
+            held = False
+            while not held:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held = True
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        die(f"Something else is still changing {path} (it holds {lock}); try again.")
+                    time.sleep(0.05)
+                except OSError:
+                    break  # a lock flock refuses: unlocked, as without one
+            # Removed by its holder meanwhile (groups rm): lock the one there now instead.
+            if held and not _same_file(fd, lock):
+                continue
+            yield held
+            return
+        finally:
+            os.close(fd)
+
+
+def _same_file(fd, path):
+    try:
+        st, fst = os.stat(path, follow_symlinks=False), os.fstat(fd)
+    except OSError:
+        return False
+    return (st.st_dev, st.st_ino) == (fst.st_dev, fst.st_ino)
 
 
 def _run(argv, capture=False, quiet=False, stdin=None):
@@ -350,11 +421,11 @@ def _run(argv, capture=False, quiet=False, stdin=None):
     return p.returncode, p.stdout or ""
 
 
-def _run_foreground(argv):
+def _run_foreground(argv, env=None):
     """Waits on argv the way a shell does: Ctrl-C is the child's to handle."""
     sys.stdout.flush()
     try:
-        p = subprocess.Popen(argv)
+        p = subprocess.Popen(argv, env=env)
     except OSError:
         return 127
     old = signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -431,7 +502,10 @@ def _toggle(unit, name, verb="status", *_):
         die(f"{name} is not enabled in this configuration.")
     verb = _flip(unit, verb)
     if verb == "status":
-        systemctl("is-active", unit)
+        # is-active's code too, as systemctl gives it (3: not active): `if proxy-ctl tor status` works.
+        status, _ = systemctl("is-active", unit)
+        if status:
+            sys.exit(status)
     elif verb == "on":
         must("start", unit)
     elif verb == "off":
@@ -475,13 +549,18 @@ def cmd_warp(*args):
         _toggle(devices[0][1], "warp", *args)
         return
     verb = args[0] if args else "status"
+    states = []
     for tag, unit in devices:
         if verb == "status":
             state = systemctl("is-active", unit, capture=True, quiet=True)[1].strip() or "inactive"
+            states.append(state)
             print(f"{tag:<16} {state}")
         else:
             print(f"{tag}:", flush=True)
             _toggle(unit, tag, verb)
+    # As `systemctl is-active` with several units: 0 when any is active, else 3.
+    if verb == "status" and "active" not in states:
+        sys.exit(3)
 
 
 def _tor_control(*commands):
@@ -756,7 +835,7 @@ COMPLETE = {
         "words": {
             "list": "subscription caches",
             "update": "refetch the subscriptions",
-            "add": "add a subscription at runtime: [tag] <url>",
+            "add": "add a subscription at runtime: [tag] <url, or - for stdin>",
             "rm": "remove a runtime subscription",
             "link": "its URL",
         }
@@ -801,10 +880,10 @@ COMPLETE = {
         }
     },
     "zapret auto retry": {"args": lambda: _names(name for name, _ in _zapret_proxied())},
-    "zapret auto forget": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
-    "zapret auto exclude": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
-    "zapret auto unpin": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-user.txt"))))},
-    "zapret auto include": {"args": lambda: _names(lines(read_text(_zapret_auto_file("zapret-hosts-user-exclude.txt"))))},
+    "zapret auto forget": {"args": lambda: _names(lines(read_shared_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
+    "zapret auto exclude": {"args": lambda: _names(lines(read_shared_text(_zapret_auto_file("zapret-hosts-auto.txt"))))},
+    "zapret auto unpin": {"args": lambda: _names(lines(read_shared_text(_zapret_auto_file("zapret-hosts-user.txt"))))},
+    "zapret auto include": {"args": lambda: _names(lines(read_shared_text(_zapret_auto_file("zapret-hosts-user-exclude.txt"))))},
     "zapret cutoff": {"words": {"status": "networks this line cuts at 16 KB", "probe": "probe this line again now"}},
     "awg": {
         "words": {
@@ -949,6 +1028,11 @@ def _complete_tree(*words):
     return candidates
 
 
+# A completion word as a shell may take it: many come from group-writable files, and bash's
+# `compgen -W` expands "$(...)" in them as whoever pressed TAB.
+COMPLETION_WORD = re.compile(r"[\w.@:+=,/%-]+")
+
+
 def cmd_complete(*words):
     """The hidden verb the shell completions call. It never fails or speaks."""
     try:
@@ -956,6 +1040,9 @@ def cmd_complete(*words):
     except Exception:
         return
     for word, description in candidates.items():
+        if not isinstance(word, str) or not COMPLETION_WORD.fullmatch(word):
+            continue
+        description = _UNPRINTABLE.sub("", str(description or "").replace("\t", " ").replace("\n", " "))
         print(f"{word}\t{description}" if description else word)
 
 
@@ -989,11 +1076,16 @@ def _unit_states(units):
     """unit -> ActiveState for the units that exist, in one systemctl call."""
     if not units:
         return {}
-    _, out = systemctl("show", "--property=Id,LoadState,ActiveState", "--", *units, capture=True, quiet=True)
+    status, out = systemctl("show", "--property=Id,LoadState,ActiveState", "--", *units, capture=True, quiet=True)
+    if status:
+        return {}  # unread, as when it prints nothing: the front ends show it as unavailable
+    # By Id, not position: a block skipped or out of order must not shift states onto other units.
+    names = {**{f"{u}.service": u for u in units}, **{u: u for u in units}}
     states = {}
-    for unit, block in zip(units, out.strip().split("\n\n"), strict=False):
+    for block in (out or "").strip().split("\n\n"):
         props = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
-        if props.get("LoadState") not in (None, "not-found"):
+        unit = names.get(props.get("Id", ""))
+        if unit and props.get("LoadState") not in (None, "not-found"):
             states[unit] = props.get("ActiveState", "unknown")
     return states
 
@@ -1008,6 +1100,18 @@ SNAPSHOT_UNITS = {
 SUBSCRIPTION_UPDATE = "proxy-suite-subscription-update"
 KILL_SWITCH = "proxy-suite-killswitch"
 BUSY_STATES = ("activating", "deactivating", "reloading")
+
+
+def _lift_kill_switch():
+    """Stops the kill switch once a global tunnel is stopped on purpose, unless another one still runs."""
+    if not svc_exists(KILL_SWITCH):
+        return
+    tunnels = ["proxy-suite-tun", "proxy-suite-tproxy", *map(_awg_service, _awg_profiles())]
+    running = sorted(u for u, s in _unit_states(tunnels).items() if s in ("active", "activating", "reloading"))
+    if running:
+        print(f"The kill switch stays up for {', '.join(running)}; lift it anyway with: proxy-ctl killswitch off", file=sys.stderr)
+        return
+    systemctl("stop", KILL_SWITCH)
 
 
 def _snapshot_units():
@@ -1174,7 +1278,7 @@ def _status_zapret():
     if not readable(auto):
         return ""
     try:
-        return str(sum(1 for line in lines(read_text(auto)) if line))
+        return str(sum(1 for line in lines(read_shared_text(auto)) if line))
     except OSError:
         return ""
 
@@ -1226,9 +1330,10 @@ def cmd_proxy(verb="status", *args):
     elif verb == "off":
         if not svc_exists("proxy-suite-socks"):
             die("proxy is not enabled in this configuration.")
-        for svc in ("proxy-suite-tproxy", "proxy-suite-tun", KILL_SWITCH):
+        for svc in ("proxy-suite-tproxy", "proxy-suite-tun"):
             if svc_exists(svc):
                 systemctl("stop", svc)
+        _lift_kill_switch()
         must("stop", "proxy-suite-socks")
     elif verb == "outbounds":
         cmd_outbounds(*args)
@@ -1252,8 +1357,8 @@ def cmd_proxy(verb="status", *args):
         action = _flip(f"proxy-suite-{verb}", *args[:1])
         _toggle(f"proxy-suite-{verb}", f"proxy {verb}", action)
         # A mode stopped on purpose lifts the kill switch; one that fails leaves it up.
-        if action == "off" and svc_exists(KILL_SWITCH):
-            systemctl("stop", KILL_SWITCH)
+        if action == "off":
+            _lift_kill_switch()
     elif verb == "clash-broker":
         # proxy-suite-clash-api's ExecStart.
         _clash_broker_serve()
@@ -1465,6 +1570,8 @@ def _clash_via_broker(broker, method, path, body, timeout):
 # let any of them switch what everyone dials and see everyone's connections.
 
 CLASH_TEST_SELECTOR = "proxy-suite-test"
+# What delay tests fetch when the start script names no proxy.urlTest.url.
+URL_TEST_DEFAULT = "https://www.gstatic.com/generate_204"
 CLASH_BROKER_MAX_BODY = 64 * 1024
 # Any local user may connect: a caller that stalls, or opens many, holds no thread for long
 # and never all of them.
@@ -1506,12 +1613,20 @@ def _broker_scopes(uid):
     return held
 
 
-def _broker_allows(method, path, scopes):
-    """Whether a caller holding `scopes` may make this request; `path` without its query.
+def _broker_test_urls():
+    """The URLs a delay test through the broker may fetch: urlTest.url, as proxy-ctl reads it."""
+    test = read_json_or(_runtime_file("outbound-test.json"), {})
+    return {_s(test.get("url") or URL_TEST_DEFAULT), _s(_outbound_inventory().get("url") or URL_TEST_DEFAULT)}
+
+
+def _broker_allows(method, path, scopes, query=""):
+    """Whether a caller holding `scopes` may make this request; `path` and its `query` apart.
 
     Only what proxy-ctl asks: reads and delay tests for any member, the download test's own
     selector too, switching the others with `routing`, live connections with `secrets`.
     Nothing else: not closing connections, the config, the logs or the traffic stream.
+    A delay test fetches the configured test URL only: any other would have the backend
+    fetch what the caller names, LAN addresses included.
     """
     if "*" in scopes:
         return True
@@ -1524,7 +1639,13 @@ def _broker_allows(method, path, scopes):
         return (
             parts == ["proxies"]
             or (parts[0] == "proxies" and len(parts) == 2)
-            or (parts[0] in ("proxies", "group") and len(parts) == 3 and parts[2] == "delay")
+            or (
+                parts[0] in ("proxies", "group")
+                and len(parts) == 3
+                and parts[2] == "delay"
+                and len(urls := urllib.parse.parse_qs(query, keep_blank_values=True).get("url") or []) == 1
+                and urls[0] in _broker_test_urls()
+            )
             or (parts == ["connections"] and "secrets" in scopes)
         )
     if method == "PUT" and parts[0] == "proxies" and len(parts) == 2:
@@ -1563,7 +1684,7 @@ def _clash_broker_server(path):
             uid = _peer_uid(self.connection)
             scopes = _broker_scopes(uid)
             parts = urllib.parse.urlsplit(self.path)
-            if scopes is None or not _broker_allows(method, parts.path, scopes):
+            if scopes is None or not _broker_allows(method, parts.path, scopes, parts.query):
                 # repr: the path is the caller's, escape sequences and all.
                 print(f"proxy-suite-clash-api: refused uid {uid}: {method} {parts.path!r}", file=sys.stderr)
                 return self._reply(403, {"message": "not allowed for your userControl scopes"})
@@ -1608,9 +1729,8 @@ def _clash_broker_server(path):
                 return False
 
         def process_request(self, request, client_address):
-            # A full house holds the next one back a while (proxy-ctl alone tests 16
-            # outbounds at once), then lets it go.
-            if not self.slots.acquire(timeout=CLASH_BROKER_TIMEOUT):
+            # A full house turns the next one away at once: waiting here would stall accept().
+            if not self.slots.acquire(blocking=False):
                 self.shutdown_request(request)
                 return
             try:
@@ -1687,6 +1807,16 @@ def _test_delay(backend_tag, url):
     return {0: "no API", 504: "timeout"}.get(status, "failed")
 
 
+def _probe_login():
+    """(user, password) of the probe and test listeners, drawn on each start (they reach any
+    exit, so not every local user may); None when unreadable."""
+    try:
+        user, sep, password = read_text(_runtime_file("probe-login")).strip().partition(":")
+    except OSError:
+        return None
+    return (user, password) if sep and user and password else None
+
+
 def _timed_download(port):
     """Megabits per second through the test listener, None when nothing arrived.
 
@@ -1694,7 +1824,7 @@ def _timed_download(port):
     anywhere else.
     """
     conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=TEST_DOWNLOAD_SECONDS)
-    login = _local_proxy_login()
+    login = _probe_login()
     auth = {"Proxy-Authorization": "Basic " + base64.b64encode(":".join(login).encode()).decode()} if login else {}
     conn.set_tunnel(TEST_DOWNLOAD_HOST, headers=auth)
     got = 0
@@ -1763,7 +1893,7 @@ def cmd_outbounds_test(*args):
         if not backend.get(tag):
             return "-"
         if kind == "delay":
-            return _test_delay(backend[tag], test.get("url") or "https://www.gstatic.com/generate_204")
+            return _test_delay(backend[tag], test.get("url") or URL_TEST_DEFAULT)
         return _test_download(backend[tag], test)
 
     # Ping and delay all at once, and done before any download competes with them.
@@ -1980,11 +2110,22 @@ def _pick_pin(choices, header):
     return "" if status else tag
 
 
+def unit_escape(text):
+    """systemd-escape, in-process: proxy-suitectl hosts have no systemd to run it from."""
+    out = []
+    for i, byte in enumerate(text.encode()):
+        char = chr(byte)
+        if char == "/":
+            out.append("-")
+        elif (char == "." and i == 0) or not (char.isascii() and (char.isalnum() or char in ":_.")):
+            out.append(f"\\x{byte:02x}")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def _start_pin_unit(instance):
-    status, escaped = _run(["systemd-escape", "--", instance], capture=True)
-    if status:
-        sys.exit(status)
-    unit = "proxy-suite-outbound-pin@" + escaped.rstrip("\n")
+    unit = "proxy-suite-outbound-pin@" + unit_escape(instance)
     if systemctl("start", f"{unit}.service")[0]:
         die(f"Failed - see: proxy-ctl logs {unit}")
 
@@ -2168,15 +2309,17 @@ class GroupWatch:
             names = os.listdir(directory)
         except OSError:
             return fresh
+        seen = {}
         for name in names:
             try:
-                mtime = os.stat(os.path.join(directory, name)).st_mtime
+                mtime = os.lstat(os.path.join(directory, name)).st_mtime
             except OSError:
                 continue
-            if self.seen_hints.get(name) != mtime:
-                if name in self.seen_hints:
-                    fresh.append(name)
-                self.seen_hints[name] = mtime
+            if self.seen_hints.get(name) != mtime and name in self.seen_hints:
+                fresh.append(name)
+            seen[name] = mtime
+        # Only what is there now: names removed since are forgotten, not kept for good.
+        self.seen_hints = seen
         return fresh
 
     def step(self, inventory, hinted=()):
@@ -2184,10 +2327,11 @@ class GroupWatch:
         groups = self.watched(inventory)
         if not groups:
             return []
-        url = _s(inventory.get("url") or "https://www.gstatic.com/generate_204")
+        url = _s(inventory.get("url") or URL_TEST_DEFAULT)
         disabled = set(inventory.get("disabled") or [])
         now_clock = self.clock()
-        hinted = set(hinted)
+        # Anyone may leave a hint: only a watched member's is worth a test and a place in the state.
+        hinted = set(hinted) & {m for info in groups.values() for m in info.get("members") or [] if m != "block"}
         results = {}
         # A hinted tag is tested at once, and so is everything around it.
         for tag in hinted:
@@ -2241,17 +2385,21 @@ class GroupWatch:
             fd, tmp = tempfile.mkstemp(dir=_groups_dir(), prefix=".groups-state.")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self.state(_group_nows()), f)
-            os.chmod(tmp, 0o644)
+                os.fchmod(f.fileno(), 0o644)
             os.replace(tmp, path)
         except OSError:
             pass
 
     def run(self):
         health = os.path.join(_groups_dir(), "health")
-        os.makedirs(health, exist_ok=True)
         # Watchdogs run as other users (the WARP tunnel as the service user). A hint only makes
-        # this test sooner, so anyone may leave one; nobody may list or remove another's.
-        os.chmod(health, 0o1733)
+        # this test sooner, so they may leave one; nobody may list or remove another's. As
+        # root, the unit makes it first, for the service user's group alone.
+        try:
+            os.mkdir(health)
+            os.chmod(health, 0o1733)
+        except FileExistsError:
+            pass
         self.hints()  # what is there already is no news
         last_state = 0.0
         while True:
@@ -2271,13 +2419,20 @@ def _group_file(tag):
 
 def _read_group_file(tag):
     try:
-        with open(_group_file(tag), encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(read_shared_text(_group_file(tag), RUNTIME_APP_MAX_BYTES))
     except FileNotFoundError:
         die(f"'{tag}' is not a group added with proxy-ctl; declared groups change in the configuration.")
     except (OSError, ValueError):
         denied(_group_file(tag))
     return data if isinstance(data, dict) else {}
+
+
+def _group_lock(tag):
+    """_file_lock over a runtime group's file; dies first for a tag that is no such group."""
+    _check_tag_shape("group", tag)
+    if not os.path.lexists(_group_file(tag)):
+        _read_group_file(tag)  # says why
+    return _file_lock(_group_file(tag))
 
 
 def _write_group_file(tag, data):
@@ -2379,52 +2534,63 @@ def cmd_groups(verb="list", *args):
             usage(GROUP_ADD_SHAPE)
         tag, members = rest[0], rest[1:]
         _check_runtime_tag("outbound", tag)
-        if tag in _outbound_groups() or os.path.exists(_group_file(tag)):
+        if tag in _outbound_groups() or os.path.lexists(_group_file(tag)):
             die(f"A group named '{tag}' already exists.")
         if not members and not opts["subscriptions"] and not opts["match"]:
             die("A group needs members, a --sub or a --match.")
         _group_check_members(tag, members)
-        _write_group_file(tag, {"outbounds": members, **opts})
+        with _file_lock(_group_file(tag)):
+            if os.path.lexists(_group_file(tag)):
+                die(f"A group named '{tag}' already exists.")
+            _write_group_file(tag, {"outbounds": members, **opts})
         _runtime_reload()
         print(f"Added group: {tag}")
     elif verb == "rm":
         if len(args) != 1:
             usage("proxy groups rm <tag>")
         tag = args[0]
-        _read_group_file(tag)
-        try:
-            os.unlink(_group_file(tag))
-        except OSError:
-            denied(_group_file(tag), "remove")
+        # Locked: a members or strategy edit under way would write it back.
+        with _group_lock(tag) as held:
+            _read_group_file(tag)
+            try:
+                os.unlink(_group_file(tag))
+            except OSError:
+                denied(_group_file(tag), "remove")
+            # Only the holder's: one waiting on it relocks the new one (_file_lock).
+            if held:
+                with contextlib.suppress(OSError):
+                    os.unlink(_lock_path(_group_file(tag)))
         _runtime_reload()
         print(f"Removed group: {tag}")
     elif verb == "members":
         if len(args) < 3 or args[1] not in ("add", "rm"):
             usage("proxy groups members <tag> add|rm <member...>")
         tag, action, names = args[0], args[1], list(args[2:])
-        data = _read_group_file(tag)
-        members = [m for m in data.get("outbounds") or [] if isinstance(m, str)]
-        if action == "add":
-            _group_check_members(tag, names)
-            members += [n for n in names if n not in members]
-        else:
-            missing = [n for n in names if n not in members]
-            if missing:
-                die(f"Not listed in '{tag}': {', '.join(missing)}")
-            members = [m for m in members if m not in names]
-            if not members and not data.get("subscriptions") and not data.get("match"):
-                die(f"That would leave '{tag}' empty; remove the group instead: proxy-ctl proxy groups rm {tag}")
-        data["outbounds"] = members
-        _write_group_file(tag, data)
+        with _group_lock(tag):
+            data = _read_group_file(tag)
+            members = [m for m in data.get("outbounds") or [] if isinstance(m, str)]
+            if action == "add":
+                _group_check_members(tag, names)
+                members += [n for n in names if n not in members]
+            else:
+                missing = [n for n in names if n not in members]
+                if missing:
+                    die(f"Not listed in '{tag}': {', '.join(missing)}")
+                members = [m for m in members if m not in names]
+                if not members and not data.get("subscriptions") and not data.get("match"):
+                    die(f"That would leave '{tag}' empty; remove the group instead: proxy-ctl proxy groups rm {tag}")
+            data["outbounds"] = members
+            _write_group_file(tag, data)
         _runtime_reload()
         print(f"{tag}: {', '.join(members) or '(members from --sub/--match only)'}")
     elif verb == "strategy":
         if len(args) != 2 or args[1] not in GROUP_STRATEGIES:
             usage(f"proxy groups strategy <tag> {'|'.join(GROUP_STRATEGIES)}")
         tag, strategy = args
-        data = _read_group_file(tag)
-        data["strategy"] = strategy
-        _write_group_file(tag, data)
+        with _group_lock(tag):
+            data = _read_group_file(tag)
+            data["strategy"] = strategy
+            _write_group_file(tag, data)
         _runtime_reload()
         print(f"{tag}: {strategy}")
     else:
@@ -2442,8 +2608,7 @@ def _priority_file():
 
 
 def _runtime_priority():
-    data = read_json_or(_priority_file(), {})
-    return {k: v for k, v in data.items() if isinstance(v, int)} if isinstance(data, dict) else {}
+    return {k: v for k, v in _read_shared_json(_priority_file()).items() if isinstance(v, int)}
 
 
 def cmd_priority(*args):
@@ -2462,30 +2627,32 @@ def cmd_priority(*args):
     tag, value = args
     if tag not in _outbound_tags() and tag not in _outbound_groups():
         die(f"Unknown outbound or group: {tag}")
-    data = _runtime_priority()
-    if value == "--clear":
-        data.pop(tag, None)
-    elif value in ("up", "down"):
-        # Every top-level entry numbered in the new order, 10 apart: room to slot one in by hand.
-        top = [_s(t) for t in _outbound_inventory().get("top") or []]
-        if tag not in top:
-            die(f"'{tag}' is not at the top level; a group orders its members itself.")
-        i = top.index(tag)
-        j = i - 1 if value == "up" else i + 1
-        if not 0 <= j < len(top):
-            print(f"{tag} is already {'first' if value == 'up' else 'last'}.")
-            return
-        top[i], top[j] = top[j], top[i]
-        data.update({t: 10 * (n + 1) for n, t in enumerate(top)})
-    elif re.fullmatch(r"-?\d+", value):
-        data[tag] = int(value)
-    else:
-        usage("proxy priority <tag> <number>|up|down|--clear")
     path = _priority_file()
-    try:
-        _spool_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
-    except OSError:
-        denied(path, "write")
+    # Read to write under one lock: the GUI and a terminal at once would drop one's change.
+    with _file_lock(path):
+        data = _runtime_priority()
+        if value == "--clear":
+            data.pop(tag, None)
+        elif value in ("up", "down"):
+            # Every top-level entry numbered in the new order, 10 apart: room to slot one in by hand.
+            top = [_s(t) for t in _outbound_inventory().get("top") or []]
+            if tag not in top:
+                die(f"'{tag}' is not at the top level; a group orders its members itself.")
+            i = top.index(tag)
+            j = i - 1 if value == "up" else i + 1
+            if not 0 <= j < len(top):
+                print(f"{tag} is already {'first' if value == 'up' else 'last'}.")
+                return
+            top[i], top[j] = top[j], top[i]
+            data.update({t: 10 * (n + 1) for n, t in enumerate(top)})
+        elif re.fullmatch(r"-?\d+", value):
+            data[tag] = int(value)
+        else:
+            usage("proxy priority <tag> <number>|up|down|--clear")
+        try:
+            _spool_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+        except OSError:
+            denied(path, "write")
     _runtime_reload()
     print(f"{tag}: {'default order' if value == '--clear' else 'moved ' + value if value in ('up', 'down') else value}")
 
@@ -2543,8 +2710,10 @@ def _local_file_keys(ob):
         if isinstance(item, dict):
             for key, child in item.items():
                 k = str(key).lower()
+                # Non-ASCII: Go's JSON decoding folds "ſ" to s and "K" to k (localFileKeysJq).
                 if (
-                    k.endswith(("file", "directory"))
+                    not k.isascii()
+                    or k.endswith(("file", "directory"))
                     or (k.endswith("path") and k != "path")
                     or k in ("masterkeylog", "torrc", "extra_args")
                 ):
@@ -2572,13 +2741,25 @@ def _runtime_json_outbound(text):
     return json.dumps(ob, ensure_ascii=False)
 
 
-def _check_runtime_tag(kind, tag):
-    if tag in ("proxy", "direct", "block") or tag.startswith("proxy-suite-"):
-        die(f"'{tag}' is reserved; pick another {kind} tag.")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+RUNTIME_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _check_tag_shape(kind, tag):
+    """What add accepts; rm and edits too, so a tag never walks out of the spool (../)."""
+    if not RUNTIME_TAG.fullmatch(tag):
         die(f"Invalid {kind} tag '{tag}': letters, digits, dot, dash and underscore only.")
-    if tag in _runtime_tags(kind):
-        die(f"A runtime {kind} named '{tag}' already exists; remove it first.")
+
+
+# As the start script skips them, with proxy-suite-*: "priority" would be priority.json in the
+# outbounds spool, "tor" the Tor outbound (reserved here whether or not this host has one).
+RUNTIME_RESERVED_TAGS = ("proxy", "direct", "block", "priority", "tor")
+
+
+def _check_runtime_tag(kind, tag):
+    if tag in RUNTIME_RESERVED_TAGS or tag.startswith("proxy-suite-"):
+        die(f"'{tag}' is reserved; pick another {kind} tag.")
+    _check_tag_shape(kind, tag)
+    _check_runtime_unused(kind, tag)
     if kind == "outbound":
         if tag in _outbound_tags():
             die(f"An outbound named '{tag}' already exists.")
@@ -2591,11 +2772,21 @@ def _check_runtime_tag(kind, tag):
 RUNTIME_TAG_MAX = 32
 
 
+def _check_runtime_unused(kind, tag):
+    if tag in _runtime_tags(kind):
+        die(f"A runtime {kind} named '{tag}' already exists; remove it first.")
+
+
+def _runtime_lock(kind):
+    """Held over an add or rm in a runtime spool: two at once could take one tag, or AmneziaWG port."""
+    return _file_lock(os.path.join(_runtime_dir(kind), "entries"))
+
+
 def _runtime_source(kind, arg):
     """Whether an add argument is the entry itself rather than its tag."""
     if kind == "outbound" and (_awg_source(arg) or _awg_file(arg)):
         return True
-    return "://" in arg or (kind == "outbound" and (arg == "-" or arg.lstrip().startswith("{")))
+    return "://" in arg or arg == "-" or (kind == "outbound" and arg.lstrip().startswith("{"))
 
 
 def _vmess_name(url):
@@ -2649,7 +2840,7 @@ def _runtime_tag_for(kind, source):
 def _unique_runtime_tag(kind, name, fallback):
     """`name` as a tag nothing else has taken: -2, -3... after it."""
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")[:RUNTIME_TAG_MAX].strip("-._") or fallback
-    taken = {"proxy", "direct", "block", *_runtime_tags(kind), *(_outbound_tags() if kind == "outbound" else _sub_tags())}
+    taken = {*RUNTIME_RESERVED_TAGS, *_runtime_tags(kind), *(_outbound_tags() if kind == "outbound" else _sub_tags())}
     tag, n = base, 1
     while tag in taken:
         n += 1
@@ -2659,7 +2850,7 @@ def _unique_runtime_tag(kind, name, fallback):
 
 
 def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
-    what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url>"
+    what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url|->"
     shape = f"proxy {_runtime_noun(kind)} add [tag] {what}"
     if len(args) == 1 and _runtime_source(kind, args[0]):
         tag, url = "", args[0]
@@ -2674,8 +2865,11 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
     # The start script checks the chain again, and leaves the outbound out if it breaks later.
     if detour and (detour == tag or detour not in _outbound_tags()):
         die(f"Cannot chain through '{detour}': not an outbound. See: proxy-ctl proxy outbounds")
-    if kind == "outbound" and url == "-":
+    # "-": the link on stdin, out of argv, so out of ps, sudo's and pkexec's logs while it waits to come up.
+    if url == "-":
         url = sys.stdin.read()
+        if not url.strip():
+            die(f"Nothing on stdin: pipe the {'link or JSON' if kind == 'outbound' else 'URL'} in.")
     if kind == "outbound" and _awg_file(url):
         url = _awg_input(url)
     if kind == "outbound" and _awg_source(url):
@@ -2685,6 +2879,13 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
         die("--container only applies to an AmneziaWG vpn:// link.")
     if awg_kind:
         die(f"--{awg_kind} only applies to an AmneziaWG config.")
+    # Over plain http anyone on the path could swap in their own servers.
+    scheme = url.strip().split("://", 1)[0].lower()
+    if kind == "subscription" and scheme != "https" and not (scheme == "http" and env("RUNTIME_SUBS_ALLOW_HTTP") == "1"):
+        die(
+            "A subscription must be an https:// URL: fetched over plain http, anyone on the path could rewrite its entries."
+            + (" An admin may allow http:// with services.proxy-suite.proxy.runtimeSubscriptions.allowHttp." if scheme == "http" else "")
+        )
     if not tag:
         tag = _runtime_tag_for(kind, url)
         _check_runtime_tag(kind, tag)
@@ -2697,16 +2898,20 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
     else:
         url = url.strip()
     path = os.path.join(_runtime_dir(kind), tag + ext)
-    try:
-        # The hop first: the entry is what the start script looks for.
-        hop = os.path.join(_runtime_dir(kind), f"{tag}.detour")
-        if detour:
-            _spool_write(hop, f"{detour}\n")
-        elif os.path.lexists(hop):
-            os.unlink(hop)  # left from an earlier entry of this name: it would chain this one too
-        _spool_write(path, f"{url}\n")
-    except OSError:
-        denied(path, "write")
+    with _runtime_lock(kind):
+        _check_runtime_unused(kind, tag)
+        try:
+            # The hop first: the entry is what the start script looks for.
+            hop = os.path.join(_runtime_dir(kind), f"{tag}.detour")
+            if detour:
+                _spool_write(hop, f"{detour}\n")
+            elif os.path.lexists(hop):
+                os.unlink(hop)  # left from an earlier entry of this name: it would chain this one too
+            # Root's alone to read: the link (or JSON) holds the server's credentials, which
+            # other members of the group need the "secrets" scope to see (`link`).
+            _spool_write(path, f"{url}\n", 0o600)
+        except OSError:
+            denied(path, "write")
     _runtime_reload()
     _runtime_entry_verify(kind, tag)
 
@@ -2749,22 +2954,24 @@ def cmd_outbound_chain(tag="", hop="", new_tag="", *_):
 def _runtime_entry_rm(kind, tag="", *_):
     if not tag:
         usage(f"proxy {_runtime_noun(kind)} rm <tag>")
-    path = _runtime_path(kind, tag)
-    if not os.path.exists(path):
-        # The dir may be root-only: an entry that is there looks absent from outside it.
-        if _runtime_hidden(kind):
-            die(f"Cannot see the entry for '{tag}' in {_runtime_dir(kind)} - {ask_group()}")
-        die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
-    try:
-        os.unlink(path)
-        # Its hop, and a disable left from it: a new entry of this name would inherit them.
-        for extra in (".detour", ".disabled", ".port", ".iface") if kind == "outbound" else ():
-            if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
-                os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
-    except FileNotFoundError:
-        pass
-    except OSError:
-        denied(path, "remove")
+    _check_tag_shape(kind, tag)
+    with _runtime_lock(kind):
+        path = _runtime_path(kind, tag)
+        if not os.path.exists(path):
+            # The dir may be root-only: an entry that is there looks absent from outside it.
+            if _runtime_hidden(kind):
+                die(f"Cannot see the entry for '{tag}' in {_runtime_dir(kind)} - {ask_group()}")
+            die(f"No runtime {kind} named '{tag}'. Ones declared in the NixOS configuration are removed there.")
+        try:
+            os.unlink(path)
+            # Its hop, and a disable left from it: a new entry of this name would inherit them.
+            for extra in (".detour", ".disabled", ".port", ".iface") if kind == "outbound" else ():
+                if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
+                    os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            denied(path, "remove")
     _runtime_reload()
     print(f"Removed {kind}: {tag}")
 
@@ -2817,7 +3024,9 @@ def cmd_outbound_disable(tag="", *_):
 def cmd_outbound_enable(tag="", *_):
     if not tag:
         usage("proxy outbounds enable <tag>")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+    # A subscription's tags keep their letters (sub-Россия), which disable took: the running
+    # proxy's list of disabled ones vouches for those. Never a path of its own.
+    if "/" in tag or tag in (".", "..") or not (RUNTIME_TAG.fullmatch(tag) or tag in _outbound_disabled()):
         die(f"Not disabled: {tag}")
     marker = _outbound_disabled_marker(tag)
     if not os.path.exists(marker):
@@ -2850,8 +3059,8 @@ def _runtime_entry_verify(kind, tag):
             if tag in _outbound_tags():
                 print(f"Added outbound: {tag}")
                 return
-        elif os.path.isfile(_subscription_cache(tag)):
-            print(f"Added subscription: {tag} ({_subscription_proxy_count_text(_subscription_cache(tag))} proxies)")
+        elif state := _subscription_state(tag):
+            print(f"Added subscription: {tag} ({state[1]} proxies)")
             return
         if time.monotonic() >= deadline:
             break
@@ -2890,14 +3099,29 @@ def _subscription_proxy_count_text(path):
         return "?"
 
 
-def _subscription_row(tag, source):
+def _subscription_state(tag):
+    """(cache mtime, proxy count), None without a cache. The cache is root's without the
+    "secrets" scope: then the running proxy's inventory counts them, and the mtime is None."""
     cache = _subscription_cache(tag)
-    if os.path.isfile(cache):
-        try:
-            age = datetime.datetime.fromtimestamp(os.path.getmtime(cache)).strftime("%Y-%m-%d %H:%M:%S")
-        except OSError:
-            age = "unknown"
-        count = _subscription_proxy_count_text(cache)
+    try:
+        st = os.stat(cache)
+    except PermissionError:
+        st = None
+    except OSError:
+        return None
+    if st is not None and not stat.S_ISREG(st.st_mode):
+        return None
+    if st is not None and os.access(cache, os.R_OK):
+        return st.st_mtime, _subscription_proxy_count_text(cache)
+    count = sum(1 for source in (_outbound_inventory().get("sources") or {}).values() if source == f"sub:{tag}")
+    return (st and st.st_mtime, str(count)) if st or count else None
+
+
+def _subscription_row(tag, source):
+    state = _subscription_state(tag)
+    if state:
+        mtime, count = state
+        age = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S") if mtime else "unknown"
     else:
         age = "(no cache)"
         count = "-"
@@ -2941,7 +3165,7 @@ def cmd_subscription(verb="list", *args):
         must("start", "proxy-suite-subscription-update")
         print("Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update")
     else:
-        usage("proxy subs [list|update|add [tag] <url>|rm <tag>|link <tag>]")
+        usage("proxy subs [list|update|add [tag] <url|->|rm <tag>|link <tag>]")
 
 
 RULE_SETS_UNIT = "proxy-suite-rulesets"
@@ -3042,8 +3266,13 @@ def _probe_fetch(domain, path, *selector):
     ua = [] if curl else ["-A", env("PROBE_UA", "Mozilla/5.0 (X11; Linux x86_64) proxy-suite-probe")]
     result = ""
     with tempfile.TemporaryDirectory(prefix="proxy-ctl-probe-") as tmp:
-        # The listener's login through a file in this private directory: argv is public.
-        login = _local_proxy_login() if "--proxy" in selector else None
+        # The listener's login through a file in this private directory: argv is public. A
+        # probe listener's own (_probe_login), or the local proxy's when there are none.
+        login = None
+        if "--proxy" in selector:
+            proxy_url = selector[selector.index("--proxy") + 1]
+            local = proxy_url == env("LOCAL_PROXY_URL", "http://127.0.0.1:1080")
+            login = _local_proxy_login() if local else _probe_login()
         auth = []
         if login:
             curlrc = os.path.join(tmp, "login.curlrc")
@@ -3068,6 +3297,10 @@ def _probe_fetch(domain, path, *selector):
                     env("PROBE_MAX_TIME", "15"),
                     "-w",
                     PROBE_WRITE_OUT,
+                    # After the first hop url is the server's Location: no globbing, no file: or other schemes.
+                    "--globoff",
+                    "--proto",
+                    "=http,https",
                     *auth,
                     *selector,
                     url,
@@ -3082,9 +3315,29 @@ def _probe_fetch(domain, path, *selector):
             if not re.fullmatch(r"3..", _probe_field(result, 3)) or _probe_redirect_is_block(result):
                 break
             url = _probe_field(result, 6)
-            if not url or _probe_site(url) != site:
+            if not url or _probe_site(url) != site or _probe_local_target(url):
                 break
     return result
+
+
+def _probe_local_target(url):
+    """Whether a Location names this host or its LAN by literal (no DNS): never followed."""
+    try:
+        host = (urllib.parse.urlsplit(url).hostname or "").rstrip(".")
+    except ValueError:
+        return True
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            # What curl's resolver also takes as IPv4: 127.1, 0x7f000001, 2130706433.
+            ip = ipaddress.IPv4Address(socket.inet_aton(host))
+        except (OSError, ValueError):
+            return False
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_unspecified
 
 
 def _probe_block_page(code, head, body):
@@ -3368,6 +3621,11 @@ def _autoproxy_dir():
     return env("AUTOPROXY_STATE_DIR", f"{state_dir()}/autoproxy")
 
 
+def _autoproxy_spool():
+    """Where `proxy auto learn|forget|relearn|clear` queue for the prober: root's state dir is read-only to members."""
+    return env("AUTOPROXY_SPOOL_DIR", f"{state_dir()}/autoproxy-requests")
+
+
 def _require_autoproxy():
     require_enabled("AUTOPROXY_ENABLED", "proxy.autoProxy")
 
@@ -3375,8 +3633,8 @@ def _require_autoproxy():
 def _autoproxy_unreadable(path):
     """The path a refused read stops at, empty when the state is readable or simply not there yet.
 
-    The state dir is 0751, opened to 0771 for the autoProxy scope's group, and
-    state.json inside it stays 0640: a member gets past the directory and a
+    The state dir is root's, 0751, and group-owned by the autoProxy scope's group,
+    and state.json inside it stays 0640: a member gets past the directory and a
     stranger does not, so both are checked.
     """
     if not os.path.isdir(path):
@@ -3454,13 +3712,7 @@ def cmd_proxy_queue(top="20", *_):
     _require_autoproxy_readable(path)
 
     print("Requested with proxy-ctl proxy auto learn:")
-    requested = ""
-    for name in ("requests", "requests.taking"):
-        try:
-            requested += read_text(os.path.join(path, name))
-        except OSError:
-            pass
-    for line in lines(requested) or ["(none)"]:
+    for line in [line for line in lines(_autoproxy_queued("requests")) if line] or ["(none)"]:
         print(f"  {line}")
 
     backlog = _autoproxy_state(path).get("backlog") or {}
@@ -3519,18 +3771,30 @@ def cmd_proxy_learned(*_):
 
 
 def _autoproxy_queue(name, line):
-    """Appends a line for the prober's own unit, which takes it under the same lock as a timer run."""
-    path = os.path.join(_autoproxy_dir(), name)
+    """Queues a line for the prober's own unit, as a file of its own in the sticky spool, named
+    to sort by time: no other member can rewrite it, and it lands whole."""
+    spool = _autoproxy_spool()
     try:
-        # Appended in place, as the prober takes it, but never through a symlink or into a
-        # FIFO a member left there: proxy-ctl may run as root.
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o666)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise OSError(f"{path} is not a regular file")
-            f.write(f"{line}\n")
+        _spool_write(os.path.join(spool, f"{name}.{time.time_ns()}.{os.getpid()}"), f"{line}\n")
     except OSError:
-        denied(path, "write")
+        denied(spool, "write to")
+
+
+def _autoproxy_queued(name):
+    """The lines still queued as `name` in the spool, oldest first; empty where it cannot be read."""
+    spool = _autoproxy_spool()
+    try:
+        names = sorted(n for n in os.listdir(spool) if n.startswith(f"{name}."))
+    except OSError:
+        return ""
+    text = ""
+    for n in names:
+        try:
+            # Capped: a request is a line, and a member's file may be anything.
+            text += read_shared_text(os.path.join(spool, n), 64 * 1024).rstrip("\n") + "\n"
+        except OSError:
+            pass
+    return text
 
 
 def _autoproxy_run(what):
@@ -3641,25 +3905,42 @@ def _zapret_auto_file(name):
 def _replace_lines(path, keep, extra=()):
     """Rewrites path with the lines keep() accepts, plus extra.
 
-    Via a temp file in the same directory, world-readable: unprivileged
-    proxy-ctl reads these lists too.
+    Via a temp file in the same directory, with the old file's owner and mode (a new one
+    world-readable: unprivileged proxy-ctl reads these lists too). Locked against another
+    proxy-ctl; what nfqws2 appended meanwhile, unlocked, is carried over before the rename.
     """
-    try:
-        old = lines(read_text(path)) if os.path.exists(path) else []
-        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path) or ".")
-    except OSError:
-        denied(path, "write")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.writelines(f"{line}\n" for line in [*filter(keep, old), *extra])
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-    except OSError:
+    with _file_lock(path):
         try:
-            os.unlink(tmp)
+            old = os.lstat(path) if os.path.lexists(path) else None
+            text = read_shared_text(path) if old else ""
+            fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path) or ".")
         except OSError:
-            pass
-        denied(path, "replace")
+            denied(path, "write")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.writelines(f"{line}\n" for line in [*filter(keep, lines(text)), *extra])
+                # By fd, not path: tmp's name could be swapped for a symlink in between.
+                os.fchmod(f.fileno(), stat.S_IMODE(old.st_mode) & 0o777 if old else 0o644)
+                if old and os.geteuid() == 0:
+                    os.fchown(f.fileno(), old.st_uid, old.st_gid)
+                # Newer than anything this edit means to drop: kept as they came.
+                f.writelines(f"{line}\n" for line in _appended_since(path, text))
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            denied(path, "replace")
+
+
+def _appended_since(path, text):
+    """The lines added to path since it read as text, if it only grew since; else none."""
+    try:
+        now = read_shared_text(path) if os.path.lexists(path) else ""
+    except OSError:
+        return []
+    return lines(now[len(text) :]) if len(now) > len(text) and now.startswith(text) else []
 
 
 def _zapret_auto_edit(path, domain, action):
@@ -3684,7 +3965,64 @@ def _zapret_strategy_drop(domain):
         key = fields[1] if len(fields) > 1 else ""
         return line.startswith("#") or (key != domain and not domain.endswith(f".{key}"))
 
-    _replace_lines(path, keep)
+    with _z2k_state_lock(path):
+        _replace_lines(path, keep)
+
+
+Z2K_LOCK_STALE = 10
+
+
+@contextlib.contextmanager
+def _z2k_state_lock(path):
+    """z2k-state-persist.lua's own lock on state.tsv (<path>.lock, made O_EXCL, stale after 10 s):
+    nfqws2 rewrites the file whole, so an unlocked rename could undo a row it just wrote."""
+    lock = f"{path}.lock"
+    deadline = time.monotonic() + LOCK_WAIT
+    while True:
+        try:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644)
+            break
+        except FileExistsError:
+            if _z2k_lock_stale(lock):
+                with contextlib.suppress(OSError):
+                    os.unlink(lock)
+            elif time.monotonic() >= deadline:
+                die(f"zapret2 is still writing {path} (it holds {lock}); try again.")
+            else:
+                time.sleep(0.05)
+        except OSError:
+            fd = None
+            break
+    if fd is None:
+        yield
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(str(int(time.time())))
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(lock)
+
+
+def _z2k_lock_stale(lock):
+    now = time.time()
+    try:
+        fd = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(fd, "rb") as f:
+            made = os.fstat(f.fileno()).st_mtime
+            content = f.read(32).strip()
+    except FileNotFoundError:
+        return False  # gone already: the next try takes it
+    except OSError:
+        return True  # no lock z2k made (a symlink, say)
+    try:
+        taken = int(content)
+    except ValueError:
+        # Made but not written yet, or its writer died in between: only the latter lasts.
+        return now - made > 2
+    # One from the future: the clock went back since.
+    return taken > now + Z2K_LOCK_STALE or now - taken > Z2K_LOCK_STALE
 
 
 def _zapret_strategy_rows():
@@ -3836,7 +4174,10 @@ def cmd_zapret_auto(verb="list", domain="", *_):
     if verb in ("add", "forget", "exclude", "unpin", "include", "retry") and not _zapret_auto_host(domain):
         usage(f"zapret auto {verb} <domain>")
     if verb == "list":
-        hosts = [h for h in lines(read_text(auto)) if h] if os.path.isfile(auto) else []
+        try:
+            hosts = [h for h in lines(read_shared_text(auto)) if h] if os.path.lexists(auto) else []
+        except OSError:
+            denied(auto)
         if not hosts:
             print("No hostnames learned yet.")
         rows, strategies, verdicts = _zapret_strategy_rows(), _zapret_strategy_map(), _zapret_verdicts()
@@ -3878,7 +4219,8 @@ def cmd_zapret_auto(verb="list", domain="", *_):
         _truncate(auto)
         for path in (_zapret_auto_file("circular/state.tsv"), _zapret_auto_file("verdicts.tsv")):
             if os.path.exists(path):
-                _truncate(path)
+                with _z2k_state_lock(path) if path.endswith("state.tsv") else contextlib.nullcontext():
+                    _truncate(path)
         print("Cleared learned hosts, remembered strategies and what zapret2 sent the proxy.")
     else:
         usage("zapret auto [list|add|forget|exclude|unpin|include|retry|clear]")
@@ -3893,7 +4235,7 @@ def cmd_zapret_auto(verb="list", domain="", *_):
 
 def _tsv(path):
     try:
-        return [line.split("\t") for line in lines(read_text(path))]
+        return [line.split("\t") for line in lines(read_shared_text(path))]
     except OSError:
         return []
 
@@ -3962,7 +4304,7 @@ def _where_in_list(path, domain):
     if not readable(path):
         return ""
     try:
-        return _where_in(set(lines(read_text(path))), domain)
+        return _where_in(set(lines(read_shared_text(path))), domain)
     except OSError:
         return ""
 
@@ -4259,7 +4601,7 @@ def _awg_free_port():
     for name in names:
         if name.endswith(".port"):
             try:
-                taken.add(int(read_text(os.path.join(directory, name)).split()[0]))
+                taken.add(int(read_shared_text(os.path.join(directory, name), 64).split()[0]))
             except (OSError, ValueError, IndexError):
                 pass
     port = next((p for p in _awg_tunnel_ports() if p not in taken), None)
@@ -4283,7 +4625,7 @@ def _awg_free_iface_slot():
     for name in names:
         if name.endswith(".iface"):
             try:
-                taken.add(int(read_text(os.path.join(directory, name)).split()[0]))
+                taken.add(int(read_shared_text(os.path.join(directory, name), 64).split()[0]))
             except (OSError, ValueError, IndexError):
                 pass
     slot = next((n for n in _awg_iface_slots() if n not in taken), None)
@@ -4307,20 +4649,22 @@ def _awg_outbound_add(tag, text, detour, container, kind=""):
     directory = _runtime_dir("outbound")
     if not os.access(directory, os.W_OK | os.X_OK):
         denied(directory, "write to")
-    # The port, or the interface's slot, first: the config is what the start script and the
-    # sync unit look for.
-    if kind == "interface":
-        extra, value, stale = ".iface", _awg_free_iface_slot(), ".port"
-    else:
-        extra, value, stale = ".port", _awg_free_port(), ".iface"
-    try:
-        for leftover in (".detour", ".disabled", stale):
-            if os.path.lexists(os.path.join(directory, tag + leftover)):
-                os.unlink(os.path.join(directory, tag + leftover))  # left from an earlier entry of this name
-        _spool_write(os.path.join(directory, tag + extra), f"{value}\n")
-    except OSError:
-        denied(directory, "write to")
-    _awg_write(text, os.path.join(directory, f"{tag}.awg"), container)
+    with _runtime_lock("outbound"):
+        _check_runtime_unused("outbound", tag)
+        # The port, or the interface's slot, first: the config is what the start script and the
+        # sync unit look for.
+        if kind == "interface":
+            extra, value, stale = ".iface", _awg_free_iface_slot(), ".port"
+        else:
+            extra, value, stale = ".port", _awg_free_port(), ".iface"
+        try:
+            for leftover in (".detour", ".disabled", stale):
+                if os.path.lexists(os.path.join(directory, tag + leftover)):
+                    os.unlink(os.path.join(directory, tag + leftover))  # left from an earlier entry of this name
+            _spool_write(os.path.join(directory, tag + extra), f"{value}\n")
+        except OSError:
+            denied(directory, "write to")
+        _awg_write(text, os.path.join(directory, f"{tag}.awg"), container)
     _runtime_reload()
     _runtime_entry_verify("outbound", tag)
 
@@ -4381,8 +4725,7 @@ def _awg_rm(name="", *_):
     if svc_active(unit) or svc_state(unit) == "failed":
         must("stop", unit)
         # As `awg off`: the kill switch would otherwise hold with no tunnel to guard.
-        if svc_exists(KILL_SWITCH):
-            systemctl("stop", KILL_SWITCH)
+        _lift_kill_switch()
     try:
         os.unlink(os.path.join(directory, f"{name}.conf"))
     except FileNotFoundError:
@@ -4432,8 +4775,8 @@ def cmd_awg(verb="list", *args):
         for profile in targets:
             must("stop" if verb == "off" else "restart", _awg_service(profile))
         # Also after a profile that already failed: off is how its kill switch is lifted.
-        if verb == "off" and svc_exists(KILL_SWITCH):
-            systemctl("stop", KILL_SWITCH)
+        if verb == "off":
+            _lift_kill_switch()
     else:
         usage("awg [list] | on <profile> | off [profile] | toggle [profile] | restart [profile] | add [name] <config> | rm <profile>")
 
@@ -4458,10 +4801,10 @@ def _wl_link(name):
     """The call a creator made and keeps rejoining: the last line it wrote."""
     path = _wl_path(name, ".link")
     try:
-        links = [line.strip() for line in lines(read_text(path)) if line.strip()]
+        links = [line.strip() for line in lines(read_shared_text(path)) if line.strip()]
     except FileNotFoundError:
         links = []
-    except PermissionError:
+    except OSError:
         denied(path)
     if not links:
         die(f"{name} has no call yet: {journal_hint(_wl_unit({'role': 'creator', 'name': name}))}")
@@ -4513,8 +4856,9 @@ def _wl_write(w, suffix, text):
         fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.chown(tmp, st.st_uid if os.geteuid() == 0 else -1, st.st_gid)
-        os.chmod(tmp, 0o600 | (st.st_mode & 0o060))
+            # By fd: the group may write here, so tmp's name could become a symlink first.
+            os.fchown(f.fileno(), st.st_uid if os.geteuid() == 0 else -1, st.st_gid)
+            os.fchmod(f.fileno(), 0o600 | (st.st_mode & 0o060))
         os.replace(tmp, path)
     except OSError:
         if tmp:
@@ -4595,6 +4939,16 @@ SLICE_ROUTES = {
 
 APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 APP_ROUTES = ("direct", "proxychains", "tun", "tproxy", "zapret")
+RUNTIME_APP_MAX_BYTES = 64 * 1024
+
+
+def _read_shared_json(path):
+    """The JSON object at path (read_shared_text), {} for anything else."""
+    try:
+        value = json.loads(read_shared_text(path, RUNTIME_APP_MAX_BYTES))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _runtime_apps():
@@ -4607,7 +4961,7 @@ def _runtime_apps():
     apps = []
     for file in names:
         name = file.removesuffix(".json")
-        entry = read_json_or(os.path.join(directory, file), {}) if file.endswith(".json") else {}
+        entry = _read_shared_json(os.path.join(directory, file)) if file.endswith(".json") else {}
         if APP_NAME.fullmatch(name) and _s(entry.get("route")) in APP_ROUTES:
             apps.append({"name": name, "route": _s(entry["route"]), "outbound": _s(entry.get("outbound") or "") or None, "runtime": True})
     return apps
@@ -4683,77 +5037,93 @@ def _ensure_app_routing():
     require_enabled("PER_APP_ROUTING_ENABLED", "perAppRouting")
 
 
-def _active_global_proxy():
-    """The global TUN or TProxy unit that is up, which the per-app backends would clash with."""
-    return next((svc for svc in ("proxy-suite-tun", "proxy-suite-tproxy") if svc_active(f"{svc}.service")), "")
+def _active_global_proxy(route=""):
+    """The global unit up that carries the app's traffic already (TUN, TProxy; for zapret an
+    AmneziaWG profile too): the per-app units refuse to start under it."""
+    units = ["proxy-suite-tun", "proxy-suite-tproxy"]
+    if route == "zapret":
+        units += [_awg_service(profile) for profile in _awg_profiles()]
+    return next((svc for svc in units if svc_active(f"{svc}.service")), "")
 
 
 def _has_units(*args):
     return bool(re.search(".", systemctl(*args, capture=True)[1]))
 
 
-def _units_active(*globs):
-    return _has_units("list-units", "--type=service", "--state=active", "--plain", "--no-legend", *globs)
+def _slice_lock(slice_base):
+    """This user's shared lock on the slice, from before its units start until the app exits:
+    a run ending must not stop the marking under one whose scope is not registered yet. None if unavailable."""
+    directory = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    try:
+        fd = os.open(
+            os.path.join(directory, f"proxy-suite-{slice_base}.lock"),
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
-def _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc, users_glob="", busy=(), then=None):
-    """busy: globs of other units that keep the backend up; then: what to do once it stopped."""
+def _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, lock=None):
+    """Stops this user's marking once none of their apps runs in the slice (the shared backend
+    stops by itself). Only the last holder of _slice_lock's lock may stop anything."""
+    if lock is not None:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(lock)
+            return
+    try:
+        _stop_slice_if_idle(slice_base, anchor_unit, user_svc)
+    finally:
+        if lock is not None:
+            os.close(lock)
+
+
+def _stop_slice_if_idle(slice_base, anchor_unit, user_svc):
+    # Still the backstop for runs that were killed and never let go of the lock.
     if _has_units("--user", "list-units", "--type=scope", "--state=running", "--plain", "--no-legend", f"{slice_base}-*"):
         return
     systemctl("stop", user_svc)
     systemctl("--user", "stop", anchor_unit)
-    users_glob = users_glob or f"{slice_base}-user@*.service"
-    if not _units_active(users_glob, *busy):
-        systemctl("stop", backend_svc)
-        if then:
-            then()
 
 
-def _stub_resolver_nameservers(path="/etc/resolv.conf"):
-    """The resolvers /etc/resolv.conf names, if every one of them is a local stub."""
-    try:
-        found = [
-            line.split()[1]
-            for line in lines(read_text(path))
-            if line.split()[:1] == ["nameserver"] and len(line.split()) > 1
-        ]
-    except OSError:
-        return []
-    stub = [x for x in found if x.startswith("127.") or x in ("::1", "localhost")]
-    return stub if found and len(stub) == len(found) else []
+def _warn_nscd(route):
+    """nscd (NixOS's default) resolves from its own cgroup, outside the wrapped app's route; a
+    resolver the app asks itself goes through the route's DNS forwarder."""
+    if os.path.exists(env("NSCD_SOCKET", "/run/nscd/socket")):
+        print(
+            "warning: nscd answers this host's lookups from outside the wrapped app's cgroup, so "
+            f"names resolve outside route={route}. Apps that ask a resolver themselves (Go "
+            "programs, a browser's own resolver or DNS-over-HTTPS) resolve through the route.",
+            file=sys.stderr,
+        )
 
 
-def _warn_stub_resolver(route):
-    """A wrapped app asking a local stub resolver leaks its names: the stub answers from
-    its own process, which is outside the app's cgroup and so outside the app's route."""
-    stub = _stub_resolver_nameservers()
-    if not stub:
-        return
-    print(
-        f"warning: {stub[0]} is this host's only resolver, and it answers from outside the "
-        f"wrapped app's cgroup, so names resolve outside route={route}. Point the app at a "
-        "resolver of its own to keep its DNS in the tunnel.",
-        file=sys.stderr,
-    )
-
-
-def _wrap_slice(slice_base, profile, backend_svc, cmd, units=None, busy=(), then=None, before=()):
+def _wrap_slice(slice_base, profile, cmd, units=None, before=()):
     """Runs cmd in a user scope inside the route's slice, then stops what went idle.
 
-    units: (anchor, this user's marking unit, a glob of every user's) when they are not
-    named after the slice. busy and then: as _cleanup_slice_if_idle takes them. before:
-    units the backend needs up first.
+    units: (anchor, this user's marking unit) when they are not named after the slice.
+    before: units to have up first, in order, that the marking unit does not bring up.
     """
     uid = os.getuid()
     scope_unit = f"{slice_base}-{profile}-{os.getpid()}"
-    anchor_unit, user_svc, users_glob = units or (f"{slice_base}-anchor.service", f"{slice_base}-user@{uid}.service", "")
+    anchor_unit, user_svc = units or (f"{slice_base}-anchor.service", f"{slice_base}-user@{uid}.service")
     # SIGTERM still cleans up, as it did behind bash's EXIT trap.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    lock = _slice_lock(slice_base)
     try:
         status = systemctl("--user", "start", anchor_unit)[0]
         for unit in before:
             status = status or systemctl("start", unit)[0]
-        status = status or systemctl("start", backend_svc)[0]
+        # A slice route's marking brings its backend up (Requires=): started alone first,
+        # the backend would go again at once, needed by nothing (StopWhenUnneeded=).
         status = status or systemctl("start", user_svc)[0]
         if not status:
             status = _run_foreground(
@@ -4770,7 +5140,7 @@ def _wrap_slice(slice_base, profile, backend_svc, cmd, units=None, busy=(), then
                 ]
             )
     finally:
-        _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, backend_svc, users_glob, busy, then)
+        _cleanup_slice_if_idle(slice_base, anchor_unit, user_svc, lock)
     sys.exit(status)
 
 
@@ -4802,12 +5172,6 @@ def _pin_routes():
     return [route for route, flag in PIN_ROUTES.items() if env(flag) == "1"]
 
 
-def _stop_per_app_tun_if_idle():
-    """The per-app TUN backend, once neither a tun profile nor a pin of it uses it."""
-    if not _units_active("proxy-suite-per-app-tun-user@*.service", "proxy-suite-per-app-via-tun@*.service"):
-        systemctl("stop", "proxy-suite-per-app-tun.service")
-
-
 def _run_via(tag, label, cmd, route=""):
     """Runs cmd with all its traffic through tag, past the routing rules: into an "interface"
     AmneziaWG outbound's interface directly, with its DNS; else through a pin slot of per-app
@@ -4831,14 +5195,13 @@ def _run_via(tag, label, cmd, route=""):
     before = ()
     if not is_profile and tag in _via_outbounds():
         key = _via_key(tag)
-        unit, global_units, then = f"proxy-suite-per-app-via@{key}.service", ("proxy-suite-tun",), None
+        unit, global_units = f"proxy-suite-per-app-via@{key}.service", ("proxy-suite-tun",)
     elif is_profile:
         key = f"app-{tag.encode().hex()}"
         unit = f"proxy-suite-per-app-via@{key}.service"
         # Up globally, it carries the app already.
         global_units = ("proxy-suite-tun", _awg_service(tag))
         before = (f"proxy-suite-awg-app@{tag}.service",)
-        then = lambda: systemctl("stop", *before)  # noqa: E731
     else:
         routes = _pin_routes()
         route = route or next(iter(routes), "")
@@ -4856,26 +5219,24 @@ def _run_via(tag, label, cmd, route=""):
         key = f"{route}-{tag.encode().hex()}"
         unit = f"proxy-suite-per-app-via-{route}@{tag.encode().hex()}.service"
         global_units = ("proxy-suite-tun", "proxy-suite-tproxy")
-        then = _stop_per_app_tun_if_idle if route == "tun" else None
     # A global mode takes the app past the per-app rules; run it as it is rather than refuse,
     # like the other per-app routes.
     active = next((u for u in global_units if svc_active(f"{u}.service")), "")
     if active:
-        print(f"note: {active}.service is active; running without --via {tag}.", file=sys.stderr)
+        print(f"warning: {active}.service is active and carries the app already; running it without --via {tag}.", file=sys.stderr)
         _exec(list(cmd))
     uid = os.getuid()
+    # The via unit, which the marking unit cannot name; it goes after the last user's
+    # marking (per-app-routing/via.nix), with the profile brought up for it.
     _wrap_slice(
         f"proxy-suite-per-app-via-{key}",
         label,
-        unit,
         list(cmd),
         (
             f"proxy-suite-per-app-via-anchor@{key}.service",
             f"proxy-suite-per-app-via-user@{uid}-{key}.service",
-            f"proxy-suite-per-app-via-user@*-{key}.service",
         ),
-        then=then,
-        before=before,
+        before=(*before, unit),
     )
 
 
@@ -4945,16 +5306,16 @@ def cmd_apps_run(*args):
         slice_base, enabled, option = SLICE_ROUTES[route]
         # The global mode already carries the app's traffic, and wrapPerApp launchers must
         # still start the app: run it as it is rather than refuse.
-        global_svc = _active_global_proxy()
+        global_svc = _active_global_proxy(route)
         if global_svc:
-            print(f"note: {global_svc}.service is active; running without route={route}.", file=sys.stderr)
+            print(f"warning: {global_svc}.service is active and carries the app already; running it without route={route}.", file=sys.stderr)
             _exec(list(cmd))
         if env(enabled) != "1":
             die(f"Profile '{profile}' uses route={route}, but {option} is false.")
-        _warn_stub_resolver(route)
-        # Pins of per-app TUN (apps run --via) keep its backend up too.
-        busy = ("proxy-suite-per-app-via-tun@*.service",) if route == "tun" else ()
-        _wrap_slice(slice_base, profile, f"{slice_base}.service", list(cmd), busy=busy)
+        # zapret's route sends the app direct anyway: its lookups go the same way.
+        if route != "zapret":
+            _warn_nscd(route)
+        _wrap_slice(slice_base, profile, list(cmd))
     else:
         die(f"Route backend '{route}' is not implemented.")
 
@@ -5083,41 +5444,64 @@ def _inbound_stats(*args):
 
 
 AWG_ONLINE_SECONDS = 180
+# How old the collector's reading of who is online may be: two of its timer's runs.
+ONLINE_READING_SECONDS = 600
 
 
 def _inbound_presence():
     """(user -> (state, addresses), links readable): "online", "seen <time>" or "never seen".
 
     Who is online and from where is as private as the traffic stats, so it takes the
-    same read access; dies without it, or when the stats API is silent.
+    same read access; dies without it, or when the stats API is silent. Who cannot reach the
+    API (it may reset the counters) gets the collector's last reading, refreshed first.
     """
     stats_path = env("INBOUNDS_STATS_FILE", f"{state_dir()}/inbound-stats.json")
     if os.path.exists(stats_path) and not readable(stats_path):
         denied(stats_path)
     api = env("INBOUNDS_API", f"unix://{runtime_dir()}/proxy-suite-inbounds/api/stats.sock")
-    sock = api.removeprefix("unix://")
-    if os.path.exists(sock) and not os.access(sock, os.W_OK):
-        denied(sock, "connect to")
-    status, out = _run(
-        [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={api}", "-all"],
-        capture=True,
-        quiet=True,
-    )
-    if status != 0:
-        die("The inbounds' stats API is not answering - is proxy-suite-inbounds running?")
-    try:
-        online = {_s(u.get("email")): u.get("ips") or [] for u in json.loads(out or "{}").get("users") or []}
-    except (ValueError, AttributeError):
-        die("Unexpected answer from the inbounds' stats API.")
     # Users nobody has seen yet, when the links say who exists.
     path = env("INBOUNDS_LINKS_FILE")
     links = read_json(path) if readable(path) else []
     known = {_s(x.get("user")) for x in links if x.get("user")}
-    # AmneziaWG peers are only known by their last handshake, which the collector reads;
-    # the XRay API already told who else is online now.
-    if any(x.get("type") == "amneziawg" for x in links):
+    sock = api.removeprefix("unix://")
+    try:
+        os.stat(sock)
+        reachable = os.access(sock, os.W_OK)
+    except FileNotFoundError:
+        die("The inbounds' stats API is not answering - is proxy-suite-inbounds running?")
+    except OSError:
+        reachable = False  # its directory is the daemon's alone
+    if reachable:
+        status, out = _run(
+            [env("INBOUNDS_XRAY", "xray"), "api", "statsonlineiplist", f"--server={api}", "-all"],
+            capture=True,
+            quiet=True,
+        )
+        if status != 0:
+            die("The inbounds' stats API is not answering - is proxy-suite-inbounds running?")
+        try:
+            users = json.loads(out or "{}").get("users") or []
+        except (ValueError, AttributeError):
+            die("Unexpected answer from the inbounds' stats API.")
+        # AmneziaWG peers are only known by their last handshake, which the collector reads;
+        # the XRay API already told who else is online now.
+        if any(x.get("type") == "amneziawg" for x in links):
+            systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
+        stats = read_json(stats_path) if readable(stats_path) else {}
+    else:
         systemctl("--no-ask-password", "start", "proxy-suite-inbound-stats.service", quiet=True)
-    stats = read_json(stats_path) if readable(stats_path) else {}
+        stats = read_json(stats_path) if readable(stats_path) else {}
+        # The collector writes only when the API answered: an old reading means it did not.
+        at = stats.get("at") or 0
+        if "online" not in stats or time.time() - at > ONLINE_READING_SECONDS:
+            die("The inbounds' stats API is not answering - is proxy-suite-inbounds running?")
+        users = stats.get("online") or []
+        if time.time() - at > 60:
+            print(f"Online as of {datetime.datetime.fromtimestamp(at):%H:%M}, the collector's last reading.", file=sys.stderr)
+    try:
+        online = {_s(u.get("email")): u.get("ips") or [] for u in users}
+    except (TypeError, AttributeError):
+        die("Unexpected answer from the inbounds' stats API.")
     seen = stats.get("seen") or {}
     now = time.time()
     for user, peer in (stats.get("awgPeers") or {}).items():

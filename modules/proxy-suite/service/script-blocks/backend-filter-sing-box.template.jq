@@ -4,7 +4,11 @@ def sing_box_preserved_rules:
      and (((.inbound? // []) | index("xray-dns-in")) != null))];
 # perAppRouting.via's pin rules, which no route mode replaces.
 def is_pin: ((.outbound? // "") | type) == "string" and ((.outbound? // "") | startswith("proxy-suite-pin-"));
-([.route.rules[]? | select(is_pin)]) as $pin_rules
+# Slurped (lists of one), not arguments: they grow with the outbounds and rules.
+$route_rules[0] as $route_rules | $probe_inbounds[0] as $probe_inbounds
+| $probe_pin_rules[0] as $probe_pin_rules | $autoproxy_rule_sets[0] as $autoproxy_rule_sets
+| $autoproxy_rules[0] as $autoproxy_rules
+| ([.route.rules[]? | select(is_pin)]) as $pin_rules
 | .outbounds = ($obs[0] + .outbounds)
   | if $auth_enabled then
       (.inbounds[] | select(.type == "mixed" and .tag == "mixed-in") | .users) = [{username:$user,password:$password}]
@@ -30,6 +34,13 @@ def is_pin: ((.outbound? // "") | type) == "string" and ((.outbound? // "") | st
     else . end
   | .route.rule_set = ((.route.rule_set // []) + $autoproxy_rule_sets)
   | .route.rules = ($probe_pin_rules + .route.rules + $autoproxy_rules)
+  # What autoProxy sends through an exit is looked up through the proxy too, as every other
+  # proxied name is (proxy.dns.remote): not by the local resolver, in the clear, for a
+  # destination learned blocked. Its own rule-sets alone, which hold names only.
+  | .dns.rules = ((.dns.rules // []) + [$autoproxy_rules[]
+      | select((.outbound? // "direct") != "direct"
+          and ((.rule_set? // []) | all(startswith("autoproxy-"))) and ((.rule_set? // []) | length > 0))
+      | {rule_set, server: "remote"}])
   # Pins after the common hijack-dns and sniff rules, so a pinned app's lookups are answered
   # as any other's, and before every rule that picks an outbound.
   | .route.rules |= [.[] | select(is_pin | not)]

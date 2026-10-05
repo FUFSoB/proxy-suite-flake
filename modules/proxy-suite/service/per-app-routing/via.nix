@@ -27,6 +27,7 @@ let
     ip
     nft
     jq
+    awk
     ;
   inherit (constants)
     awgPerAppRulePriority
@@ -91,7 +92,7 @@ let
         if perAppViaProfiles then
           ''
             slot=$(${pkgs.coreutils}/bin/head -n 1 "/run/proxy-suite-awg-app-$tag/slot" 2>/dev/null || true)
-            if [[ ! $slot =~ ^[0-9]+$ ]] || (( slot >= ${toString constants.awgAppSlots} )); then
+            if [[ ! $slot =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( slot >= ${toString constants.awgAppSlots} )); then
               echo "proxy-suite: AmneziaWG profile '$tag' is not up for apps (proxy-suite-awg-app@$tag)" >&2
               exit 1
             fi
@@ -112,9 +113,16 @@ let
       }
     elif ! entry=$(${jq} -ce --arg t "$tag" '.[$t] // empty' ${perAppViaFile}); then
       ${lib.optionalString perAppViaRuntime ''
-        # One added at runtime: its slot in the spool, which is group-writable (O_NOFOLLOW).
-        slot=$(${pkgs.coreutils}/bin/dd if="${runtimeOutboundsDir}/$tag.iface" iflag=nofollow,nonblock status=none 2>/dev/null | ${pkgs.coreutils}/bin/head -n 1 || true)
-        if [[ $slot =~ ^[0-9]+$ ]] && (( slot < ${toString awgRuntimeIfaceSlots} )); then
+        # One added at runtime: the slot its interface runs in, as proxy-suite-awg-if@ keeps it;
+        # else the spool's, which is group-writable (O_NOFOLLOW), and names the slot it gets
+        # next, not the one a tag removed and added again still runs in.
+        slot_file="/run/proxy-suite-awg-if-$tag/slot"
+        if [[ -s $slot_file && ! -L $slot_file ]]; then
+          slot=$(${pkgs.coreutils}/bin/head -n 1 "$slot_file")
+        else
+          slot=$(${pkgs.coreutils}/bin/dd if="${runtimeOutboundsDir}/$tag.iface" iflag=nofollow,nonblock status=none 2>/dev/null | ${pkgs.coreutils}/bin/head -n 1 || true)
+        fi
+        if [[ $slot =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( slot < ${toString awgRuntimeIfaceSlots} )); then
           entry=$(${jq} -nc --arg t "$tag" --argjson s "$slot" --argjson fallback ${lib.escapeShellArg (builtins.toJSON fallbackDns)} '{
             interface: ("${awgRuntimeIfacePrefix}" + ($s | tostring)),
             table: (${toString awgRuntimeIfaceTableBase} + $s),
@@ -217,6 +225,12 @@ let
             type nat hook postrouting priority srcnat; policy accept;
             oifname "$interface" meta mark $mark masquerade
         }
+        # The app's packets out of any other interface: the ip rules are gone (networkd
+        # drops rules it did not make), and the main table took them to the uplink.
+        chain misrouted {
+            type filter hook postrouting priority filter; policy accept;
+            meta mark $mark oifname != { "lo", "$interface" } drop
+        }
     }
     EOF
 
@@ -237,9 +251,15 @@ let
     exec ${python3} ${proxySuiteScriptsDir}/per_app_dns.py --port "$dns_port" --mark "$mark" "''${servers[@]}"
   '';
 
+  # A failure keeps the marking and the unreachable rule, so the apps are turned away rather
+  # than sent out directly until the restart; viaUp clears it. A stop takes it all down.
   viaDown = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -uo pipefail
     ${resolveInstance}
+    if [[ ''${SERVICE_RESULT:-success} != success ]]; then
+      echo "proxy-suite: per-app via $1 failed ($SERVICE_RESULT): its apps are held until it is back" >&2
+      exit 0
+    fi
     ${nft} delete table inet "$nft_table" 2>/dev/null || true
     ${rulesDown}
   '';
@@ -279,7 +299,33 @@ let
     slice_name="proxy-suite-per-app-via-$key.slice"
     set -- "''${instance%%-*}"
   '';
-  viaUserStart = userRules.mkUserRuleStart {
+  # The hold (user-rules.nix), by what the key runs via: an AmneziaWG interface takes the
+  # private ranges too (as viaUp's chain does), a pin slot what its route's backend takes.
+  viaHold = ''
+    case "$key" in
+      awg-* | app-*)
+        ${userRules.mkHoldBodies {
+          marks = [
+            "$mark"
+            (toString cfg.proxy.tproxy.proxyMark)
+          ];
+          allow = [
+            "127.0.0.0/8"
+            "169.254.0.0/16"
+            "224.0.0.0/4"
+            "255.255.255.255/32"
+            "::1/128"
+            "fe80::/10"
+            "ff00::/8"
+          ]
+          ++ perAppRoutingCfg.via.localSubnets;
+        }}
+        ;;
+      tproxy-*) ${userRules.tproxyHold "$mark"} ;;
+      tun-*) ${userRules.tunHold "$mark"} ;;
+    esac
+  '';
+  viaUserRule = userRules.mkUserRuleStart {
     name = "per-app-via-$key";
     nftFamily = "inet";
     nftTable = "$nft_table";
@@ -288,6 +334,7 @@ let
     sliceLabel = "app via";
     markRule = "meta mark set $mark ct mark set $mark";
     prelude = userPrelude;
+    hold = viaHold;
   };
   viaUserStop = userRules.mkUserRuleStop {
     name = "per-app-via-$key";
@@ -295,7 +342,88 @@ let
     nftTable = "$nft_table";
     nftChain = "$nft_chain";
     prelude = userPrelude;
+    hold = true;
+    unitName = ''"proxy-suite-per-app-via-user@$instance.service"'';
   };
+
+  # $1, a user unit's instance <uid>-<key>, to $key and $via_unit, the unit whose table
+  # the key's user rules go in.
+  viaUserKey = ''
+    instance=''${1:-}
+    if [[ ! $instance =~ ^[0-9]+-((awg|app|tproxy|tun)-[0-9a-f]+)$ ]]; then
+      echo "proxy-suite: '$instance' is not <uid>-<per-app via instance>" >&2
+      exit 1
+    fi
+    key=''${BASH_REMATCH[1]}
+    case "$key" in
+      awg-* | app-*) via_unit="proxy-suite-per-app-via@$key.service" ;;
+      *) via_unit="proxy-suite-per-app-via-''${key%%-*}@''${key#*-}.service" ;;
+    esac
+  '';
+  # Held while a user's rule goes in, and while the last user's unit takes the via unit
+  # down: no rule lands in a table on its way out, to leave its app unmarked.
+  viaUsersLock = ''
+    ${pkgs.coreutils}/bin/mkdir -p ${pinDir}
+    exec 8>>"${pinDir}/users-$key.lock"
+    ${flock} 8
+  '';
+  viaUserStart = pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -euo pipefail
+    ${viaUserKey}
+    ${viaUsersLock}
+    # proxy-ctl starts it first; one on its way down takes the table with it.
+    if [[ $(${constants.systemctl} show --property=ActiveState --value "$via_unit") != active ]]; then
+      echo "proxy-suite: $via_unit is not up" >&2
+      exit 1
+    fi
+    ${viaUserRule} "$1"
+  '';
+  # ExecStopPost of a user's unit: with no other user's left, the via unit goes, and the
+  # global profile it ran through. perApp members may only start those (polkit.nix):
+  # stopping one under another user's apps would send them out unmarked.
+  viaRetire = pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -euo pipefail
+    ${viaUserKey}
+    # Its own restart (a job of that type until the stop half is done) comes straight back.
+    if ${constants.systemctl} list-jobs --no-legend "proxy-suite-per-app-via-user@$1.service" \
+      | ${awk} '$3 == "restart" { found = 1 } END { exit !found }'; then
+      exit 0
+    fi
+    ${viaUsersLock}
+    others=$(${constants.systemctl} list-units --plain --no-legend --state=active,activating,reloading \
+      "proxy-suite-per-app-via-user@*-$key.service" \
+      | ${awk} -v self="proxy-suite-per-app-via-user@$1.service" '$1 != self')
+    [[ -z $others ]] || exit 0
+    was=$(${constants.systemctl} show --property=ActiveState --value "$via_unit" || true)
+    ${constants.systemctl} stop "$via_unit"
+    # A failed one kept its rules to hold its apps (viaDown), and a stop runs nothing more for
+    # it: with no app left, they go here.
+    if [[ $was == failed && ( $key == awg-* || $key == app-* ) ]]; then
+      SERVICE_RESULT=success ${viaDown} "$key" || true
+      ${constants.systemctl} reset-failed "$via_unit" 2>/dev/null || true
+    fi
+    ${lib.optionalString perAppViaProfiles ''
+      # After the via unit: its stop reads the profile's slot.
+      if [[ $key == app-* ]]; then
+        set -- "''${key#app-}"
+        ${decodeTag}
+        ${constants.systemctl} stop "proxy-suite-awg-app@$tag.service"
+      fi
+    ''}
+  '';
+  # ExecStartPost of the via units, $1 the key. Their table starts empty, also on a restart
+  # (Restart=, or that of the backend a pin is part of), under users' units that stay
+  # active: their rules go back in here, or their apps would go out unmarked.
+  viaReapply = pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -uo pipefail
+    ${constants.systemctl} list-units --plain --no-legend --state=active \
+      "proxy-suite-per-app-via-user@*-''${1:-}.service" \
+      | while read -r unit _; do
+        instance=''${unit#proxy-suite-per-app-via-user@}
+        ${viaUserRule} "''${instance%.service}" \
+          || echo "proxy-suite: the rule of $unit did not go back in" >&2
+      done
+  '';
   # The pin slots, of per-app TProxy and of per-app TUN.
   pinRouteNames = lib.optional perAppPinTproxy "tproxy" ++ lib.optional perAppPinTun "tun";
   pinDir = "${constants.runtimeDir}/proxy-suite-per-app-via";
@@ -308,7 +436,7 @@ let
       tableBase = constants.perAppPinTproxyTableBase;
       nftFiles = perAppPinTproxyRulesFiles;
       # Where the user rule units add their cgroup rules, as for the per-app TProxy's own.
-      nftChain = "output";
+      nftChain = "app_mark";
       clashApi = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
       secretFile = "${constants.runtimeDir}/proxy-suite-socks/clash-secret";
       backend = "proxy-suite-socks.service";
@@ -459,6 +587,26 @@ let
       ${decodeTag}
       ${pinSlot route true}
       if [[ -z $slot ]]; then
+        # Every slot taken: one that nothing has run through for a minute (no user's marking
+        # unit for it), as a perApp member could leave behind by starting the unit alone, is
+        # taken back. The minute spares one proxy-ctl has just started for its app.
+        for (( n = 0; n < ${toString perAppPinSlots}; n++ )); do
+          slot_file="${pinDir}/${route}-$n"
+          [[ -f $slot_file ]] || continue
+          other=$(< "$slot_file")
+          [[ $other =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+          (( $(${pkgs.coreutils}/bin/date +%s) - $(${pkgs.coreutils}/bin/stat -c %Y "$slot_file") >= 60 )) || continue
+          other_hex=$(printf '%s' "$other" | ${pkgs.coreutils}/bin/od -An -tx1 | ${pkgs.coreutils}/bin/tr -d ' \n')
+          if [[ -z $(${constants.systemctl} list-units --plain --no-legend --state=active,activating,reloading \
+            "proxy-suite-per-app-via-user@*-${route}-$other_hex.service") ]]; then
+            echo "proxy-suite: taking back ${route} pin slot $n from '$other': nothing runs through it" >&2
+            ${constants.systemctl} stop "proxy-suite-per-app-via-${route}@$other_hex.service" || true
+            break
+          fi
+        done
+        ${pinSlot route true}
+      fi
+      if [[ -z $slot ]]; then
         echo "proxy-suite: all ${toString perAppPinSlots} ${route} pin slots are taken (perAppRouting.via.pinSlots)" >&2
         exit 1
       fi
@@ -472,8 +620,10 @@ let
       trap release ERR
       files=(${lib.concatMapStringsSep " " toString r.nftFiles})
       ${nft} delete table inet "$nft_table" 2>/dev/null || true
-      ${nft} -f "''${files[$slot]}"
+      # The route first, then the marking: a packet marked before its route is in would
+      # leave by the main table, and the kill switch lets the mark through.
       ${r.routingUp}
+      ${nft} -f "''${files[$slot]}"
       # A backend that restarts restarts this too (PartOf), which switches it again.
       select_pin "$tag" 60
     '';
@@ -505,8 +655,11 @@ in
     viaUp
     viaDns
     viaDown
+    viaUserRule
     viaUserStart
     viaUserStop
+    viaRetire
+    viaReapply
     pinRoutes
     pinUp
     pinDown

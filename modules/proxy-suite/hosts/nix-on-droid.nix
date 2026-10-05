@@ -23,6 +23,7 @@ let
       internal
       ;
     hostPath = "${home}/.nix-profile/bin";
+    withSystemd = false;
   };
 
   supervisorDir = "${host.runtimeDir}/proxy-suite-supervisor";
@@ -75,6 +76,11 @@ in
         kernelPackages = null;
         firewallPackage = null;
         resolvconfPackage = null;
+      };
+      # A phone's storage is tight: proxy-ctl falls back to less and plain curl.
+      services.proxy-suite.tools = {
+        lnav.enable = lib.mkDefault false;
+        curlImpersonate.enable = lib.mkDefault false;
       };
       # An app may not join netlink's route groups: without this sing-box fails to start.
       services.proxy-suite.proxy.singBox.package = lib.mkDefault (

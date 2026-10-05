@@ -7,7 +7,9 @@ applies to the local proxy, TUN, TProxy and per-app routing alike.
 
 1. `proxy.routing.rules`, in order. The first match wins, and a rule can name a specific
    outbound.
-2. The `proxy`, `direct` and `block` lists.
+2. The lists: `proxy.domains` and `proxy.ips` first, then `block`, then `direct`, then
+   `proxy.geosites`, `proxy.geoips` and `proxy.ruleSets`. A name in both a block and a direct
+   list (an ad domain under `category-ru`, say) is blocked.
 3. Anything left goes to `proxy.routing.default`: `"proxy"` (the default) or `"direct"`.
 
 Russian sites and IPs go direct unless you set `routing.directRu = false`.

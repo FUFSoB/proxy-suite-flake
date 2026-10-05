@@ -9,6 +9,7 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 import inbound_runtime as rt
 
@@ -111,7 +112,7 @@ class RuntimeTest(unittest.TestCase):
         # `xray x25519` as XRay 26 prints it.
         self.xray = os.path.join(self.tmp.name, "xray")
         with open(self.xray, "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\necho 'PrivateKey: private-x'\necho 'Password (PublicKey): public-x'\necho 'Hash32: h'\n")
+            f.write("#!/bin/sh\necho 'PrivateKey: cmVhbGl0eS10ZXN0LXByaXZhdGUta2V5LTMyYnl0ZXM'\necho 'Password (PublicKey): cmVhbGl0eS10ZXN0LXB1YmxpYy1rZXktMzItYnl0ZXM'\necho 'Hash32: h'\n")
         os.chmod(self.xray, 0o755)
 
     def tearDown(self):
@@ -171,6 +172,15 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(result["selfSources"][0]["ipv6"], "fd78::4")
         self.assertEqual(warnings, [])
 
+    def test_a_full_amneziawg_subnet_refuses_another_runtime_user(self):
+        # A /30 holds one client: awg_inbound.py would fail every listener's start on a second.
+        awg = next(l for l in self.spec["listeners"] if l["tag"] == "awg")
+        awg["amneziaWg"] = {"subnet": "10.9.0.0/30"}
+        rt.cmd_users_add(self.spec, self.spool, "alice", None, ["awg"])
+        with self.assertRaisesRegex(rt.RuntimeError_, "no free address"):
+            rt.cmd_users_add(self.spec, self.spool, "carol", None, ["awg"])
+        self.assertEqual(list(self.state()["users"]), ["alice"])
+
     def test_a_second_user_on_a_plain_shadowsocks_listener_is_refused(self):
         with self.assertRaisesRegex(rt.RuntimeError_, "2022-blake3-aes method"):
             rt.cmd_users_add(self.spec, self.spool, "alice", None, ["ss-in"])
@@ -195,7 +205,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_bind_writes_the_runtime_side(self):
         rt.cmd_users_add(self.spec, self.spool, "alice", None, [])
-        self.add_listener("friends", type="vless", port=20001)
+        self.add_listener("friends", type="vless", port=20001, tls={"enable": True, "certificate": "main"})
         rt.cmd_bind(self.spec, self.spool, "alice", "vless-in", True)
         rt.cmd_bind(self.spec, self.spool, "bob", "friends", True)
         state = self.state()
@@ -214,7 +224,8 @@ class RuntimeTest(unittest.TestCase):
 
     def test_removing_takes_the_bindings_along(self):
         rt.cmd_users_add(self.spec, self.spool, "alice", None, [])
-        self.add_listener("friends", type="vless", port=20001, users=["alice", "bob"])
+        self.add_listener("friends", type="vless", port=20001, users=["alice", "bob"],
+                          tls={"enable": True, "certificate": "main"})
         rt.cmd_bind(self.spec, self.spool, "alice", "friends", True)
         rt.cmd_users_rm(self.spec, self.spool, "alice")
         self.assertEqual(self.state()["listeners"]["friends"]["users"], ["bob"])
@@ -227,6 +238,40 @@ class RuntimeTest(unittest.TestCase):
             rt.cmd_users_rm(self.spec, self.spool, "bob")
 
     # --- listeners ---------------------------------------------------------------
+
+    def test_a_declared_password_that_is_no_2022_key_is_refused(self):
+        # A declared user's password is the key as it is: one of 16 bytes is right for aes-128,
+        # not for aes-256, where XRay would fail every listener's start.
+        key16, key32 = (base64.b64encode(bytes(range(n))).decode() for n in (16, 32))
+        self.spec["users"]["ss"]["password"] = key16
+        self.add_listener("ss128", type="shadowsocks", port=20001, method="2022-blake3-aes-128-gcm", users=["ss"],
+                          serverPassword=key16)
+        with self.assertRaisesRegex(rt.RuntimeError_, "no 2022-blake3-aes-256-gcm key"):
+            self.add_listener("ss256", type="shadowsocks", port=20002, method="2022-blake3-aes-256-gcm", users=["ss"],
+                              serverPassword=key32)
+
+    def test_declared_credentials_never_go_in_the_clear(self):
+        # bob's uuid is set in Nix: on a plain vless listener anyone on the way reads it.
+        with self.assertRaisesRegex(rt.RuntimeError_, "in the clear"):
+            self.add_listener("plain", type="vless", port=20001, users=["bob"])
+        # A runtime user's is drawn for the spool, and a loopback listener is a fallback's target.
+        rt.cmd_users_add(self.spec, self.spool, "alice", None, [])
+        self.add_listener("plain", type="vless", port=20001, users=["alice"])
+        self.add_listener("behind", type="vless", port=20002, address="127.0.0.1", users=["bob"])
+
+    def test_share_links_point_only_at_this_server(self):
+        # Declared users can be bound here: a link elsewhere would hand their uuid to whoever
+        # listens there, from the subscription they already have.
+        for fields, why in (
+            ({"shareAddress": "evil.example.net"}, "shareAddress"),
+            ({"sharePort": 31337}, "sharePort"),
+            ({"order": -1000}, "order"),
+        ):
+            with self.subTest(fields=fields):
+                with self.assertRaisesRegex(rt.RuntimeError_, why):
+                    self.add_listener("decoy", type="vmess", port=20001, users=["bob"], **fields)
+        self.add_listener("decoy", type="vmess", port=20001, users=["bob"], shareAddress="vpn.example.com", sharePort=20001)
+        self.assertEqual(self.state()["listeners"]["decoy"]["shareAddress"], "vpn.example.com")
 
     def test_reality_listener_gets_generated_keys(self):
         args = rt.main.__globals__["argparse"].Namespace(
@@ -241,7 +286,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(entry["shareFingerprint"], "firefox")
         rt.cmd_add(self.spec, self.spool, "friends", entry, self.xray)
         saved = self.state()["listeners"]["friends"]
-        self.assertEqual((saved["reality"]["privateKey"], saved["reality"]["publicKey"]), ("private-x", "public-x"))
+        self.assertEqual((saved["reality"]["privateKey"], saved["reality"]["publicKey"]), ("cmVhbGl0eS10ZXN0LXByaXZhdGUta2V5LTMyYnl0ZXM", "cmVhbGl0eS10ZXN0LXB1YmxpYy1rZXktMzItYnl0ZXM"))
         self.assertRegex(saved["reality"]["shortIds"][0], r"^[0-9a-f]{8}$")
         merged, result, _ = rt.merge(self.spec)
         friends = next(l for l in merged["listeners"] if l["tag"] == "friends")
@@ -264,6 +309,50 @@ class RuntimeTest(unittest.TestCase):
             ({"type": "vless", "port": 20001, "shareFingerprint": "netscape"}, "shareFingerprint: invalid value"),
             ({"type": "hysteria2", "port": 20001, "hysteria": {"portHopping": "1-2"}}, "not something"),
             ({"type": "vless", "port": 20001, "fallbacks": [{"dest": 22}]}, "not in inbounds.runtime.fallbackDests"),
+            # XRay dials these for anyone: never this host, its LAN or the cloud metadata.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "127.0.0.1:5432"}},
+             "reality.dest .* private network"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "[::ffff:10.0.0.1]:443"}},
+             "reality.dest .* private network"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "2130706433:443"}},
+             "reality.dest .* private network"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "localhost:443"}},
+             "reality.dest .* private network"),
+            # A name may resolve inside: only ever a site's 443, not any service it has.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "db.example.com:5432"}},
+             "reality.dest .* port 443"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "[2001:db8::1]:22"}},
+             "reality.dest .* port 443"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "/run/x.sock"}},
+             "reality.dest"),
+            # A Unix socket, even one named to look like a port 443.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "@sock:443"}},
+             "reality.dest"),
+            # Each fails XRay's whole start, every declared listener with it.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "shortIds": []}},
+             "shortIds"),
+            ({"type": "vless", "port": 20001, "transport": {"type": "ws", "path": "x"}}, "transport.path"),
+            ({"type": "vless", "port": 20001, "fallbacks": [{"path": "x", "dest": "127.0.0.1:8080"}]}, "path"),
+            # Neither may raise and take every listener with it: "²" is a digit to isdigit.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "\u00b2"}},
+             "reality.dest .* port 443"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "dest": "a\u0000b:443"}},
+             "reality.dest: invalid value"),
+            ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
+              "hysteria": {"masquerade": "http://169.254.169.254/latest/meta-data/"}}, "masquerade .* public site"),
+            ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
+              "hysteria": {"masquerade": "file:///etc/shadow"}}, "masquerade .* public site"),
+            # A name may resolve inside (localtest.me is 127.0.0.1): a web port only.
+            ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
+              "hysteria": {"masquerade": "http://localtest.me:9090/"}}, "masquerade .* port 80 or 443"),
+            # Values XRay refuses, with the declared listeners along with them.
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "shortIds": ["abc"]}},
+             "shortIds: invalid"),
+            ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "privateKey": "not-a-key"}},
+             "privateKey: invalid"),
+            ({"type": "shadowsocks", "port": 20001, "method": "none"}, "method: invalid"),
+            ({"type": "shadowsocks", "port": 20001, "method": "2022-blake3-aes-128-gcm", "serverPassword": "junk"},
+             "serverPassword must be base64 of 16 bytes"),
             ({"type": "vless", "port": 20001, "fallbacks": [{"listener": "vless-in"}]}, "must be another runtime listener"),
             ({"type": "vless", "port": 20001, "flow": "xtls-rprx-vision", "transport": {"type": "ws"}}, "flow is only valid"),
             ({"type": "vmess", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"]}}, "reality only for vless"),
@@ -280,6 +369,14 @@ class RuntimeTest(unittest.TestCase):
         self.add_listener("a", type="vless", port=20001)
         with self.assertRaisesRegex(rt.RuntimeError_, "taken by another listener"):
             self.add_listener("b", type="vless", port=20001)
+        # A public site, or a local decoy the configuration names, on whatever port.
+        for tag, port, dest in (("r1", 20003, "www.example.com:443"), ("r2", 20004, "127.0.0.1:8080"),
+                                ("r3", 20006, "[2606:4700::1111]:443")):
+            self.add_listener(tag, type="vless", port=port, reality={"enable": True, "serverNames": ["a.com"], "dest": dest})
+        self.add_listener("h", type="hysteria2", port=20005, tls={"certificate": "main"},
+                          hysteria={"masquerade": "https://www.example.com"})
+        self.add_listener("h2", type="hysteria2", port=20007, tls={"certificate": "main"},
+                          hysteria={"masquerade": "http://www.example.com:80/"})
 
     def test_fallback_to_a_runtime_listener(self):
         self.add_listener("ws", type="vless", port=20002, address="127.0.0.1", transport={"type": "ws", "path": "/ws"}, users=["bob"])
@@ -292,7 +389,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(by_tag["ws"]["front"]["port"], 8443)
         self.assertEqual(by_tag["front"]["tls"]["certificateFile"], "/run/cert")
         with self.assertRaisesRegex(rt.RuntimeError_, "already the fallback listener"):
-            self.add_listener("front2", type="vless", port=20003, fallbacks=[{"path": "/ws", "listener": "ws"}], users=["bob"])
+            self.add_listener("front2", type="vless", port=20003, tls={"enable": True, "certificate": "main"}, fallbacks=[{"path": "/ws", "listener": "ws"}], users=["bob"])
 
     def test_listener_without_users_waits(self):
         self.add_listener("empty", type="vless", port=20001)
@@ -319,6 +416,70 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(len(warnings), 3)
         _, result, more = rt.merge_state(self.spec, state)
         self.assertIn(("user", "noorder"), result["problems"])
+
+    def test_a_listener_that_trips_a_check_goes_alone(self):
+        # Written straight into the spool, past cmd_add: merge drops it, not every listener.
+        self.write("listeners", "odd", {"order": 1, "type": "vless", "port": 20001,
+                                        "reality": {"enable": True, "serverNames": ["a.com"], "dest": "\u00b2"}})
+        with mock.patch.object(rt, "listener_problems", side_effect=ValueError("boom")):
+            _, result, _ = rt.merge_state(self.spec, self.state())
+        self.assertIn(("listener", "odd"), result["problems"])
+
+    def test_a_kind_directory_swapped_for_a_link_is_not_followed(self):
+        # The spool is group-writable: users/ renamed away and a link left in its place.
+        elsewhere = os.path.join(self.tmp.name, "elsewhere")
+        os.makedirs(elsewhere)
+        with open(os.path.join(elsewhere, "eve.json"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"order": 5, "uuid": "44444444-4444-4444-8444-444444444444", "password": "p", "listeners": []}))
+        os.symlink(elsewhere, os.path.join(self.spool, "users"))
+        state, warnings = rt.load_spool(self.spool)
+        self.assertEqual(state["users"], {})
+        self.assertEqual(len(warnings), 1)
+        with self.assertRaises(OSError):
+            self.write("users", "alice", {"order": 6})
+        with self.assertRaises(OSError):
+            rt.remove_entry(self.spool, "users", "eve")
+        self.assertEqual(os.listdir(elsewhere), ["eve.json"])
+
+    def test_changes_take_the_spool_lock(self):
+        fd = rt.lock_spool(self.spool)
+        try:
+            other = os.open(os.path.join(self.spool, ".lock"), os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    rt.fcntl.flock(other, rt.fcntl.LOCK_EX | rt.fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+        finally:
+            os.close(fd)
+        # A lock file another made 0640 still serves: it is opened read-only.
+        os.chmod(os.path.join(self.spool, ".lock"), 0o440)
+        os.close(rt.lock_spool(self.spool))
+        os.unlink(os.path.join(self.spool, ".lock"))
+        os.symlink(os.path.join(self.tmp.name, "target"), os.path.join(self.spool, ".lock"))
+        with self.assertRaises(OSError):
+            rt.lock_spool(self.spool)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "target")))
+
+    def test_a_lock_outside_the_spool_is_used_not_made(self):
+        lock = os.path.join(self.tmp.name, "spool.lock")
+        # Not there yet: the spool's own instead, and the outside one is not made.
+        os.close(rt.lock_spool(self.spool, lock))
+        self.assertFalse(os.path.exists(lock))
+        os.unlink(os.path.join(self.spool, ".lock"))
+        open(lock, "w").close()
+        os.chmod(lock, 0o440)
+        fd = rt.lock_spool(self.spool, lock)
+        try:
+            other = os.open(lock, os.O_RDONLY)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    rt.fcntl.flock(other, rt.fcntl.LOCK_EX | rt.fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+        finally:
+            os.close(fd)
+        self.assertFalse(os.path.exists(os.path.join(self.spool, ".lock")))
 
     def test_entries_are_group_readable_only(self):
         self.write("users", "alice", {"order": 5})

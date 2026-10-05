@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -32,7 +33,8 @@ import socket
 import stat
 import subprocess
 import sys
-import tempfile
+import time
+import urllib.parse
 import uuid
 
 # User names and listener tags: they become file names, XRay emails and tags, and URL parts.
@@ -63,7 +65,6 @@ SS_METHODS = (
     "chacha20-ietf-poly1305",
     "xchacha20-poly1305",
     "xchacha20-ietf-poly1305",
-    "none",
 )
 
 
@@ -74,11 +75,29 @@ class RuntimeError_(ValueError):
 # --- the spool ------------------------------------------------------------------------
 
 
-def _read_entry(path: str) -> dict:
+def _open_kind_dir(directory: str) -> int:
+    """users/ or listeners/, not followed if a member of the group-writable spool swapped
+    in a symlink to another directory."""
+    return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def _awg_capacity(listener: dict) -> int | None:
+    """How many users an AmneziaWG listener's subnet holds, as awg_inbound.py hands out
+    addresses: the network, this host (offset 1) and the broadcast are not theirs. None
+    when the spec does not say."""
+    try:
+        network = ipaddress.ip_network(listener["amneziaWg"]["subnet"], strict=False)
+    except (KeyError, TypeError, ValueError):
+        return None
+    last = network.num_addresses - (1 if network.prefixlen < 31 else 0)
+    return max(last - 2, 0)
+
+
+def _read_entry(path: str, dir_fd: int | None = None) -> dict:
     """One spool file, as root reads it: a regular file only, never through a symlink,
     which would hand over any file root can read, nor a FIFO, which would hang the start."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     except OSError as exc:
         raise RuntimeError_(f"cannot read {path}: {exc.strerror}") from None
     with os.fdopen(fd, "rb") as handle:
@@ -90,7 +109,7 @@ def _read_entry(path: str) -> dict:
         data = handle.read(MAX_ENTRY_BYTES + 1)
     try:
         value = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise RuntimeError_(f"{path} is not valid JSON: {exc}") from None
     if not isinstance(value, dict):
         raise RuntimeError_(f"{path} must hold a JSON object")
@@ -99,9 +118,21 @@ def _read_entry(path: str) -> dict:
 
 def _entries(directory: str, warnings: list[str], what: str) -> dict[str, dict]:
     try:
-        names = sorted(os.listdir(directory))
+        dir_fd = _open_kind_dir(directory)
     except FileNotFoundError:
         return {}
+    except OSError as exc:
+        warnings.append(f"cannot list {directory}: {exc.strerror}")
+        return {}
+    try:
+        return _entries_at(dir_fd, directory, warnings, what)
+    finally:
+        os.close(dir_fd)
+
+
+def _entries_at(dir_fd: int, directory: str, warnings: list[str], what: str) -> dict[str, dict]:
+    try:
+        names = sorted(os.listdir(dir_fd))
     except OSError as exc:
         warnings.append(f"cannot list {directory}: {exc.strerror}")
         return {}
@@ -114,7 +145,7 @@ def _entries(directory: str, warnings: list[str], what: str) -> dict[str, dict]:
             warnings.append(f"ignoring runtime {what} '{name}': not a valid name")
             continue
         try:
-            entries[name] = _read_entry(os.path.join(directory, file_name))
+            entries[name] = _read_entry(file_name, dir_fd)
         except RuntimeError_ as exc:
             warnings.append(f"ignoring runtime {what} '{name}': {exc}")
     return entries
@@ -141,25 +172,71 @@ def write_entry(spool: str, kind: str, name: str, entry: dict) -> None:
         os.makedirs(directory, exist_ok=True)
     finally:
         os.umask(old)
-    path = os.path.join(directory, f"{name}.json")
-    # A new file of its own, never a fixed name: a symlink a member left there would take
-    # the write of this tool run as root wherever it points.
-    fd, tmp = tempfile.mkstemp(prefix=f".{name}.json.", dir=directory)
+    dir_fd = _open_kind_dir(directory)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, indent=2, sort_keys=True) + "\n")
-        os.chmod(tmp, 0o640)
-        os.replace(tmp, path)
-    except BaseException:
+        # A new file of its own, never a fixed name: a symlink a member left there would
+        # take the write of this tool run as root wherever it points.
+        while True:
+            tmp = f".{name}.json.{secrets.token_hex(8)}"
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+                break
+            except FileExistsError:
+                continue
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, indent=2, sort_keys=True) + "\n")
+                os.fchmod(handle.fileno(), 0o640)
+            os.replace(tmp, f"{name}.json", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(dir_fd)
 
 
 def remove_entry(spool: str, kind: str, name: str) -> None:
-    os.unlink(os.path.join(spool, kind, f"{name}.json"))
+    dir_fd = _open_kind_dir(os.path.join(spool, kind))
+    try:
+        os.unlink(f"{name}.json", dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+LOCK_WAIT_SECONDS = 15
+
+
+def lock_spool(spool: str, lock: str | None = None) -> int:
+    """Held across a command's read, check and write, so `users rm` racing `bind` cannot
+    write the user back. lock: a file root made outside the spool, where no member can swap it."""
+    # Read-only, which flock needs no more than: a 0640 one still serves the group.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        if not lock:
+            raise FileNotFoundError
+        path = lock
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        # Not made yet (tmpfiles has not run since the switch): the spool's own.
+        path = os.path.join(spool, ".lock")
+        fd = os.open(path, flags | os.O_CREAT, 0o660)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise RuntimeError_(f"{path} is not a regular file")
+    # A member holding it for good must not hang every other change.
+    deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise RuntimeError_(f"{spool} is locked by another change; try again") from None
+            time.sleep(0.1)
 
 
 # --- the shape of entries -------------------------------------------------------------
@@ -170,7 +247,8 @@ def _is_port(value) -> bool:
 
 
 def _nonspace(value) -> bool:
-    return isinstance(value, str) and value != "" and not re.search(r"\s", value)
+    # No control characters either: a NUL is no whitespace, and no value XRay can use.
+    return isinstance(value, str) and value != "" and not re.search(r"[\s\x00-\x1f\x7f]", value)
 
 
 def _strings(value) -> bool:
@@ -197,6 +275,25 @@ def _is_alpn(value) -> bool:
     return isinstance(value, list) and all(item in ALPNS for item in value)
 
 
+def _is_x25519_key(value) -> bool:
+    """A REALITY key as XRay reads it: 32 bytes, unpadded URL-safe base64. Anything else
+    and XRay refuses the whole configuration, the declared listeners with it."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
+        return False
+    try:
+        return len(base64.urlsafe_b64decode(value + "=")) == 32
+    except ValueError:
+        return False
+
+
+def _ss2022_key_ok(value, method) -> bool:
+    """A Shadowsocks 2022 key: standard base64 of exactly the method's key length."""
+    try:
+        return len(base64.b64decode(value, validate=True)) == SS2022_KEY_BYTES[method]
+    except (TypeError, ValueError):
+        return False
+
+
 # What a runtime listener's JSON may set, and how. The file fields of the option are not
 # here: a runtime listener names nothing on disk. Nor raw JSON, AmneziaWG or port hopping,
 # which need more than XRay (interfaces, nftables) and are built in Nix.
@@ -216,7 +313,9 @@ LISTENER_SCHEMA = {
     "serverPassword": _nullable(_nonspace),
     "transport": {
         "type": _one_of(*TRANSPORTS),
-        "path": _is_str,
+        # XRay refuses its whole config over a fallback path not starting with "/", and a
+        # fallback to this listener takes its path.
+        "path": lambda value: isinstance(value, str) and (value == "" or value.startswith("/")),
         "host": _nullable(_nonspace),
         "mode": _nullable(_one_of(*XHTTP_MODES)),
         "serviceName": _is_str,
@@ -230,11 +329,15 @@ LISTENER_SCHEMA = {
     },
     "reality": {
         "enable": _is_bool,
-        "dest": _nonspace,
+        # Not "/path" or "@name": XRay takes those for a Unix socket, which a runtime listener
+        # never names.
+        "dest": lambda value: _nonspace(value) and not str(value).startswith(("/", "@")),
         "serverNames": _strings,
-        "privateKey": _nullable(_nonspace),
-        "publicKey": _nullable(_nonspace),
-        "shortIds": lambda value: _strings(value) and all(re.fullmatch(r"[0-9a-fA-F]{0,16}", i) for i in value),
+        "privateKey": _nullable(_is_x25519_key),
+        "publicKey": _nullable(_is_x25519_key),
+        # Whole bytes: XRay refuses an odd number of hex digits.
+        # And at least one: XRay refuses an empty list, every listener with it.
+        "shortIds": lambda value: _strings(value) and bool(value) and all(re.fullmatch(r"(?:[0-9a-fA-F]{2}){0,8}", i) for i in value),
         "xver": _one_of(0, 1, 2),
     },
     "fallbacks": "fallbacks",
@@ -250,7 +353,7 @@ LISTENER_SCHEMA = {
 FALLBACK_SCHEMA = {
     "name": _nullable(_nonspace),
     "alpn": _nullable(_one_of("h2", "http/1.1")),
-    "path": _nullable(_is_str),
+    "path": _nullable(lambda value: isinstance(value, str) and (value == "" or value.startswith("/"))),
     "dest": _nullable(lambda value: _is_port(value) or _nonspace(value)),
     "listener": _nullable(lambda value: isinstance(value, str) and bool(NAME.fullmatch(value))),
     "xver": _one_of(0, 1, 2),
@@ -378,6 +481,48 @@ def _loopback(address: str) -> bool:
     return address.startswith("127.") or address in ("::1", "localhost")
 
 
+def _internal_host(host: str) -> bool:
+    """A host this server reaches but the internet should not: loopback, private,
+    link-local (cloud metadata), or any other address that is not globally routable."""
+    host = host.strip("[]").rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        # inet_aton's forms (2130706433, 0x7f.1) that XRay's resolver may still take.
+        try:
+            address = ipaddress.ip_address(socket.inet_aton(host))
+        except (OSError, ValueError):  # ValueError: an embedded NUL
+            return False
+    if getattr(address, "ipv4_mapped", None):
+        address = address.ipv4_mapped
+    return not address.is_global
+
+
+def _dest_host(dest: str) -> str:
+    """The host of a REALITY dest: host:port, [v6]:port, or a bare port (loopback)."""
+    if dest.isascii() and dest.isdigit():
+        return "127.0.0.1"
+    if dest.startswith("["):
+        return dest[1:].split("]", 1)[0]
+    return dest.rsplit(":", 1)[0] if dest.count(":") == 1 else dest
+
+
+def _dest_port(dest: str) -> int | None:
+    """The port of a REALITY dest, as _dest_host splits it; None for a socket path."""
+    # ASCII digits only: str.isdigit takes "²", which int() refuses.
+    if dest.isascii() and dest.isdigit():
+        return int(dest)
+    if dest.startswith("[") and "]:" in dest:
+        port = dest.rsplit("]:", 1)[1]
+    elif dest.count(":") == 1:
+        port = dest.rsplit(":", 1)[1]
+    else:
+        return None
+    return int(port) if port.isascii() and port.isdigit() else None
+
+
 # --- users ----------------------------------------------------------------------------
 
 
@@ -434,14 +579,28 @@ def new_user(order: int, listeners: list[str]) -> dict:
 # --- listeners ------------------------------------------------------------------------
 
 
-def listener_problems(listener: dict, runtime: dict, share_links: bool) -> list[str]:
+def listener_problems(listener: dict, runtime: dict, share_links: bool, shared: dict | None = None) -> list[str]:
     """The declared listeners' assertions (service-assertions.nix), for a runtime listener
-    filled in with the defaults and its users, plus the fences of inbounds.runtime."""
+    filled in with the defaults and its users, plus the fences of inbounds.runtime.
+
+    shared: {"addresses", "ports"} its share links may name, the server's own (_share_fence)."""
     problems = []
 
     def need(condition: bool, message: str) -> None:
         if not condition:
             problems.append(message)
+
+    # Declared users' links carry their own credentials: pointing them at another host or a
+    # member's port would hand those over.
+    if shared is not None:
+        share_address = listener.get("shareAddress")
+        need(share_address is None or share_address in shared["addresses"],
+             f"shareAddress {json.dumps(share_address)} is neither inbounds.serverAddress nor a declared listener's")
+        share_port = listener.get("sharePort")
+        need(share_port is None or share_port == listener["port"] or share_port in shared["ports"],
+             f"sharePort {share_port} is neither the listener's port nor a declared listener's")
+    # Ahead of the declared listeners in a subscription, which clients often take first.
+    need(listener.get("order", 0) >= 0, "order must not be negative")
 
     kind = listener["type"]
     transport = listener["transport"]
@@ -450,6 +609,13 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool) -> list[
     hysteria = listener["hysteria"]
     users = listener["users"]
     tls_terminated = tls["enable"] or kind in ("trojan", "hysteria2")
+    # A declared user's credentials (set in Nix) never cross the network in the clear; on
+    # loopback the listener is a fallback's target, behind its front's TLS.
+    loopback = _is_ip(listener["listen"]) and ipaddress.ip_address(listener["listen"]).is_loopback
+    if kind in ("vless", "socks", "http") and not tls["enable"] and not reality["enable"] and not loopback:
+        for user in users:
+            need(bool(user.get("runtime")),
+                 f"declared user '{user['name']}' would send its credentials in the clear: give the listener tls or reality")
 
     need(_port_allowed(listener["port"], runtime.get("ports") or []),
          f"port {listener['port']} is not in inbounds.runtime.ports")
@@ -464,6 +630,17 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool) -> list[
          "shadowsocks with more than one user needs a 2022-blake3-aes-* method")
     need(not multi_ss or listener.get("serverPassword") is not None,
          "shadowsocks with more than one user needs serverPassword")
+    # A declared user keeps the password it has: on a 2022 method it is the key, and one of
+    # another length fails XRay's whole start. Runtime users get theirs derived (_user_for).
+    if kind == "shadowsocks" and listener.get("method") in SS2022_KEY_BYTES:
+        for user in users:
+            password = _user_for(user, listener).get("password")
+            need(not isinstance(password, str) or _ss2022_key_ok(password, listener["method"]),
+                 f"user '{user['name']}' has a password that is no {listener['method']} key")
+    server_password = listener.get("serverPassword")
+    need(server_password is None or kind != "shadowsocks" or listener["method"] not in SS2022_KEY_BYTES
+         or _ss2022_key_ok(server_password, listener["method"]),
+         f"serverPassword must be base64 of {SS2022_KEY_BYTES.get(listener.get('method'))} bytes for {listener.get('method')}")
     need(not reality["enable"] or transport["type"] in ("raw", "xhttp", "grpc"),
          "reality only runs over the raw, xhttp and grpc transports")
     need(not share_links or not reality["enable"] or kind in ("vless", "trojan"),
@@ -489,6 +666,32 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool) -> list[
          "hysteria2 takes no reality or transport")
     need(hysteria.get("masquerade") is None or kind == "hysteria2",
          "hysteria.masquerade is for hysteria2 listeners only")
+    # XRay dials both for anyone, past routing: not this host or its LAN (a local decoy is
+    # declared). Names are not resolved, so port 443 keeps one that resolves inside to TLS.
+    if reality["enable"]:
+        dest = str(reality["dest"])
+        declared = dest in [str(item) for item in runtime.get("fallbackDests") or []]
+        need(declared or not _internal_host(_dest_host(dest)),
+             f"reality.dest {json.dumps(dest)} is on this host or a private network, and not in inbounds.runtime.fallbackDests")
+        need(declared or _dest_port(dest) == 443,
+             f"reality.dest {json.dumps(dest)} must be a site's port 443, unless it is in inbounds.runtime.fallbackDests")
+    masquerade = hysteria.get("masquerade")
+    if masquerade is not None:
+        try:
+            parts = urllib.parse.urlsplit(masquerade)
+            host = parts.hostname
+            port = parts.port
+        except ValueError:
+            parts, host, port = None, None, None
+        need(parts is not None and parts.scheme in ("http", "https") and bool(host) and not _internal_host(host),
+             f"hysteria.masquerade {json.dumps(masquerade)} must be an http(s) URL of a public site")
+        # As for reality.dest: a name that resolves inside passes the check above, so the
+        # port stays a web one, not whatever service listens there.
+        if parts is not None and host:
+            host_port = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+            declared = host_port in [str(item) for item in runtime.get("fallbackDests") or []]
+            need(declared or port in (None, 80, 443),
+                 f"hysteria.masquerade {json.dumps(masquerade)} must use port 80 or 443, unless {host_port} is in inbounds.runtime.fallbackDests")
     need(not hysteria["salamander"]["enable"] or kind == "hysteria2",
          "hysteria.salamander is for hysteria2 listeners only")
     need(not listener["acceptProxyProtocol"] or not _udp_only(listener),
@@ -711,6 +914,11 @@ def merge_state(spec: dict, state: dict, check_ports: bool = False) -> tuple[dic
                 problem("user", name, f"cannot be on '{tag}': {why}")
                 continue
             candidate = users[name]
+            capacity = _awg_capacity(target) if target["type"] == "amneziawg" else None
+            if capacity is not None and len(target["users"]) >= capacity:
+                # awg_inbound.py's allocation would fail, and with it every listener's start.
+                problem("user", name, f"cannot be on '{tag}': its subnet has no free address")
+                continue
             if tag in declared and target["type"] == "shadowsocks" and target["users"]:
                 if not target["method"].startswith("2022-blake3-aes-") or (
                     target.get("serverPassword") is None and target.get("serverPasswordFile") is None
@@ -721,10 +929,17 @@ def merge_state(spec: dict, state: dict, check_ports: bool = False) -> tuple[dic
 
     # Ports, fences and the declared assertions, on the listeners as they now stand.
     declared_ports = {listener["port"] for listener in merged["listeners"]}
+    shared = {
+        "addresses": {a for a in [spec.get("serverAddress")] + [l.get("shareAddress") for l in merged["listeners"]] if a},
+        "ports": declared_ports | {l["sharePort"] for l in merged["listeners"] if l.get("sharePort")},
+    }
     used_ports: set[int] = set()
     for tag in sorted(runtime_listeners, key=lambda t: (runtime_listeners[t]["order"], t)):
         listener = runtime_listeners[tag]
-        why = listener_problems(listener, runtime, share_links)
+        try:
+            why = listener_problems(listener, runtime, share_links, shared)
+        except Exception as exc:  # noqa: BLE001 - this one listener goes, not every inbound
+            why = [f"cannot be checked: {exc}"]
         if listener["port"] in declared_ports or listener["port"] in used_ports:
             why.append(f"port {listener['port']} is taken by another listener")
         if not why and check_ports and not port_free(listener["listen"], listener["port"], _protocols(listener)):
@@ -1273,7 +1488,12 @@ def main(argv: list[str] | None = None) -> int:
     if changes and not all(os.access(path, os.W_OK | os.X_OK) for path in writable):
         print(f"Cannot write {spool}", file=sys.stderr)
         return 77
+    # Read before the lock: someone typing a listener in must not hold every other change.
+    piped = sys.stdin.read() if args.command == "add" and getattr(args, "source", "") == "-" else None
+    lock = None
     try:
+        if changes:
+            lock = lock_spool(spool, (spec.get("runtime") or {}).get("lock"))
         if args.command == "users" and args.verb in (None, "list"):
             state, warnings = load_spool(spool)
             for warning in warnings:
@@ -1300,7 +1520,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.source in TYPES:
                 entry = listener_from_flags(args.source, args)
             else:
-                text = sys.stdin.read() if args.source == "-" else open(args.source, encoding="utf-8").read()
+                text = piped if args.source == "-" else open(args.source, encoding="utf-8").read()
                 try:
                     entry = json.loads(text)
                 except ValueError as exc:
@@ -1342,6 +1562,9 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(f"{exc.filename or ''}: {exc.strerror}", file=sys.stderr)
         return 1
+    finally:
+        if lock is not None:
+            os.close(lock)
     return 0
 
 

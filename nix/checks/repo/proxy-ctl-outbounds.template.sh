@@ -14,8 +14,7 @@ mkdir -p stub
   printf '%s\n' 'fi'
   printf '%s\n' 'exit 0'
 } > stub/systemctl
-printf '#!/bin/sh\nprintf %%s "$2"\n' > stub/systemd-escape
-chmod +x stub/systemctl stub/systemd-escape
+chmod +x stub/systemctl
 export PATH="$PWD/stub:$PATH"
 
 mkdir -p obd subd cache
@@ -68,10 +67,11 @@ done
 # Removing something that was never added says so.
 ! run proxy outbounds rm nope 2>/dev/null
 
-# A good add lands in the spool group-readable, not world-readable.
+# A good add lands in the spool root's alone: the link holds credentials, which the rest of
+# the group sees only with the "secrets" scope.
 run proxy outbounds add spool-one http://example.com:1 | grep -q 'Added outbound: spool-one'
 [ "$(cat obd/spool-one.url)" = "http://example.com:1" ]
-[ "$(stat -c %a obd/spool-one.url)" = "640" ]
+[ "$(stat -c %a obd/spool-one.url)" = "600" ]
 run proxy outbounds | grep -q 'spool-one  *runtime'
 # Adding it twice is refused.
 ! run proxy outbounds add spool-one http://example.com:1 2>/dev/null

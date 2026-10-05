@@ -220,8 +220,15 @@ require_cmd "$IP_BIN"
 require_cmd "$NFT_BIN"
 require_cmd "$CURL_BIN"
 
-OUTPUT_DIR="${1:-/tmp/proxy-suite-xray-tun-$(date +%Y%m%d-%H%M%S)}"
-mkdir -p "$OUTPUT_DIR"
+# Run as root, with captures of the journal and the ruleset: a fresh private directory,
+# never one another user could have made first.
+umask 077
+if [ -n "${1:-}" ]; then
+  OUTPUT_DIR=$1
+  mkdir -p "$OUTPUT_DIR"
+else
+  OUTPUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/proxy-suite-xray-tun-$(date +%Y%m%d-%H%M%S)-XXXXXX")
+fi
 
 ORIG_PROXY_ACTIVE=0
 ORIG_TUN_ACTIVE=0

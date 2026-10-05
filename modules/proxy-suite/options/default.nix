@@ -21,6 +21,7 @@
     ./geodata.nix
     ./gui.nix
     ./tui.nix
+    ./tools.nix
     ./user-control.nix
     ./kill-switch.nix
     ./host.nix

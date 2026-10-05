@@ -60,6 +60,9 @@ in
       proxychainsConfigFile
       amneziaWgProfileNamesFile
       ;
+    withSystemd = constants.serviceManager != "supervisor";
+    withLnav = cfg.tools.lnav.enable;
+    withCurlImpersonate = cfg.tools.curlImpersonate.enable;
     env = {
       CLASH_API = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
       SELECTION = selectionMode;
@@ -134,7 +137,6 @@ in
       INBOUNDS_ENABLED = flag proxyInboundsEnabled;
       INBOUNDS_LINKS_FILE = proxyInboundsLinksFile;
       INBOUNDS_STATS_FILE = constants.inboundStatsFile;
-      INBOUNDS_XRAY = proxyInboundsXray;
       INBOUNDS_API = "unix://${constants.inboundStatsApiSocket}";
       INBOUNDS_SUBS_FILE = proxyInboundsSubscriptionsFile;
       INBOUNDS_SUB_BASE_URL =
@@ -153,18 +155,27 @@ in
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;
       RUNTIME_OUTBOUNDS_DIR = constants.runtimeOutboundsDir;
       RUNTIME_SUBS_DIR = constants.runtimeSubscriptionsDir;
+      RUNTIME_SUBS_ALLOW_HTTP = flag proxyCfg.runtimeSubscriptions.allowHttp;
       USER_CONTROL_GROUP = userControlCfg.group;
       # {group: [scopes]}: what proxy-suite-clash-api lets each group's members ask.
       USER_CONTROL_GROUPS = builtins.toJSON ctx.clashBrokerGroups;
       LOCAL_PROXY_URL = "http://${localProxy.hostPart}:${toString proxyCfg.listener.port}";
       AUTOPROXY_ENABLED = flag proxyCfg.autoProxy.enable;
       AUTOPROXY_STATE_DIR = constants.autoProxyStateDir;
+      AUTOPROXY_SPOOL_DIR = constants.autoProxySpoolDir;
       TOR_CONTROL_SOCKET = constants.torControlSocket;
-      SING_BOX = "${singBoxCfg.package}/bin/sing-box";
       STATE_DIR = constants.stateDir;
       RUNTIME_DIR = constants.runtimeDir;
       SERVICE_MANAGER = constants.serviceManager;
       PRIVILEGED = flag constants.privileged;
+    }
+    # Only the engines this host runs, so the other stays out of the closure; unset,
+    # proxy_ctl.py looks on PATH and skips what it cannot run.
+    // lib.optionalAttrs ctx.singBoxEnabled {
+      SING_BOX = "${singBoxCfg.package}/bin/sing-box";
+    }
+    // lib.optionalAttrs proxyInboundsEnabled {
+      INBOUNDS_XRAY = proxyInboundsXray;
     }
     // lib.optionalAttrs ctx.clashBrokerEnabled {
       CLASH_BROKER = constants.clashBrokerSocket;

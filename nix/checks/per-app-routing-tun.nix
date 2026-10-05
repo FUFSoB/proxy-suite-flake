@@ -145,8 +145,21 @@ in
     (
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun";
       assert perAppRoutingTunFixture.config.systemd.services ? "proxy-suite-per-app-tun-user@";
+      # Every user's: it goes once the last user's marking that requires it stops; never by a
+      # member's stop under the others' apps. Requires=, not BindsTo=, so the marking stays up
+      # through a crash and its automatic restart, which restarts the marking too.
+      assert
+        perAppRoutingTunFixture.config.systemd.services.proxy-suite-per-app-tun.unitConfig.StopWhenUnneeded;
+      assert
+        perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".requires == [
+          "proxy-suite-per-app-tun.service"
+        ];
+      assert
+        perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".bindsTo == [ ];
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
-      assert perAppRoutingTunServiceConfig.ExecStartPre == perAppRoutingTunServiceConfig.ExecStopPost;
+      assert
+        builtins.head perAppRoutingTunServiceConfig.ExecStartPre
+        == perAppRoutingTunServiceConfig.ExecStopPost;
       # With proxy.ipv6, wrapped apps' IPv6 goes through the app TUN too.
       assert pkgs.lib.hasInfix "link set dev psperapptun0 up" perAppRoutingTunUpScript;
       assert pkgs.lib.hasInfix ''-6 addr replace "$tun6_cidr" dev psperapptun0'' perAppRoutingTunUpScript;

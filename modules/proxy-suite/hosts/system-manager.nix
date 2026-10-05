@@ -97,6 +97,11 @@ in
             (lib.mkIf cfg.internal.polkit.enable {
               "polkit-1/rules.d/50-proxy-suite.rules".text = cfg.internal.polkit.rules;
             })
+            # Read from /etc by polkit 126 and later. An older one never finds the action, and
+            # its pkexec asks for the password every time instead.
+            (lib.mapAttrs' (
+              name: path: lib.nameValuePair "polkit-1/actions/${name}" { source = path; }
+            ) cfg.internal.polkit.actions)
           ];
 
         }

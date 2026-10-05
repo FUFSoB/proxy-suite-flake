@@ -38,7 +38,8 @@ let
     })
     awgServiceNames
     tunInterfaces
-    perAppConflicts
+    perAppRefuseUnderGlobal
+    daemonSandbox
     perAppZapretMarkUpScript
     perAppZapretMarkDownScript
     ;
@@ -89,17 +90,22 @@ let
 
   # nfqws2 and proxy-ctl expect the list files to exist. With userControl its group
   # edits them: proxy-ctl renames a new list in, so the directories are what it writes.
+  stateDirMode =
+    if userControlAllows "zapret" then
+      "2775 -g ${lib.escapeShellArg cfg.userControl.group}"
+    # userControl.groups only, through ACLs: the group bits (their mask) stay open.
+    else if userControlAnyAllows "zapret" then
+      "2775"
+    else
+      "0755";
   mkPreStart = ''
     ${lib.getExe' pkgs.kmod "modprobe"} nfnetlink_queue 2>/dev/null || true
-    install -d -m ${
-      if userControlAllows "zapret" then
-        "2775 -g ${lib.escapeShellArg cfg.userControl.group}"
-      # userControl.groups only, through ACLs: the group bits (their mask) stay open.
-      else if userControlAnyAllows "zapret" then
-        "2775"
-      else
-        "0755"
-    } ${runtime.stateDir} ${runtime.circularStateDir}
+    install -d -m ${stateDirMode} ${runtime.stateDir}
+    # A plain mkdir, not install -d, which would chmod and chown a symlink a member left in the
+    # group's state directory.
+    circular=${runtime.circularStateDir}
+    if [ -L "$circular" ]; then rm -f -- "$circular"; fi
+    mkdir -m ${lib.head (lib.splitString " " stateDirMode)} -- "$circular" 2>/dev/null || true
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
     # In this unit's sandbox: a name a member left here leads nowhere else.
     ${constants.grantDirAcl pkgs runtime.stateDir (userControlExtraGroupsFor "zapret") "rwX"}
@@ -121,7 +127,8 @@ let
     // lib.optionalAttrs (userControlAllows "zapret") { Group = cfg.userControl.group; }
     # nfqws2 runs as root and writes its lists in a directory the zapret scope's group
     # writes to as well.
-    // constants.rootInSharedDirConfig;
+    // constants.rootInSharedDirConfig
+    // daemonSandbox;
 
   cutoff = import ./zapret2/cutoff.nix {
     inherit
@@ -134,6 +141,25 @@ let
   };
 
   directSync = import ./zapret2/direct-sync.nix { inherit lib pkgs cfg; };
+
+  # autohostlist wants nf_conntrack_tcp_be_liberal on; the stop puts back what the host had.
+  # Outside the sandbox ("+"), which keeps /proc/sys read-only.
+  conntrackLiberalKey = "/proc/sys/net/netfilter/nf_conntrack_tcp_be_liberal";
+  conntrackLiberalOn = "-+${pkgs.writeShellScript "proxy-suite-zapret2-liberal" ''
+    saved="$RUNTIME_DIRECTORY/conntrack-liberal"
+    # Created, never followed: this runs as root outside the sandbox.
+    if [ ! -e "$saved" ] && [ ! -L "$saved" ]; then
+      ${pkgs.coreutils}/bin/cat ${conntrackLiberalKey} | (set -o noclobber; cat > "$saved") 2>/dev/null || true
+    fi
+    echo 1 > ${conntrackLiberalKey}
+  ''}";
+  conntrackLiberalRestore = "-+${pkgs.writeShellScript "proxy-suite-zapret2-liberal" ''
+    saved="$RUNTIME_DIRECTORY/conntrack-liberal"
+    value=$(${pkgs.coreutils}/bin/cat "$saved" 2>/dev/null || echo 0)
+    [[ $value =~ ^[01]$ ]] || value=0
+    echo "$value" > ${conntrackLiberalKey}
+    ${pkgs.coreutils}/bin/rm -f "$saved"
+  ''}";
 
 in
 {
@@ -166,7 +192,13 @@ in
         runtimeDirectory = "proxy-suite-zapret";
         stateDirectory = "proxy-suite/zapret2";
         execStart = "${runtime.daemonScript}";
-        execStopPost = "${runtime.initScript} stop_fw";
+        execStopPost = [
+          "${runtime.initScript} stop_fw"
+        ]
+        ++ lib.optional zapretCfg.zapret2.autoHostlist.enable conntrackLiberalRestore;
+        # What zapret's start_fw would do for autohostlist, here outside the sandbox ("+"),
+        # once the firewall has loaded nf_conntrack.
+        execStartPost = if zapretCfg.zapret2.autoHostlist.enable then conntrackLiberalOn else null;
         extraServiceConfig = daemonConfig (
           runtime.mkEnv {
             runtime = globalRuntime;
@@ -177,25 +209,33 @@ in
 
   services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
     lib.mkIf perAppZapretCfg.enable
-      (mkRestartingService {
-        description = "proxy-suite per-app-routing zapret2 backend";
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        conflicts = perAppConflicts ++ awgServiceNames;
-        preStart = mkPreStart;
-        runtimeDirectory = "proxy-suite-per-app-zapret";
-        stateDirectory = "proxy-suite/zapret2";
-        execStart = "${runtime.daemonScript}";
-        execStartPre = "${perAppZapretMarkUpScript}";
-        execStopPost = [
-          "${runtime.initScript} stop_fw"
-          "${perAppZapretMarkDownScript}"
-        ];
-        extraServiceConfig = daemonConfig (
-          runtime.mkEnv {
-            runtime = perAppRuntime;
-            pidDir = "/run/proxy-suite-per-app-zapret";
+      (
+        lib.mkMerge [
+          (mkRestartingService {
+            description = "proxy-suite per-app-routing zapret2 backend";
+            after = [ "network-online.target" ];
+            wants = [ "network-online.target" ];
+            preStart = mkPreStart;
+            runtimeDirectory = "proxy-suite-per-app-zapret";
+            stateDirectory = "proxy-suite/zapret2";
+            execStart = "${runtime.daemonScript}";
+            execStartPre = "${perAppZapretMarkUpScript}";
+            execStopPost = [
+              "${runtime.initScript} stop_fw"
+              "${perAppZapretMarkDownScript}"
+            ];
+            extraServiceConfig = daemonConfig (
+              runtime.mkEnv {
+                runtime = perAppRuntime;
+                pidDir = "/run/proxy-suite-per-app-zapret";
+              }
+            );
+          })
+          {
+            # Ahead of everything, preStart's script among them (mkBefore there): under a global
+            # mode nothing of it runs, not even the queue's firewall rules.
+            serviceConfig.ExecStartPre = lib.mkOrder 400 [ perAppRefuseUnderGlobal ];
           }
-        );
-      });
+        ]
+      );
 }

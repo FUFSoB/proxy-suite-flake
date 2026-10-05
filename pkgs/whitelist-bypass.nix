@@ -26,8 +26,9 @@ pkgs.buildGo126Module (finalAttrs: {
     "headless/dion-joiner"
     "headless/bitrix-joiner"
   ];
-  # The call link (WB_LINK) and the local proxy's password (WB_UPSTREAM_PASS) from the
-  # environment, not argv: these run for good, and every local user reads a command line.
+  # The call link (WB_LINK), the local proxy's password (WB_UPSTREAM_PASS) and a joiner's
+  # SOCKS password (WB_SOCKS_PASS) from the environment, not argv: these run for good, and
+  # every local user reads a command line.
   postPatch = ''
     envDefault() {
       substituteInPlace "headless/$1/main.go" --replace-fail \
@@ -38,6 +39,10 @@ pkgs.buildGo126Module (finalAttrs: {
     done
     for p in bitrix dion dion-joiner wbstream wbstream-joiner; do
       envDefault $p room WB_LINK
+    done
+    # The joiners' SOCKS password (the hop login proxy-suite gives them) likewise.
+    for p in telemost-joiner wbstream-joiner dion-joiner bitrix-joiner; do
+      envDefault $p socks-pass WB_SOCKS_PASS
     done
     envDefault bitrix-joiner link WB_LINK
     envDefault telemost tm-link WB_LINK

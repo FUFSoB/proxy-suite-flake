@@ -6,11 +6,11 @@ Reads run on a worker thread; every change runs proxy-ctl, as in the TUI.
 
 import os
 import re
-import shlex
 import signal
 import subprocess
 import sys
 import threading
+import time
 
 import gi
 
@@ -226,6 +226,10 @@ def plain(line):
     return "".join(t for t, _ in ansi_segments(line))
 
 
+# Failed state reads in a row before the tray says "Status unavailable" (one every 3 s).
+STALE_READS_UNKNOWN = 3
+
+
 def last_line(lines):
     return next((plain(line).strip() for line in reversed(lines) if plain(line).strip()), "")
 
@@ -414,7 +418,7 @@ class Page(Gtk.Box):
             ("w", lambda *_: self.win.where()),
             ("<Shift>l", lambda *_: self.win.follow_logs()),
             ("o", lambda *_: self.win.show_last_output()),
-            ("r", lambda *_: self.win.app.reload()),
+            ("r", lambda *_: self.win.app.reload(fresh_root=True)),
             ("Menu|<Shift>F10", lambda *_: self.open_menu(None)),
         ):
             if trigger not in self.triggers():
@@ -776,7 +780,7 @@ class Window(Adw.ApplicationWindow):
         switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
         header.set_title_widget(switcher)
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh now (F5)")
-        refresh.connect("clicked", lambda *_: app.reload())
+        refresh.connect("clicked", lambda *_: app.reload(fresh_root=True))
         # A slow load shows a spinner in the refresh button's place.
         self.refresh_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
         self.refresh_stack.add_named(refresh, "idle")
@@ -955,7 +959,7 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def paste(self):
-        """Ctrl+V anywhere but a text field: whatever is in the clipboard is added to this tab."""
+        """Ctrl+V anywhere but a text field: whatever is in the clipboard is added to this tab, once confirmed."""
         if isinstance(self.get_focus(), Gtk.Editable) or self.get_visible_dialog() is not None:
             return False
         page = self.page()
@@ -973,7 +977,9 @@ class Window(Adw.ApplicationWindow):
         if argv is None:
             self.toast(what)
         else:
-            self.app.run_argv("run", argv, self, stdin=stdin)
+            # Asked first: a web page can put a link in the clipboard, and one stray Ctrl+V
+            # would have root fetch its subscription.
+            self.app.confirm(argv, lambda: self.app.run_argv("run", argv, self, stdin=stdin), self, stdin=stdin)
 
     def follow_logs(self):
         self.app.run_argv("suspend", ["logs"], self)
@@ -1111,6 +1117,11 @@ class ProxySuiteGui(Adw.Application):
         self.viewing = {}
         self.seen = {}
         self.root_read_refused = False  # pkexec for a tab read was dismissed: not asked again until Ctrl+E flips
+        # tab id -> (rows, summary, when) of its last root read: pkexec asks for the password each
+        # time, so not on every refresh; again on F5, Ctrl+E, or after a root action.
+        self.root_reads = {}
+        self.pending_fresh = False
+        self.stale_reads = 0  # empty state reads in a row, after one that worked
         self.timer = None
 
     def do_startup(self):
@@ -1122,7 +1133,7 @@ class ProxySuiteGui(Adw.Application):
             css.load_from_string(CSS)
             # Above a user gtk.css theme: these rules are only for this window's own classes.
             Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
-        for name, callback in (("quit", lambda *_: self.quit()), ("reload", lambda *_: self.reload()), ("present", lambda *_: self.present())):
+        for name, callback in (("quit", lambda *_: self.quit()), ("reload", lambda *_: self.reload(fresh_root=True)), ("present", lambda *_: self.present())):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             self.add_action(action)
@@ -1174,9 +1185,10 @@ class ProxySuiteGui(Adw.Application):
     def on_elevated(self, action, value):
         action.set_state(value)
         self.root_read_refused = False
+        self.root_reads.clear()
         if self.window:
             self.window.root_badge.set_visible(value.get_boolean())
-        self.reload()  # tabs only root can read
+        self.reload(fresh_root=True)  # tabs only root can read
 
     def present(self, tab=None):
         if self.window is None:
@@ -1214,9 +1226,11 @@ class ProxySuiteGui(Adw.Application):
         self.reload()
         return True
 
-    def reload(self):
+    def reload(self, fresh_root=False):
+        """fresh_root: read a root-only tab as root again (F5, Ctrl+E), not from the last read."""
         if self.loading:
             self.pending = True  # one more once this load lands
+            self.pending_fresh = self.pending_fresh or fresh_root
             return
         self.loading = True
         self.generation += 1
@@ -1224,9 +1238,19 @@ class ProxySuiteGui(Adw.Application):
         if window:
             window.set_busy(True)
         tab = window.pages[window.stack.get_visible_child_name()].tab if window and window.stack.get_visible_child_name() else None
-        threading.Thread(target=self.load, args=(self.generation, tab, self.elevated(), dict(self.seen)), daemon=True).start()
+        threading.Thread(target=self.load, args=(self.generation, tab, self.elevated(), dict(self.seen), fresh_root), daemon=True).start()
 
-    def load(self, generation, tab, elevated, seen):
+    def load(self, generation, tab, elevated, seen, fresh_root=False):
+        # landed() always runs: it is what clears self.loading, else no reload would start again.
+        result = None
+        try:
+            result = self.gather(tab, elevated, seen, fresh_root)
+        except (Exception, SystemExit) as e:
+            print(f"proxy-suite-gui: load failed: {e!r}", file=sys.stderr)
+        finally:
+            GLib.idle_add(self.landed, generation, result)
+
+    def gather(self, tab, elevated, seen, fresh_root=False):
         model.new_load()
         states = model._read_states()
         marks = model._safe(model.failure_marks, states, fallback={})
@@ -1238,11 +1262,12 @@ class ProxySuiteGui(Adw.Application):
         if tab is not None:
             result["visible"] = model.available_tabs(states)
             result["status"] = model._safe(model.status_items, states, fallback=[("", "Status unavailable", "bad")])
-            result["tab"] = (tab.id, *self.load_tab(tab, states, elevated))
-        GLib.idle_add(self.landed, generation, result)
+            result["tab"] = (tab.id, *self.load_tab(tab, states, elevated, fresh_root))
+        return result
 
-    def load_tab(self, tab, states, elevated):
-        """The tab as this user reads it; what only root can read, through pkexec when actions run as root."""
+    def load_tab(self, tab, states, elevated, fresh_root=False):
+        """The tab as this user reads it; what only root can read, through pkexec when actions run as root:
+        once, and again on fresh_root."""
         rows, summary = model.load_tab(tab, states)
         if not model.needs_root(summary.splitlines(), 1):
             return rows, summary
@@ -1250,20 +1275,32 @@ class ProxySuiteGui(Adw.Application):
             return rows, summary + "\nCtrl+E: read and run as root"
         if self.root_read_refused:
             return rows, summary + "\nRoot read cancelled: Ctrl+E twice to ask again."
+        cached = self.root_reads.get(tab.id)
+        if cached and not fresh_root:
+            root_rows, why, when = cached
+            return root_rows, why + f"\nRead as root at {time.strftime('%H:%M:%S', time.localtime(when))}: F5 to read again."
         root_rows, why = model.load_tab_as_root(tab, "pkexec")
         if root_rows is None:
             # ponytail: one refusal stops the asking, else the password dialog is back every refresh
             self.root_read_refused = why == "authentication cancelled"
             return rows, summary + f"\nAs root: {why}"
+        self.root_reads[tab.id] = (root_rows, why, time.time())
         return root_rows, why
 
     def landed(self, generation, result):
         self.loading = False
         if self.window:
             self.window.set_busy(False)
-        if generation == self.generation:
+        # None: the load failed; what is shown stays.
+        if generation == self.generation and result is not None:
             # Nothing read, after a read that worked: keep the last good one, tray and all.
             stale = not result["states"] and bool(self.states)
+            self.stale_reads = self.stale_reads + 1 if stale else 0
+            if stale and self.stale_reads >= STALE_READS_UNKNOWN and self.tray:
+                # One failed read is a blip; this many is no state to show at all: the last
+                # good one may say "tunnel" while nothing runs any more.
+                tree, overall, _ = result["tray"]
+                self.tray.update(model.icon_name(overall), overall["label"], tree, attention=True)
             if not stale:
                 self.states = result["states"]
                 marks = result["marks"]
@@ -1282,8 +1319,8 @@ class ProxySuiteGui(Adw.Application):
             if "tab" in result and self.window:
                 self.window.fill(self.states, result["visible"], result["status"], *result["tab"], stale=stale)
         if self.pending:
-            self.pending = False
-            self.reload()
+            fresh, self.pending, self.pending_fresh = self.pending_fresh, False, False
+            self.reload(fresh_root=fresh)
         return False
 
     def notify_failures(self, snap):
@@ -1315,8 +1352,8 @@ class ProxySuiteGui(Adw.Application):
             else:
                 run()
 
-    def confirm(self, argv, then, parent):
-        body = f"<tt>{GLib.markup_escape_text(f'proxy-ctl {shlex.join(argv)}')}</tt>"
+    def confirm(self, argv, then, parent, stdin=None):
+        body = f"<tt>{GLib.markup_escape_text(model.shown(argv, stdin=stdin))}</tt>"
         dialog = Adw.AlertDialog(heading="Run this?", body=body, body_use_markup=True, close_response="cancel", default_response="run")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("run", "Run")
@@ -1328,8 +1365,10 @@ class ProxySuiteGui(Adw.Application):
         """run: a toast; dialog, suspend, pause: output streamed into a dialog; copy: the last line to the clipboard.
         root, or the elevated toggle: through pkexec. Never `apps run`, which is per user.
         stdin: text proxy-ctl reads (argv says "-"), kept out of argv and pkexec's log."""
-        root = (root or self.elevated()) and argv[:1] != ["apps"]
-        command = f"{'pkexec ' if root else ''}proxy-ctl {shlex.join(argv)}"
+        # "wrap" is proxy-ctl's alias of `apps run`: never as root either. `apps add`/`rm` may be.
+        root = (root or self.elevated()) and argv[:2] != ["apps", "run"] and argv[:1] != ["wrap"]
+        # Only ever shown (toast, dialog title, notification): credentials blanked.
+        command = model.shown(argv, "pkexec" if root else None)
         retry_argv = argv
         qr = "--qr" in argv
         if qr:
@@ -1348,19 +1387,24 @@ class ProxySuiteGui(Adw.Application):
             p = model.popen(argv, "pkexec" if root else None, stdin=stdin)
             if dialog:
                 GLib.idle_add(lambda: dialog.running(p, stoppable=not root) and False)
-            for line in p.stdout:
-                out.append(line.rstrip("\n"))
+            for line in model.output_lines(p):
+                out.append(line)
                 if dialog:
                     GLib.idle_add(lambda line=out[-1]: dialog.write(line) and False)
-            status = p.wait()
+            if getattr(p, "proxy_suite_stopped", False):
+                # Root's may outlive its closed pipe a while: reaped whenever it goes.
+                threading.Thread(target=p.wait, daemon=True).start()
+                status = -signal.SIGTERM
+            else:
+                status = p.wait()
         except OSError as e:
             out.append(f"cannot run proxy-ctl: {e}")
             status = 127
         if root and status == 126 and not out:
             out.append("authentication cancelled")  # pkexec: the password dialog was dismissed
-        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status, retry_argv, stdin) and False)
+        GLib.idle_add(lambda: self.ran(command, mode, win, dialog, qr, out, status, retry_argv, stdin, root) and False)
 
-    def ran(self, command, mode, win, dialog, qr, out, status, retry_argv, stdin=None):
+    def ran(self, command, mode, win, dialog, qr, out, status, retry_argv, stdin=None, root=False):
         last = last_line(out)
         text = "\n".join(out)
         output = (command, text)
@@ -1375,22 +1419,27 @@ class ProxySuiteGui(Adw.Application):
             elif status:
                 dialog.write(f"\x1b[31m(exit status {status})\x1b[0m")
             elif qr and last:
-                dialog.show_qr(last)
+                # A --config is the whole multi-line .conf, not its last line.
+                dialog.show_qr("\n".join(plain(line) for line in out).strip("\n") if "--config" in retry_argv else last)
         elif win is not None:
+            # A toast is on screen for anyone to see: the link copied, or one in an error, blanked.
             if mode == "copy" and not status and last:
-                win.copy_text(last, f"Copied: {last}")
+                win.copy_text(last, f"Copied: {model.redact(last)}")
             else:
-                message = f"{last}  ({command})" if last else command
+                message = f"{model.redact(last)}  ({command})" if last else command
                 # Anything it printed is worth a button: the toast shows a few lines of it at most.
                 win.toast(f"exit {status}: {message}" if status else message, output if out else None, retry)
         elif status:
             # From the tray: nothing else would say it failed.
             note = Gio.Notification.new(f"{command} failed")
-            note.set_body(last or f"exit status {status}")
+            note.set_body(model.redact(last) if last else f"exit status {status}")
             note.set_default_action("app.present")
             if retry:
                 note.add_button_with_target("Retry as Root", "app.retry-root", GLib.Variant("as", retry_argv))
             self.send_notification(None, note)
+        if root and not status:
+            # What root just changed: the last root reads no longer show it.
+            self.root_reads.clear()
         self.reload()
 
 

@@ -202,6 +202,12 @@ in
         perAppRoutingZapretFixture.config.systemd.user.services ? "proxy-suite-per-app-zapret-anchor";
       assert builtins.elem "network-online.target" perAppRoutingZapretService.after;
       assert builtins.elem "network-online.target" perAppRoutingZapretService.wants;
+      # Declared with zapret's units; units.nix adds that it goes once no user needs it.
+      assert perAppRoutingZapretService.unitConfig.StopWhenUnneeded;
+      assert
+        perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".requires == [
+          "proxy-suite-per-app-zapret.service"
+        ];
       true
     )
 

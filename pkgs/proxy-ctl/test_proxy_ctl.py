@@ -2,6 +2,7 @@
 
 import contextlib
 import datetime
+import fcntl
 import io
 import json
 import os
@@ -55,31 +56,58 @@ class TerminalSafeTest(unittest.TestCase):
         self.assertEqual(out.getvalue(), "vless://u@h:1#\\x1b]52;c;cm0gLXJmIH4=\\x07name\\x0d\tok\n\\x9b2J")
 
 
-class StubResolverTest(unittest.TestCase):
-    def resolv(self, content):
-        tmp = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
-        tmp.write(content)
-        tmp.close()
-        self.addCleanup(os.unlink, tmp.name)
-        return tmp.name
-
-    def test_only_stub_nameservers_are_reported(self):
-        path = self.resolv("nameserver 127.0.0.53\noptions edns0\n")
-        assert ctl._stub_resolver_nameservers(path) == ["127.0.0.53"]
-
-    def test_a_real_resolver_alongside_the_stub_is_not_a_leak(self):
-        path = self.resolv("nameserver 127.0.0.53\nnameserver 192.168.1.1\n")
-        assert ctl._stub_resolver_nameservers(path) == []
-
-    def test_missing_resolv_conf_is_quiet(self):
-        assert ctl._stub_resolver_nameservers("/nonexistent/resolv.conf") == []
-
-    def test_wrap_warns_once_on_the_stub(self):
-        with mock.patch.object(ctl, "_stub_resolver_nameservers", return_value=["127.0.0.53"]):
-            status, out, err = run(ctl._warn_stub_resolver, "tun")
+class NscdWarningTest(unittest.TestCase):
+    def test_wrap_warns_on_nscd(self):
+        # glibc goes through nscd, which looks names up from its own cgroup.
+        with tempfile.NamedTemporaryFile() as sock, mock.patch.dict(os.environ, {"NSCD_SOCKET": sock.name}):
+            status, out, err = run(ctl._warn_nscd, "tproxy")
         assert status == 0, (status, out, err)
-        assert "route=tun" in err
-        assert "127.0.0.53" in err
+        assert "nscd" in err and "route=tproxy" in err
+
+    def test_no_nscd_is_quiet(self):
+        # A stub resolver on loopback is no leak: the route's forwarder answers it.
+        with mock.patch.dict(os.environ, {"NSCD_SOCKET": "/nonexistent/socket"}):
+            assert run(ctl._warn_nscd, "tun")[2] == ""
+
+
+class SharedFilesTest(unittest.TestCase):
+    def test_completion_words_are_never_shell_code(self):
+        words = {"ok-tag": "", "sub-Россия": "", "$(id>/tmp/p)": "", "`id`": "", "a b": "", "x": "d\tescr\x1b[31m"}
+        with mock.patch.object(ctl, "_complete_tree", lambda *w: words):
+            _, out, _ = run(ctl.cmd_complete, "proxy")
+        self.assertEqual(out.splitlines(), ["ok-tag", "sub-Россия", "x\td escr[31m"])
+
+    def test_a_list_swapped_for_a_link_is_not_copied(self):
+        with tempfile.TemporaryDirectory() as d:
+            secret = os.path.join(d, "secret")
+            with open(secret, "w") as f:
+                f.write("root:hash\n")
+            os.chmod(secret, 0o600)
+            listed = os.path.join(d, "zapret-hosts-auto.txt")
+            os.symlink(secret, listed)
+            status, _, _ = run(ctl._replace_lines, listed, lambda line: True)
+            self.assertNotEqual(status, 0)
+            self.assertTrue(os.path.islink(listed))
+            os.unlink(listed)
+            os.mkfifo(listed)
+            with self.assertRaises(OSError):
+                ctl.read_shared_text(listed)
+
+
+class SliceCleanupTest(unittest.TestCase):
+    def test_a_run_still_starting_keeps_the_marking(self):
+        with tempfile.TemporaryDirectory() as runtime, mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}), \
+                mock.patch.object(ctl, "_has_units", return_value=False), \
+                mock.patch.object(ctl, "systemctl", return_value=(0, "")) as systemctl:
+            ending = ctl._slice_lock("proxy-suite-app-tun")
+            starting = ctl._slice_lock("proxy-suite-app-tun")
+            self.assertIsNotNone(ending)
+            # The other run has its units up but no scope yet: nothing is stopped under it.
+            ctl._cleanup_slice_if_idle("proxy-suite-app-tun", "a.service", "u.service", ending)
+            systemctl.assert_not_called()
+            # The last one out stops them.
+            ctl._cleanup_slice_if_idle("proxy-suite-app-tun", "a.service", "u.service", starting)
+            self.assertEqual([c.args for c in systemctl.call_args_list], [("stop", "u.service"), ("--user", "stop", "a.service")])
 
 
 class EnvTest(unittest.TestCase):
@@ -120,13 +148,18 @@ class ClashApiTest(EnvTest):
 
 class ClashBrokerTest(EnvTest):
     def test_what_each_scope_may_ask(self):
-        allows = ctl._broker_allows
+        os.environ["OUTBOUND_INVENTORY_FILE"] = self.write("outbounds.json", {"url": "https://t.test/204"})
+        allows = lambda method, target, scopes: ctl._broker_allows(method, target.split("?")[0], scopes, target.partition("?")[2])  # noqa: E731
         member, routing, secrets = set(), {"routing"}, {"secrets"}
         for method, path, scopes, expected in (
             ("GET", "/proxies", member, True),
             ("GET", "/proxies/proxy", member, True),
-            ("GET", "/proxies/DE%20one/delay", member, True),
-            ("GET", "/group/g/delay", member, True),
+            ("GET", "/proxies/DE%20one/delay?url=https%3A%2F%2Ft.test%2F204&timeout=8000", member, True),
+            ("GET", "/group/g/delay?timeout=1&url=https://t.test/204", member, True),
+            # Only the configured test URL: any other is the backend fetching what the caller names.
+            ("GET", "/proxies/proxy/delay?url=http://192.168.1.1/admin", member, False),
+            ("GET", "/group/g/delay?url=https://t.test/204&url=http://10.0.0.1/", member, False),
+            ("GET", "/proxies/proxy/delay", member, False),
             ("PUT", "/proxies/proxy-suite-test", member, True),
             ("PUT", "/proxies/proxy", member, False),
             ("PUT", "/proxies/proxy", routing, True),
@@ -145,6 +178,10 @@ class ClashBrokerTest(EnvTest):
         ):
             with self.subTest(method=method, path=path, scopes=scopes):
                 self.assertEqual(allows(method, path, scopes), expected)
+        # outbound-test.json's URL, which `proxy outbounds test` asks with, as much as the inventory's.
+        self.write("outbound-test.json", {"url": "https://other.test/"})
+        self.assertTrue(allows("GET", "/proxies/p/delay?url=https://other.test/", member))
+        self.assertTrue(allows("GET", "/proxies/p/delay?url=https://t.test/204", member))
 
     def test_root_reads_the_secret_everyone_else_asks_the_broker(self):
         os.environ["CLASH_BROKER"] = self.write("api.sock", "")
@@ -188,7 +225,7 @@ class ClashBrokerTest(EnvTest):
         sock = self.path("api.sock")
         os.environ.update(
             CLASH_API=f"http://127.0.0.1:{api.server_address[1]}",
-            OUTBOUND_INVENTORY_FILE=self.path("outbounds.json"),
+            OUTBOUND_INVENTORY_FILE=self.write("outbounds.json", {"url": "x"}),
             USER_CONTROL_GROUPS=json.dumps({group: ["routing"]}),
         )
         self.patch("CLASH_BROKER_TIMEOUT", 1)
@@ -203,6 +240,7 @@ class ClashBrokerTest(EnvTest):
         self.assertEqual(ask("PUT", "/proxies/proxy", {"name": "de"})[0], 200)
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(ask("GET", "/connections")[0], 403)
+            self.assertEqual(ask("GET", "/proxies/proxy/delay?url=http://127.0.0.1:22/")[0], 403)
         # The secret reaches the API, never the caller; the refused request never left.
         self.assertEqual([s[2] for s in seen], ["Bearer s3cret", "Bearer s3cret"])
         self.assertNotIn("/connections", [s[1] for s in seen])
@@ -298,7 +336,7 @@ class ClashBrokerTest(EnvTest):
         self.write("clash-secret", "s3cret\n")
         os.environ.update(
             CLASH_API=f"http://127.0.0.1:{api.server_address[1]}",
-            OUTBOUND_INVENTORY_FILE=self.path("outbounds.json"),
+            OUTBOUND_INVENTORY_FILE=self.write("outbounds.json", {"url": "x"}),
             USER_CONTROL_GROUPS=json.dumps({group: ["outbounds"]}),
         )
         sock = self.path("api.sock")
@@ -321,6 +359,11 @@ class WarpDevicesTest(EnvTest):
         status, out, _ = run(ctl.cmd_warp)
         self.assertEqual(status, 0)
         self.assertEqual(out.split(), ["warp-1", "active", "warp-2", "active"])
+        # Status exits as `systemctl is-active` would: 3 once none is active.
+        self.patch("systemctl", lambda *a, **kw: (3, "inactive\n"))
+        self.assertEqual(run(ctl.cmd_warp)[0], 3)
+        self.assertEqual(run(ctl.cmd_warp, "status", "warp-1")[0], 3)
+        self.patch("systemctl", lambda *a, **kw: calls.append(a) or (0, "active\n"))
         calls.clear()
         run(ctl.cmd_warp, "restart", "warp-2")
         self.assertEqual(calls, [("restart", "proxy-suite-awg-warp-2")])
@@ -383,6 +426,18 @@ class GroupWatchTest(EnvTest):
         self.assertEqual(self.step(1, hinted=["warp-1"]), [("warp", "warp-2")])
         # A hint about a member that still works changes nothing.
         self.assertEqual(self.step(1, hinted=["warp-2"]), [])
+
+    def test_hints_outside_the_groups_are_ignored(self):
+        # A name no watched group holds is neither tested nor kept.
+        self.step(0)
+        self.calls.clear()
+        self.step(1, hinted=["../etc", "nobody"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(set(self.watch.health), {"warp-1", "warp-2"})
+        # A member's is tested each time it comes.
+        self.step(1, hinted=["warp-1"])
+        self.step(1, hinted=["warp-1"])
+        self.assertEqual(sum(p.startswith("/proxies/warp-1/delay") for _, p in self.calls), 2)
 
     def test_without_failback_it_stays(self):
         self.inventory["groups"]["warp"]["failback"] = False
@@ -491,10 +546,14 @@ class ProbeVerdictTest(unittest.TestCase):
 
 class ProbeFetchTest(EnvTest):
     def test_listener_login_goes_through_a_file(self):
-        """With listener.auth the probe listeners want the login; never on curl's argv."""
+        """The probe listeners take the login drawn per start, the local proxy its own
+        (listener.auth); never on curl's argv."""
         os.environ["PROXYCHAINS_CONFIG"] = self.write(
             "proxychains.conf", 'strict_chain\n\n[ProxyList]\nsocks5 127.0.0.1 1080 user pa"ss\\w\n'
         )
+        os.environ["OUTBOUND_INVENTORY_FILE"] = self.write("outbounds.json", "{}")
+        self.write("probe-login", "probe:0123abcd\n")
+        os.environ["LOCAL_PROXY_URL"] = "http://127.0.0.1:1080"
         seen = []
 
         def curl(argv):
@@ -505,6 +564,10 @@ class ProbeFetchTest(EnvTest):
         self.patch("run_curl", curl)
         ctl._probe_fetch("site.test", "/", "--proxy", "http://127.0.0.1:18600")
         argv, curlrc = seen[0]
+        self.assertEqual(curlrc, 'proxy-user = "probe:0123abcd"\n')
+        self.assertFalse(any("0123abcd" in a for a in argv))
+        ctl._probe_fetch("site.test", "/", "--proxy", "http://127.0.0.1:1080")
+        argv, curlrc = seen[-1]
         self.assertEqual(curlrc, 'proxy-user = "user:pa\\"ss\\\\w"\n')
         self.assertFalse(any("pa" in a and "ss" in a for a in argv))
         # Direct fetches, and a config without a login, carry none.
@@ -535,6 +598,12 @@ class ProbeFetchTest(EnvTest):
         calls.clear()
         ctl._probe_fetch("loop.test", "/", "--noproxy", "*")
         self.assertLessEqual(len(calls), 6)
+        # A Location at this host or the LAN, by literal, is never fetched.
+        for target in ("http://127.1/", "http://localhost/", "http://[::ffff:10.0.0.1]/", "http://u@192.168.1.1:80/", "http://0.0.0.0/"):
+            with self.subTest(target=target):
+                self.assertTrue(ctl._probe_local_target(target))
+        self.assertFalse(ctl._probe_local_target("https://www.spotify.test/"))
+        self.assertFalse(ctl._probe_local_target("https://203.0.113.0.example/"))
 
     def test_block_pages(self):
         waf_head = "HTTP/2 403\r\nserver: CloudFront\r\nx-cache: Error from cloudfront\r\n\r\n"
@@ -702,6 +771,16 @@ class ServiceManagerTest(EnvTest):
         self.assertEqual(seen, [["systemctl", "--user", "start", "anchor.service"], ["systemctl", "start", "proxy-suite-socks"]])
         self.assertEqual(ctl.journal_hint("proxy-suite-autoproxy-learn", 20), "journalctl -u proxy-suite-autoproxy-learn -n 20")
 
+    def test_unit_escape(self):
+        # As systemd-escape prints them.
+        self.assertEqual(ctl.unit_escape("ssh-proxy"), "ssh\\x2dproxy")
+        self.assertEqual(ctl.unit_escape("de_1:x.y"), "de_1:x.y")
+        self.assertEqual(ctl.unit_escape(".a/b c\\"), "\\x2ea-b\\x20c\\x5c")
+        self.assertEqual(ctl.unit_escape("é"), "\\xc3\\xa9")
+        seen = self.calls()
+        ctl._start_pin_unit("my-vps")
+        self.assertEqual(seen, [["systemctl", "start", "proxy-suite-outbound-pin@my\\x2dvps.service"]])
+
     def test_logs(self):
         ran = []
 
@@ -749,6 +828,25 @@ class ServiceManagerTest(EnvTest):
         self.patch("_active_awg_profiles", lambda: [])
         ctl.cmd_awg("off")
         self.assertEqual(stops(), [ctl.KILL_SWITCH])
+        seen.clear()
+        ctl.COMMANDS["killswitch"]("off")
+        self.assertEqual(stops(), [ctl.KILL_SWITCH])
+        # Another global tunnel still up keeps it: turning off one that is not running lifts nothing.
+        self.patch("_awg_profiles", lambda: ["home"])
+        running = {ctl._awg_service("home"): "active"}
+        self.patch("_unit_states", lambda units: {u: running.get(u, "inactive") for u in units})
+        for off in (lambda: ctl.cmd_proxy("tun", "off"), lambda: ctl.cmd_proxy("tproxy", "off"), lambda: ctl.cmd_proxy("off")):
+            seen.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                off()
+            self.assertNotIn(ctl.KILL_SWITCH, stops())
+            self.assertIn("stays up for proxy-suite-awg-home", err.getvalue())
+        running = {"proxy-suite-tproxy": "activating"}
+        seen.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
+            ctl.cmd_awg("off", "home")
+        self.assertEqual(stops(), [ctl._awg_service("home")])
+        # Still, killswitch off always lifts it.
         seen.clear()
         ctl.COMMANDS["killswitch"]("off")
         self.assertEqual(stops(), [ctl.KILL_SWITCH])
@@ -881,10 +979,11 @@ class ServiceManagerTest(EnvTest):
         self.assertEqual(ctl.journal_hint("proxy-suite-socks", 5), "/bin/proxy-suitectl journal -u proxy-suite-socks -n 5")
 
     def test_paths_follow_host_dirs(self):
-        for name in ("SUB_CACHE_DIR", "AUTOPROXY_STATE_DIR", "INBOUNDS_STATS_FILE", "OUTBOUND_INVENTORY_FILE"):
+        for name in ("SUB_CACHE_DIR", "AUTOPROXY_STATE_DIR", "AUTOPROXY_SPOOL_DIR", "INBOUNDS_STATS_FILE", "OUTBOUND_INVENTORY_FILE"):
             os.environ.pop(name, None)
         os.environ.update(STATE_DIR="/home/u/.local/state/proxy-suite", RUNTIME_DIR="/tmp/ps")
         self.assertEqual(ctl._autoproxy_dir(), "/home/u/.local/state/proxy-suite/autoproxy")
+        self.assertEqual(ctl._autoproxy_spool(), "/home/u/.local/state/proxy-suite/autoproxy-requests")
         self.assertEqual(os.path.dirname(ctl._subscription_cache("x")), "/home/u/.local/state/proxy-suite/subscriptions")
 
     def test_rootless_hosts_never_ask_for_root(self):
@@ -902,7 +1001,8 @@ class ServiceManagerTest(EnvTest):
 class AutoProxyTest(EnvTest):
     def setUp(self):
         super().setUp()
-        os.environ.update(AUTOPROXY_ENABLED="1", AUTOPROXY_STATE_DIR=self.dir)
+        os.environ.update(AUTOPROXY_ENABLED="1", AUTOPROXY_STATE_DIR=self.dir, AUTOPROXY_SPOOL_DIR=self.path("spool"))
+        os.makedirs(self.path("spool"))
 
     def state_on_start(self, state):
         def systemctl(*args, **kw):
@@ -925,8 +1025,12 @@ class AutoProxyTest(EnvTest):
         self.assertNotEqual(run(ctl.cmd_proxy_learn, "x;rm -rf /")[0], 0)
         self.assertNotEqual(run(ctl.cmd_proxy_learn, "-evil.test/path")[0], 0)
         out = ok(ctl.cmd_proxy_learn, "www.last.fm")
-        self.assertEqual(ctl.read_text(self.path("requests")), "www.last.fm\n")
+        self.assertEqual(ctl._autoproxy_queued("requests"), "www.last.fm\n")
         self.assertIn("last.fm: destination - routed via primary", out)
+        # A file of its own in the spool, never in root's state dir.
+        (queued,) = os.listdir(self.path("spool"))
+        self.assertRegex(queued, r"^requests\.[0-9]+\.[0-9]+$")
+        self.assertFalse(os.path.exists(self.path("requests")))
 
     def test_learn_nothing_to_route(self):
         # A verdict that routes nothing is kept for its host and reported.
@@ -939,11 +1043,16 @@ class AutoProxyTest(EnvTest):
         status, _, err = run(ctl.cmd_proxy_learn, "www.last.fm")
         self.assertNotEqual(status, 0)
         self.assertIn("still queued", err)
-        self.assertIn("www.last.fm\n", ctl.read_text(self.path("requests")))
+        self.assertIn("www.last.fm\n", ctl._autoproxy_queued("requests"))
 
     def test_queue_and_learned(self):
         self.patch("systemctl", lambda *args, **kw: (0, ""))
-        self.write("requests", "www.last.fm\n")
+        self.write("spool/requests.2.1", "www.last.fm\n")
+        # What a member left besides: not followed, not waited on, not shown.
+        self.write("secret", "root.only\n")
+        os.symlink(self.path("secret"), self.path("spool/requests.3.1"))
+        os.mkfifo(self.path("spool/requests.4.1"))
+        self.write("spool/.requests.5.1.tmp", "half.written\n")
         self.write(
             "state.json",
             {
@@ -957,6 +1066,8 @@ class AutoProxyTest(EnvTest):
         )
         q = ok(ctl.cmd_proxy_queue)
         self.assertIn("\n  www.last.fm\n", q)
+        self.assertNotIn("root.only", q)
+        self.assertNotIn("half.written", q)
         # Most-dialled first.
         self.assertLess(q.index("b.example"), q.index("a.example"))
         learned = ok(ctl.cmd_proxy_learned)
@@ -973,7 +1084,7 @@ class AutoProxyTest(EnvTest):
         self.patch("systemctl", lambda *args, **kw: started.append(args) or (0, ""))
         # A host names its domain: the route is the domain's.
         out = ok(ctl.cmd_proxy_forget, "www.last.fm")
-        self.assertEqual(ctl.read_text(self.path("edits")), "forget last.fm\n")
+        self.assertEqual(ctl._autoproxy_queued("edits"), "forget last.fm\n")
         self.assertEqual(started, [("start", "proxy-suite-autoproxy-learn.service")])
         self.assertIn("Forgot last.fm (was via primary)", out)
         self.assertNotEqual(run(ctl.cmd_proxy_forget, "x;rm -rf /")[0], 0)
@@ -987,8 +1098,8 @@ class AutoProxyTest(EnvTest):
         self.state_on_start(before)  # the same exit wins again
         out = ok(ctl.cmd_proxy_relearn, "last.fm")
         # Forgotten first, then probed again from the host it was learned from.
-        self.assertEqual(ctl.read_text(self.path("edits")), "forget last.fm\n")
-        self.assertEqual(ctl.read_text(self.path("requests")), "www.last.fm\n")
+        self.assertEqual(ctl._autoproxy_queued("edits"), "forget last.fm\n")
+        self.assertEqual(ctl._autoproxy_queued("requests"), "www.last.fm\n")
         self.assertIn("probing www.last.fm", out)
         self.assertIn("proxy-ctl proxy outbounds disable primary", out)
 
@@ -997,7 +1108,20 @@ class AutoProxyTest(EnvTest):
         status, _, err = run(ctl.cmd_proxy_clear)
         self.assertNotEqual(status, 0)
         self.assertIn("still queued", err)
-        self.assertEqual(ctl.read_text(self.path("edits")), "clear\n")
+        self.assertEqual(ctl._autoproxy_queued("edits"), "clear\n")
+        # Again: queued after the first, not in its place.
+        run(ctl.cmd_proxy_clear)
+        self.assertEqual(ctl._autoproxy_queued("edits"), "clear\nclear\n")
+
+    @unittest.skipIf(os.geteuid() == 0, "root writes anything")
+    def test_unwritable_spool_asks_for_sudo(self):
+        os.chmod(self.path("spool"), 0o500)
+        try:
+            status, _, err = run(ctl.cmd_proxy_learn, "www.last.fm")
+        finally:
+            os.chmod(self.path("spool"), 0o755)
+        self.assertNotEqual(status, 0)
+        self.assertIn(f"Cannot write to {self.path('spool')}", err)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads anything")
     def test_unreadable_state_asks_for_sudo(self):
@@ -1056,6 +1180,7 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         self.assertEqual(tag("outbound", "vless://u@www.example.org:443"), "vless-example-2")
         self.assertEqual(tag("outbound", '{"type": "socks", "server": "127.0.0.1"}'), "socks")
         self.assertEqual(tag("outbound", '{"tag": "proxy", "type": "socks"}'), "proxy-2")  # reserved
+        self.assertEqual(tag("outbound", "vless://u@t.test:443#tor"), "tor-2")
         self.assertEqual(tag("outbound", "vmess://" + __import__("base64").b64encode(b'{"ps": "JP 2", "add": "jp.test"}').decode()), "JP-2")
         self.assertEqual(tag("outbound", "{not json"), "outbound")
         self.assertEqual(tag("subscription", "https://sub.provider.com/api/v1/client?token=x"), "provider-2")
@@ -1076,10 +1201,67 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         self.assertNotEqual(status, 0)
         self.assertIn("The tag goes first", err)
         self.assertNotEqual(run(ctl.cmd_subscription, "add", "lonely")[0], 0)
+        # Plain http: anyone on the path could rewrite what root fetches. Refused, piped or not.
+        for args, stdin in ((("plain", "http://sub.plain.test/s"), ""), (("plain", "-"), " HTTP://sub.plain.test/s\n"), (("ftp://sub.plain.test/s",), "")):
+            with self.subTest(args=args), mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+                status, _, err = run(ctl.cmd_subscription, "add", *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn("must be an https:// URL", err)
+        self.assertIn("runtimeSubscriptions.allowHttp", run(ctl.cmd_subscription, "add", "plain", "http://sub.plain.test/s")[2])
+        self.assertFalse([n for n in os.listdir(self.path("subscriptions.d")) if not n.startswith(("work", "home", "."))])
+        # Unless the admin allows it; other schemes stay refused.
+        with mock.patch.dict(os.environ, {"RUNTIME_SUBS_ALLOW_HTTP": "1"}):
+            ok(ctl.cmd_subscription, "add", "plain", "http://sub.plain.test/s")
+            self.assertNotEqual(run(ctl.cmd_subscription, "add", "ftp", "ftp://sub.plain.test/s")[0], 0)
+        os.unlink(self.path("subscriptions.d/plain.url"))
+        # An HTTP proxy is still an outbound.
+        ok(ctl.cmd_outbounds, "add", "httpproxy", "http://proxy.test:3128")
+        # Names the start script skips: priority.json's, the Tor outbound's and its own selectors'.
+        for reserved in ("priority", "tor", "proxy-suite-test"):
+            with self.subTest(tag=reserved):
+                status, _, err = run(ctl.cmd_outbounds, "add", reserved, "vless://u@r.test:443")
+                self.assertNotEqual(status, 0)
+                self.assertIn("is reserved", err)
+                self.assertFalse(os.path.exists(self.path(f"outbounds.d/{reserved}.url")))
         # Outbound JSON alone, and a JSON-looking word for a subscription is not a source.
         self.assertIn("Tag: socks", ok(ctl.cmd_outbounds, "add", '{"type": "socks", "server": "127.0.0.1", "server_port": 1080}'))
         self.assertTrue(os.path.exists(self.path("outbounds.d/socks.json")))
-        self.assertNotEqual(run(ctl.cmd_subscription, "add", "-")[0], 0)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads any cache")
+    def test_a_root_only_cache_is_counted_from_the_inventory(self):
+        """Without "secrets" the cache is out of reach: add and list go by the outbounds the proxy took from it."""
+        os.makedirs(self.path("subscriptions"))
+        os.chmod(self.path("subscriptions"), 0)
+        self.addCleanup(os.chmod, self.path("subscriptions"), 0o755)
+
+        def started():
+            tags = self.declared + ctl._runtime_tags("outbound")
+            sources = {f"{t}-{n}": f"sub:{t}" for t in ctl._runtime_tags("subscription") for n in (1, 2)}
+            self.write("outbounds.json", {"tags": tags + list(sources), "sources": sources})
+
+        self.backend_start = started
+        self.assertIn("Added subscription: work (2 proxies)", ok(ctl.cmd_subscription, "add", "work", "https://sub.work.test/s"))
+        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  work +unknown +2 +runtime$")
+        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  provider +\(no cache\) +- +static$")
+
+    def test_add_from_stdin(self):
+        # "-": the link on stdin, so its credentials stay out of argv (ps, pkexec's log).
+        with mock.patch.object(sys, "stdin", io.StringIO("https://sub.piped.test/s?token=t\n")):
+            self.assertIn("Tag: piped", ok(ctl.cmd_subscription, "add", "-"))
+        self.assertEqual(ctl.read_text(self.path("subscriptions.d/piped.url")), "https://sub.piped.test/s?token=t\n")
+        with mock.patch.object(sys, "stdin", io.StringIO("https://sub.x.test/s")):
+            ok(ctl.cmd_subscription, "add", "mine", "-")
+        self.assertTrue(os.path.exists(self.path("subscriptions.d/mine.url")))
+        with mock.patch.object(sys, "stdin", io.StringIO("vless://u@de.test:443#DE")):
+            ok(ctl.cmd_outbounds, "add", "-", "--detour", "primary")
+        self.assertEqual(ctl.read_text(self.path("outbounds.d/DE.url")), "vless://u@de.test:443#DE\n")
+        # Nothing piped in: nothing written.
+        for fn in (ctl.cmd_subscription, ctl.cmd_outbounds):
+            with self.subTest(fn=fn.__name__), mock.patch.object(sys, "stdin", io.StringIO("")):
+                status, _, err = run(fn, "add", "empty", "-")
+                self.assertNotEqual(status, 0)
+                self.assertIn("Nothing on stdin", err)
+        self.assertFalse([n for n in os.listdir(self.path("subscriptions.d")) + os.listdir(self.path("outbounds.d")) if n.startswith("empty")])
 
     def test_json_naming_local_files_is_refused(self):
         """The backend holds CAP_NET_ADMIN: a tor outbound runs a program, *_path and *File are read."""
@@ -1087,6 +1269,8 @@ class RuntimeEntryTest(RuntimeSpoolTest):
             ("t", {"type": "tor", "executable_path": "/tmp/x"}),
             ("s", {"type": "ssh", "server": "h", "private_key_path": "/root/.ssh/id_ed25519"}),
             ("x", {"protocol": "vless", "streamSettings": {"tlsSettings": {"masterKeyLog": "/etc/x"}}}),
+            # XRay's JSON decoding folds U+017F to s: this is masterKeyLog to it.
+            ("u", {"protocol": "vless", "streamSettings": {"tlsSettings": {"ma\u017fterKeyLog": "/etc/x"}}}),
         ):
             status, _, err = run(ctl.cmd_outbounds, "add", tag, json.dumps(ob))
             self.assertNotEqual(status, 0)
@@ -1110,6 +1294,8 @@ class RuntimeEntryTest(RuntimeSpoolTest):
             self.assertFalse(os.path.islink(self.path(f"outbounds.d/{name}")), name)
             self.assertFalse(os.path.exists(self.path(f"created-{name}")), name)
         self.assertEqual(ctl.read_text(self.path("outbounds.d/new.detour")), "primary\n")
+        # The link holds credentials: no other member reads it without the "secrets" scope.
+        self.assertEqual(stat.S_IMODE(os.stat(self.path("outbounds.d/new.url")).st_mode), 0o600)
 
     def test_disable_enable(self):
         self.pinned = "primary"
@@ -1193,7 +1379,62 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
         ok(ctl.cmd_outbounds, "disable", "de")
         ok(ctl.cmd_outbounds, "rm", "de")
-        self.assertEqual(os.listdir(self.path("outbounds.d")), [])
+        self.assertEqual(os.listdir(self.path("outbounds.d")), [".entries.lock"])
+
+    def test_priority_and_group_edits_are_locked(self):
+        """Read to write under .<name>.lock: the GUI and a terminal at once would drop one's change."""
+        ok(ctl.cmd_groups, "add", "pool", "primary")
+        for name, fn, args in [
+            ("priority.json", ctl.cmd_priority, ("primary", "5")),
+            ("pool.group", ctl.cmd_groups, ("strategy", "pool", "urltest")),
+            ("pool.group", ctl.cmd_groups, ("members", "pool", "add", "vless-example")),
+        ]:
+            with self.subTest(args=args), open(self.path(f"outbounds.d/.{name}.lock"), "a") as held:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                with mock.patch.object(ctl, "LOCK_WAIT", 0.2):
+                    status, _, err = run(fn, *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn("Something else is still changing", err)
+        self.assertFalse(os.path.exists(self.path("outbounds.d/priority.json")))
+        self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/pool.group")))["outbounds"], ["primary"])
+        # Released, they go through.
+        ok(ctl.cmd_groups, "members", "pool", "add", "vless-example")
+        self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/pool.group")))["outbounds"], ["primary", "vless-example"])
+        # rm takes its lock file along; one waiting on the old one locks the new one instead.
+        lock = self.path("outbounds.d/.pool.group.lock")
+        ok(ctl.cmd_groups, "rm", "pool")
+        self.assertFalse(os.path.exists(lock))
+        opened = []
+        real_open = os.open
+
+        def open_once(path, *a, **kw):
+            # The first open finds the old, removed lock (as one already waiting holds it).
+            if path == lock and not opened:
+                opened.append(path)
+                stale = real_open(lock, os.O_RDONLY | os.O_CREAT, 0o600)
+                os.unlink(lock)
+                return stale
+            return real_open(path, *a, **kw)
+
+        with mock.patch.object(ctl.os, "open", open_once), ctl._file_lock(self.path("outbounds.d/pool.group")) as held:
+            self.assertTrue(held)
+            self.assertTrue(os.path.exists(lock))
+
+    def test_rm_and_group_edits_stay_in_the_spool(self):
+        # Root runs these: a tag with ../ in it must not reach files outside the spool.
+        for name in ("victim.url", "victim.group"):
+            self.write(name, "{}")
+        for fn, args in [
+            (ctl.cmd_outbounds, ("rm", "../victim")),
+            (ctl.cmd_groups, ("rm", "../victim")),
+            (ctl.cmd_groups, ("strategy", "../victim", "failover")),
+            (ctl.cmd_groups, ("members", "../victim", "rm", "a")),
+        ]:
+            with self.subTest(args=args):
+                status, _, err = run(fn, *args)
+                self.assertNotEqual(status, 0)
+                self.assertIn("Invalid", err)
+        self.assertTrue(os.path.exists(self.path("victim.url")) and os.path.exists(self.path("victim.group")))
 
 
 AWG_CONF = """[Interface]
@@ -1417,6 +1658,54 @@ class ZapretAutoTest(EnvTest):
         self.assertNotIn("chat.example", ctl.read_text(verdicts))
         self.assertIn("discord.com", ctl.read_text(verdicts))
 
+    def test_rewrite_keeps_what_nfqws2_appended_meanwhile(self):
+        """nfqws2 appends verdicts without our lock: a line it added after the read survives the rename."""
+        path = self.write("verdicts.tsv", "works\ta.example\ttcp\nunfixable\tb.example\ttcp\n")
+        mkstemp = tempfile.mkstemp
+
+        def appended_meanwhile(*args, **kwargs):
+            with open(path, "a") as f:
+                f.write("works\tc.example\ttcp\n")
+            return mkstemp(*args, **kwargs)
+
+        with mock.patch.object(ctl.tempfile, "mkstemp", appended_meanwhile):
+            ctl._replace_lines(path, lambda line: "b.example" not in line)
+        self.assertEqual(ctl.read_text(path), "works\ta.example\ttcp\nworks\tc.example\ttcp\n")
+
+    def test_rewrites_take_the_lock(self):
+        """Another proxy-ctl mid-edit holds .<name>.lock: this one waits for it, then gives up."""
+        path = self.write("zapret-hosts-auto.txt", "a.example\n")
+        with open(self.path(".zapret-hosts-auto.txt.lock"), "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            with mock.patch.object(ctl, "LOCK_WAIT", 0.2):
+                status, _, err = run(ctl._replace_lines, path, lambda _: False)
+        self.assertNotEqual(status, 0)
+        self.assertIn("Something else is still changing", err)
+        self.assertEqual(ctl.read_text(path), "a.example\n")
+        # A lock planted as a symlink is not followed: the edit goes ahead without it.
+        os.unlink(self.path(".zapret-hosts-auto.txt.lock"))
+        victim = self.write("victim", "")
+        os.symlink(victim, self.path(".zapret-hosts-auto.txt.lock"))
+        ctl._replace_lines(path, lambda _: False)
+        self.assertEqual(ctl.read_text(path), "")
+        self.assertTrue(os.path.islink(self.path(".zapret-hosts-auto.txt.lock")))
+
+    def test_strategy_drop_takes_z2ks_lock(self):
+        """z2k writes state.tsv whole under state.tsv.lock: a fresh one is waited for, a stale one taken."""
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        state = self.write("circular/state.tsv", "rkn_tcp\ta.example\t3\t1\tauto\t\nrkn_tcp\tb.example\t2\t1\tauto\t\n")
+        lock = self.write("circular/state.tsv.lock", str(int(time.time())))
+        with mock.patch.object(ctl, "LOCK_WAIT", 0.2):
+            status, _, err = run(ctl._zapret_strategy_drop, "a.example")
+        self.assertNotEqual(status, 0)
+        self.assertIn("zapret2 is still writing", err)
+        self.assertIn("a.example", ctl.read_text(state))
+        self.assertTrue(os.path.exists(lock))  # z2k's, not ours to remove
+        self.write("circular/state.tsv.lock", str(int(time.time()) - 60))
+        ctl._zapret_strategy_drop("a.example")
+        self.assertEqual(ctl.read_text(state), "rkn_tcp\tb.example\t2\t1\tauto\t\n")
+        self.assertFalse(os.path.exists(lock))
+
 
 class InboundsTest(EnvTest):
     def test_stats(self):
@@ -1453,9 +1742,14 @@ class InboundsTest(EnvTest):
         self.assertNotEqual(status, 0)
         self.assertIn("No traffic recorded yet", err)
 
+    def api(self):
+        """The stats API's socket, as root (or the daemon's own user) reaches it."""
+        os.environ["INBOUNDS_API"] = "unix://" + self.write("stats.sock", "")
+
     def test_online(self):
         answer = {"users": [{"email": "fufsob", "ips": [{"ip": "203.0.113.7", "lastSeen": 1789471207}]}]}
         self.patch("_run", lambda *a, **kw: (0, json.dumps(answer)))
+        self.api()
         os.environ["INBOUNDS_STATS_FILE"] = self.write("stats.json", {"seen": {"phone": 1789135690}})
         os.environ["INBOUNDS_LINKS_FILE"] = self.write("links.json", [{"tag": "a", "user": "fufsob"}, {"tag": "a", "user": "teri"}])
         out = ok(ctl._inbound_online)
@@ -1466,9 +1760,49 @@ class InboundsTest(EnvTest):
         self.patch("_run", lambda *a, **kw: (1, ""))
         self.assertNotEqual(run(ctl._inbound_online)[0], 0)
 
+    @unittest.skipIf(os.geteuid() == 0, "root reaches any socket")
+    def test_online_without_the_api(self):
+        """A stats member cannot reach the API (it may reset the counters): who was online
+        comes from the collector's file, read again first."""
+        self.patch("_run", lambda *a, **kw: self.fail("asked the API"))
+        started = []
+        self.patch("systemctl", lambda *a, **kw: started.append(a))
+        now = 1789471300
+        self.patch("time", mock.Mock(time=lambda: now))
+        os.environ["INBOUNDS_API"] = "unix://" + self.write("stats.sock", "")
+        os.chmod(self.path("stats.sock"), 0o400)
+        online = [{"email": "fufsob", "ips": [{"ip": "203.0.113.7", "lastSeen": now - 5}]}]
+        os.environ["INBOUNDS_STATS_FILE"] = self.write("stats.json", {"at": now - 10, "online": online, "seen": {"phone": now - 9000}})
+        os.environ["INBOUNDS_LINKS_FILE"] = self.write("links.json", [{"tag": "a", "user": "fufsob"}, {"tag": "a", "user": "teri"}])
+        status, out, err = run(ctl._inbound_online)
+        self.assertEqual(status, 0)
+        self.assertEqual(started, [("--no-ask-password", "start", "proxy-suite-inbound-stats.service")])
+        self.assertRegex(out, r"(?m)^  fufsob +online +203\.0\.113\.7$")
+        self.assertRegex(out, r"(?m)^  phone +seen ")
+        self.assertRegex(out, r"(?m)^  teri +never seen")
+        self.assertNotIn("as of", err)
+        # A reading a few minutes old says so; one the collector could not refresh is no answer.
+        self.write("stats.json", {"at": now - 300, "online": online})
+        status, out, err = run(ctl._inbound_online)
+        self.assertEqual(status, 0)
+        self.assertIn("collector's last reading", err)
+        for stats in ({"at": now - 3600, "online": online}, {"at": now, "seen": {}}):
+            with self.subTest(stats=stats):
+                self.write("stats.json", stats)
+                status, _, err = run(ctl._inbound_online)
+                self.assertNotEqual(status, 0)
+                self.assertIn("not answering", err)
+        # No socket at all: the inbounds are down, whatever the collector last read.
+        self.write("stats.json", {"at": now - 10, "online": online})
+        os.unlink(self.path("stats.sock"))
+        status, _, err = run(ctl._inbound_online)
+        self.assertNotEqual(status, 0)
+        self.assertIn("is proxy-suite-inbounds running", err)
+
     def test_online_amneziawg(self):
         answer = {"users": [{"email": "fufsob", "ips": [{"ip": "203.0.113.7", "lastSeen": 1789471207}]}]}
         self.patch("_run", lambda *a, **kw: (0, json.dumps(answer)))
+        self.api()
         started = []
         self.patch("systemctl", lambda *a, **kw: started.append(a))
         now = 1789471300
@@ -1566,15 +1900,18 @@ class AppsRunTest(EnvTest):
             self.assertIn(f"--slice={base}", scope)
             self.assertEqual(scope[-2:], ("curl", "x"))
             self.assertIn(("start", f"{base}-user@{os.getuid()}.service"), self.calls)
-            # Nothing else runs in the slice, so it is torn down afterwards.
-            self.assertIn(("stop", f"{base}.service"), self.calls)
+            # Nothing else runs in the slice, so this user's marking goes afterwards.
+            self.assertIn(("stop", f"{base}-user@{os.getuid()}.service"), self.calls)
             self.assertIn(("--user", "stop", f"{base}-anchor.service"), self.calls)
+            # The backend every user shares: brought up by the marking unit (Requires=), and
+            # gone after the last one by itself (StopWhenUnneeded=), never stopped here.
+            self.assertFalse([c for c in self.calls if c[0] in ("start", "stop") and c[-1] == f"{base}.service"])
 
     def test_cleanup_when_scope_fails(self):
         self.scope_status = 3
         status, _, _ = run(ctl.cmd_apps, "run", "tun", "--", "false")
         self.assertEqual(status, 3)
-        self.assertIn(("stop", "proxy-suite-per-app-tun.service"), self.calls)
+        self.assertIn(("stop", f"proxy-suite-per-app-tun-user@{os.getuid()}.service"), self.calls)
 
     def test_global_proxy_runs_plain(self):
         # A wrapPerApp launcher must still start the app; the global mode carries it.
@@ -1599,11 +1936,12 @@ class AppsRunTest(EnvTest):
             self.assertIn(f"--slice={base}", scope)
             self.assertEqual(scope[-2:], ("curl", "x"))
             self.assertIn(("--user", "start", f"proxy-suite-per-app-via-anchor@{key}.service"), self.calls)
-            self.assertIn(("start", f"proxy-suite-per-app-via@{key}.service"), self.calls)
-            self.assertIn(("start", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
-            self.assertIn(("stop", f"proxy-suite-per-app-via@{key}.service"), self.calls)
-            listed = next(c for c in self.calls if c[0] == "list-units" and c[-1].startswith("proxy-suite-per-app-via-user@"))
-            self.assertEqual(listed[-1], f"proxy-suite-per-app-via-user@*-{key}.service")
+            # The via unit first: the marking goes in its table.
+            starts = [c[1] for c in self.calls if c[0] == "start"]
+            self.assertEqual(starts, [f"proxy-suite-per-app-via@{key}.service", f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
+            # Only this user's marking stops; the last one's takes the via unit down itself.
+            stops = [c[1] for c in self.calls if c[0] == "stop"]
+            self.assertEqual(stops, [f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
 
     def test_via_without_pin_slots(self):
         status, _, err = run(ctl.cmd_apps, "run", "--via", "nl", "--", "curl")
@@ -1634,9 +1972,8 @@ class AppsRunTest(EnvTest):
                 self.assertIn(f"--unit=proxy-suite-per-app-via-{key}-{label}-{os.getpid()}", scope)
                 self.assertIn(("start", f"proxy-suite-per-app-via-{route}@{hexed}.service"), self.calls)
                 self.assertIn(("start", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
-                self.assertIn(("stop", f"proxy-suite-per-app-via-{route}@{hexed}.service"), self.calls)
-                # The per-app TUN backend goes too once nothing uses it; the socks backend stays.
-                self.assertEqual(("stop", "proxy-suite-per-app-tun.service") in self.calls, route == "tun")
+                # The pin, and the per-app TUN backend it holds, go by themselves.
+                self.assertEqual([c[1] for c in self.calls if c[0] == "stop"], [f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
         self.assertIn("Unknown outbound: fr", run(ctl.cmd_apps, "run", "--via", "fr", "--", "curl")[2])
         self.assertIn("--route is tun or tproxy", run(ctl.cmd_apps, "run", "--via", "nl", "--route", "zapret", "--", "curl")[2])
         os.environ["PER_APP_PIN_TUN"] = "0"
@@ -1684,8 +2021,18 @@ class AppsRunTest(EnvTest):
         self.assertFalse(os.path.exists(self.path("apps.d/play.json")))
         self.assertIn("No app profile", run(ctl.cmd_apps, "rm", "play")[2])
 
+    def test_runtime_profiles_read_only_regular_files(self):
+        # apps.d is the group's: a FIFO or a symlink to /dev/zero would hang or fill root's proxy-ctl.
+        os.environ["RUNTIME_APPS_DIR"] = self.path("apps.d")
+        self.write("apps.d/play.json", {"route": "direct"})
+        self.write("apps.d/big.json", json.dumps({"route": "direct", "pad": "x" * ctl.RUNTIME_APP_MAX_BYTES}))
+        os.mkfifo(self.path("apps.d/fifo.json"))
+        os.symlink("/dev/zero", self.path("apps.d/zero.json"))
+        os.symlink(self.path("apps.d/play.json"), self.path("apps.d/link.json"))
+        self.assertEqual([p["name"] for p in ctl._runtime_apps()], ["play"])
+
     def test_via_global_awg_profile(self):
-        # Brought up apart for the app, first, and taken down with the last app through it.
+        # Brought up apart for the app, first; the last user's marking takes it down.
         os.environ.update(PER_APP_VIA_PROFILES="1", AWG_PROFILES_FILE=self.write("awg.json", ["netcup"]))
         key = "app-" + "netcup".encode().hex()
         status, _, _ = run(ctl.cmd_apps, "run", "--via", "netcup", "--", "curl", "x")
@@ -1694,7 +2041,7 @@ class AppsRunTest(EnvTest):
         self.assertEqual(starts[:2], ["proxy-suite-awg-app@netcup.service", f"proxy-suite-per-app-via@{key}.service"])
         scope = next(c for c in self.calls if c[0] == "systemd-run")
         self.assertIn(f"--slice=proxy-suite-per-app-via-{key}", scope)
-        self.assertIn(("stop", "proxy-suite-awg-app@netcup.service"), self.calls)
+        self.assertNotIn(("stop", "proxy-suite-awg-app@netcup.service"), self.calls)
         self.assertIn("netcup", ctl._complete_tree("apps", "run", "--via"))
         # Up globally, it carries the app as it is.
         self.calls.clear()
@@ -1723,11 +2070,13 @@ class AppsRunTest(EnvTest):
         self.assertIn("No global AmneziaWG profile 'fr'", run(ctl.cmd_apps, "run", "--via", "awg:fr", "--", "curl")[2])
         self.assertIn("--via takes an outbound", run(ctl.cmd_apps, "run", "--via", "wg:nl", "--", "curl")[2])
 
-    def test_tun_profile_keeps_backend_for_pins(self):
+    def test_cleanup_reads_only_own_scopes(self):
+        # Other users' marking and the pins of per-app TUN are systemd's to weigh
+        # (StopWhenUnneeded=): cleanup asks only after this user's own apps.
         self.calls.clear()
         run(ctl.cmd_apps, "run", "tun", "--", "curl")
-        listed = next(c for c in self.calls if c[0] == "list-units" and "proxy-suite-per-app-tun-user@*.service" in c)
-        self.assertIn("proxy-suite-per-app-via-tun@*.service", listed)
+        self.assertFalse([c for c in self.calls if c[0] == "list-units"])
+        self.assertIn(("--user", "list-units", "--type=scope", "--state=running", "--plain", "--no-legend", "proxy-suite-per-app-tun-*"), self.calls)
 
     def test_via_under_global_tun_runs_plain(self):
         self.active = {"proxy-suite-tun.service"}
@@ -2097,6 +2446,16 @@ class TorTest(EnvTest):
         self.assertIn("bootstrap unknown", out)
         self.assertIn("not running", err)
 
+    def test_status_exit_code_is_is_actives(self):
+        """`if proxy-ctl tor status` means running: 3 when not, as systemctl says it, and no bootstrap line."""
+        self.patch("systemctl", lambda *a, **kw: (0, None) if a[0] == "cat" else (3, "inactive\n"))
+        status, out, _ = run(ctl.cmd_tor)
+        self.assertEqual(status, 3)
+        self.assertNotIn("bootstrap", out)
+        for fn in (ctl.cmd_proxy, ctl.cmd_zapret, ctl.COMMANDS["ssh"]):
+            with self.subTest(fn=fn):
+                self.assertEqual(run(fn, "status")[0], 3)
+
 
 class BadExitTest(EnvTest):
     def test_shown_from_state(self):
@@ -2211,6 +2570,14 @@ class StatusSnapshotTest(EnvTest):
         self.assertEqual(data["overall"]["base"], "tunnel")
         self.assertEqual(data["outbound"], "b (pinned)")
         self.assertEqual(data["route_mode"], {"available": True, "current": "default", "default": "blacklist"})
+
+    def test_unit_states_by_id(self):
+        blocks = "Id=proxy-suite-tun.service\nLoadState=loaded\nActiveState=failed\n\nId=proxy-suite-socks.service\nLoadState=loaded\nActiveState=active\n"
+        self.patch("systemctl", lambda *a, **kw: (0, blocks))
+        # Out of order, one missing: each state still lands on its own unit.
+        self.assertEqual(ctl._unit_states(["proxy-suite-socks", "proxy-suite-zapret", "proxy-suite-tun"]), {"proxy-suite-socks": "active", "proxy-suite-tun": "failed"})
+        self.patch("systemctl", lambda *a, **kw: (1, blocks))
+        self.assertEqual(ctl._unit_states(["proxy-suite-socks"]), {})
 
     def test_warp_over_amneziawg_is_watched(self):
         # An outbound WARP profile is no `awg` profile, but its unit can still fail.

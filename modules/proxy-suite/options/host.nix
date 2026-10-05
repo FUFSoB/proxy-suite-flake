@@ -46,6 +46,8 @@ in
     # UDP ports the host's firewall opens, as "port" or "from-to".
     openUdpPorts = internalOption (types.listOf types.str) [ ];
     resolvconfPackage = internalOption (types.nullOr types.package) null;
+    # The users the host's enabled time daemons send NTP as; null where the host cannot say.
+    timeSyncUsers = internalOption (types.nullOr (types.listOf types.str)) null;
   };
 
   options.services.proxy-suite.internal = {
@@ -64,6 +66,8 @@ in
       enable = internalOption types.bool false;
       pkexecWrapper = internalOption types.bool false;
       rules = internalOption types.lines "";
+      # Action files by name ("<id>.policy"), for the polkit daemon to read.
+      actions = internalOption (types.attrsOf types.path) { };
     };
     nftables = internalOption types.bool false;
     # nftables tables by name, family inet (NixOS only): NAT the firewall option cannot express.

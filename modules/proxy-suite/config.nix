@@ -34,7 +34,8 @@ let
       proxyInboundsSelfSources
       proxyInboundsRuntimeEnabled
       proxyInboundsRuntimeVias
-      proxyInboundRuntimePorts
+      proxyInboundsHostPorts
+      proxyInboundsLoopback
       ;
     inherit (rules) zapretDirectRules;
   };
@@ -99,6 +100,8 @@ let
     in
     {
       spool = derived.constants.runtimeInboundsDir;
+      # Rootless, the spool is the user's alone: its own .lock serves.
+      lock = if cfg.host.privileged then derived.constants.runtimeInboundsLock else null;
       inherit (rt) ports fallbackDests tlsCertificates;
       vias = derived.proxyInboundsRuntimeVias;
       defaultVia = derived.proxyInboundsCfg.routing.via;
@@ -125,6 +128,7 @@ let
     shareLinks = derived.proxyInboundsCfg.shareLinks;
     # Listeners the onion service carries, which get a second set of links to it.
     onionListeners = map (ib: ib.tag) derived.torOnionInbounds;
+    inherit (inboundRules) sniffDomainsExcluded;
     listeners = map (
       ib:
       {

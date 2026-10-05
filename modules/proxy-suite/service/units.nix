@@ -12,7 +12,6 @@ let
     globalTun
     globalTproxy
     killSwitchEnabled
-    awgGlobalProfiles
     perAppRoutingTun
     perAppRoutingTproxy
     perAppZapretEnabled
@@ -41,7 +40,9 @@ let
 
   inherit (routingScripts)
     xrayTunUpScript
+    xrayTunReloadScript
     tproxyUpScript
+    tproxyReloadScript
     tproxyDownScript
     killSwitchUpScript
     killSwitchDownScript
@@ -74,6 +75,135 @@ let
   perAppViaAwg = perAppViaInterfaceOutbounds != [ ] || perAppViaRuntime || ctx.perAppViaProfiles;
   # Or any outbound, through a pin slot: either way, the apps' slices and their marking.
   perAppViaEnabled = perAppViaAwg || perAppRouting.pinUp != { };
+  # A per-app backend every user's apps share. perApp members may only start it (polkit.nix):
+  # it goes once the last user's marking unit that requires it stops, or the last pin of it.
+  perAppSharedBackend =
+    unit: restartOnSwitch (lib.recursiveUpdate unit { unitConfig.StopWhenUnneeded = true; });
+  # A switch restarts it rather than stopping it across activation: a shorter gap, and a
+  # restart keeps the per-app holds (user-rules.nix). [Service] is where the switch reads it.
+  restartOnSwitch = unit: lib.recursiveUpdate unit { serviceConfig."X-StopIfChanged" = false; };
+  # Rules a firewall reload can flush, put back by `reload` (a start of the firewall: by
+  # proxy-suite-firewall-reapply). After=, or the firewall's flush could come after it.
+  reloadAfterFirewall =
+    reload: unit:
+    lib.recursiveUpdate unit {
+      after = (unit.after or [ ]) ++ [ "nftables.service" ];
+      serviceConfig.ExecReload = reload;
+      unitConfig.ReloadPropagatedFrom = [ "nftables.service" ];
+    };
+  # NixOS's firewall loads the static tables itself (constants.persistedNftDir); the per-app
+  # ones hold cgroup matches, which fail the firewall's whole load once the cgroup is gone.
+  firewallIncludes = ctx.firewallIncludesTables;
+  reloadAfterFirewallUnlessIncluded =
+    reload: if firewallIncludes then lib.id else reloadAfterFirewall reload;
+  # What proxy-suite-firewall-reapply reloads, as systemctl patterns.
+  firewallReapplyUnits =
+    lib.optionals (!firewallIncludes) (
+      lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service"
+      ++ lib.optional (proxyEnabled || proxyInboundsEnabled) "proxy-suite-daemon-guard.service"
+      ++ lib.optional (proxyEnabled && globalTproxy.enable) "${serviceNames.tproxy}.service"
+      # Only XRay's TUN has a reload; sing-box's would be restarted.
+      ++ lib.optional (proxyEnabled && globalTun.enable && pureXrayEnabled) "${serviceNames.tun}.service"
+    )
+    ++ lib.optionals (proxyEnabled && perAppRoutingTun.enable) [
+      "${serviceNames.perAppTun}.service"
+      "${serviceNames.perAppTun}-user@*.service"
+    ]
+    ++ lib.optionals (proxyEnabled && perAppRoutingTproxy.enable) [
+      "${serviceNames.perAppTproxy}.service"
+      "${serviceNames.perAppTproxy}-user@*.service"
+    ]
+    ++ lib.optional perAppViaAwg "proxy-suite-per-app-via@*.service"
+    ++ map (route: "proxy-suite-per-app-via-${route}@*.service") (
+      builtins.attrNames perAppRouting.pinUp
+    );
+  # A per-app route's DNS forwarder (nftables.nix's dns_redirect), up while the route or one
+  # of its pin slots is: a listener for the route's own mark, and one for each slot's.
+  perAppDnsUnit = route: "proxy-suite-per-app-${route}-dns.service";
+  mkPerAppDnsForwarder =
+    {
+      route,
+      mark,
+      basePort,
+      pinMarkBase,
+      pins,
+      bind ? [ ],
+    }:
+    let
+      listeners = [
+        "${toString basePort}:${toString mark}"
+      ]
+      ++ lib.genList (slot: "${toString (basePort + 1 + slot)}:${toString (pinMarkBase + slot)}") (
+        if pins then ctx.perAppPinSlots else 0
+      );
+    in
+    restartOnSwitch (mkRestartingService {
+      description = "proxy-suite per-app ${route} DNS forwarder";
+      execStart = lib.concatStringsSep " " (
+        [
+          ctx.python3
+          "${ctx.proxySuiteScriptsDir}/per_app_dns.py"
+        ]
+        ++ map (l: "--listen ${l}") listeners
+        ++ map (a: "--bind ${a}") bind
+        ++ [ ctx.constants.perAppDnsUpstream ]
+      );
+      runtimeDirectory = "proxy-suite-per-app-${route}-dns";
+      extraServiceConfig = {
+        # Ready once it listens, so the route's apps' first lookup finds it.
+        Type = "notify";
+        NotifyAccess = "main";
+        RestartSec = 2;
+        DynamicUser = true;
+        # SO_MARK on its sockets, and nothing else.
+        AmbientCapabilities = [ "CAP_NET_ADMIN" ];
+        CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        ProtectControlGroups = true;
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        SystemCallArchitectures = "native";
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+        SystemCallFilter = [ "@system-service" ];
+        # The apps' queries on loopback, sent on to the upstream the backend answers for.
+        IPAddressAllow = [
+          "localhost"
+          ctx.constants.perAppDnsUpstream
+        ];
+        IPAddressDeny = "any";
+      };
+    })
+    // {
+      unitConfig.StopWhenUnneeded = true;
+    };
+  # The global TUN and TProxy carry every app already: the per-app TProxy backend, its pin
+  # slots and per-app zapret refuse to start under them, and go when one starts
+  # (constants.refuseUnderGlobal).
+  globalModeUnits = [
+    "${serviceNames.tproxy}.service"
+    "${serviceNames.tun}.service"
+  ];
+  perAppUnderGlobalModes = [
+    "${serviceNames.perAppTproxy}.service"
+    "proxy-suite-per-app-via-tproxy@*.service"
+    "proxy-suite-per-app-via-tun@*.service"
+    "${serviceNames.perAppZapret}.service"
+  ];
 
   # For the root units reading what userControl's group writes (outbounds.d,
   # subscriptions.d): the file system read-only but for their own directories, so no
@@ -99,7 +229,9 @@ let
     {
       enable = proxyEnabled;
       name = serviceNames.socks;
-      value = mkRestartingService {
+      # No PropagatesStopTo= TProxy: it stops TProxy on a restart too, which should hold the
+      # traffic meanwhile. `proxy off` stops TProxy itself.
+      value = restartOnSwitch (mkRestartingService {
         description = "${backendDescription} proxy client (SOCKS + TProxy-ready)";
         # Only XRay goes through the OpenSSH unit's listener.
         after = [
@@ -114,11 +246,18 @@ let
         ++ lib.optional torOutboundEnabled "proxy-suite-tor.service"
         ++ map (j: "proxy-suite-wb-joiner-${j.tag}.service") whitelistBypassJoiners;
         wantedBy = [ "multi-user.target" ];
+        # The hop login drawn as root, ahead of the start script, which ProtectSystem keeps
+        # from writing /run (constants.ensureHopLogin).
+        execStartPre = lib.filter (x: x != null) [
+          (ctx.constants.daemonMetadataGuard ctx.pkgs)
+          "+${ctx.constants.ensureHopLogin ctx.pkgs}"
+        ];
         execStart = scripts.startSocks;
         runtimeDirectory = serviceNames.socks;
         stateDirectory = "proxy-suite";
-        extraServiceConfig = xrayAssetEnv // spoolReaderSandbox [ ];
-      };
+        # The hybrid sidecar's config has no geo rules: only XRay as the backend reads them.
+        extraServiceConfig = lib.optionalAttrs pureXrayEnabled xrayAssetEnv // spoolReaderSandbox [ ];
+      });
     }
     {
       enable = proxyInboundsEnabled;
@@ -139,6 +278,7 @@ let
         ++ lib.optional proxyInboundsNeedLocalProxy "${serviceNames.socks}.service"
         ++ lib.optional torOnionEnabled "proxy-suite-tor.service";
         wantedBy = [ "multi-user.target" ];
+        execStartPre = ctx.constants.daemonMetadataGuard ctx.pkgs;
         execStart = scripts.startInbounds;
         # inbounds.routing.serverSource's dummy interface.
         execStopPost = scripts.stopInboundsInterface;
@@ -146,9 +286,24 @@ let
         # The collector's file.
         stateDirectory = "proxy-suite";
         # While XRay still runs: what it counted since the last timer run.
-        extraServiceConfig = xrayAssetEnv // {
-          ExecStop = scripts.collectInboundStats;
-        };
+        extraServiceConfig =
+          xrayAssetEnv
+          // {
+            ExecStop = scripts.collectInboundStats;
+          }
+          # Nothing it runs is setuid (setpriv drops to the service user by itself), and no
+          # other unit shares its temporary files.
+          // lib.optionalAttrs ctx.constants.privileged {
+            NoNewPrivileges = true;
+            PrivateTmp = true;
+            # Root parses the group-writable inbounds.d: it writes nowhere but its runtime
+            # and state directories, which systemd leaves writable.
+            ProtectSystem = "strict";
+            ProtectKernelTunables = true;
+            ProtectControlGroups = true;
+            # The stats API's directory is the daemon's alone now, no setgid one to make.
+            RestrictSUIDSGID = true;
+          };
       };
     }
     {
@@ -158,7 +313,11 @@ let
         description = "Apply proxy-suite inbound users and listeners added at runtime";
         execStart = scripts.reloadInbounds;
         stateDirectory = "proxy-suite";
-        extraServiceConfig.RemainAfterExit = false;
+        # Root, over the spool userControl's group writes.
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ];
       };
     }
     {
@@ -173,20 +332,22 @@ let
         extraServiceConfig.RemainAfterExit = false;
       };
     }
-    # Pulled in by every global tunnel and left up when it stops or crashes: only
-    # proxy-ctl's off verbs take it down. After them, so a first start still fetches
-    # subscriptions and resolves endpoints directly.
+    # Up from boot, before any network, and pulled in by every global tunnel; only proxy-ctl's
+    # off verbs take it down. What the tunnels fetch to come up goes as a user it lets past.
     {
       enable = killSwitchEnabled;
       name = serviceNames.killSwitch;
       value =
         mkOneshotService {
           description = "proxy-suite kill switch - reject traffic outside the global tunnel";
+          # After the firewall: its start flushes the whole ruleset on some hosts.
           after = [
-            "${serviceNames.socks}.service"
-            "${serviceNames.tun}.service"
-          ]
-          ++ map (name: "proxy-suite-awg-${name}.service") (builtins.attrNames awgGlobalProfiles);
+            "sysinit.target"
+            "nftables.service"
+            "firewall.service"
+          ];
+          wants = [ "network-pre.target" ];
+          wantedBy = [ "multi-user.target" ];
           execStart = killSwitchUpScript;
           execStop = killSwitchDownScript;
           extraServiceConfig.ExecReload = killSwitchUpScript;
@@ -195,100 +356,210 @@ let
         # new rules from a switch are swapped in by a reload instead, in one transaction.
         // {
           reloadIfChanged = true;
+          before = [ "network-pre.target" ];
+          unitConfig = {
+            # Not stopped at shutdown either, unlike the units it guards.
+            DefaultDependencies = false;
+          }
+          # Put back after a firewall reload that flushed the ruleset (see reloadAfterFirewall).
+          // lib.optionalAttrs (!firewallIncludes) {
+            ReloadPropagatedFrom = [ "nftables.service" ];
+          };
+        };
+    }
+    # A start or restart of the firewall, which flushes the ruleset on some hosts, reloads
+    # what reloadAfterFirewall covers; a reload does nothing to a unit that is not up.
+    {
+      enable = ctx.constants.privileged && firewallReapplyUnits != [ ];
+      name = "proxy-suite-firewall-reapply";
+      value = mkOneshotService {
+        description = "proxy-suite - put its nftables tables back after the firewall starts";
+        after = [ "nftables.service" ];
+        wantedBy = [ "nftables.service" ];
+        # --no-block: the units it reloads are ordered after nftables, whose start this is
+        # part of.
+        execStart = "-${ctx.constants.systemctl} try-reload-or-restart --no-block ${lib.concatStringsSep " " firewallReapplyUnits}";
+        # Inactive once done, so the firewall's next start runs it again.
+        extraServiceConfig.RemainAfterExit = false;
+      };
+    }
+    # The daemon guard (constants.daemonMetadataGuard) on its own as well, so that a firewall
+    # that flushed the ruleset gets it back, not only the next start of the units that load it.
+    {
+      enable = ctx.constants.privileged && (proxyEnabled || proxyInboundsEnabled);
+      name = "proxy-suite-daemon-guard";
+      value =
+        let
+          load = [
+            (ctx.constants.daemonMetadataGuard ctx.pkgs)
+          ]
+          ++ lib.optional firewallIncludes "-${routingScripts.persistDaemonGuardScript}";
+        in
+        mkOneshotService {
+          description = "proxy-suite - keep cloud metadata and the loopback hops from other users";
+          after = [ "nftables.service" ];
+          wantedBy = [ "multi-user.target" ];
+          execStart = load;
+          extraServiceConfig.ExecReload = load;
+        }
+        // {
+          reloadIfChanged = true;
+        }
+        // lib.optionalAttrs (!firewallIncludes) {
+          unitConfig.ReloadPropagatedFrom = [ "nftables.service" ];
         };
     }
     {
       enable = proxyEnabled && globalTproxy.enable;
       name = serviceNames.tproxy;
-      value = mkOneshotService {
-        description = "proxy-suite TProxy - nftables rules and policy routing";
-        after = [
-          "network.target"
-          "${serviceNames.socks}.service"
-        ];
-        wantedBy = lib.optionals (proxyCfg.autostart == "tproxy") [ "multi-user.target" ];
-        requires = [ "${serviceNames.socks}.service" ];
-        wants = lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
-        conflicts = [
-          "${serviceNames.tun}.service"
-          "${serviceNames.perAppTproxy}.service"
-        ];
-        execStart = tproxyUpScript;
-        execStop = tproxyDownScript;
-      };
+      # Put back with the firewall: all the host's (and the LAN's) traffic, otherwise.
+      value = restartOnSwitch (
+        reloadAfterFirewallUnlessIncluded tproxyReloadScript (mkOneshotService {
+          description = "proxy-suite TProxy - nftables rules and policy routing";
+          after = [
+            "network.target"
+            "${serviceNames.socks}.service"
+          ];
+          wantedBy = lib.optionals (proxyCfg.autostart == "tproxy") [ "multi-user.target" ];
+          # Wants=, not Requires=: a restart of the backend would restart this too, and the
+          # host's traffic go direct until it is back.
+          wants = [
+            "${serviceNames.socks}.service"
+          ]
+          ++ lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
+          conflicts = [ "${serviceNames.tun}.service" ];
+          execStartPre = ctx.constants.stopPerAppUnits ctx.pkgs perAppUnderGlobalModes;
+          execStart = tproxyUpScript;
+          # Post: also after a start that failed partway, whose marking table would
+          # otherwise outlive it and send marked traffic out past the kill switch.
+          execStopPost = tproxyDownScript;
+        })
+      );
     }
     {
       enable = proxyEnabled && globalTun.enable;
       name = serviceNames.tun;
-      value = mkRestartingService {
-        description = "${backendDescription} TUN proxy client";
-        after = [ "network-online.target" ];
-        wants = [
-          "network-online.target"
-        ]
-        ++ lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
-        wantedBy = lib.optionals (proxyCfg.autostart == "tun") [ "multi-user.target" ];
-        conflicts = [ "${serviceNames.tproxy}.service" ];
-        execStartPre = tunCleanupScript;
-        execStart = scripts.startTun;
-        execStartPost = if pureXrayEnabled then xrayTunUpScript else null;
-        execStopPost = tunCleanupScript;
-        runtimeDirectory = serviceNames.tun;
-        stateDirectory = "proxy-suite";
-      };
+      value = restartOnSwitch (
+        (if pureXrayEnabled then reloadAfterFirewallUnlessIncluded xrayTunReloadScript else lib.id)
+          (mkRestartingService {
+            description = "${backendDescription} TUN proxy client";
+            after = [ "network-online.target" ];
+            wants = [
+              "network-online.target"
+            ]
+            ++ lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service";
+            wantedBy = lib.optionals (proxyCfg.autostart == "tun") [ "multi-user.target" ];
+            conflicts = [ "${serviceNames.tproxy}.service" ];
+            execStartPre = [
+              (ctx.constants.stopPerAppUnits ctx.pkgs perAppUnderGlobalModes)
+              tunCleanupScript
+              (ctx.constants.ensureHopLogin ctx.pkgs)
+            ];
+            execStart = scripts.startTun;
+            execStartPost = if pureXrayEnabled then xrayTunUpScript else null;
+            execStopPost = tunCleanupScript;
+            runtimeDirectory = serviceNames.tun;
+            stateDirectory = "proxy-suite";
+          })
+      );
     }
     {
       enable = proxyEnabled && perAppRoutingTun.enable;
       name = serviceNames.perAppTun;
-      value = mkRestartingService {
-        description = "proxy-suite per-app-routing TUN backend";
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        execStartPre = perAppRouting.perAppTunDownScript;
-        execStart = scripts.startPerAppTun;
-        execStartPost = perAppRouting.perAppTunUpScript;
-        execStopPost = perAppRouting.perAppTunDownScript;
-        runtimeDirectory = serviceNames.perAppTun;
-        stateDirectory = "proxy-suite";
-      };
+      value = reloadAfterFirewall perAppRouting.perAppTunReloadScript (
+        perAppSharedBackend (mkRestartingService {
+          description = "proxy-suite per-app-routing TUN backend";
+          after = [
+            "network-online.target"
+            (perAppDnsUnit "tun")
+          ];
+          wants = [
+            "network-online.target"
+            (perAppDnsUnit "tun")
+          ];
+          execStartPre = [
+            perAppRouting.perAppTunDownScript
+            (ctx.constants.ensureHopLogin ctx.pkgs)
+          ];
+          execStart = scripts.startPerAppTun;
+          execStartPost = perAppRouting.perAppTunUpScript;
+          execStopPost = perAppRouting.perAppTunDownScript;
+          runtimeDirectory = serviceNames.perAppTun;
+          stateDirectory = "proxy-suite";
+        })
+      );
     }
     {
       enable = proxyEnabled && perAppRoutingTun.enable;
       name = "${serviceNames.perAppTun}-user@";
-      value = mkUserRuleService {
+      # Its rules back in after the backend's table, and the hold's, came back (After=).
+      value = reloadAfterFirewall "${perAppRouting.perAppTunUserRuleStart} %i" (mkUserRuleService {
         description = "Enable proxy-suite app TUN marking for user %i";
         backendService = serviceNames.perAppTun;
         execStart = "${perAppRouting.perAppTunUserRuleStart} %i";
         execStop = "${perAppRouting.perAppTunUserRuleStop} %i";
-      };
+      });
     }
     {
       enable = proxyEnabled && perAppRoutingTproxy.enable;
       name = serviceNames.perAppTproxy;
-      value = mkOneshotService {
-        description = "proxy-suite per-app-routing TProxy backend";
-        after = [
-          "network.target"
-          "${serviceNames.socks}.service"
-        ];
-        requires = [ "${serviceNames.socks}.service" ];
-        conflicts = [
-          "${serviceNames.tproxy}.service"
-          "${serviceNames.tun}.service"
-        ];
-        execStart = perAppRouting.perAppTproxyUpScript;
-        execStop = perAppRouting.perAppTproxyDownScript;
+      value = reloadAfterFirewall perAppRouting.perAppTproxyReloadScript (
+        perAppSharedBackend (mkOneshotService {
+          description = "proxy-suite per-app-routing TProxy backend";
+          after = [
+            "network.target"
+            "${serviceNames.socks}.service"
+            (perAppDnsUnit "tproxy")
+          ];
+          requires = [ "${serviceNames.socks}.service" ];
+          wants = [ (perAppDnsUnit "tproxy") ];
+          execStartPre = ctx.constants.refuseUnderGlobal ctx.pkgs globalModeUnits;
+          execStart = perAppRouting.perAppTproxyUpScript;
+          # Post: after a start that failed partway too (see the global TProxy unit).
+          execStopPost = perAppRouting.perAppTproxyDownScript;
+        })
+      );
+    }
+    {
+      enable = proxyEnabled && perAppRoutingTun.enable;
+      name = "proxy-suite-per-app-tun-dns";
+      value = mkPerAppDnsForwarder {
+        route = "tun";
+        mark = perAppRoutingTun.fwmark;
+        basePort = ctx.constants.perAppTunDnsBasePort;
+        pinMarkBase = ctx.constants.perAppPinTunFwmarkBase;
+        pins = ctx.perAppPinTun;
+      };
+    }
+    {
+      enable = proxyEnabled && perAppRoutingTproxy.enable;
+      name = "proxy-suite-per-app-tproxy-dns";
+      value = mkPerAppDnsForwarder {
+        route = "tproxy";
+        mark = perAppRoutingTproxy.fwmark;
+        basePort = ctx.constants.perAppTproxyDnsBasePort;
+        pinMarkBase = ctx.constants.perAppPinTproxyFwmarkBase;
+        pins = ctx.perAppPinTproxy;
+        # The mark takes the queries to a local route (see per_app_dns.py's BIND).
+        bind = [ "127.0.0.1" ];
       };
     }
     {
       enable = proxyEnabled && perAppRoutingTproxy.enable;
       name = "${serviceNames.perAppTproxy}-user@";
-      value = mkUserRuleService {
+      # Its rules back in after the backend's table, and the hold's, came back (After=).
+      value = reloadAfterFirewall "${perAppRouting.perAppTproxyUserRuleStart} %i" (mkUserRuleService {
         description = "Enable proxy-suite app TProxy marking for user %i";
         backendService = serviceNames.perAppTproxy;
         execStart = "${perAppRouting.perAppTproxyUserRuleStart} %i";
         execStop = "${perAppRouting.perAppTproxyUserRuleStop} %i";
-      };
+      });
+    }
+    # Declared with zapret's own units (zapret.nix, zapret2.nix).
+    {
+      enable = perAppZapretEnabled;
+      name = serviceNames.perAppZapret;
+      value = perAppSharedBackend { };
     }
     {
       enable = perAppZapretEnabled;
@@ -306,31 +577,54 @@ let
     {
       enable = perAppViaAwg;
       name = "proxy-suite-per-app-via@";
-      value = mkRestartingService {
-        description = "proxy-suite per-app routing via %i";
-        execStartPre = "${perAppRouting.viaUp} %i";
-        execStart = "${perAppRouting.viaDns} %i";
-        execStopPost = "${perAppRouting.viaDown} %i";
-        runtimeDirectory = "proxy-suite-per-app-via-%i";
-        extraServiceConfig = {
-          # Ready once the forwarder listens, so the app's first lookup finds it.
-          Type = "notify";
-          NotifyAccess = "main";
-          RestartSec = 2;
-          NoNewPrivileges = true;
-          ProtectSystem = "strict";
-          ProtectHome = true;
-          PrivateTmp = true;
-          ProtectClock = true;
-          ProtectHostname = true;
-          ProtectKernelLogs = true;
-          RestrictRealtime = true;
-          RestrictSUIDSGID = true;
-          LockPersonality = true;
-          # nft and ip rules, and SO_MARK on the forwarder's sockets.
-          CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
-        };
-      };
+      # Its table, rules and users' rules back after a firewall reload that flushed them.
+      value = restartOnSwitch (
+        reloadAfterFirewall
+          [
+            "${perAppRouting.viaUp} %i"
+            "${perAppRouting.viaReapply} %i"
+          ]
+          (mkRestartingService {
+            description = "proxy-suite per-app routing via %i";
+            execStartPre = "${perAppRouting.viaUp} %i";
+            execStart = "${perAppRouting.viaDns} %i";
+            # viaUp starts the table empty: after a restart, the users' rules go back in.
+            execStartPost = "${perAppRouting.viaReapply} %i";
+            execStopPost = "${perAppRouting.viaDown} %i";
+            runtimeDirectory = "proxy-suite-per-app-via-%i";
+            extraServiceConfig = {
+              # Ready once the forwarder listens, so the app's first lookup finds it.
+              Type = "notify";
+              NotifyAccess = "main";
+              RestartSec = 2;
+              NoNewPrivileges = true;
+              ProtectSystem = "strict";
+              ProtectHome = true;
+              PrivateTmp = true;
+              ProtectClock = true;
+              ProtectHostname = true;
+              ProtectKernelLogs = true;
+              # Root still, though with one capability: the disks' device nodes, /proc/sys and
+              # cgroups are root's to write without any, and the forwarder answers apps.
+              PrivateDevices = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectControlGroups = true;
+              RestrictRealtime = true;
+              RestrictSUIDSGID = true;
+              LockPersonality = true;
+              # nft and ip rules, and SO_MARK on the forwarder's sockets.
+              CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+              # Netlink for nft and ip, unix for the readiness notice, IP for the forwarder.
+              RestrictAddressFamilies = [
+                "AF_UNIX"
+                "AF_INET"
+                "AF_INET6"
+                "AF_NETLINK"
+              ];
+            };
+          })
+      );
     }
   ]
   # `apps run --via <tag>` for any other outbound: a pin slot of per-app TProxy or TUN for
@@ -343,21 +637,34 @@ let
       let
         backend = perAppRouting.pinRoutes.${route}.backend;
       in
-      mkOneshotService {
-        description = "proxy-suite per-app ${route} pin for the outbound %i (in hex)";
-        execStart = "${perAppRouting.pinUp.${route}} %i";
-        execStop = "${perAppRouting.pinDown.${route}} %i";
-        after = [ backend ];
-        requires = [ backend ];
-        # As per-app TProxy: under a global mode, proxy-ctl runs the app without its route.
-        conflicts = [
-          "${serviceNames.tproxy}.service"
-          "${serviceNames.tun}.service"
-        ];
-      }
-      // {
-        partOf = [ backend ];
-      };
+      # Its table and its users' rules back after a firewall reload that flushed them. The
+      # users' holds keep their apps in while it rebuilds.
+      restartOnSwitch (
+        reloadAfterFirewall
+          [
+            "${perAppRouting.pinUp.${route}} %i"
+            "${perAppRouting.viaReapply} ${route}-%i"
+          ]
+          (
+            mkOneshotService {
+              description = "proxy-suite per-app ${route} pin for the outbound %i (in hex)";
+              execStart = "${perAppRouting.pinUp.${route}} %i";
+              execStartPost = "${perAppRouting.viaReapply} ${route}-%i";
+              execStop = "${perAppRouting.pinDown.${route}} %i";
+              after = [
+                backend
+                (perAppDnsUnit route)
+              ];
+              requires = [ backend ];
+              wants = [ (perAppDnsUnit route) ];
+              # As per-app TProxy: under a global mode, proxy-ctl runs the app without its route.
+              execStartPre = ctx.constants.refuseUnderGlobal ctx.pkgs globalModeUnits;
+            }
+            // {
+              partOf = [ backend ];
+            }
+          )
+      );
   }) (builtins.attrNames perAppRouting.pinUp)
   ++ [
     {
@@ -367,6 +674,12 @@ let
         description = "Enable proxy-suite per-app via marking for %i";
         execStart = "${perAppRouting.viaUserStart} %i";
         execStop = "${perAppRouting.viaUserStop} %i";
+        # No unit names the via unit from <uid>-<key>, so no Requires= can hold it for
+        # StopWhenUnneeded=: the last user's unit takes it down itself.
+        execStopPost = "${perAppRouting.viaRetire} %i";
+        # A switch's stop would take the via unit down under the running apps; a new via
+        # unit puts the rules back itself (viaReapply). In [Service], where the switch reads it.
+        extraServiceConfig.X-RestartIfChanged = false;
       };
     }
     {
@@ -392,7 +705,20 @@ let
       value = mkOneshotService {
         description = "Set proxy-suite route mode to %i";
         execStart = "${scripts.setRouteModeScript} %i";
-        extraServiceConfig.RemainAfterExit = false;
+        # Root, started by userControl's group: it writes the mode file and restarts the
+        # proxy, nothing else.
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ]
+        // lib.optionalAttrs ctx.constants.privileged {
+          # Where the mode file lives, which nothing else makes: kept between runs, and
+          # writable under ProtectSystem, whether or not it exists yet.
+          RuntimeDirectory = "proxy-suite";
+          RuntimeDirectoryPreserve = "yes";
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+        };
       };
     }
     {

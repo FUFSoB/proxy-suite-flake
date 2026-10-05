@@ -27,9 +27,17 @@
   mkSubscriptionBlock,
   mkSubscriptionLoadHelperBlock,
   runtimeSubscriptionsBlock,
+  laterTags ? [ ],
+  # The backends, to check a runtime JSON outbound with before it joins the config.
+  singBoxBin ? null,
+  xrayBin ? null,
 }:
 
 let
+  # A value in a shell comment, on that one line: a newline in a tag (types.str) would end
+  # the comment and run the rest as root.
+  oneLine = value: builtins.replaceStrings [ "\n" "\r" ] [ " " " " ] (toString value);
+
   sshProxyTag = "ssh-proxy";
   torOutboundEnabled = torCfg != null && torCfg.enable && torCfg.asOutbound;
   groupsJq = builtins.path {
@@ -41,12 +49,13 @@ let
 
   # The keys of an outbound that point the backend at a local file or program, comma-joined;
   # a sing-box tor outbound as "type: tor". proxy_url_parsers.local_file_keys and proxy-ctl's
-  # _local_file_keys apply the same rule.
+  # _local_file_keys apply the same rule. A non-ASCII key counts as well: Go's JSON
+  # decoding matches field names under Unicode case folding ("maſterKeyLog" is masterKeyLog).
   localFileKeysJq = ''
     [(if .type == "tor" then "type: tor" else empty end),
      (.. | objects | keys[] | ascii_downcase
-      | select(endswith("file") or (endswith("path") and . != "path") or endswith("directory")
-          or IN("masterkeylog", "torrc", "extra_args")))]
+      | select((explode | any(. > 127)) or endswith("file") or (endswith("path") and . != "path")
+          or endswith("directory") or IN("masterkeylog", "torrc", "extra_args")))]
     | unique | join(", ")
   '';
 
@@ -91,16 +100,24 @@ let
             case "$pref" in
               xray)
                 ob=$(_proxy_suite_parse_xray_url "$tag" "$url") || return 1
+                _proxy_suite_check_url_outbound xray "$ob" "$tag" "$source" || return 1
                 _proxy_suite_add_xray_sidecar_ob "$ob" "$tag"
                 ;;
               sing-box)
                 ob=$(_proxy_suite_parse_sing_box_url "$tag" "$url") || return 1
+                _proxy_suite_check_url_outbound sing-box "$ob" "$tag" "$source" || return 1
                 _proxy_suite_add_sing_box_ob "$ob"
                 ;;
               *)
-                if ob=$(_proxy_suite_parse_sing_box_url "$tag" "$url" 2>"$RUNTIME_DIR/sing-box-parser.err"); then
+                # Created 0600 first: the parser's error can quote the link's id or password,
+                # and the runtime directory is world-listable.
+                (umask 077 && : > "$RUNTIME_DIR/sing-box-parser.err")
+                # One sing-box parses but refuses still gets XRay's turn.
+                if ob=$(_proxy_suite_parse_sing_box_url "$tag" "$url" 2>"$RUNTIME_DIR/sing-box-parser.err") &&
+                  _proxy_suite_check_url_outbound sing-box "$ob" "$tag" "$source" 2>/dev/null; then
                   _proxy_suite_add_sing_box_ob "$ob"
                 elif ob=$(_proxy_suite_parse_xray_url "$tag" "$url"); then
+                  _proxy_suite_check_url_outbound xray "$ob" "$tag" "$source" || return 1
                   _proxy_suite_add_xray_sidecar_ob "$ob" "$tag"
                 else
                   echo "proxy-suite: outbound '$tag' cannot be parsed by SingBox or XRay" >&2
@@ -115,6 +132,9 @@ let
         else
           ''
             ob=$(_proxy_suite_parse_url "$tag" "$url") || return 1
+            _proxy_suite_check_url_outbound ${
+              if pureXrayEnabled then "xray" else "sing-box"
+            } "$ob" "$tag" "$source" || return 1
             OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")
           '';
       # Raw JSON gets the tag and the routing mark a Nix-declared one gets (rawOutboundJson).
@@ -166,14 +186,17 @@ let
           "" | *[!0-9]*) return 1 ;;
         esac
         [ "$2" -ge 1 ] && [ "$2" -le 65535 ] || return 1
-        ob=$(${jq} -nc --arg t "$1" --argjson p "$2" ${
-          lib.escapeShellArg (
-            if pureXrayEnabled then
-              ''{protocol: "socks", tag: $t, settings: {address: "127.0.0.1", port: $p}}''
-            else
-              ''{type: "socks", tag: $t, server: "127.0.0.1", server_port: $p}''
-          )
-        }) || return 1
+        # The tunnel's listener takes the hop login (constants.ensureHopLogin).
+        ${constants.ensureHopLogin pkgs}
+        ob=$(${jq} -nc --arg t "$1" --argjson p "$2" --arg u ${constants.hopUser} \
+          --rawfile pw ${lib.escapeShellArg constants.hopLoginFile} ${
+            lib.escapeShellArg (
+              if pureXrayEnabled then
+                ''{protocol: "socks", tag: $t, settings: {address: "127.0.0.1", port: $p, user: $u, pass: ($pw | rtrimstr("\n"))}}''
+              else
+                ''{type: "socks", tag: $t, server: "127.0.0.1", server_port: $p, username: $u, password: ($pw | rtrimstr("\n"))}''
+            )
+          }) || return 1
         ${
           if hybridEnabled then
             ''_proxy_suite_add_sing_box_ob "$ob"''
@@ -219,19 +242,25 @@ let
       # written before links existed: those entries share as JSON until the next update).
       _proxy_suite_record_subscription_share() {
         SUBSCRIPTION_URLS_JSON=$(${jq} --arg t "$1" --rawfile u <(_proxy_suite_read_source "$2") '.[$t] = ($u | rtrimstr("\n"))' <<< "$SUBSCRIPTION_URLS_JSON")
+        # Only the entries merged (_proxy_suite_record_outbound_source ran first): one left
+        # out for a taken tag would otherwise put its link on that tag's outbound.
         if [ -s "$3" ]; then
-          OUTBOUND_URLS_JSON=$(${jq} --slurpfile l "$3" '. + $l[0]' <<< "$OUTBOUND_URLS_JSON") || true
+          OUTBOUND_URLS_JSON=$(${jq} --slurpfile l "$3" --arg s "sub:$1" \
+            --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
+            '. + ($l[0] | with_entries(select($sources[0][.key] == $s)))' <<< "$OUTBOUND_URLS_JSON") || true
         fi
       }
 
       # $1 source label, $2 array length before the add, $3 after. Subscriptions
       # append an unknown number of outbounds, so they label them by range.
+      # Here and below, whatever grows with the outbounds goes to jq through a file, not
+      # --argjson: a big subscription outgrows the kernel's 128 KiB limit on one argument.
       _proxy_suite_record_outbound_source() {
         [ "$3" -gt "$2" ] || return 0
         OUTBOUND_SOURCES_JSON=$(${jq} \
-          --argjson sources "$OUTBOUND_SOURCES_JSON" --arg s "$1" \
+          --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") --arg s "$1" \
           --argjson b "$2" --argjson a "$3" \
-          'reduce .[$b:$a][].tag as $t ($sources; .[$t] = $s)' <<< "$OUTBOUNDS_JSON")
+          'reduce .[$b:$a][].tag as $t ($sources[0]; .[$t] = $s)' <<< "$OUTBOUNDS_JSON")
       }
 
       ${
@@ -256,6 +285,15 @@ let
             }
           ''
       }
+      # $1 kind, $2 the outbound parsed from a URL, $3 tag, $4 source label: a runtime one
+      # through the backend's own check, as for runtime JSON.
+      _proxy_suite_check_url_outbound() {
+        [ "$4" = runtime ] || return 0
+        _proxy_suite_check_json_outbound "$1" "$2" && return 0
+        echo "proxy-suite: runtime outbound '$3' is not one the backend takes" >&2
+        return 1
+      }
+
       # $1 tag, $2 URL, $3 source label, $4 backend preference (auto|sing-box|xray).
       # Returns non-zero when the URL cannot be parsed; the caller decides whether
       # that is fatal.
@@ -264,6 +302,28 @@ let
         ${addBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
         OUTBOUND_URLS_JSON=$(${jq} --arg t "$tag" --rawfile u <(printf '%s' "$url") '.[$t] = $u' <<< "$OUTBOUND_URLS_JSON")
+      }
+
+      # $1 kind, $2 the outbound: whether its backend takes it, as one it refuses would fail
+      # the whole start. Alone (its references dropped), as the service user, from stdin.
+      _proxy_suite_check_json_outbound() {
+        local kind="$1" ob="$2" as=()
+        [ "$(${pkgs.coreutils}/bin/id -u)" = 0 ] && as=(${constants.runAsServiceUser pkgs [ ]})
+        case "$kind" in
+          ${lib.optionalString (singBoxBin != null) ''
+            sing-box)
+              ${jq} -c '{outbounds: [del(.detour, .domain_resolver) | select(.type != "selector" and .type != "urltest")]}' <<< "$ob" \
+                | "''${as[@]}" ${singBoxBin} check -c /dev/stdin >/dev/null 2>&1
+              ;;
+          ''}
+          ${lib.optionalString (xrayBin != null) ''
+            xray)
+              ${jq} -c '{outbounds: [del(.proxySettings) | del(.streamSettings.sockopt.dialerProxy)]}' <<< "$ob" \
+                | "''${as[@]}" ${xrayBin} run -test -format json -c stdin: >/dev/null 2>&1
+              ;;
+          ''}
+          *) return 0 ;;
+        esac
       }
 
       # $1 tag, $2 file holding one sing-box or XRay outbound, $3 source label.
@@ -282,6 +342,10 @@ let
           fi
         fi
         kind=$(${jq} -r 'if has("protocol") then "xray" elif has("type") then "sing-box" else "" end' <<< "$ob")
+        if [ "$source" = runtime ] && ! _proxy_suite_check_json_outbound "$kind" "$ob"; then
+          echo "proxy-suite: runtime outbound '$tag' is not one the backend takes (a field misspelt, or one it no longer has)" >&2
+          return 1
+        fi
         ${jsonAddBlock}
         _proxy_suite_record_tag_source "$tag" "$source"
       }
@@ -297,8 +361,16 @@ let
           [ -f "$f" ] && [ ! -L "$f" ] || continue
           tag="''${f##*/}"
           tag="''${tag%.*}"
+          # A tab or newline in a name would split the line into entries of its own.
+          if [[ ! $tag =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "proxy-suite: warning: ignoring a runtime outbound whose name is not a valid tag" >&2
+            continue
+          fi
           case "$tag" in
-            proxy | direct | block${lib.optionalString torOutboundEnabled " | tor"})
+            # proxy-suite-*: the test selector and the pin selectors the start script adds;
+            # priority.json is the priority overrides, not an outbound.
+            proxy | direct | block | priority | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"})
+              [ "$f" = "${runtimeOutboundsDir}/priority.json" ] && continue
               echo "proxy-suite: warning: ignoring runtime outbound '$tag': reserved name" >&2
               continue
               ;;
@@ -316,7 +388,7 @@ let
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
-        # outbound: ${tag} (static ${backend} json)
+        # outbound: ${oneLine tag} (static ${backend} json)
         OB_JSON=$(cat "${jsonFile}")
         OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
@@ -326,8 +398,8 @@ let
         urlSource = if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-core" ob.url;
       in
       ''
-        # outbound: ${tag}
-        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat "${urlSource}")" static || exit 1
+        # outbound: ${oneLine tag}
+        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static || exit 1
       '';
 
   singBoxRawOutboundJson =
@@ -347,7 +419,7 @@ let
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
-        # outbound: ${tag} (hybrid XRay json sidecar)
+        # outbound: ${oneLine tag} (hybrid XRay json sidecar)
         OB_JSON=$(cat "${jsonFile}")
         _proxy_suite_add_xray_sidecar_ob "$OB_JSON" ${lib.escapeShellArg tag}
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
@@ -358,7 +430,7 @@ let
         jsonFile = pkgs.writeText "proxy-suite-core" outboundJson;
       in
       ''
-        # outbound: ${tag} (hybrid SingBox json)
+        # outbound: ${oneLine tag} (hybrid SingBox json)
         OB_JSON=$(cat "${jsonFile}")
         _proxy_suite_add_sing_box_ob "$OB_JSON"
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
@@ -368,8 +440,8 @@ let
         urlSource = if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-core" ob.url;
       in
       ''
-        # outbound: ${tag} (hybrid ${ob.backend})
-        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat "${urlSource}")" static ${ob.backend} || exit 1
+        # outbound: ${oneLine tag} (hybrid ${ob.backend})
+        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static ${ob.backend} || exit 1
       '';
 
   mkSshProxyOutboundBlock =
@@ -420,7 +492,7 @@ let
           -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} \
           | ${jq} -R -s '[splits("\n")] | map(select(length > 0 and (startswith("#") | not))) | map(sub("^\\S+\\s+"; ""))')
         if [ "$(${jq} 'length' <<< "$SSH_HOST_KEYS")" -eq 0 ]; then
-          echo "proxy-suite: no host keys for ${knownHostsTarget} in ${sshProxyCfg.hostKeyFile}" >&2
+          echo "proxy-suite: no host keys for "${lib.escapeShellArg knownHostsTarget}" in "${lib.escapeShellArg sshProxyCfg.hostKeyFile} >&2
           exit 1
         fi
         OB_JSON=$(${jq} --argjson hk "$SSH_HOST_KEYS" '.host_key = $hk' <<< "$OB_JSON")
@@ -433,7 +505,9 @@ let
         # sing-box opens the key as ${constants.serviceUser}, which cannot read a key in a
         # home directory: it gets a copy only root and its group can read.
         SSH_IDENTITY="$RUNTIME_DIR/ssh-identity"
-        install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}${lib.escapeShellArg sshProxyCfg.identityFile} "$SSH_IDENTITY"
+        install -m ${
+          if constants.privileged then "0640" else "0600"
+        } ${constants.ifPrivileged "-g ${constants.serviceUser} "}${lib.escapeShellArg sshProxyCfg.identityFile} "$SSH_IDENTITY"
         OB_JSON=$(${jq} --arg key "$SSH_IDENTITY" '.private_key_path = $key' <<< "$OB_JSON")
       ''}
       ${hostKeyFileBlock}
@@ -448,8 +522,30 @@ let
 
   # Outbounds whose JSON is known at build time: every backend takes it as is.
   mkFixedOutboundBlock = comment: source: outbound: ''
-    # outbound: ${outbound.tag} (${comment})
+    # outbound: ${oneLine outbound.tag} (${comment})
     OB_JSON=${lib.escapeShellArg (builtins.toJSON outbound)}
+    ${
+      if hybridEnabled then
+        ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
+      else
+        ''OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")''
+    }
+    _proxy_suite_record_tag_source ${lib.escapeShellArg outbound.tag} ${source}
+  '';
+
+  # As mkFixedOutboundBlock, with the hop login added at start: it is drawn per boot, and
+  # the password reaches jq from its file, never argv.
+  mkHopOutboundBlock = comment: source: outbound: ''
+    # outbound: ${oneLine outbound.tag} (${comment})
+    ${constants.ensureHopLogin pkgs}
+    OB_JSON=$(${jq} -c --arg u ${constants.hopUser} --rawfile pw ${lib.escapeShellArg constants.hopLoginFile} ${
+      lib.escapeShellArg (
+        if pureXrayEnabled then
+          ''.settings += {user: $u, pass: ($pw | rtrimstr("\n"))}''
+        else
+          ''. + {username: $u, password: ($pw | rtrimstr("\n"))}''
+      )
+    } <<< ${lib.escapeShellArg (builtins.toJSON outbound)})
     ${
       if hybridEnabled then
         ''_proxy_suite_add_sing_box_ob "$OB_JSON"''
@@ -461,26 +557,28 @@ let
 
   # WARP and "singBox" or "userspace" AmneziaWG profiles run in a tunnel unit, which restarts them when the
   # handshake stops being answered. Every backend reaches it as a loopback SOCKS hop.
+  # Every hop but Tor's takes the hop login (constants.ensureHopLogin); Tor has none to take.
   mkTunnelOutboundBlock =
     unit: source: tag: port:
-    mkFixedOutboundBlock "SOCKS hop to ${unit}" source (
-      if pureXrayEnabled then
-        {
-          protocol = "socks";
-          inherit tag;
-          settings = {
-            address = "127.0.0.1";
-            inherit port;
-          };
-        }
-      else
-        {
-          type = "socks";
-          inherit tag;
-          server = "127.0.0.1";
-          server_port = port;
-        }
-    );
+    (if source == "tor" then mkFixedOutboundBlock else mkHopOutboundBlock) "SOCKS hop to ${unit}" source
+      (
+        if pureXrayEnabled then
+          {
+            protocol = "socks";
+            inherit tag;
+            settings = {
+              address = "127.0.0.1";
+              inherit port;
+            };
+          }
+        else
+          {
+            type = "socks";
+            inherit tag;
+            server = "127.0.0.1";
+            server_port = port;
+          }
+      );
 
   # An "interface" AmneziaWG profile: the outbound binds to the interface, which has no routes.
   # sing-box resolves its destinations through it too; XRay resolves as usual.
@@ -532,11 +630,31 @@ let
 
   mkBackendOutboundBlock = if hybridEnabled then mkHybridOutboundBlock else mkOutboundBlock;
 
+  # Tags a runtime outbound may not take: the outbounds added after it, the groups (declared
+  # and runtime), and the backend template's own. Those already in (declared, subscriptions,
+  # an earlier runtime one under another extension) are checked as it comes.
+  runtimeTakenTags = laterTags ++ lib.optional pureXrayEnabled "dns-out";
   runtimeOutboundsBlock = ''
     # outbounds added at runtime, and the hop each one chains through (<tag>.detour)
     RUNTIME_DETOURS_JSON='{}'
+    RUNTIME_TAKEN_JSON=$(
+      for f in "${runtimeOutboundsDir}"/*.group; do
+        [ -e "$f" ] || continue
+        f="''${f##*/}"
+        printf '%s\n' "''${f%.group}"
+      done | ${jq} -R . | ${jq} -cs --argjson fixed ${lib.escapeShellArg (builtins.toJSON runtimeTakenTags)} '. + $fixed'
+    )
     while IFS=$'\t' read -r RUNTIME_OB_TAG RUNTIME_OB_SRC; do
       [ -n "$RUNTIME_OB_TAG" ] || continue
+      # A duplicate tag fails the backend's start, every outbound with it: this one goes.
+      if {
+        printf '%s\n' "''${OUTBOUNDS_JSON:-[]}"
+        ${lib.optionalString hybridEnabled ''printf '%s\n' "''${XRAY_OUTBOUNDS_JSON:-[]}"''}
+      } | ${jq} -e -s --arg t "$RUNTIME_OB_TAG" --argjson taken "$RUNTIME_TAKEN_JSON" \
+        '(add | [.[].tag]) + $taken | index([$t]) != null' >/dev/null 2>&1; then
+        echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG': the tag is taken" >&2
+        continue
+      fi
       case "$RUNTIME_OB_SRC" in
         *.json) _proxy_suite_add_json_outbound "$RUNTIME_OB_TAG" "$RUNTIME_OB_SRC" runtime ;;
         # Its tunnel (proxy-suite-awg-tunnel@<tag>) checks the port again before listening.
@@ -581,24 +699,25 @@ let
   # unchained; whatever chained through it is checked again.
   detourBlock = ''
     # outbound chaining
-    DETOURS_JSON=$(${jq} -c --argjson runtime "$RUNTIME_DETOURS_JSON" '.outbounds = $runtime + .outbounds' \
+    DETOURS_JSON=$(${jq} -c --slurpfile runtime <(printf '%s' "$RUNTIME_DETOURS_JSON") '.outbounds = $runtime[0] + .outbounds' \
       <<< ${lib.escapeShellArg (builtins.toJSON detours)})
     while [ "$DETOURS_JSON" != '{"outbounds":{},"subscriptions":{}}' ]; do
+      # The filter reads $sources as the object itself, so the program unwraps the slurped one.
       DETOUR_RESULT=$(${jq} -c --slurpfile xob <(printf '%s' "${
         if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"
       }") '{outbounds: ., xray: $xob[0]}' <<< "$OUTBOUNDS_JSON" \
-        | ${jq} -c -f ${
+        | ${jq} -c -f <(printf '%s' '$sources[0] as $sources | '; cat ${
           builtins.path {
             name = "proxy-suite-outbound-detours";
             path = ../../outbound-detours.jq;
           }
-        } \
+        }) \
           --argjson d "$DETOURS_JSON" \
-          --argjson sources "$OUTBOUND_SOURCES_JSON" \
+          --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
           --arg kind ${detourKind})
-      DETOUR_DROP=$(${jq} -c --argjson sources "$OUTBOUND_SOURCES_JSON" \
-        '[.errors[] | select($sources[.tag] == "runtime")] | unique_by(.tag)' <<< "$DETOUR_RESULT")
-      if ${jq} -e --argjson sources "$OUTBOUND_SOURCES_JSON" 'any(.errors[]; $sources[.tag] != "runtime")' <<< "$DETOUR_RESULT" >/dev/null; then
+      DETOUR_DROP=$(${jq} -c --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
+        '[.errors[] | select($sources[0][.tag] == "runtime")] | unique_by(.tag)' <<< "$DETOUR_RESULT")
+      if ${jq} -e --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") 'any(.errors[]; $sources[0][.tag] != "runtime")' <<< "$DETOUR_RESULT" >/dev/null; then
         ${jq} -r '.errors[] | "proxy-suite: " + .message' <<< "$DETOUR_RESULT" >&2
         exit 1
       fi
@@ -638,7 +757,7 @@ let
         DISABLED_TAGS_JSON=$(${jq} -c --arg t "''${DISABLED_TAG%.disabled}" '. + [$t]' <<< "$DISABLED_TAGS_JSON")
       done
     fi
-    DISABLED_TAGS_JSON=$(${jq} -c --argjson tags "$OUTBOUND_TAGS_JSON" 'map(select(. as $t | $tags | index([$t]))) | unique' <<< "$DISABLED_TAGS_JSON")
+    DISABLED_TAGS_JSON=$(${jq} -c --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") 'map(select(. as $t | $tags[0] | index([$t]))) | unique' <<< "$DISABLED_TAGS_JSON")
   '';
 
   # proxy.groups and those `proxy-ctl proxy groups add` left as <tag>.group next to the runtime
@@ -671,7 +790,7 @@ let
             # As proxy-ctl names them; the spool is group-writable, and a group tagged "proxy"
             # would shadow the real selector.
             case "$GROUP_NAME" in
-              proxy | direct | block${lib.optionalString torOutboundEnabled " | tor"} | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*)
+              proxy | direct | block | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"} | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*)
                 echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': reserved or invalid name" >&2
                 continue
                 ;;
@@ -713,12 +832,13 @@ let
       while IFS= read -r GROUP_NAME; do
         echo "proxy-suite: warning: ignoring group '$GROUP_NAME': an outbound has that tag" >&2
         GROUPS_CONFIG_JSON=$(${jq} -c --arg g "$GROUP_NAME" 'del(.[$g])' <<< "$GROUPS_CONFIG_JSON")
-      done < <(${jq} -r --argjson tags "$OUTBOUND_TAGS_JSON" 'keys[] | select(. as $g | $tags | index([$g]))' <<< "$GROUPS_CONFIG_JSON")
+      done < <(${jq} -r --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") 'keys[] | select(. as $g | $tags[0] | index([$g]))' <<< "$GROUPS_CONFIG_JSON")
       # A runtime group inside itself is left out, like any runtime outbound that cannot be
       # built; only a loop among declared groups fails the start.
       while :; do
-        GROUPS_RESULT=$(${jq} -nc --argjson tags "$OUTBOUND_TAGS_JSON" --argjson sources "''${OUTBOUND_SOURCES_JSON:-{\}}" \
-          '{tags: $tags, sources: $sources}' \
+        GROUPS_RESULT=$(${jq} -nc --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") \
+          --slurpfile sources <(printf '%s' "''${OUTBOUND_SOURCES_JSON:-{\}}") \
+          '{tags: $tags[0], sources: $sources[0]}' \
           | ${jq} -c -f ${groupsJq} \
             --argjson groups "$GROUPS_CONFIG_JSON" \
             --argjson priority "$PRIORITY_JSON" \
@@ -741,7 +861,7 @@ let
       GROUP_TAGS_JSON=$(${jq} -c '.groups | keys_unsorted' <<< "$GROUPS_RESULT")
       GROUPS_INFO_JSON=$(${jq} -c '.groups' <<< "$GROUPS_RESULT")
       TOP_TAGS_JSON=$(${jq} -c '.top' <<< "$GROUPS_RESULT")
-      OUTBOUNDS_JSON=$(${jq} -c --argjson g "$(${jq} -c '.outbounds' <<< "$GROUPS_RESULT")" '. + $g' <<< "$OUTBOUNDS_JSON")
+      OUTBOUNDS_JSON=$(${jq} -c --slurpfile g <(${jq} -c '.outbounds' <<< "$GROUPS_RESULT") '. + $g[0]' <<< "$OUTBOUNDS_JSON")
     '';
 
   pinBlock = ''
@@ -778,19 +898,21 @@ let
   # chains through, what selection leaves alone, and what was disabled.
   inventoryBlock = ''
     ${jq} -n \
-      --argjson tags "$OUTBOUND_TAGS_JSON" \
-      --argjson sources "$OUTBOUND_SOURCES_JSON" \
+      --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") \
+      --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
       --arg pinned "$PINNED_OUTBOUND" \
       --arg selection ${lib.escapeShellArg selectionMode} \
       --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
       --slurpfile xobs <(printf '%s' "${if hybridEnabled then "$XRAY_OUTBOUNDS_JSON" else "[]"}") \
-      --argjson selectable "$SELECTABLE_TAGS_JSON" \
+      --slurpfile selectable <(printf '%s' "$SELECTABLE_TAGS_JSON") \
       --argjson disabled "$DISABLED_TAGS_JSON" \
-      --argjson groups "$GROUPS_INFO_JSON" \
-      --argjson top "$TOP_TAGS_JSON" \
+      --slurpfile groups <(printf '%s' "$GROUPS_INFO_JSON") \
+      --slurpfile top <(printf '%s' "$TOP_TAGS_JSON") \
       --argjson priority "$PRIORITY_JSON" \
       --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
-      '{tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
+      '$tags[0] as $tags | $sources[0] as $sources | $selectable[0] as $selectable
+      | $groups[0] as $groups | $top[0] as $top
+      | {tags: $tags, sources: $sources, pinned: $pinned, selection: $selection,
         detours: ([($xobs[0] + $obs[0])[] | (.detour // .streamSettings.sockopt.dialerProxy?) as $h
           | select($h != null) | {key: .tag, value: $h}] | from_entries),
         excluded: ($top - $selectable), disabled: $disabled,
@@ -864,17 +986,17 @@ let
             if [ -z "$PINNED_OUTBOUND" ] && [ "''${GROUPS_WATCHED:-true}" != true ]; then
               # No Clash API here for the watcher to drive: sing-box's own urltest instead.
               WRAPPER=$(${jq} -n \
-                --argjson tags "$SELECTABLE_TAGS_JSON" \
+                --slurpfile tags <(printf '%s' "$SELECTABLE_TAGS_JSON") \
                 --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
                 --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
-                '{type:"urltest",tag:"proxy",outbounds:$tags,url:$url,interval:"30s",tolerance:$tolerance}')
+                '{type:"urltest",tag:"proxy",outbounds:$tags[0],url:$url,interval:"30s",tolerance:$tolerance}')
             else
               WRAPPER=$(${jq} -n \
-                --argjson tags "$TAGS" \
+                --slurpfile tags <(printf '%s' "$TAGS") \
                 --arg default "$DEFAULT_TAG" \
-                '{type:"selector",tag:"proxy",outbounds:$tags,default:$default,interrupt_exist_connections:true}')
+                '{type:"selector",tag:"proxy",outbounds:$tags[0],default:$default,interrupt_exist_connections:true}')
             fi
-            OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
+            OUTBOUNDS_JSON=$(${jq} --slurpfile w <(printf '%s' "$WRAPPER") '$w + .' <<< "$OUTBOUNDS_JSON")
           ''
         else if selectionMode == "selector" then
           ''
@@ -884,10 +1006,10 @@ let
               DEFAULT_TAG=$(${jq} -r '.[0]' <<< "$SELECTABLE_TAGS_JSON")
             fi
             WRAPPER=$(${jq} -n \
-              --argjson tags "$TAGS" \
+              --slurpfile tags <(printf '%s' "$TAGS") \
               --arg default "$DEFAULT_TAG" \
-              '{type:"selector",tag:"proxy",outbounds:$tags,default:$default}')
-            OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
+              '{type:"selector",tag:"proxy",outbounds:$tags[0],default:$default}')
+            OUTBOUNDS_JSON=$(${jq} --slurpfile w <(printf '%s' "$WRAPPER") '$w + .' <<< "$OUTBOUNDS_JSON")
           ''
         else
           ''
@@ -896,18 +1018,18 @@ let
               # A pin beats latency ranking: the same outbounds, behind a selector
               # the Clash API can also switch live.
               WRAPPER=$(${jq} -n \
-                --argjson tags "$TAGS" \
+                --slurpfile tags <(printf '%s' "$TAGS") \
                 --arg default "$PINNED_OUTBOUND" \
-                '{type:"selector",tag:"proxy",outbounds:$tags,default:$default}')
+                '{type:"selector",tag:"proxy",outbounds:$tags[0],default:$default}')
             else
               WRAPPER=$(${jq} -n \
-                --argjson tags "$SELECTABLE_TAGS_JSON" \
+                --slurpfile tags <(printf '%s' "$SELECTABLE_TAGS_JSON") \
                 --arg url ${lib.escapeShellArg proxyCfg.urlTest.url} \
                 --arg interval ${lib.escapeShellArg proxyCfg.urlTest.interval} \
                 --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
-                '{type:"urltest",tag:"proxy",outbounds:$tags,url:$url,interval:$interval,tolerance:$tolerance}')
+                '{type:"urltest",tag:"proxy",outbounds:$tags[0],url:$url,interval:$interval,tolerance:$tolerance}')
             fi
-            OUTBOUNDS_JSON=$(${jq} --argjson w "$WRAPPER" '[$w] + .' <<< "$OUTBOUNDS_JSON")
+            OUTBOUNDS_JSON=$(${jq} --slurpfile w <(printf '%s' "$WRAPPER") '$w + .' <<< "$OUTBOUNDS_JSON")
           '';
       # Real exits for autoProxy, taken after the wrapper may have renamed one to
       # "proxy".
