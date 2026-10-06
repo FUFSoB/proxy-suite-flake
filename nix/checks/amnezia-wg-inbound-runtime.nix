@@ -176,7 +176,9 @@ pkgs.testers.runNixOSTest {
         server.succeed("ip link show awgi-home")
         server.succeed("ip link show awgi-roam")
         server.succeed("nft list table inet proxy_suite_awg_inbounds")
-        server.succeed("test $(jq '[.[] | select(.type == \"amneziawg\")] | length' /run/proxy-suite-inbounds/links.json) = 4")
+        # The unit is active once its start script runs; it writes the links just before
+        # XRay's exec, so they may not be there yet.
+        server.wait_until_succeeds("test \"$(jq '[.[] | select(.type == \"amneziawg\")] | length' /run/proxy-suite-inbounds/links.json)\" = 4", timeout=60)
         server.succeed("test -n \"$(proxy-ctl inbounds link home phone --config --qr)\"")
         import_profiles(alice, "phone", "tablet")
         import_profiles(bob, "laptop", "watch")

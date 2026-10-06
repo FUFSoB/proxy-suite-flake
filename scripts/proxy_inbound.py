@@ -15,6 +15,7 @@ import os
 import secrets
 import urllib.parse
 
+import inbound_runtime
 from awg_inbound import client_entries
 from proxy_parsing import build_outbound
 
@@ -222,10 +223,22 @@ def render_xray_inbound(listener: dict) -> dict:
         if len(users) == 1:
             settings["password"] = _user_secret(users[0], listener_type, tag)
             settings["email"] = users[0].get("name") or f"{tag}-0"
+            keys = [(settings["email"], settings["password"])]
         else:
             # Multi-user is 2022-blake3-aes only: the server key, then one key per user.
             settings["password"] = _server_secret(listener, tag)
             settings["clients"] = _clients(listener, tag)
+            keys = [("server", settings["password"])] + [(c["email"], c["password"]) for c in settings["clients"]]
+        # Keys from files are only seen here; XRay refuses one of another length with a bare
+        # "bad key" and does not start at all.
+        method = listener["method"]
+        if method in inbound_runtime.SS2022_KEY_BYTES:
+            for name, key in keys:
+                if not inbound_runtime._ss2022_key_ok(key, method):
+                    raise ValueError(
+                        f"listener '{tag}': the {name} key is not base64 of "
+                        f"{inbound_runtime.SS2022_KEY_BYTES[method]} bytes, as {method} needs"
+                    )
     elif listener_type in ("socks", "http"):
         settings = {"auth": "password", "accounts": _accounts(listener, tag)}
         if listener_type == "socks":

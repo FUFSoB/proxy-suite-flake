@@ -22,9 +22,10 @@ concurrency:
 
 jobs:
   update-dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       has_changes: ${{ steps.changes.outputs.has_changes }}
+      checks_failed: ${{ steps.checks.outputs.failed }}
     steps:
       # No token left in .git/config for the steps that run fetched code (flake updates,
       # update-pins.sh, nix builds); create-pull-request authenticates on its own.
@@ -86,15 +87,33 @@ jobs:
           mapfile -t attrs < <(scripts/update-pins.sh --attrs)
           nix build --no-link "${attrs[@]}"
 
+      # A failing check does not hold the update back: the pull request opens as a draft
+      # naming the failures, and the run still ends red (open-pull-request's last step).
       - name: Run flake checks
+        id: checks
         if: steps.changes.outputs.has_changes == 'true'
-        run: nix flake check --print-build-logs
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/flake-check.log"
+          if nix flake check --keep-going --print-build-logs 2>&1 | tee "$log"; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "failed=true" >> "$GITHUB_OUTPUT"
+          # The check attributes nix marks failed; else the derivations it could not build.
+          {
+            grep -oE '❌ checks\.[^[:space:]]+' "$log" | sed 's/^❌ //' ||
+              grep -oE "Cannot build '/nix/store/[a-z0-9]{32}-[^']+\.drv'" "$log" |
+              sed -E "s|^.*/[a-z0-9]{32}-||; s|\.drv'$||"
+          } | sort -u > "$RUNNER_TEMP/failed-checks.txt" || true
 
       - name: Compose pull request body
         if: steps.changes.outputs.has_changes == 'true'
         env:
           SHOULD_UPDATE_NIXPKGS: ${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}
           CHANGED_WATCH_ATTRS: ${{ steps.nixpkgs_gate.outputs.nixpkgs_changed_watch_attrs }}
+          CHECKS_FAILED: ${{ steps.checks.outputs.failed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           {
@@ -113,6 +132,18 @@ jobs:
             echo "- nixpkgs updated: \`$SHOULD_UPDATE_NIXPKGS\`"
             echo "- changed watched attrs: \`$CHANGED_WATCH_ATTRS\`"
             echo "- zapret: refreshed every run"
+            echo
+            echo "### Flake checks"
+            if [[ "$CHECKS_FAILED" == "true" ]]; then
+              echo "Failed, so this pull request is a draft ([run log]($RUN_URL)):"
+              if [[ -s "$RUNNER_TEMP/failed-checks.txt" ]]; then
+                while IFS= read -r check; do echo "- \`$check\`"; done < "$RUNNER_TEMP/failed-checks.txt"
+              else
+                echo "- no failing check named in the log; see the run"
+              fi
+            else
+              echo "- all passed"
+            fi
             echo
             echo '```'
             git diff --stat
@@ -146,7 +177,7 @@ jobs:
   open-pull-request:
     needs: update-dependencies
     if: needs.update-dependencies.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -175,8 +206,11 @@ jobs:
           fi
 
       - name: Create or update pull request
+        id: pr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
+          # always-true also turns an open pull request back into a draft.
+          draft: ${{ needs.update-dependencies.outputs.checks_failed == 'true' && 'always-true' || 'false' }}
           branch: ci/update-dependencies
           delete-branch: false
           add-paths: |
@@ -189,3 +223,23 @@ jobs:
           labels: |
             dependencies
             nix
+
+      # draft: false leaves an existing draft alone; once the checks pass, mark it ready.
+      - name: Mark the pull request ready for review
+        if: needs.update-dependencies.outputs.checks_failed != 'true' && steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+          if [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" == "true" ]]; then
+            gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Fail the run on failed checks
+        if: needs.update-dependencies.outputs.checks_failed == 'true'
+        env:
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          echo "::error::Flake checks failed; the update is a draft pull request: $PR_URL"
+          exit 1

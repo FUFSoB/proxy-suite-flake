@@ -7,7 +7,8 @@ let
   # Fixed so the client can be configured against it at build time. Real
   # deployments keep these in a secret manager.
   uuid = "b831381d-6324-4d53-ad4f-8cda48b30811";
-  ssPassword = "dGhpcy1pcy1hLTE2Ynl0ZS1rZXk=";
+  # Base64 of exactly 16 bytes, the 2022-blake3-aes-128-gcm key length (XRay 26.9.30 refuses others).
+  ssPassword = "dGhpcy1pcy0xNi1ieXRlcw==";
   # Public addresses: blockPrivate would refuse the origin on a private one.
   serverAddress = "11.0.0.1";
   # XRay refuses plain VLESS to a public IP, so the client dials a private one.

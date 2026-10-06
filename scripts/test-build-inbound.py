@@ -242,6 +242,19 @@ class RenderInboundTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no server password"):
             render_xray_inbound(multi_user_shadowsocks(serverPassword=None))
 
+    def test_shadowsocks_2022_key_of_wrong_length_is_rejected(self):
+        # 20 bytes for a 16-byte method: XRay would fail its whole start on it.
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = os.path.join(tmp, "password")
+            with open(key_path, "w", encoding="utf-8") as handle:
+                handle.write("dGhpcy1pcy1hLTE2Ynl0ZS1rZXk=\n")
+            with self.assertRaisesRegex(ValueError, "the ss key is not base64 of 16 bytes"):
+                render_xray_inbound(
+                    listener(type="shadowsocks", users=[{"name": "ss", "password": None, "passwordFile": key_path}])
+                )
+        with self.assertRaisesRegex(ValueError, "the server key is not base64 of 16 bytes"):
+            render_xray_inbound(multi_user_shadowsocks(serverPassword="c2hvcnQ="))
+
     def test_socks_accounts_and_udp(self):
         ib = render_xray_inbound(
             listener(type="socks", users=[{"name": "me", "password": "pw", "passwordFile": None}])

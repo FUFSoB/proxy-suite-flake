@@ -14,6 +14,10 @@ let
       websockets
       requests
       cryptography
+      # proxy/cf_h2.py since v1.11: httpx with its HTTP/2 extra (h2), CA bundle from certifi.
+      httpx
+      h2
+      certifi
     ]
   );
 in
