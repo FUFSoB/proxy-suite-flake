@@ -152,6 +152,7 @@ in
       ZAPRET_STRATEGIES_FILE = constants.zapret2StrategiesFile;
       ZAPRET_CUTOFF_ENABLED = flag zapretCutoffEnabled;
       ZAPRET_CUTOFF_DIR = constants.zapret2CutoffDir;
+      ZAPRET_DIRECT_DIR = constants.zapret2DirectDir;
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;
       RUNTIME_OUTBOUNDS_DIR = constants.runtimeOutboundsDir;
       RUNTIME_SUBS_DIR = constants.runtimeSubscriptionsDir;

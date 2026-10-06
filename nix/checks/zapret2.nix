@@ -493,14 +493,22 @@ in
           printf 'unfixable\tretried.example\ttcp\t\t5\nretry\tretried.example\ttcp\tproxy-ctl\t6\n'
           printf 'unfixable\tBAD NAME\ttcp\t\t7\n'
         } >direct-lists/verdicts.tsv
-        ${directSync} direct-lists out
+        # systemd-resolved's cache, as resolvectl show-cache prints it.
+        printf 'Scope protocol=dns family=AF_INET ifindex=2 ifname=eth0\n%s\n%s\n%s\n%s\n' \
+          'www.example.com IN CNAME edge.cdn.example.net.' 'edge.cdn.example.net IN A 149.154.167.99' \
+          'Other.Example IN A 149.154.167.99' 'gone.example IN A 198.51.100.1' >dns-cache
+        ${directSync} direct-lists out dns-cache
         test "$(cat out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["203.0.113.7/32"]}]}'
         # A site's TCP, or only its QUIC; addresses blocked outright.
         test "$(cat out/proxy.json)" = '{"version":1,"rules":[{"domain_suffix":["chat.example"]},{"network":["udp"],"port":[443],"domain_suffix":["discord.com"]},{"ip_cidr":["149.154.167.99/32"]}]}'
+        # A blocked address by the names asked for, a CNAME followed back; looked up once.
+        test "$(cat out/names.tsv)" = "$(printf '149.154.167.99\tother.example,www.example.com')"
         # Unchanged, the files stay as they were: sing-box reloads on every rename.
         inode=$(stat -c %i out/direct.json)
-        ${directSync} direct-lists out
+        : >dns-cache
+        ${directSync} direct-lists out dns-cache
         test "$(stat -c %i out/direct.json)" = "$inode"
+        test "$(cat out/names.tsv)" = "$(printf '149.154.167.99\tother.example,www.example.com')"
         ${directSync} empty-lists empty-out
         test "$(cat empty-out/direct.json)" = '{"version":1,"rules":[]}'
         test "$(cat empty-out/proxy.json)" = '{"version":1,"rules":[]}'

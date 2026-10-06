@@ -34,7 +34,8 @@ the time, downloads that stall partway, and requests that never get an answer.
 What zapret2 cannot fix goes through your proxy, when you have one: a site none of its
 strategies get through for (only its QUIC, when that alone fails), and an address that
 never answers at all, as Telegram's are blocked. That works for traffic the proxy sees
-(TUN, TProxy, per-app routing).
+(TUN, TProxy, per-app routing). `proxy-ctl zapret auto` names such an address by the sites
+looked up to it, when systemd-resolved still had them cached as it was blocked.
 
 ```nix
 services.proxy-suite = {

@@ -3898,6 +3898,11 @@ def _zapret_cutoff_dir():
     return env("ZAPRET_CUTOFF_DIR", f"{state_dir()}/zapret2-cutoff")
 
 
+def _zapret_direct_dir():
+    """Root's rule-sets from zapret2's state (zapret2/direct-sync.template.sh)."""
+    return env("ZAPRET_DIRECT_DIR", f"{state_dir()}/zapret2-direct")
+
+
 def _zapret_auto_file(name):
     return os.path.join(_zapret_state_dir(), name)
 
@@ -4112,11 +4117,26 @@ def _zapret_status(host, verdicts=None):
     return ", ".join(parts)
 
 
+def _zapret_looked_up():
+    """{address: [names]}: what the addresses blocked outright were looked up by."""
+    return {
+        fields[0]: [name for name in fields[1].split(",") if name]
+        for fields in _tsv(os.path.join(_zapret_direct_dir(), "names.tsv"))
+        if len(fields) == 2
+    }
+
+
 def _zapret_proxied(verdicts=None):
     """[(name, why)] the proxy carries because zapret2 cannot fix them."""
     verdicts = _zapret_verdicts() if verdicts is None else verdicts
+    looked_up = _zapret_looked_up()
+
+    def why(name, proto):
+        names = looked_up.get(name) if proto == "ip" else None
+        return f"{ZAPRET_PROXIED[proto]} ({', '.join(names)})" if names else ZAPRET_PROXIED[proto]
+
     return [
-        (name, ZAPRET_PROXIED[proto])
+        (name, why(name, proto))
         for (name, proto), kind in sorted(verdicts.items())
         if (kind, proto) in (("unfixable", "tcp"), ("unfixable", "udp"), ("blocked", "ip"))
     ]

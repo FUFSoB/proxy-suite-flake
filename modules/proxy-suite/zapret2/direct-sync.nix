@@ -1,8 +1,9 @@
 # The proxy's two rule-sets from zapret2's runtime state (direct-sync.template.sh):
 # direct.json, the hosts zapret2 pins (`proxy-ctl zapret auto add`) and learns and can
 # fix, sent direct so zapret2 sees their traffic (directSync); proxy.json, what it cannot
-# fix, for the proxy to carry (zapret2.proxyFallback). Rebuilt whenever a host list or a
-# verdict changes; sing-box reloads them on the rename.
+# fix, for the proxy to carry (zapret2.proxyFallback); and names.tsv, the names the
+# addresses blocked outright were looked up by, for proxy-ctl. Rebuilt whenever a host
+# list or a verdict changes; sing-box reloads them on the rename.
 {
   lib,
   pkgs,
@@ -21,6 +22,8 @@ let
         pkgs.coreutils
         pkgs.diffutils
         pkgs.jq
+        # resolvectl: the names of the addresses blocked outright.
+        pkgs.systemd
       ];
     }
   );

@@ -1636,8 +1636,12 @@ class ZapretAutoTest(EnvTest):
             "unfixable\tchat.example\ttcp\trkn_tcp\t3\n"
             "blocked\t149.154.167.99\tip\tno answer\t4\n"
             "blocked\t203.0.113.9\tip\tno answer\t5\n"
-            "reachable\t203.0.113.9\tip\t\t6\n",
+            "reachable\t203.0.113.9\tip\t\t6\n"
+            "blocked\t198.51.100.4\tip\tno answer\t7\n",
         )
+        # The names an address was looked up by, from root's direct-sync; none for some.
+        os.environ["ZAPRET_DIRECT_DIR"] = self.path("direct")
+        self.write("direct/names.tsv", "149.154.167.99\t\n198.51.100.4\tapi.example,cdn.example\n")
         status, out, err = run(ctl.cmd_zapret_auto, "list")
         self.assertEqual(status, 0)
         self.assertIn("www.notion.so  works", out)
@@ -1645,6 +1649,7 @@ class ZapretAutoTest(EnvTest):
         self.assertIn("signal.org     cut off after 16 KB: keeps the proxy's route", out)
         self.assertRegex(out, r"(?m)^  discord\.com +its QUIC: no strategy gets through$")
         self.assertRegex(out, r"(?m)^  149\.154\.167\.99 +blocked by address$")
+        self.assertRegex(out, r"(?m)^  198\.51\.100\.4 +blocked by address \(api\.example, cdn\.example\)$")
         self.assertNotIn("203.0.113.9", out)
         self.assertIn("zapret auto retry", err)
         # retry clears it, and restarts zapret2 to unfreeze the rotation, when it runs.

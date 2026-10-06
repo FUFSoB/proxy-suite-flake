@@ -1,4 +1,5 @@
-# $1: zapret2's state directory, $2: the directory to write the two rule-sets to.
+# $1: zapret2's state directory, $2: the directory to write the two rule-sets to; $3, the
+# checks': a dump to read in place of systemd-resolved's cache.
 # direct.json: the hosts zapret2 handles, so the proxy sends them direct and zapret2 sees
 #   them: the pinned ones, and the learned ones once a strategy got through for them
 #   (detect.lua's "works"), unless learned from transfers cut short ("stalls"); a learned
@@ -6,12 +7,17 @@
 # proxy.json: what zapret2 cannot fix, for the proxy to carry: sites every strategy failed
 #   for ("unfixable": all of a site's TCP, or only its QUIC), and addresses that leave
 #   connections unanswered ("blocked").
+# names.tsv: "address<TAB>names" of each address blocked outright, for proxy-ctl: no
+#   connection to it got far enough to name its site, but the lookups before them did. The
+#   names systemd-resolved's cache has it under, a CNAME followed back to the name asked
+#   for; read once, as its verdict lands, while the cache still holds them ("" for none).
 # The last verdict per name and protocol wins ("retry", "reachable" and "works" clear one).
 # Rewritten only when they change: sing-box reloads them on every rename.
 set -euo pipefail
 export PATH=@path@
 dir=$1
 out=$2
+cache=${3:-}
 
 # The zapret scope's group writes these: never through a symlink it left (to a file only
 # root may read, which would land in the world-readable rule-sets), nor into a FIFO.
@@ -93,3 +99,38 @@ jq -n -c --rawfile verdicts <(lists "$dir/verdicts.tsv") "$hosts"'
       + [($v | named("blocked"; "ip")) + ($tcp | map(select(ip))) | select(length > 0) | {ip_cidr: cidr}])}
 ' >"$out/proxy.json.tmp"
 write "$out/proxy.json"
+
+names='def blocked: verdicts | named("blocked"; "ip") | unique;
+  def known: split("\n") | map(split("\t") | select(length == 2) | {key: .[0], value: .[1]}) | from_entries;
+  # resolvectl show-cache: "name IN A address", "alias IN CNAME name".
+  def records: split("\n")
+    | map(capture("^\\s*(?<name>\\S+)\\s+IN\\s+(?<type>A|AAAA|CNAME)\\s+(?<data>\\S+)\\s*$")
+      | .name |= (ascii_downcase | rtrimstr(".")) | .data |= (ascii_downcase | rtrimstr(".")));
+  def aliased($aliases): . as $s | ($s + [$aliases[] | select(.data | IN($s[])) | .name] | unique)
+    | if . == $s then . else aliased($aliases) end;
+  # The names asked for: those no other name of the chain is an alias for.
+  def asked($aliases): . as $all | map(select(. as $n | any($aliases[]; .data == $n and (.name | IN($all[]))) | not));'
+
+# The resolver is asked only for an address it has not been asked about yet.
+missing=$(jq -n -r --rawfile verdicts <(lists "$dir/verdicts.tsv") --rawfile known <(lists "$out/names.tsv") \
+  "$hosts$names"'($verdicts | blocked) - ($known | known | keys) | .[]')
+dump() {
+  if [ -z "$missing" ]; then
+    true
+  elif [ -n "$cache" ]; then
+    lists "$cache"
+  else
+    timeout 2 resolvectl show-cache 2>/dev/null || true
+  fi
+}
+
+jq -n -r --rawfile verdicts <(lists "$dir/verdicts.tsv") --rawfile known <(lists "$out/names.tsv") \
+  --rawfile cache <(dump) "$hosts$names"'
+  ($known | known) as $known
+  | ($cache | records) as $records
+  | ($records | map(select(.type == "CNAME"))) as $aliases
+  | $verdicts | blocked | .[] as $ip
+  | "\($ip)\t\($known[$ip] // ([$records[] | select(.type != "CNAME" and .data == $ip) | .name] | unique
+      | aliased($aliases) | asked($aliases) | map(select(hostname)) | .[:4] | join(",")))"
+' >"$out/names.tsv.tmp"
+write "$out/names.tsv"
