@@ -76,9 +76,56 @@ let
   # Or any outbound, through a pin slot: either way, the apps' slices and their marking.
   perAppViaEnabled = perAppViaAwg || perAppRouting.pinUp != { };
   # A per-app backend every user's apps share. perApp members may only start it (polkit.nix):
-  # it goes once the last user's marking unit that requires it stops, or the last pin of it.
+  # it goes once the last user's marking unit that requires it stops, or the last pin of it,
+  # unless it is kept running (perAppRouting.<route>.keepRunning; the standby unit below).
   perAppSharedBackend =
-    unit: restartOnSwitch (lib.recursiveUpdate unit { unitConfig.StopWhenUnneeded = true; });
+    name: unit:
+    restartOnSwitch (
+      lib.recursiveUpdate unit {
+        unitConfig.StopWhenUnneeded =
+          !builtins.elem [ name ] (map (entry: entry.units) ctx.perAppKeepRunning);
+      }
+    );
+  # Starts what is kept running, but what a global mode carrying its traffic holds down
+  # (constants.refuseUnderGlobal): its stop runs this again (constants.withPerAppStandby).
+  # A global AmneziaWG profile's copy for apps goes up first, waited for: the via unit reads
+  # its slot as it starts, so it starts again if the copy was down.
+  perAppStandbyStart =
+    entry:
+    let
+      units = entry.units;
+      last = "${lib.last units}.service";
+      first = "${builtins.head units}.service";
+    in
+    lib.optionalString (entry.modes != [ ]) "under_global ${lib.escapeShellArgs entry.modes} || "
+    + (
+      if builtins.length units == 1 then
+        "$systemctl start --no-block ${last}\n"
+      else
+        ''
+          if $systemctl is-active --quiet ${first}; then
+            $systemctl start --no-block ${last}
+          else
+            $systemctl start ${first} && $systemctl restart --no-block ${last}
+          fi
+        ''
+    );
+  perAppStandbyScript = ctx.pkgs.writeShellScript "proxy-suite-per-app" ''
+    set -u
+    systemctl=${ctx.constants.systemctl}
+    # A global mode still stopping, maybe the one whose stop started this, is waited out.
+    under_global() {
+      for _ in $(${ctx.seqBin} 1 100); do
+        [[ -n $($systemctl list-units --plain --no-legend --state=deactivating "$@") ]] || break
+        ${ctx.sleepBin} 0.1
+      done
+      [[ -n $($systemctl list-units --plain --no-legend --state=active,activating,reloading "$@") ]]
+    }
+    # The waits last: an AmneziaWG handshake.
+    ${lib.concatMapStrings perAppStandbyStart (
+      builtins.sort (a: b: builtins.length a.units < builtins.length b.units) ctx.perAppKeepRunning
+    )}
+  '';
   # A switch restarts it rather than stopping it across activation: a shorter gap, and a
   # restart keeps the per-app holds (user-rules.nix). [Service] is where the switch reads it.
   restartOnSwitch = unit: lib.recursiveUpdate unit { serviceConfig."X-StopIfChanged" = false; };
@@ -432,7 +479,7 @@ let
           execStart = tproxyUpScript;
           # Post: also after a start that failed partway, whose marking table would
           # otherwise outlive it and send marked traffic out past the kill switch.
-          execStopPost = tproxyDownScript;
+          execStopPost = ctx.constants.withPerAppStandby "${serviceNames.tproxy}.service" tproxyDownScript;
         })
       );
     }
@@ -457,7 +504,7 @@ let
             ];
             execStart = scripts.startTun;
             execStartPost = if pureXrayEnabled then xrayTunUpScript else null;
-            execStopPost = tunCleanupScript;
+            execStopPost = ctx.constants.withPerAppStandby "${serviceNames.tun}.service" tunCleanupScript;
             runtimeDirectory = serviceNames.tun;
             stateDirectory = "proxy-suite";
           })
@@ -467,7 +514,7 @@ let
       enable = proxyEnabled && perAppRoutingTun.enable;
       name = serviceNames.perAppTun;
       value = reloadAfterFirewall perAppRouting.perAppTunReloadScript (
-        perAppSharedBackend (mkRestartingService {
+        perAppSharedBackend serviceNames.perAppTun (mkRestartingService {
           description = "proxy-suite per-app-routing TUN backend";
           after = [
             "network-online.target"
@@ -504,7 +551,7 @@ let
       enable = proxyEnabled && perAppRoutingTproxy.enable;
       name = serviceNames.perAppTproxy;
       value = reloadAfterFirewall perAppRouting.perAppTproxyReloadScript (
-        perAppSharedBackend (mkOneshotService {
+        perAppSharedBackend serviceNames.perAppTproxy (mkOneshotService {
           description = "proxy-suite per-app-routing TProxy backend";
           after = [
             "network.target"
@@ -559,7 +606,21 @@ let
     {
       enable = perAppZapretEnabled;
       name = serviceNames.perAppZapret;
-      value = perAppSharedBackend { };
+      value = perAppSharedBackend serviceNames.perAppZapret { };
+    }
+    {
+      enable = ctx.perAppKeepRunning != [ ];
+      name = "proxy-suite-per-app-standby";
+      value = mkOneshotService {
+        description = "Start the proxy-suite per-app backends kept running";
+        # After the global modes: one starting at boot is up by then, and the stop of one that
+        # started this is over. A template's instances are waited out by the script.
+        after = builtins.filter (unit: !lib.hasInfix "*" unit) ctx.perAppStandbyGlobalModes;
+        wantedBy = [ "multi-user.target" ];
+        execStart = perAppStandbyScript;
+        # Run again by each global mode's stop.
+        extraServiceConfig.RemainAfterExit = false;
+      };
     }
     {
       enable = perAppZapretEnabled;

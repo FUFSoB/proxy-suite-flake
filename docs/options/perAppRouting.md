@@ -11,6 +11,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [createDefaultProfiles](#services-proxy-suite-perapprouting-createdefaultprofiles)
   - [profiles](#services-proxy-suite-perapprouting-profiles)
     - item
+      - [keepRunning](#services-proxy-suite-perapprouting-profiles-keeprunning)
       - [name](#services-proxy-suite-perapprouting-profiles-name)
       - [outbound](#services-proxy-suite-perapprouting-profiles-outbound)
       - [route](#services-proxy-suite-perapprouting-profiles-route)
@@ -21,6 +22,7 @@ Part of the [proxy-suite options reference](./index.md).
   - tproxy
     - [enable](#services-proxy-suite-perapprouting-tproxy-enable)
     - [fwmark](#services-proxy-suite-perapprouting-tproxy-fwmark)
+    - [keepRunning](#services-proxy-suite-perapprouting-tproxy-keeprunning)
     - [localSubnets](#services-proxy-suite-perapprouting-tproxy-localsubnets)
     - [routeTable](#services-proxy-suite-perapprouting-tproxy-routetable)
   - tun
@@ -28,6 +30,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [address](#services-proxy-suite-perapprouting-tun-address)
     - [fwmark](#services-proxy-suite-perapprouting-tun-fwmark)
     - [interface](#services-proxy-suite-perapprouting-tun-interface)
+    - [keepRunning](#services-proxy-suite-perapprouting-tun-keeprunning)
     - [localSubnets](#services-proxy-suite-perapprouting-tun-localsubnets)
     - [mtu](#services-proxy-suite-perapprouting-tun-mtu)
     - [routeTable](#services-proxy-suite-perapprouting-tun-routetable)
@@ -37,6 +40,7 @@ Part of the [proxy-suite options reference](./index.md).
   - zapret
     - [enable](#services-proxy-suite-perapprouting-zapret-enable)
     - [filterMark](#services-proxy-suite-perapprouting-zapret-filtermark)
+    - [keepRunning](#services-proxy-suite-perapprouting-zapret-keeprunning)
     - [qnum](#services-proxy-suite-perapprouting-zapret-qnum)
 
 <a id="services-proxy-suite-perapprouting-enable"></a>
@@ -64,6 +68,17 @@ Profiles for ` proxy-ctl apps run <name> -- <command> `\.
 **Type:** list of (submodule)\
 **Default:** `[ ]`\
 **Example:** `[ { name = "steam-browser"; route = "proxychains"; } ]`
+
+<a id="services-proxy-suite-perapprouting-profiles-keeprunning"></a>
+## services\.proxy-suite\.perAppRouting\.profiles\.\*\.keepRunning
+
+Keep what this profile runs through running from boot, rather than starting it with
+the first app and stopping it after the last: its ` outbound ` (an AmneziaWG
+interface or profile, or a pin slot, which then stays taken), or else its ` route `’s
+backend, as ` perAppRouting.<route>.keepRunning ` does\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-profiles-name"></a>
 ## services\.proxy-suite\.perAppRouting\.profiles\.\*\.name
@@ -136,6 +151,16 @@ Firewall mark for wrapped apps’ traffic\.
 **Type:** signed integer\
 **Default:** `17`
 
+<a id="services-proxy-suite-perapprouting-tproxy-keeprunning"></a>
+## services\.proxy-suite\.perAppRouting\.tproxy\.keepRunning
+
+Keep the per-app TProxy backend running from boot, rather than starting it with the first app
+and stopping it after the last: apps start without waiting for it\.
+Under a global TUN or TProxy it stays down, and comes back once that stops\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-perapprouting-tproxy-localsubnets"></a>
 ## services\.proxy-suite\.perAppRouting\.tproxy\.localSubnets
 
@@ -184,6 +209,15 @@ Interface name\.
 
 **Type:** network interface name\
 **Default:** `"psperapptun0"`
+
+<a id="services-proxy-suite-perapprouting-tun-keeprunning"></a>
+## services\.proxy-suite\.perAppRouting\.tun\.keepRunning
+
+Keep the per-app TUN backend running from boot, rather than starting it with the first app
+and stopping it after the last: apps start without waiting for it\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-tun-localsubnets"></a>
 ## services\.proxy-suite\.perAppRouting\.tun\.localSubnets
@@ -246,6 +280,16 @@ Firewall mark bit for wrapped apps’ traffic\.
 
 **Type:** signed integer\
 **Default:** `268435456`
+
+<a id="services-proxy-suite-perapprouting-zapret-keeprunning"></a>
+## services\.proxy-suite\.perAppRouting\.zapret\.keepRunning
+
+Keep the per-app zapret backend running from boot, rather than starting it with the first app
+and stopping it after the last: apps start without waiting for it\.
+Under a global TUN, TProxy or AmneziaWG profile it stays down, and comes back once that stops\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-perapprouting-zapret-qnum"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.qnum

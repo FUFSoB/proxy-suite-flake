@@ -40,6 +40,65 @@ let
         inherit pkgs;
         cfg = perAppRoutingTproxyFixture.config.services.proxy-suite;
       }).perAppTproxyRulesFile;
+
+  keepRunningFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        proxy.tun.enable = true;
+        perAppRouting = {
+          enable = true;
+          tun = {
+            enable = true;
+            keepRunning = true;
+          };
+          tproxy = {
+            enable = true;
+            keepRunning = true;
+          };
+        };
+      };
+    }
+  ];
+  keepRunningServices = keepRunningFixture.config.systemd.services;
+  keepRunningStandby = keepRunningServices.proxy-suite-per-app-standby;
+  keepRunningStandbyScript = generated.readDerivation keepRunningStandby.serviceConfig.ExecStart;
+
+  # Profiles through an outbound, kept: a pin slot, and a global AmneziaWG profile's copy for apps.
+  keepViaFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        amneziaWg = {
+          enable = true;
+          kernelModulePackage = null;
+          profiles.home.configFile = "/run/secrets/awg.conf";
+        };
+        perAppRouting = {
+          enable = true;
+          tun.enable = true;
+          profiles = [
+            {
+              name = "game";
+              route = "tun";
+              outbound = "primary";
+              keepRunning = true;
+            }
+            {
+              name = "home-app";
+              outbound = "home";
+              keepRunning = true;
+            }
+          ];
+        };
+      };
+    }
+  ];
+  keepViaServices = keepViaFixture.config.systemd.services;
+  keepViaStandbyScript = generated.readDerivation keepViaServices.proxy-suite-per-app-standby.serviceConfig.ExecStart;
+  keepViaPerApp = mkPerAppUserRules keepViaFixture;
+  keepViaRetireScript = generated.readDerivation keepViaPerApp.viaRetire;
+  keepViaPinUpScript = generated.readDerivation keepViaPerApp.pinUp.tun;
 in
 {
   assertions = [
@@ -68,6 +127,60 @@ in
         perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".requires == [
           "proxy-suite-per-app-tproxy.service"
         ];
+      # Started with the first app, so nothing to keep running.
+      assert !(perAppRoutingTproxyFixture.config.systemd.services ? proxy-suite-per-app-standby);
+      true
+    )
+
+    # -- perAppRouting: keepRunning keeps the backends up from boot, back after a global mode --
+    (
+      assert !keepRunningServices.proxy-suite-per-app-tun.unitConfig.StopWhenUnneeded;
+      assert !keepRunningServices.proxy-suite-per-app-tproxy.unitConfig.StopWhenUnneeded;
+      assert keepRunningStandby.wantedBy == [ "multi-user.target" ];
+      assert !keepRunningStandby.serviceConfig.RemainAfterExit;
+      # Ordered after the global modes, so it sees one that starts at boot or is stopping.
+      assert builtins.elem "proxy-suite-tun.service" keepRunningStandby.after;
+      assert builtins.elem "proxy-suite-tproxy.service" keepRunningStandby.after;
+      # The per-app TUN runs under a global mode; the per-app TProxy steps aside for one.
+      assert pkgs.lib.hasInfix "\n$systemctl start --no-block proxy-suite-per-app-tun.service\n"
+        keepRunningStandbyScript;
+      assert pkgs.lib.hasInfix
+        "\nunder_global proxy-suite-tproxy.service proxy-suite-tun.service || $systemctl start --no-block proxy-suite-per-app-tproxy.service\n"
+        keepRunningStandbyScript;
+      # A global mode's stop brings it back, after its own cleanup.
+      assert builtins.length keepRunningServices.proxy-suite-tun.serviceConfig.ExecStopPost == 2;
+      assert pkgs.lib.hasSuffix "start --no-block proxy-suite-per-app-standby.service" (
+        pkgs.lib.last keepRunningServices.proxy-suite-tun.serviceConfig.ExecStopPost
+      );
+      true
+    )
+
+    # -- perAppRouting: a kept profile keeps its outbound's units, which nothing takes down --
+    (
+      let
+        inherit (pkgs.lib) hasInfix;
+        # "primary" and "home" in hex, as proxy-ctl names their units.
+        kept = "tun-7072696d617279 | app-686f6d65)";
+      in
+      assert hasInfix
+        "under_global proxy-suite-tproxy.service proxy-suite-tun.service || $systemctl start --no-block proxy-suite-per-app-via-tun@7072696d617279.service"
+        keepViaStandbyScript;
+      # The copy for apps first; the via unit again if it was down, for its slot.
+      assert hasInfix
+        "under_global proxy-suite-awg-home.service proxy-suite-awg@home.service || if $systemctl is-active --quiet proxy-suite-awg-app@home.service; then"
+        keepViaStandbyScript;
+      assert hasInfix
+        "$systemctl start proxy-suite-awg-app@home.service && $systemctl restart --no-block proxy-suite-per-app-via@app-686f6d65.service"
+        keepViaStandbyScript;
+      # Not by the last app's exit, nor taken back by another pin.
+      assert hasInfix "${kept} exit 0 ;;" keepViaRetireScript;
+      assert hasInfix "${kept} continue ;;" keepViaPinUpScript;
+      # The global profile's stop brings its copy back.
+      assert pkgs.lib.hasSuffix "start --no-block proxy-suite-per-app-standby.service" (
+        pkgs.lib.last keepViaServices.proxy-suite-awg-home.serviceConfig.ExecStopPost
+      );
+      # The pin holds the backend up through Requires=.
+      assert keepViaServices.proxy-suite-per-app-tun.unitConfig.StopWhenUnneeded;
       true
     )
 

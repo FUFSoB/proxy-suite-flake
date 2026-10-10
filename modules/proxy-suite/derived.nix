@@ -629,6 +629,109 @@ let
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
   clashApiEnabled = singBoxEnabled;
   perAppZapretEnabled = perAppZapretCfg.enable;
+  # The global units each per-app backend steps aside for (constants.refuseUnderGlobal), as
+  # systemctl patterns: they stop it as they start, and the standby unit waits them out.
+  perAppGlobalModes = {
+    "proxy-suite-per-app-tun" = [ ];
+    "proxy-suite-per-app-tproxy" = [
+      "proxy-suite-tproxy.service"
+      "proxy-suite-tun.service"
+    ];
+    "proxy-suite-per-app-zapret" = [
+      "proxy-suite-tproxy.service"
+      "proxy-suite-tun.service"
+    ]
+    ++ map (name: "proxy-suite-awg-${name}.service") (
+      builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
+    )
+    ++ lib.optional awgRuntimeGlobal "proxy-suite-awg@*.service";
+  };
+  # A tag as proxy-ctl names its via units: in hex, as Python's str.encode().hex().
+  hexOf =
+    s:
+    lib.concatMapStrings (
+      c: lib.fixedWidthString 2 "0" (lib.toLower (lib.toHexString (lib.strings.charToInt c)))
+    ) (lib.stringToCharacters s);
+  # What `proxy-ctl apps run` starts for a declared profile (_run_via, cmd_apps_run), null for
+  # nothing of its own (direct, proxychains): `units`, in order, without ".service"; `modes`,
+  # the global units they step aside for; `key`, the via instance, if any.
+  perAppProfileUnits =
+    profile:
+    let
+      target = perAppViaTarget profile.outbound;
+      hex = hexOf target.name;
+      viaProfile =
+        target.kind != "outbound"
+        && perAppViaProfiles
+        && (target.kind == "awg" || awgGlobalProfiles ? ${target.name});
+      viaInterface = !viaProfile && builtins.any (ob: ob.tag == target.name) perAppViaInterfaceOutbounds;
+      backend = "proxy-suite-per-app-${profile.route}";
+    in
+    if profile.outbound == null then
+      if perAppGlobalModes ? ${backend} then
+        {
+          key = null;
+          units = [ backend ];
+          modes = perAppGlobalModes.${backend};
+        }
+      else
+        null
+    else if viaProfile then
+      {
+        key = "app-${hex}";
+        # The profile brought up for the apps alone, then the via unit on its slot.
+        units = [
+          "proxy-suite-awg-app@${target.name}"
+          "proxy-suite-per-app-via@app-${hex}"
+        ];
+        modes = [
+          "proxy-suite-awg-${target.name}.service"
+        ]
+        ++ lib.optional awgRuntimeGlobal "proxy-suite-awg@${target.name}.service";
+      }
+    else if viaInterface then
+      {
+        key = "awg-${hex}";
+        units = [ "proxy-suite-per-app-via@awg-${hex}" ];
+        modes = [ ];
+      }
+    else
+      {
+        key = "${profile.route}-${hex}";
+        units = [ "proxy-suite-per-app-via-${profile.route}@${hex}" ];
+        modes = perAppGlobalModes."proxy-suite-per-app-tproxy";
+      };
+  # What is kept running between apps (perAppRouting.<route>.keepRunning and
+  # perAppRouting.profiles.*.keepRunning), as perAppProfileUnits gives it; the standby unit
+  # (service/units.nix) starts it.
+  perAppKeepRunning = lib.unique (
+    lib.concatMap
+      (
+        route:
+        lib.optional
+          (
+            cfg.perAppRouting.${route}.enable
+            && cfg.perAppRouting.${route}.keepRunning
+            && (route == "zapret" || proxyEnabled)
+          )
+          (perAppProfileUnits {
+            inherit route;
+            outbound = null;
+          })
+      )
+      [
+        "tun"
+        "tproxy"
+        "zapret"
+      ]
+    ++ builtins.filter (entry: entry != null) (
+      map perAppProfileUnits (builtins.filter (profile: profile.keepRunning) cfg.perAppRouting.profiles)
+    )
+  );
+  # The via instances kept: no last app's exit stops them, and no pin is taken back from them.
+  perAppKeptViaKeys = lib.filter (key: key != null) (map (entry: entry.key) perAppKeepRunning);
+  # The global modes whose stop brings something kept back (constants.withPerAppStandby).
+  perAppStandbyGlobalModes = lib.unique (lib.concatMap (entry: entry.modes) perAppKeepRunning);
   # The system-wide instance; per-app zapret runs its own.
   zapretGlobalEnabled = zapretCfg.enable && zapretCfg.global.enable;
   zapretCutoffEnabled =
@@ -808,6 +911,23 @@ let
           ${cfg.host.systemctl}${managerFlag} stop -- "$unit" 2>/dev/null || true
         done
       ''} ${lib.concatStringsSep " " patterns}";
+    # A global mode's ExecStopPost (null: none), and after it, if needed, what brings back
+    # the per-app backends kept running (perAppKeepRunning) that it stopped. `unit`: its
+    # perAppGlobalModes pattern; a template's, "<name>@*.service", stands for its instances.
+    # --no-block: the standby unit waits for this stop (After=).
+    withPerAppStandby =
+      unit: stopPost:
+      if
+        builtins.any (
+          mode:
+          mode == unit
+          || (lib.hasSuffix "@*.service" unit && lib.hasPrefix (lib.removeSuffix "*.service" unit) mode)
+        ) perAppStandbyGlobalModes
+      then
+        lib.optionals (stopPost != null) (lib.toList stopPost)
+        ++ [ "-+${cfg.host.systemctl}${managerFlag} start --no-block proxy-suite-per-app-standby.service" ]
+      else
+        stopPost;
     # The same for a unit that needs no root at all; "+" ExecStartPre/ExecStopPost
     # commands still run privileged.
     unprivilegedServiceConfig =
@@ -1127,6 +1247,11 @@ in
     zapretEngine
     perAppZapretCfg
     perAppZapretEnabled
+    perAppProfileUnits
+    perAppKeepRunning
+    perAppKeptViaKeys
+    perAppGlobalModes
+    perAppStandbyGlobalModes
     zapretGlobalEnabled
     zapretCutoffEnabled
     zapretCutoffProxyFallback

@@ -73,6 +73,15 @@ let
 
   ipFamily = cidr: if lib.hasInfix ":" cidr then "ip6" else "ip";
 
+  # Runs `action` for a via instance kept running (perAppKeptViaKeys), `key` as shell text.
+  keptCase =
+    key: action:
+    lib.optionalString (ctx.perAppKeptViaKeys != [ ]) ''
+      case ${key} in
+        ${lib.concatStringsSep " | " ctx.perAppKeptViaKeys}) ${action} ;;
+      esac
+    '';
+
   # $1, the instance, to $key, $tag and its outbound's $interface, $table and $mark. An
   # awg-<hex> instance is an "interface" outbound; app-<hex> a global profile, which
   # proxy-suite-awg-app@<name> has brought up on a slot of its own.
@@ -379,7 +388,7 @@ let
     ${viaUserRule} "$1"
   '';
   # ExecStopPost of a user's unit: with no other user's left, the via unit goes, and the
-  # global profile it ran through. perApp members may only start those (polkit.nix):
+  # global profile it ran through, unless kept running. perApp members may only start those (polkit.nix):
   # stopping one under another user's apps would send them out unmarked.
   viaRetire = pkgs.writeShellScript "proxy-suite-per-app" ''
     set -euo pipefail
@@ -389,6 +398,7 @@ let
       | ${awk} '$3 == "restart" { found = 1 } END { exit !found }'; then
       exit 0
     fi
+    ${keptCase "$key" "exit 0"}
     ${viaUsersLock}
     others=$(${constants.systemctl} list-units --plain --no-legend --state=active,activating,reloading \
       "proxy-suite-per-app-via-user@*-$key.service" \
@@ -597,6 +607,7 @@ let
           [[ $other =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
           (( $(${pkgs.coreutils}/bin/date +%s) - $(${pkgs.coreutils}/bin/stat -c %Y "$slot_file") >= 60 )) || continue
           other_hex=$(printf '%s' "$other" | ${pkgs.coreutils}/bin/od -An -tx1 | ${pkgs.coreutils}/bin/tr -d ' \n')
+          ${keptCase ''"${route}-$other_hex"'' "continue"}
           if [[ -z $(${constants.systemctl} list-units --plain --no-legend --state=active,activating,reloading \
             "proxy-suite-per-app-via-user@*-${route}-$other_hex.service") ]]; then
             echo "proxy-suite: taking back ${route} pin slot $n from '$other': nothing runs through it" >&2

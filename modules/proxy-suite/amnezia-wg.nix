@@ -672,9 +672,15 @@ let
         ExecStart = withArg start;
         ExecStop = withArg stop;
       }
-      // lib.optionalAttrs (cfg.proxy.enable && !outbound) {
-        ExecStopPost = proxyBypassDown;
-      }
+      // (
+        let
+          # Per-app zapret back once it is down, if kept running.
+          stopPost =
+            derived.constants.withPerAppStandby "${spec.unit}${lib.optionalString spec.template "*"}.service"
+              (if cfg.proxy.enable then proxyBypassDown else null);
+        in
+        lib.optionalAttrs (!outbound && stopPost != null) { ExecStopPost = stopPost; }
+      )
       # The Endpoint lookup (ownLookups) gets past the kill switch by this group, so a
       # profile that dropped can come back while the kill switch holds.
       // lib.optionalAttrs (derived.killSwitchEnabled && !outbound) {

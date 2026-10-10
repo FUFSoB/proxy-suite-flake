@@ -130,6 +130,7 @@ services.proxy-suite = {
     tproxy = {
       enable = false;
       fwmark = 17;
+      keepRunning = false;
       localSubnets = [
         "192.168.0.0/16"
       ];
@@ -140,6 +141,7 @@ services.proxy-suite = {
       enable = false;
       fwmark = 16;
       interface = "psperapptun0";
+      keepRunning = false;
       localSubnets = [
         "192.168.0.0/16"
       ];
@@ -155,6 +157,7 @@ services.proxy-suite = {
     zapret = {
       enable = false;
       filterMark = 268435456;
+      keepRunning = false;
       qnum = 201;
     };
   };

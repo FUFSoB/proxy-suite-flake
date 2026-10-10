@@ -4,6 +4,52 @@
 
 {
   assertions = [
+    # A pin kept running holds its slot for good.
+    (rejects "keep 2 outbounds running through per-app tun, more than perAppRouting.via.pinSlots (1)" [
+      {
+        services.proxy-suite = {
+          proxy.outbounds = [
+            {
+              tag = "second";
+              url = "http://proxy2.example.com:8080";
+            }
+          ];
+          perAppRouting = {
+            enable = true;
+            tun.enable = true;
+            via.pinSlots = 1;
+            profiles = [
+              {
+                name = "a";
+                route = "tun";
+                outbound = "primary";
+                keepRunning = true;
+              }
+              {
+                name = "b";
+                route = "tun";
+                outbound = "second";
+                keepRunning = true;
+              }
+            ];
+          };
+        };
+      }
+    ])
+    (rejects "keepRunning has nothing to keep for route \"proxychains\"" [
+      {
+        services.proxy-suite.perAppRouting = {
+          enable = true;
+          proxychains.enable = true;
+          profiles = [
+            {
+              name = "curl";
+              keepRunning = true;
+            }
+          ];
+        };
+      }
+    ])
     (rejects "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark" [
       {
         services.proxy-suite = {

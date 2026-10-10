@@ -57,16 +57,9 @@ in
   };
   # The per-app instance's ExecStartPre: it has nothing to add under a global mode, which
   # it never displaces (constants.refuseUnderGlobal); those take it down as they start.
-  perAppRefuseUnderGlobal = derived.constants.refuseUnderGlobal pkgs (
-    [
-      "proxy-suite-tproxy.service"
-      "proxy-suite-tun.service"
-    ]
-    ++ map (name: "proxy-suite-awg-${name}.service") (
-      builtins.attrNames (lib.filterAttrs (_: profile: profile.asOutbound == null) cfg.amneziaWg.profiles)
-    )
-    ++ lib.optional derived.awgRuntimeGlobal "proxy-suite-awg@*.service"
-  );
+  perAppRefuseUnderGlobal =
+    derived.constants.refuseUnderGlobal pkgs
+      derived.perAppGlobalModes."proxy-suite-per-app-zapret";
 
   perAppZapretMarkUpScript = pkgs.writeShellScript scriptName ''
     set -euo pipefail

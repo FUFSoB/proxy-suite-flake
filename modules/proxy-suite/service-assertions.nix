@@ -512,7 +512,27 @@ let
         "proxy-suite: perAppRouting profile '${profile.name}': '${profile.outbound}' is both a global AmneziaWG profile and an outbound; say \"awg:${target.name}\" or \"outbound:${target.name}\""
       )
     ]
-  ) perAppRoutingCfg.profiles;
+    ++ [
+      (mkAssertion (!profile.keepRunning || derived.perAppProfileUnits profile != null)
+        "proxy-suite: perAppRouting profile '${profile.name}': keepRunning has nothing to keep for route \"${profile.route}\" with no outbound"
+      )
+    ]
+  ) perAppRoutingCfg.profiles
+  # Kept pins never give their slot back: they have to leave none short.
+  ++
+    map
+      (
+        route:
+        let
+          kept = builtins.filter (lib.hasPrefix "${route}-") derived.perAppKeptViaKeys;
+        in
+        mkAssertion (builtins.length kept <= derived.perAppPinSlots)
+          "proxy-suite: perAppRouting profiles keep ${toString (builtins.length kept)} outbounds running through per-app ${route}, more than perAppRouting.via.pinSlots (${toString derived.perAppPinSlots})"
+      )
+      [
+        "tun"
+        "tproxy"
+      ];
 
   localProxyAuthCfg = proxyCfg.listener.auth;
   localProxyAuthUsed =

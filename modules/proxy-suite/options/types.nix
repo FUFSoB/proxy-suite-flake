@@ -94,6 +94,17 @@ let
         '';
         example = "de";
       };
+
+      keepRunning = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Keep what this profile runs through running from boot, rather than starting it with
+          the first app and stopping it after the last: its `outbound` (an AmneziaWG
+          interface or profile, or a pin slot, which then stays taken), or else its `route`'s
+          backend, as `perAppRouting.<route>.keepRunning` does.
+        '';
+      };
     };
   };
 in

@@ -100,6 +100,64 @@ services.proxy-suite = {
   `proxy-ctl apps rm game`. In `proxy-tui` and the desktop app, the Apps tab adds and removes
   them, and runs a command via an outbound.
 
+## Keep a route running
+
+`tun`, `tproxy` and `zapret` start their backend with the first app and stop it after the last,
+so each first app waits for it to come up. `keepRunning` keeps one running from boot instead:
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  proxy = {
+    enable = true;
+    outbounds = [ { tag = "my-vps"; urlFile = "/run/secrets/my-vps-url"; } ];
+  };
+  perAppRouting = {
+    enable = true;
+    createDefaultProfiles = true;
+    tun = {
+      enable = true;
+      keepRunning = true;
+    };
+  };
+};
+```
+
+The per-app TProxy and zapret step aside under a global TUN or TProxy (zapret under a global
+AmneziaWG profile too), as below, and come back once it stops.
+
+A profile through one outbound can be kept running too, with its own `keepRunning`:
+
+```nix
+services.proxy-suite = {
+  enable = true;
+  proxy = {
+    enable = true;
+    outbounds = [ { tag = "nl"; urlFile = "/run/secrets/nl-url"; } ];
+  };
+  amneziaWg = {
+    enable = true;
+    profiles.home.configFile = "/run/secrets/home.conf";
+  };
+  perAppRouting = {
+    enable = true;
+    tun.enable = true;
+    profiles = [
+      { name = "game"; route = "tun"; outbound = "nl"; keepRunning = true; }
+      { name = "home"; outbound = "awg:home"; keepRunning = true; }
+    ];
+  };
+};
+```
+
+- An "interface" AmneziaWG outbound keeps its rules and DNS forwarder for apps up.
+- A global AmneziaWG profile is kept up for apps alone (as `--via` brings it up), unless the
+  profile is up globally, which carries the apps already.
+- Any other outbound keeps its pin slot: it counts against `perAppRouting.via.pinSlots`
+  for good, and with it the route's backend stays up.
+
+Only declared profiles: one `proxy-ctl apps add` adds still starts with its first app.
+
 ## Good to know
 
 - `tun`, `tproxy` and `zapret` profiles start a system service, so they ask for an admin

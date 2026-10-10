@@ -20,6 +20,20 @@ let
         "10.0.0.0/8"
       ];
     };
+  # `globalModes`: what it steps aside for (constants.refuseUnderGlobal), or null.
+  keepRunning =
+    what: globalModes:
+    mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Keep the ${what} backend running from boot, rather than starting it with the first app
+        and stopping it after the last: apps start without waiting for it.
+      ''
+      + lib.optionalString (globalModes != null) ''
+        Under a global ${globalModes} it stays down, and comes back once that stops.
+      '';
+    };
 in
 {
   options.services.proxy-suite.perAppRouting = {
@@ -64,6 +78,7 @@ in
 
     tun = {
       enable = mkEnableOption "per-app TUN";
+      keepRunning = keepRunning "per-app TUN" null;
       fwmark = int 16 "Firewall mark for wrapped apps' traffic.";
       routeTable = int 101 "Routing table for the per-app TUN.";
       localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
@@ -85,6 +100,7 @@ in
 
     tproxy = {
       enable = mkEnableOption "per-app TProxy";
+      keepRunning = keepRunning "per-app TProxy" "TUN or TProxy";
       fwmark = int 17 "Firewall mark for wrapped apps' traffic.";
       routeTable = int 102 "Routing table for the per-app TProxy.";
       localSubnets = localSubnets "Subnets that skip the proxy (DNS still goes through it).";
@@ -106,6 +122,7 @@ in
 
     zapret = {
       enable = mkEnableOption "per-app zapret, a separate zapret for wrapped apps only";
+      keepRunning = keepRunning "per-app zapret" "TUN, TProxy or AmneziaWG profile";
       filterMark = int 268435456 "Firewall mark bit for wrapped apps' traffic.";
       qnum = int 201 "NFQUEUE number. Must differ from the global zapret's.";
     };
