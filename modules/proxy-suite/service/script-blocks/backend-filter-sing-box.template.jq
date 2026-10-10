@@ -20,7 +20,23 @@ $route_rules[0] as $route_rules | $probe_inbounds[0] as $probe_inbounds
       | if $clear_dns_rules then
           .dns.rules = .dns.rules[:@userDnsRuleCount@]
             + [.dns.rules[@userDnsRuleCount@:][] | select(.server? == "fakeip" or .domain_suffix? == ["onion"])]
-        else . end
+        else
+          # The DNS mirror composed with the route (routing-compose.jq), runtime rules' lookups
+          # among the configuration's: in place of the configuration's own, which follows the
+          # user's rules and the .onion ones.
+          (($ARGS.named.route_dns // [null])[0]) as $route_dns
+          | if $route_dns == null then . else
+              (.dns.rules // []) as $r
+              | ([$r[@userDnsRuleCount@:][] | .domain_suffix? == ["onion"]] | index(false)
+                 // ($r[@userDnsRuleCount@:] | length)) as $onion
+              | (@userDnsRuleCount@ + $onion) as $at
+              | .dns.rules = $r[:$at] + $route_dns + $r[$at + ($ARGS.named.static_dns_count // 0):]
+            end
+        end
+      # The runtime rules' own rule sets, and geodata the configuration does not name.
+      | ([.route.rule_set[]?.tag]) as $have
+      | .route.rule_set = ((.route.rule_set // [])
+          + [(($ARGS.named.user_rule_sets // [[]])[0])[] | select(.tag as $t | $have | index([$t]) | not)])
     else . end
   # autoProxy rules, after the route-mode replace so no mode drops them: pins first
   # (they only match their own listener), learned rules last before final, so

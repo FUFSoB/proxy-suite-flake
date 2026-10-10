@@ -14,7 +14,7 @@ def xray_rewrite_proxy_rule($single_tag):
 def xray_preserved_rules:
   [.routing.rules[]
    | select((.ruleTag? // "") | . == "dns-hijack" or . == "dns-upstream-direct" or . == "dns-upstream-remote"
-       or . == "inbounds-private-guard" or . == "inbounds-host-guard")];
+       or . == "dns-remote-bridge" or . == "inbounds-private-guard" or . == "inbounds-host-guard")];
 def xray_final_rule($tag; $single_tag):
   if $tag == "proxy" and "@selectionMode@" == "urltest" then
     {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)

@@ -80,6 +80,15 @@ let
       ;
   };
 
+  runtimeRoutingChecks = import ./runtime-routing.nix {
+    inherit
+      checkLib
+      pkgs
+      minimalProxyCtlWrapper
+      minimalProxyCtlScript
+      ;
+  };
+
   subscriptionChecks = import ./subscriptions.nix {
     inherit checkLib;
     inherit
@@ -344,6 +353,7 @@ let
     ++ guiChecks.assertions
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
+    ++ runtimeRoutingChecks.assertions
     ++ optionTypeChecks.assertions
     ++ perAppRoutingChecks.assertions
     ++ perAppRoutingAwgChecks.assertions
@@ -356,6 +366,7 @@ in
   amneziawg-unit-scripts = amneziaWgChecks.unitScripts;
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
   tor-guard-runtime = torChecks.runtime;
+  runtime-routing = runtimeRoutingChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;
   zapret2-config = zapret2Checks.runtime;

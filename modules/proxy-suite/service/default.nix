@@ -95,6 +95,10 @@ let
       path = constants.runtimeAppsDir;
       scope = "perApp";
     }
+    ++ lib.optional proxyEnabled {
+      path = constants.runtimeRoutingDir;
+      scope = "routing";
+    }
     ++ lib.optional derived.zapretCutoffEnabled {
       path = "${constants.zapret2CutoffDir}/requests";
       scope = "zapret";
@@ -367,6 +371,11 @@ lib.mkMerge [
             constants.runtimeSubscriptionsDir
           ]
         ))
+        # Routing rules added at runtime (`proxy rules`): the routing scope's. Nothing secret
+        # in them, but root renders what is there into every backend's route.
+        (lib.mkIf (cfg.enable && proxyEnabled) [
+          "d ${constants.runtimeRoutingDir} ${spoolDirMode "routing"} -"
+        ])
         # inbounds.runtime: the users' and listeners' files hold their secrets, so the dir is
         # as closed as outbounds.d, and group-writable only with the inbounds scope.
         (lib.mkIf (cfg.enable && derived.proxyInboundsRuntimeEnabled) (

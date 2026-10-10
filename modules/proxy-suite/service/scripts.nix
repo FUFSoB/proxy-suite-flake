@@ -187,6 +187,8 @@ let
   backendJqFilterFile = pkgs.writeText "proxy-suite-core" backendJqFilter;
 
   startScripts = import ./start-scripts.nix { ctx = sctx; };
+  routingRuntime = import ./script-blocks/routing-runtime.nix { ctx = sctx; };
+  applyRoutingScript = routingRuntime.apply;
   inherit (startScripts) startSocks startTun startPerAppTun;
 
   proxyInboundsScripts = import ./proxy-inbounds-scripts.nix { ctx = sctx; };
@@ -240,6 +242,7 @@ in
     proxyInboundsSubscriptionsFile
     routeModeStateFile
     setRouteModeScript
+    applyRoutingScript
     pinOutboundScript
     reloadOutboundsScript
     subscriptionUpdateScript

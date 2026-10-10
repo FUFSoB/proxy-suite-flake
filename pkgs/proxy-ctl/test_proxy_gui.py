@@ -154,6 +154,23 @@ class GuiTest(unittest.TestCase):
         then()
         self.assertEqual(ran, [(["proxy", "subs", "add", "-"], "https://evil.test/s")])
 
+    def test_selector_runs_only_a_new_choice(self):
+        """The Routing page's mode drop-down: picking runs proxy-ctl; filling it from a read does not."""
+        routing = next(t for t in model.TABS if t.id == "routing")
+        ran = []
+        win = types.SimpleNamespace(app=types.SimpleNamespace(run_argv=lambda mode, argv, win: ran.append((mode, argv))))
+        page = types.SimpleNamespace(tab=routing, win=win, selector_setting=False, selector_values=["default", *ctl.ROUTE_MODES])
+        drop = lambda index: types.SimpleNamespace(get_selected=lambda: index)  # noqa: E731
+        with mock.patch.object(ctl, "_route_mode_current", lambda: "default"):
+            gui.Page.on_selector_changed(page, drop(2), None)
+            self.assertEqual(ran, [("run", ["proxy", "mode", "blacklist"])])
+            gui.Page.on_selector_changed(page, drop(0), None)  # the current one
+            gui.Page.on_selector_changed(page, drop(Gtk.INVALID_LIST_POSITION), None)
+            page.selector_setting = True  # set from a read
+            gui.Page.on_selector_changed(page, drop(1), None)
+        self.assertEqual(len(ran), 1)
+        self.assertTrue(gui.accelerator(routing.selector.key))
+
     def test_every_tray_icon_is_drawn(self):
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
         with tempfile.TemporaryDirectory() as out:

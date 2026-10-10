@@ -238,6 +238,7 @@ class ModelTest(unittest.TestCase):
             ],
             "zapret": [{"kind": k} for k in ("learned", "pinned", "excluded")],
             "autoproxy": [{"kind": k} for k in ("routed", "queued")],
+            "routing": [{"runtime": rt, "disabled": d} for rt in (False, True) for d in (False, True)],
         }
         for tab in model.TABS:
             by_key = {}
@@ -271,17 +272,59 @@ class ModelTest(unittest.TestCase):
         zapret = next(t for t in model.TABS if t.id == "zapret")
         env = {}
         with mock.patch.object(ctl, "env", lambda name, default="": env.get(name, default)):
-            self.assertEqual([a.key for a in model.applicable(routing, None)], [])
+            self.assertEqual([a.key for a in model.applicable(routing, None)], ["n"])
             self.assertEqual([a.key for a in model.applicable(zapret, None)], ["space", "ctrl+r"])
             with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
                 json.dump([{"name": "ru", "path": "/nonexistent"}], f)
                 f.flush()
                 env.update(RULE_SETS_FILE=f.name, ZAPRET_AUTO_ENABLED="1", ZAPRET_CUTOFF_ENABLED="1")
-                self.assertEqual([a.argv(None, "", {}) for a in model.applicable(routing, None)], [["proxy", "rulesets", "list"], ["proxy", "rulesets", "update"]])
+                self.assertEqual(
+                    [a.argv(None, "", {}) for a in model.applicable(routing, None) if a.key != "n"],
+                    [["proxy", "rulesets", "list"], ["proxy", "rulesets", "update"]],
+                )
             self.assertEqual([a.key for a in model.applicable(zapret, None)], ["n", "X", "F", "P", "space", "ctrl+r"])
         actions = {a.key: a for a in zapret.actions}
         self.assertEqual(actions["n"].argv(None, "example.com", {}), ["zapret", "auto", "add", "example.com"])
         self.assertEqual(actions["X"].argv(None, "example.com", {}), ["zapret", "auto", "exclude", "example.com"])
+
+    def test_routing_tab(self):
+        """Rules in match order, actions on the runtime ones only, and the mode as a selector."""
+        tab = next(t for t in model.TABS if t.id == "routing")
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = os.path.join(tmp, "routing.d")
+            os.makedirs(spool)
+            with open(os.path.join(spool, "rules.json"), "w") as f:
+                json.dump({"rules": [{"name": "work", "target": "de", "priority": 150, "domains": ["work.example"]},
+                                     {"name": "off", "target": "direct", "priority": 10, "disabled": True}]}, f)
+            buckets = os.path.join(tmp, "buckets.json")
+            with open(buckets, "w") as f:
+                json.dump({"sections": [{"id": "rules", "priority": 100, "label": "routing.rules", "entries": [{"target": "de", "domains": ["c.example"]}]}]}, f)
+            env = {"RUNTIME_ROUTING_DIR": spool, "ROUTING_RULES_FILE": buckets, "OUTBOUND_INVENTORY_FILE": os.path.join(tmp, "none.json")}
+            with mock.patch.object(ctl, "env", lambda name, default="": env.get(name, default)):
+                rows, _ = model.load_tab(tab, {})
+        self.assertEqual([r["key"] for r in rows], ["rule:off", "config:rules:0", "rule:work"])
+        off, config, work = rows
+        self.assertEqual(off["notes"], "disabled")
+        by = lambda row: {a.key: a for a in model.applicable(tab, row)}  # noqa: E731
+        self.assertEqual(set(by(config)), {"n"})  # the configuration's: nothing to change here
+        self.assertEqual(by(off)["e"].argv(off, "", {}), ["proxy", "rules", "enable", "off"])
+        self.assertEqual(by(work)["e"].argv(work, "", {}), ["proxy", "rules", "disable", "work"])
+        self.assertEqual(by(work)["plus"].argv(work, "", {}), ["proxy", "rules", "priority", "work", "up"])
+        self.assertEqual(by(work)["a"].argv(work, "a.example 1.1.1.1", {}), ["proxy", "rules", "matches", "work", "add", "a.example", "1.1.1.1"])
+        self.assertEqual(by(work)["t"].argv(work, " proxy ", {}), ["proxy", "rules", "target", "work", "proxy"])
+        self.assertTrue(by(work)["d"].confirm)
+        self.assertEqual(by(None)["n"].argv(None, "direct bank.example --name bank", {}), ["proxy", "rules", "add", "direct", "bank.example", "--name", "bank"])
+        # The mode: a selector over the table, not rows in it.
+        options, current = model.selector_state(tab)
+        self.assertEqual([v for v, _ in options], ["default", *ctl.ROUTE_MODES])
+        self.assertEqual(current, "default")
+        self.assertIsNone(model.selector_argv(tab, "default"))  # already
+        self.assertIsNone(model.selector_argv(tab, "nope"))
+        self.assertEqual(model.selector_argv(tab, "all-proxy"), ["proxy", "mode", "all-proxy"])
+        self.assertTrue(model.selector_line(tab).startswith("Mode:  ● Default"))
+        self.assertIsNone(model.selector_state(next(t for t in model.TABS if t.id == "services")))
+        # A bare host pasted onto the tab goes through the proxy.
+        self.assertEqual(model.paste_argv("routing", "blocked.example")[0], ["proxy", "rules", "add", "proxy", "blocked.example"])
 
     def test_tray_menu(self):
         states = {

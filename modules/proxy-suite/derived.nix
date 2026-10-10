@@ -1066,6 +1066,11 @@ let
     runtimeInboundsLock = "${runtimeDir}/proxy-suite-inbounds-runtime.lock";
     # Per-app profiles added with `proxy-ctl apps add`: <name>.json, next to the declared ones.
     runtimeAppsDir = "${stateDir}/apps.d";
+    # Routing rules added with `proxy-ctl proxy rules`: rules.json, written by the routing
+    # scope's groups. Root renders it into routingRulesDir (routing-runtime.nix), which the
+    # backends read: rules.json checked, and a rule set per rule that sing-box reloads.
+    runtimeRoutingDir = "${stateDir}/routing.d";
+    routingRulesDir = "${stateDir}/routing";
     # Shell function for the scripts that read those spools as root. $1 a file: in a spool,
     # a regular file only, and never through a symlink, which would hand over any file root
     # can read (a share link or an error message then shows it), nor a FIFO, which would

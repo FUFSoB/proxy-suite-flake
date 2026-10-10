@@ -36,7 +36,7 @@ Members of the group get the listed scopes. An empty `scopes` list grants all of
 | Scope | Allows |
 |---|---|
 | `services` | turning services on, off and restarting them |
-| `routing` | `proxy pin`, `proxy unpin`, `proxy mode` |
+| `routing` | `proxy pin`, `proxy unpin`, `proxy mode`, `proxy rules` |
 | `outbounds` | adding, removing, enabling and disabling outbounds and subscriptions, AmneziaWG outbounds included |
 | `amneziaWg` | `awg add` and `awg rm`: global AmneziaWG profiles, which take over the host's routes and DNS |
 | `perApp` | `apps run` with `tun`, `tproxy` and `zapret` profiles |
@@ -89,6 +89,7 @@ connections (`proxy-ctl where`) need `secrets`. Nothing else in the API is open 
 | `proxy outbounds disable` | until `enable`; works on outbounds from Nix too |
 | `inbounds users add`, `inbounds add`, `inbounds bind` | until removed; kept across reboots |
 | `proxy pin` | until `unpin`; kept across reboots |
+| `proxy rules add` | until removed with `rules rm`; kept across reboots |
 | `proxy mode` | until the next reboot |
 | `… on` / `… off` | until the next reboot; boot state comes from the config |
 

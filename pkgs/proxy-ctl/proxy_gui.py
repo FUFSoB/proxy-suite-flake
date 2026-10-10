@@ -93,6 +93,7 @@ CSS = """
 .status-chip.ok .chip-label, .status-chip.warn .chip-label, .status-chip.bad .chip-label { opacity: 0.8; }
 
 .summary { padding: 8px 14px 0 14px; }
+.selector-bar { padding: 8px 14px 0 14px; }
 .filter-bar { padding: 8px 12px; }
 .row-count { font-feature-settings: "tnum"; }
 
@@ -309,6 +310,20 @@ class Page(Gtk.Box):
 
         self.summary = Gtk.Label(xalign=0, wrap=True, selectable=True, visible=False, css_classes=["summary", "dim-label"])
 
+        # The tab's one choice apart from its rows (Routing: the mode), above everything else, so
+        # it is there whatever the rows are.
+        self.selector_values = []
+        self.selector_setting = False
+        self.selector_drop = None
+        if tab.selector:
+            self.selector_drop = Gtk.DropDown(model=Gtk.StringList(), valign=Gtk.Align.CENTER, tooltip_text=f"Shortcut: {display_key(tab.selector.key)}")
+            self.selector_drop.connect("notify::selected", self.on_selector_changed)
+            label = Gtk.Label(label=tab.selector.label, css_classes=["heading"], mnemonic_widget=self.selector_drop)
+            self.selector_bar = Gtk.Box(spacing=12, css_classes=["selector-bar"], visible=False)
+            self.selector_bar.append(label)
+            self.selector_bar.append(self.selector_drop)
+            self.append(self.selector_bar)
+
         self.search = Gtk.SearchEntry(placeholder_text="Filter: words in any column, or column:value", hexpand=True)
         self.search.connect("search-changed", lambda _: self.refill())
         self.search.connect("stop-search", self.on_stop_search)
@@ -420,6 +435,7 @@ class Page(Gtk.Box):
             ("o", lambda *_: self.win.show_last_output()),
             ("r", lambda *_: self.win.app.reload(fresh_root=True)),
             ("Menu|<Shift>F10", lambda *_: self.open_menu(None)),
+            *([(accelerator(self.tab.selector.key), lambda *_: self.open_selector())] if self.tab.selector else []),
         ):
             if trigger not in self.triggers():
                 controller.add_shortcut(Gtk.Shortcut(trigger=Gtk.ShortcutTrigger.parse_string(trigger), action=Gtk.CallbackAction.new(self.keyed(trigger, callback))))
@@ -464,9 +480,43 @@ class Page(Gtk.Box):
 
     # --- filling ------------------------------------------------------------------------
 
-    def fill(self, rows, summary):
+    def fill(self, rows, summary, selector=None):
         self.rows, self.summary_text, self.loaded = rows, summary, True
+        self.fill_selector(selector)
         self.refill()
+
+    def fill_selector(self, state):
+        """The selector as read: its options and the current one, set without running anything."""
+        if self.selector_drop is None:
+            return
+        self.selector_bar.set_visible(state is not None)
+        if state is None:
+            return
+        options, current = state
+        values = [v for v, _ in options]
+        self.selector_setting = True
+        try:
+            if values != self.selector_values:
+                self.selector_values = values
+                self.selector_drop.set_model(Gtk.StringList.new([label for _, label in options]))
+            if current in values and self.selector_drop.get_selected() != values.index(current):
+                self.selector_drop.set_selected(values.index(current))
+        finally:
+            self.selector_setting = False
+
+    def on_selector_changed(self, drop, _):
+        index = drop.get_selected()
+        if self.selector_setting or not 0 <= index < len(self.selector_values):
+            return
+        argv = model.selector_argv(self.tab, self.selector_values[index])
+        if argv:
+            self.win.app.run_argv("run", argv, self.win)
+
+    def open_selector(self):
+        if self.selector_drop is None or not self.selector_bar.get_visible():
+            return False
+        self.selector_drop.grab_focus()
+        return self.selector_drop.activate()
 
     def refill(self):
         rows, summary = self.rows, self.summary_text
@@ -929,7 +979,7 @@ class Window(Adw.ApplicationWindow):
             chip.append(Gtk.Label(label=value, css_classes=["chip-value"], ellipsize=Pango.EllipsizeMode.END))
             self.status.append(chip)
 
-    def fill(self, states, visible, status, tab_id, rows, summary, stale=False):
+    def fill(self, states, visible, status, tab_id, rows, summary, stale=False, selector=None):
         # A read that came back empty after a good one keeps what is on screen: every tab
         # and row blinking out and back is worse than a banner saying the read failed.
         if stale:
@@ -943,7 +993,7 @@ class Window(Adw.ApplicationWindow):
         if visible != self.shown():
             self.show_tabs(visible)
         if tab_id in self.pages and tab_id in visible:
-            self.pages[tab_id].fill(rows, summary)
+            self.pages[tab_id].fill(rows, summary, selector)
 
     # --- acting ----------------------------------------------------------------------------------
 
@@ -1072,6 +1122,8 @@ class Window(Adw.ApplicationWindow):
             section = Adw.ShortcutsSection(title=page.tab.title)
             for key, label in model.key_labels(actions):
                 section.add(Adw.ShortcutsItem(title=cap(label), accelerator=accelerator(key)))
+            if page.tab.selector:
+                section.add(Adw.ShortcutsItem(title=f"Choose the {page.tab.selector.label.lower()}", accelerator=accelerator(page.tab.selector.key)))
             dialog.add(section)
         section = Adw.ShortcutsSection(title="Everywhere")
         for accel, title in GLOBAL_SHORTCUTS:
@@ -1263,6 +1315,7 @@ class ProxySuiteGui(Adw.Application):
             result["visible"] = model.available_tabs(states)
             result["status"] = model._safe(model.status_items, states, fallback=[("", "Status unavailable", "bad")])
             result["tab"] = (tab.id, *self.load_tab(tab, states, elevated, fresh_root))
+            result["selector"] = model.selector_state(tab)
         return result
 
     def load_tab(self, tab, states, elevated, fresh_root=False):
@@ -1317,7 +1370,7 @@ class ProxySuiteGui(Adw.Application):
                     self.tray.update(model.icon_name(overall), tooltip, tree, attention=bool(failed))
                 self.notify_failures(snap)
             if "tab" in result and self.window:
-                self.window.fill(self.states, result["visible"], result["status"], *result["tab"], stale=stale)
+                self.window.fill(self.states, result["visible"], result["status"], *result["tab"], stale=stale, selector=result.get("selector"))
         if self.pending:
             fresh, self.pending, self.pending_fresh = self.pending_fresh, False, False
             self.reload(fresh_root=fresh)

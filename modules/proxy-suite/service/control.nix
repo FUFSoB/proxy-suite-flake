@@ -30,6 +30,7 @@ let
     perAppViaRuntime
     proxySuiteScriptsDir
     ruleSets
+    routeModeRulesFile
     pkgs
     ;
   inherit (ctx.scripts)
@@ -93,6 +94,13 @@ in
       PROXYCHAINS_CONFIG = toString proxychainsConfigFile;
       PROXYCHAINS_QUIET_ARG = lib.removeSuffix " " proxychainsQuietArg;
       ROUTE_MODE_STATE_FILE = routeModeStateFile;
+      # The configuration's routing in sections, each at its priority ("sections"), and the
+      # rules `proxy rules` adds: its spool, and what root rendered of it.
+      ROUTING_RULES_FILE = toString routeModeRulesFile;
+      RUNTIME_ROUTING_DIR = constants.runtimeRoutingDir;
+      ROUTING_RULES_DIR = constants.routingRulesDir;
+      GEODATA_GEOSITE_DIR = "${cfg.geodata.singBox.geosite}/share/sing-box/rule-set";
+      GEODATA_GEOIP_DIR = "${cfg.geodata.singBox.geoip}/share/sing-box/rule-set";
       DEFAULT_ROUTE_MODE = if proxyCfg.routing.default == "proxy" then "blacklist" else "whitelist";
       AWG_PROFILES_FILE = toString amneziaWgProfileNamesFile;
       # The WARP devices behind outbounds, each with the unit that carries it.

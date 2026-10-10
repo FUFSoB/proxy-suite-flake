@@ -22,6 +22,7 @@ let
     "proxy-suite-outbound-pin@" = "routing";
     "proxy-suite-outbound-unpin." = "routing";
     "proxy-suite-route-mode@" = "routing";
+    "proxy-suite-routing-apply." = "routing";
     "proxy-suite-outbound-reload." = "outbounds";
     "proxy-suite-subscription-update." = "outbounds";
     # Tunnels of the AmneziaWG outbounds added at runtime; a global profile's own unit

@@ -4,6 +4,8 @@
 import asyncio
 import contextlib
 import io
+import json
+import os
 import signal
 import tempfile
 import unittest
@@ -285,19 +287,37 @@ class TuiTest(unittest.TestCase):
             # Declared: nothing removes it here.
             self.assertNotIn("d", app.screen.active_bindings)
 
-            # On to Routing.
+            # On to Routing: a runtime rule ahead of nothing the configuration has.
+            os.makedirs(f"{self.env['STATE_DIR']}/routing.d")
+            with open(f"{self.env['STATE_DIR']}/routing.d/rules.json", "w") as f:
+                json.dump({"rules": [{"name": "bank", "target": "direct", "domains": ["bank.example"]}]}, f)
             await pilot.press("right")
             await self.settle(app, pilot)
             self.assertEqual((app.active_tab(), app.focused.id), ("routing", "routing-table"))
+            self.assertIn("● [b]Default", str(app.main.query_one("#routing-selector").content))
 
             # Enter opens the row's actions; arrows and enter pick one.
-            await pilot.press("down", "enter")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, tui.Menu)
-            self.assertEqual(self.menu_labels(app), ["switch to this mode"])
             await pilot.press("enter")
             await pilot.pause()
+            self.assertIsInstance(app.screen, tui.Menu)
+            self.assertEqual(self.menu_labels(app)[:2], ["add a rule…", "add domains or addresses to it…"])
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("minus")
+            self.assertEqual(self.ran.pop(), ["proxy", "rules", "priority", "bank", "down"])
+
+            # m: the mode, picked from a list that starts at the current one.
+            await pilot.press("m")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, tui.Pick)
+            await pilot.press("down", "enter")
+            await pilot.pause()
             self.assertEqual(self.ran.pop(), ["proxy", "mode", "whitelist"])
+            # Or a click on one in the line above the table.
+            app.action_choose("all-bypass")
+            self.assertEqual(self.ran.pop(), ["proxy", "mode", "all-bypass"])
+            app.action_choose("default")  # already: nothing runs
+            self.assertEqual(self.ran, [])
 
             # Outbounds: letter shortcuts; p pins, and on the pinned row unpins; nothing removes a declared one.
             await pilot.press("right")

@@ -5,12 +5,21 @@ applies to the local proxy, TUN, TProxy and per-app routing alike.
 
 ## How a destination is routed
 
-1. `proxy.routing.rules`, in order. The first match wins, and a rule can name a specific
-   outbound.
-2. The lists: `proxy.domains` and `proxy.ips` first, then `block`, then `direct`, then
-   `proxy.geosites`, `proxy.geoips` and `proxy.ruleSets`. A name in both a block and a direct
-   list (an ad domain under `category-ru`, say) is blocked.
-3. Anything left goes to `proxy.routing.default`: `"proxy"` (the default) or `"direct"`.
+The first match wins, checked in this order. Each step has a priority number, and the
+rules you add at runtime (below) go in among them:
+
+| Priority | What is checked |
+|---|---|
+| 100 | `proxy.routing.rules`, in order, after each outbound's own `routing`. A rule can name a specific outbound. |
+| 200 | `proxy.domains` and `proxy.ips` |
+| 300 | `block` |
+| 400 | `direct`, then private addresses |
+| 500 | `proxy.geosites`, `proxy.geoips` and `proxy.ruleSets` |
+| after | what autoProxy and zapret2 learned |
+| last | `proxy.routing.default`: `"proxy"` (the default) or `"direct"` |
+
+A name in both a block and a direct list (an ad domain under `category-ru`, say) is blocked.
+Apps run with `apps run --via` skip all of this.
 
 Russian sites and IPs go direct unless you set `routing.directRu = false`.
 
@@ -81,6 +90,48 @@ services.proxy-suite = {
 
 They need the sing-box or hybrid backend.
 
+## Add rules at runtime
+
+`proxy-ctl proxy rules` adds rules without a rebuild. They are kept across reboots:
+
+```sh
+proxy-ctl proxy rules add direct bank.example 10.0.0.0/8   # these go direct
+proxy-ctl proxy rules add proxy geosite:netflix            # this through the proxy
+proxy-ctl proxy rules add us-vps hulu.com --name streaming # through one outbound or group
+proxy-ctl proxy rules add block ads.example --priority 350 # after the config's block list
+proxy-ctl proxy rules                                      # every rule, in the order checked
+```
+
+A rule matches domains (subdomains included), addresses and CIDRs, `geosite:NAME`,
+`geoip:NAME` and `ruleset:NAME` (a rule set from `routing.ruleSets`). It sends them to
+`proxy`, `direct`, `block`, or any outbound or group, ones added at runtime included.
+
+Without `--name`, the rule is named after its target, so `rules add direct …` keeps adding to
+the same rule. A new rule gets priority 50, ahead of everything in the config. Give it
+another number with `--priority`, or move it later:
+
+```sh
+proxy-ctl proxy rules priority streaming 450    # after the direct lists
+proxy-ctl proxy rules priority streaming up     # one row up, past a rule or a config step
+proxy-ctl proxy rules matches direct rm 10.0.0.0/8
+proxy-ctl proxy rules target streaming de-vps
+proxy-ctl proxy rules disable streaming         # keep it, but stop applying it
+proxy-ctl proxy rules rm streaming
+```
+
+On equal priority, a runtime rule goes first. Route modes treat runtime rules like the
+config's: `all-proxy` drops the ones that go direct, and `all-bypass` keeps only blocks.
+
+A change applies at once. On sing-box and hybrid, adding or removing a rule's domains and
+addresses does not restart anything. Other changes, and every change on XRay, restart the
+proxy, which drops open connections. A rule whose outbound is gone is left out until the
+outbound is back, and `proxy rules` says why.
+
+The Routing tab in the TUI and the app lists the same rules, the config's included. It adds
+(`n`), edits (`a`, `x`, `t`), moves (`+`, `-`, `y`), disables (`e`) and removes (`d`) them. The
+route mode is a selector above the table (`m`). Pasting a bare domain onto the tab sends it
+through the proxy.
+
 ## Commands
 
 ```sh
@@ -90,11 +141,13 @@ proxy-ctl proxy mode blacklist     # proxy unless a rule says otherwise
 proxy-ctl proxy mode all-proxy     # everything through the proxy, except blocks
 proxy-ctl proxy mode all-bypass    # everything direct, except blocks
 proxy-ctl proxy mode default       # back to routing.default
+proxy-ctl proxy rules              # every routing rule, in the order checked
 proxy-ctl proxy auto               # what autoProxy routed, and where
 proxy-ctl proxy rulesets update    # refetch rule sets now
 ```
 
-A route mode set with `proxy-ctl` lasts until the next reboot.
+A route mode set with `proxy-ctl` lasts until the next reboot. Rules added with
+`proxy rules` last until removed.
 
 ## Good to know
 

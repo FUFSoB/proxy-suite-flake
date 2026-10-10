@@ -99,6 +99,9 @@ let
   customRouteRules = map (rule: {
     category = customRuleCategory rule.outbound;
     entries = mkCustomRuleEntries rule;
+    # Its share of the DNS mirror below, so a start script that reorders the sections
+    # (runtime routing rules) reorders their lookups with them.
+    dns = customDnsRules rule;
   }) customRules;
 
   proxyPrimaryRules = lib.flatten [
@@ -172,18 +175,23 @@ let
       inherit server;
     };
   dnsServerFor = category: if category == "direct" then "local" else "remote";
-  singBoxDnsRules =
-    lib.concatMap (
-      rule:
-      lib.optionals (customRuleCategory rule.outbound != "block") (
-        mkDnsRules (dnsServerFor (customRuleCategory rule.outbound)) rule.domains rule.geosites (
-          rule.ruleSets or [ ]
-        )
+  customDnsRules =
+    rule:
+    lib.optionals (customRuleCategory rule.outbound != "block") (
+      mkDnsRules (dnsServerFor (customRuleCategory rule.outbound)) rule.domains rule.geosites (
+        rule.ruleSets or [ ]
       )
-    ) customRules
-    ++ mkDnsRules "remote" r.proxy.domains [ ] [ ]
-    ++ mkDnsRules "local" direct.domains direct.geosites r.direct.ruleSets
-    ++ mkDnsRules "remote" [ ] r.proxy.geosites r.proxy.ruleSets;
+    );
+  dnsSections = {
+    proxyPrimary = mkDnsRules "remote" r.proxy.domains [ ] [ ];
+    direct = mkDnsRules "local" direct.domains direct.geosites r.direct.ruleSets;
+    proxyGeo = mkDnsRules "remote" [ ] r.proxy.geosites r.proxy.ruleSets;
+  };
+  singBoxDnsRules =
+    lib.concatMap (item: item.dns) customRouteRules
+    ++ dnsSections.proxyPrimary
+    ++ dnsSections.direct
+    ++ dnsSections.proxyGeo;
 
   singBoxRouteModeRules = {
     common = commonRules;
@@ -193,6 +201,8 @@ let
     safetyDirect = safetyDirectRules;
     block = blockRules;
     proxyGeo = proxyGeoRules;
+    # The DNS mirror by section, in singBoxDnsRules' order (custom's is in each rule).
+    dns = dnsSections;
   };
 in
 {

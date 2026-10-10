@@ -73,6 +73,17 @@ class Action:
 
 
 @dataclass
+class Selector:
+    """One choice a tab makes apart from its rows (the Routing tab's mode), drawn above the table."""
+
+    label: str
+    options: Callable  # () -> [(value, label)]
+    current: Callable  # () -> the value chosen now
+    argv: Callable  # value -> proxy-ctl argv that chooses it
+    key: str = "m"  # opens the choice
+
+
+@dataclass
 class Tab:
     id: str
     title: str
@@ -82,6 +93,7 @@ class Tab:
     summary: Callable = None  # () -> text above the table, read with every load
     actions: list = field(default_factory=list)
     tree: bool = False  # rows carry "ancestors" (row keys) and "group": the order means something, so no sorting
+    selector: Selector = None
 
 
 def ROW(_):
@@ -248,12 +260,21 @@ def service_rows(states):
     ]
 
 
-def route_rows(_):
-    current = ctl._route_mode_current()
-    return [
-        {"key": m, "active": "●" if m == current else "", "mode": ctl._route_mode_label(m)}
-        for m in ("default", *ctl.ROUTE_MODES)
-    ]
+def route_mode_options():
+    """The route modes as the Routing tab's selector and the tray offer them: (mode, label)."""
+    return [(m, ctl._route_mode_label(m)) for m in ("default", *ctl.ROUTE_MODES)]
+
+
+def routing_rows(_):
+    return ctl._routing_rows()
+
+
+def routing_summary():
+    return (
+        f"Configured default: {ctl._route_mode_default()}; an override lasts until you switch back to default. "
+        "Checked top to bottom: a lower # first, a runtime rule first among equals, then the final outbound. "
+        "On sing-box, a rule's domains and addresses change without a restart."
+    )
 
 
 def outbound_rows(_):
@@ -655,6 +676,10 @@ def _rule_sets():
     return bool(ctl.read_json_or(ctl.env("RULE_SETS_FILE"), []))
 
 
+def _runtime_rule(row):
+    return bool(row.get("runtime"))
+
+
 def _zapret_toggle(row, _, states):
     return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
 
@@ -748,11 +773,40 @@ TABS = [
         "routing",
         "Routing",
         _socks,
-        [("active", ""), ("key", "Mode"), ("mode", "Meaning")],
-        route_rows,
-        summary=lambda: f"Configured default: {ctl._route_mode_default()}. An override lasts until you switch back to default.",
+        [("priority", "#"), ("name", "Rule"), ("source", "Source"), ("target", "Target"), ("matches", "Matches"), ("notes", "Notes")],
+        routing_rows,
+        summary=routing_summary,
+        tree=True,
+        selector=Selector(
+            "Mode",
+            route_mode_options,
+            # Looked up at each read: tests and the front ends patch proxy_ctl's.
+            lambda: ctl._route_mode_current(),
+            lambda mode: ["proxy", "mode", mode],
+        ),
         actions=[
-            Action("space", "switch to this mode", lambda r, *_: ["proxy", "mode", r["key"]], when=lambda r: not r["active"]),
+            Action(
+                "n",
+                "add a rule…",
+                lambda r, t, _: ["proxy", "rules", "add", *shlex.split(t)],
+                prompt="<proxy|direct|block|outbound> <domain, address, geosite:x, geoip:x or ruleset:x…> [--name n] [--priority n]"
+                " - e.g. direct bank.example 10.0.0.0/8",
+            ),
+            Action("a", "add domains or addresses to it…", lambda r, t, _: ["proxy", "rules", "matches", r["name"], "add", *t.split()], when=_runtime_rule, prompt="<domain, address, geosite:x, geoip:x or ruleset:x…>"),
+            Action("x", "remove domains or addresses from it…", lambda r, t, _: ["proxy", "rules", "matches", r["name"], "rm", *t.split()], when=_runtime_rule, prompt="<domain, address, geosite:x, geoip:x or ruleset:x…>"),
+            Action("t", "send it elsewhere…", lambda r, t, _: ["proxy", "rules", "target", r["name"], t.strip()], when=_runtime_rule, prompt="<proxy, direct, block or an outbound>"),
+            Action(
+                "y",
+                "set its priority…",
+                lambda r, t, _: ["proxy", "rules", "priority", r["name"], t.strip()],
+                when=_runtime_rule,
+                prompt="<number> - lower goes first; the configuration's sections are at 100 to 500",
+            ),
+            Action("plus", "move it up", lambda r, *_: ["proxy", "rules", "priority", r["name"], "up"], when=_runtime_rule),
+            Action("minus", "move it down", lambda r, *_: ["proxy", "rules", "priority", r["name"], "down"], when=_runtime_rule),
+            Action("e", "disable it", lambda r, *_: ["proxy", "rules", "disable", r["name"]], when=lambda r: _runtime_rule(r) and not r["disabled"]),
+            Action("e", "enable it again", lambda r, *_: ["proxy", "rules", "enable", r["name"]], when=lambda r: _runtime_rule(r) and r["disabled"]),
+            Action("d", "remove it", lambda r, *_: ["proxy", "rules", "rm", r["name"]], when=_runtime_rule, confirm=True),
             Action("i", "rule sets and when each was fetched", lambda r, *_: ["proxy", "rulesets", "list"], mode="dialog", offered=_rule_sets),
             Action("u", "fetch the rule sets now", lambda r, *_: ["proxy", "rulesets", "update"], mode="dialog", offered=_rule_sets),
         ],
@@ -1017,7 +1071,7 @@ WHERE = Action("w", "How is a domain routed", lambda r, t, _: ["where", t], prom
 PROXY_SCHEMES = ("vless", "vmess", "trojan", "ss", "hysteria2", "hy2", "tuic", "anytls", "naive+https", "naive+quic", "socks5", "socks5h", "socks4", "socks4a")
 HOST = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+")
 # A bare host means something only where a tab collects hosts.
-HOST_ARGV = {"zapret": ["zapret", "auto", "add"], "autoproxy": ["proxy", "auto", "learn"]}
+HOST_ARGV = {"zapret": ["zapret", "auto", "add"], "autoproxy": ["proxy", "auto", "learn"], "routing": ["proxy", "rules", "add", "proxy"]}
 OUTBOUND_ADD = ["proxy", "outbounds", "add"]
 
 
@@ -1067,6 +1121,33 @@ def available_tabs(states):
 
 def applicable(tab, row):
     return [a for a in tab.actions if offered(a) and (a.when is None or (row is not None and a.when(row)))]
+
+
+def selector_state(tab):
+    """(options, current value) of a tab's selector, or None: without one, or unreadable."""
+    if tab.selector is None:
+        return None
+    options = _safe(tab.selector.options, fallback=None)
+    if not options:
+        return None
+    return options, _safe(tab.selector.current, fallback=None)
+
+
+def selector_argv(tab, value):
+    """What choosing value runs, or None when it is already the choice or no option."""
+    state = selector_state(tab)
+    if state is None or value == state[1] or value not in dict(state[0]):
+        return None
+    return tab.selector.argv(value)
+
+
+def selector_line(tab):
+    """The selector as one line of text: "Mode: ● Default …  ○ Whitelist …"."""
+    state = selector_state(tab)
+    if state is None:
+        return ""
+    options, current = state
+    return f"{tab.selector.label}:  " + "   ".join(f"{'●' if v == current else '○'} {label}" for v, label in options)
 
 
 def load_tab(tab, states):
@@ -1330,8 +1411,8 @@ def tray_menu(snap, outbounds=None):
                 f"Routing: {ctl._route_mode_label(current)}",
                 kind="submenu",
                 children=[
-                    MenuItem(f"mode-{m}", ctl._route_mode_label(m), kind="radio", checked=m == current, argv=["proxy", "mode", m])
-                    for m in ("default", *ctl.ROUTE_MODES)
+                    MenuItem(f"mode-{m}", label, kind="radio", checked=m == current, argv=["proxy", "mode", m])
+                    for m, label in route_mode_options()
                 ],
             )
         )

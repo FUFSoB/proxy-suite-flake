@@ -4,6 +4,7 @@ What it shows and does lives in proxy_model, shared with proxy-suite-gui; this i
 """
 
 import faulthandler
+import json
 import os
 import re
 import shutil
@@ -277,6 +278,29 @@ class Menu(Dialog):
         self.dismiss(self.actions[int(event.option.id)])
 
 
+class Pick(Dialog):
+    """A tab's selector: its options, the current one first in focus, picked with the arrows."""
+
+    BINDINGS = [Binding("escape,q", "dismiss", "close")]
+
+    def __init__(self, title, options, current):
+        super().__init__()
+        self.heading, self.options, self.current = title, options, current
+
+    def compose(self) -> ComposeResult:
+        values = [v for v, _ in self.options]
+        with Vertical(classes="dialog menu"):
+            yield Label(printable(self.heading), classes="dialog-title", markup=False)
+            choices = Choices(*(Option(f"{'●' if v == self.current else '○'} {label}", id=str(i)) for i, (v, label) in enumerate(self.options)))
+            if self.current in values:
+                choices.highlighted = values.index(self.current)
+            yield choices
+            yield hint("↑↓ or click to choose", ("esc close", "dismiss"))
+
+    def on_option_list_option_selected(self, event):
+        self.dismiss(self.options[int(event.option.id)][0])
+
+
 class Output(Dialog):
     BINDINGS = [Binding("escape,q", "dismiss", "close"), Binding("c", "copy", "copy"), Binding("exclamation_mark", "retry_root", "retry as root")]
 
@@ -344,7 +368,21 @@ class Table(DataTable):
 def _pane(tab):
     """A pane whose bindings are its tab's action keys, live while its table has focus."""
     bindings = [Binding(a.key, f"app.act({i})") for i, a in enumerate(tab.actions)]
+    if tab.selector:
+        bindings.append(Binding(tab.selector.key, "app.choose"))
     return type(f"{tab.id.title()}Pane", (TabPane,), {"BINDINGS": bindings})
+
+
+def selector_markup(tab, state):
+    """The selector's line, each option a link that chooses it."""
+    options, current = state
+    parts = [
+        f"[b]{escape(label)}[/]" if value == current else f"[@click=app.choose({json.dumps(value)})]{escape(label)}[/]"
+        for value, label in options
+    ]
+    return f"[b ansi_cyan]{escape(model.display_key(tab.selector.key))}[/] {escape(tab.selector.label)}: " + "  ·  ".join(
+        f"{'●' if value == current else '○'} {part}" for (value, _), part in zip(options, parts, strict=True)
+    )
 
 
 WIDE, TALL = 130, 40  # from here on the detail panel shows beside, or below, the table
@@ -379,6 +417,8 @@ class MainScreen(Screen):
         with TabbedContent(id="tabs"):
             for tab in self.tabs.values():
                 with _pane(tab)(tab.title, id=tab.id):
+                    if tab.selector:
+                        yield Static(id=f"{tab.id}-selector", classes="selector")
                     yield Static(id=f"{tab.id}-summary", classes="summary")
                     with Container(classes="body"):
                         table = Table(id=f"{tab.id}-table", cursor_type="row")
@@ -412,6 +452,7 @@ class ProxyTui(App):
     #tabs ContentSwitcher { height: 1fr; }
     #tabs TabPane { height: 1fr; padding: 0; }
     .summary { display: none; height: auto; padding: 0 1; text-style: dim; }
+    .selector { display: none; height: auto; padding: 0 1; }
     DataTable { background: $background; }
     #tabs DataTable { height: 1fr; }
     DataTable > .datatable--header { background: $background; color: $accent; text-style: bold; }
@@ -447,6 +488,7 @@ class ProxyTui(App):
         self.sorts = {}  # tab id -> (column, descending)
         self.collapsed = {}  # tree tab id -> keys of the groups folded away
         self.loaded = {}  # tab id -> the last load, refilled at once when sorting or filtering changes
+        self.selectors = {}  # tab id -> its selector's (options, current) as last read
         self.status = []
         self.typed = {}  # prompt title -> what was last typed there
         self.feedback_timer = None
@@ -536,6 +578,7 @@ class ProxyTui(App):
             visible = model.available_tabs(states)
             status = _safe(status_text, states, fallback=["status unavailable"])
             rows, summary = model.load_tab(self.tabs[tab_id], states)
+            self.selectors[tab_id] = model.selector_state(self.tabs[tab_id])
         except Exception as e:
             # A dead worker would leave the tab as it was, for good; the next refresh tries again.
             log_trace(f"load {tab_id}")
@@ -586,6 +629,11 @@ class ProxyTui(App):
         widget = self.main.query_one(f"#{tab_id}-summary", Static)
         _update(widget, Text(printable(summary)))
         widget.display = bool(summary)
+        if self.tabs[tab_id].selector:
+            state = self.selectors.get(tab_id)
+            widget = self.main.query_one(f"#{tab_id}-selector", Static)
+            _update(widget, selector_markup(self.tabs[tab_id], state) if state else "")
+            widget.display = bool(state)
         self.rows[tab_id] = {r["key"]: r for r in rows}
         tab, table = self.tabs[tab_id], self.table(tab_id)
         keys = [r["key"] for r in rows]
@@ -672,10 +720,28 @@ class ProxyTui(App):
     def action_where(self):
         self.perform(model.WHERE, None)
 
+    def action_choose(self, value=None):
+        """The tab's selector: value from a click on its line, else picked from a list."""
+        tab = self.tabs[self.active_tab()]
+        state = self.selectors.get(tab.id)
+        if not tab.selector or not state:
+            self.feedback("Nothing to choose here right now.")
+            return
+
+        def chosen(value):
+            argv = value is not None and model.selector_argv(tab, value)
+            if argv:
+                self.run_argv("run", argv)
+
+        if value is None:
+            self.push_screen(Pick(tab.selector.label, *state), chosen)
+        else:
+            chosen(value)
+
     def on_data_table_header_selected(self, event):
         tab_id, name = self.active_tab(), event.column_key.value
         if self.tabs[tab_id].tree:
-            self.feedback("This list keeps its order: it is the order groups and the top level pick in.")
+            self.feedback("This list keeps its order: the order it is picked or checked in.")
             return
         sort = self.sorts.pop(tab_id, None)
         if not sort or sort[0] != name:
@@ -717,7 +783,10 @@ class ProxyTui(App):
     def action_help(self):
         tab = self.tabs[self.active_tab()]
         text = Text()
-        for heading, keys in ((tab.title, model.key_labels(a for a in tab.actions if model.offered(a))), ("Everywhere", GLOBAL_KEYS)):
+        own = model.key_labels(a for a in tab.actions if model.offered(a))
+        if tab.selector:
+            own.append((tab.selector.key, f"choose the {tab.selector.label.lower()}"))
+        for heading, keys in ((tab.title, own), ("Everywhere", GLOBAL_KEYS)):
             text.append(f"{heading}\n", style="bold")
             for key, label in keys:
                 text.append(f"  {model.display_key(key):<9}", style=ACCENT)

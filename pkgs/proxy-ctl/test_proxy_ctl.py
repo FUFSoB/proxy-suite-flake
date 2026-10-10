@@ -2508,6 +2508,10 @@ class WhereTest(EnvTest):
             }
         }
         self.assertEqual(ctl._where_sing_box(config, "rr1.youtube.com"), ("warp", "rule-set yt"))
+        # A runtime routing rule's own rule set reads as the rule.
+        config["route"]["rule_set"][0]["tag"] = "user:videos"
+        config["route"]["rules"][-1]["rule_set"] = ["user:videos"]
+        self.assertEqual(ctl._where_sing_box(config, "rr1.youtube.com"), ("warp", "runtime rule videos"))
         self.assertEqual(ctl._where_sing_box(config, "a.example.org")[0], "proxy")
         # A leading dot is subdomains only; nothing else matches, so the final outbound.
         self.assertEqual(ctl._where_sing_box(config, "example.org")[0], "direct")
@@ -2531,6 +2535,163 @@ class WhereTest(EnvTest):
             ctl._where_inbounds(config, "youtube.com", "")[1],
             "inbound-zapret-direct-domain (full:youtube.com, listeners relay, ports 443)",
         )
+
+
+class RoutingRulesTest(EnvTest):
+    """proxy rules: the spool proxy-ctl writes, and where each rule lands among the configuration's."""
+
+    SECTIONS = [
+        {"id": "rules", "priority": 100, "label": "routing.rules", "entries": [{"target": "de", "domains": ["c.example"]}]},
+        {"id": "proxy", "priority": 200, "label": "routing.proxy: domains and ips", "entries": [{"target": "proxy", "domains": []}]},
+        {"id": "block", "priority": 300, "label": "routing.block", "entries": [{"target": "block", "domains": ["ads.example"]}]},
+        {"id": "direct", "priority": 400, "label": "routing.direct, private addresses", "entries": [{"target": "direct"}]},
+    ]
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.path("routing.d"))
+        geosites = self.path("geo")
+        os.makedirs(geosites)
+        open(os.path.join(geosites, "geosite-netflix.srs"), "w").close()
+        os.environ.update(
+            RUNTIME_ROUTING_DIR=self.path("routing.d"),
+            ROUTING_RULES_DIR=self.path("routing"),
+            ROUTING_RULES_FILE=self.write("buckets.json", {"common": [], "sections": self.SECTIONS}),
+            OUTBOUND_INVENTORY_FILE=self.write("socks/outbounds.json", {"tags": ["de", "proxy"], "groups": {"fast": {}}}),
+            RULE_SETS_FILE=self.write("rulesets.json", [{"name": "blocked", "path": "/x"}]),
+            GEODATA_GEOSITE_DIR=geosites,
+            ROUTE_MODE_STATE_FILE=self.path("no-mode"),
+        )
+        self.applied = 0
+
+        def systemctl(*args, **_):
+            self.applied += args[:2] == ("start", "proxy-suite-routing-apply.service")
+            return 0, ""
+
+        self.patch("systemctl", systemctl)
+        self.patch("svc_exists", lambda unit: True)
+
+    def rules(self):
+        with open(self.path("routing.d/rules.json")) as f:
+            return {r["name"]: r for r in json.load(f)["rules"]}
+
+    def test_matches_as_typed(self):
+        m = ctl._rule_match
+        self.assertEqual(m("Bank.Example"), ("domains", "bank.example"))
+        self.assertEqual(m(".bank.example"), ("domains", "bank.example"))
+        self.assertEqual(m("https://user@WWW.Bank.example:8443/login"), ("domains", "www.bank.example"))
+        self.assertEqual(m("10.1.2.3"), ("ips", "10.1.2.3/32"))
+        self.assertEqual(m("10.1.2.3/8"), ("ips", "10.0.0.0/8"))
+        self.assertEqual(m("2001:db8::1"), ("ips", "2001:db8::1/128"))
+        self.assertEqual(m("geosite:netflix"), ("geosites", "netflix"))
+        self.assertEqual(m("geoip:ru"), ("geoips", "ru"))  # no geoip dir here: not checked
+        self.assertEqual(m("ruleset:blocked"), ("ruleSets", "blocked"))
+        for bad in ("geosite:nope", "geosite:../x", "ruleset:other", "a b", "$(id)", "x/y"):
+            with self.subTest(bad=bad):
+                self.assertEqual(run(ctl._rule_match, bad)[0], 1)
+
+    def test_add_extends_the_rule_named_after_its_target(self):
+        ok(ctl.cmd_rules, "add", "direct", "bank.example", "10.0.0.0/8")
+        ok(ctl.cmd_rules, "add", "direct", "bank2.example", "bank.example")
+        ok(ctl.cmd_rules, "add", "fast", "geosite:netflix", "--name", "video", "--priority", "250")
+        rules = self.rules()
+        self.assertEqual(rules["direct"]["domains"], ["bank.example", "bank2.example"])
+        self.assertEqual((rules["direct"]["priority"], rules["direct"]["ips"]), (50, ["10.0.0.0/8"]))
+        self.assertEqual((rules["video"]["target"], rules["video"]["priority"], rules["video"]["geosites"]), ("fast", 250, ["netflix"]))
+        self.assertEqual(self.applied, 3)
+        # Another target under the same name is a mistake, not a silent move.
+        status, _, err = run(ctl.cmd_rules, "add", "proxy", "x.example", "--name", "direct")
+        self.assertEqual(status, 1)
+        self.assertIn("rules target direct proxy", err)
+        self.assertEqual(run(ctl.cmd_rules, "add", "nowhere", "x.example")[0], 1)
+        self.assertEqual(run(ctl.cmd_rules, "add", "proxy", "x.example", "--name", "../x")[0], 1)
+        self.assertEqual(self.applied, 3)
+
+    def test_edits(self):
+        ok(ctl.cmd_rules, "add", "direct", "a.example", "b.example")
+        ok(ctl.cmd_rules, "matches", "direct", "rm", "a.example")
+        ok(ctl.cmd_rules, "matches", "direct", "add", "1.1.1.1")
+        ok(ctl.cmd_rules, "target", "direct", "de")
+        ok(ctl.cmd_rules, "disable", "direct")
+        ok(ctl.cmd_rules, "priority", "direct", "450")
+        rule = self.rules()["direct"]
+        self.assertEqual((rule["domains"], rule["ips"], rule["target"], rule["disabled"], rule["priority"]), (["b.example"], ["1.1.1.1/32"], "de", True, 450))
+        ok(ctl.cmd_rules, "enable", "direct")
+        self.assertFalse(self.rules()["direct"]["disabled"])
+        self.assertEqual(run(ctl.cmd_rules, "priority", "direct", "1.5")[0], 1)
+        self.assertEqual(run(ctl.cmd_rules, "rm", "nope")[0], 1)
+        ok(ctl.cmd_rules, "rm", "direct")
+        self.assertEqual(self.rules(), {})
+
+    def test_up_and_down_step_past_the_configuration(self):
+        ok(ctl.cmd_rules, "add", "direct", "a.example")
+        ok(ctl.cmd_rules, "add", "proxy", "b.example")
+        order = lambda: [r["name"] for r in ctl._routing_rows()]  # noqa: E731
+        # Empty sections are no rows: proxy (200) is not there to step past.
+        self.assertEqual(order(), ["direct", "proxy", "routing.rules", "routing.block", "routing.direct, private addresses"])
+        ok(ctl.cmd_rules, "priority", "proxy", "down")
+        self.assertEqual(order(), ["direct", "routing.rules", "proxy", "routing.block", "routing.direct, private addresses"])
+        self.assertEqual(self.rules()["proxy"]["priority"], 110)
+        ok(ctl.cmd_rules, "priority", "direct", "down")
+        # Both after routing.rules now, the one moved first: numbered 10 apart there.
+        self.assertEqual(order()[:3], ["routing.rules", "direct", "proxy"])
+        self.assertEqual({n: r["priority"] for n, r in self.rules().items()}, {"direct": 110, "proxy": 120})
+        ok(ctl.cmd_rules, "priority", "direct", "down")
+        self.assertEqual(order()[:3], ["routing.rules", "proxy", "direct"])
+        ok(ctl.cmd_rules, "priority", "direct", "down")
+        ok(ctl.cmd_rules, "priority", "direct", "down")
+        self.assertEqual(order()[-1], "direct")
+        self.assertIn("already last", ok(ctl.cmd_rules, "priority", "direct", "down"))
+        # Before a section a rule may share its number (runtime first among equals).
+        ok(ctl.cmd_rules, "priority", "proxy", "100")
+        self.assertEqual(order()[:2], ["proxy", "routing.rules"])
+
+    def test_list_and_rows(self):
+        ok(ctl.cmd_rules, "add", "direct", "a.example", "geosite:netflix")
+        self.write("socks/routing-skipped.json", [{"name": "direct", "why": "no such geosite"}])
+        rows = {r["key"]: r for r in ctl._routing_rows()}
+        self.assertEqual(rows["rule:direct"]["matches"], "a.example, geosite:netflix")
+        self.assertEqual(rows["rule:direct"]["notes"], "left out: no such geosite")
+        self.assertEqual((rows["config:block:0"]["source"], rows["config:block:0"]["runtime"]), ("config", False))
+        self.assertEqual(rows["config:direct:0"]["matches"], "private addresses")
+        out = ok(ctl.cmd_rules)
+        self.assertIn("routing.block", out)
+        self.assertIn("-> direct: a.example, geosite:netflix", out)
+
+    def test_a_spool_edited_by_hand_reads_as_root_applies_it(self):
+        """What routing-render.jq drops is no row, and nothing in the file stops the list."""
+        with open(self.path("routing.d/rules.json"), "w") as f:
+            f.write(
+                '{"rules": [{"name": "inf", "target": "proxy", "priority": Infinity},'
+                ' {"name": "nan", "target": "proxy", "priority": NaN},'
+                ' {"name": "far", "target": "proxy", "priority": -5e9},'
+                ' {"name": "half", "target": "proxy", "priority": -2.5},'
+                ' {"name": "half", "target": "direct"},'
+                ' {"name": "../x", "target": "proxy"},'
+                ' {"name": "ctl", "target": "a\\u0007b"}]}'
+            )
+        rules = {r["name"]: (r["priority"], r["target"]) for r in ctl._runtime_rules()}
+        self.assertEqual(rules, {"inf": (1_000_000, "proxy"), "nan": (50, "proxy"), "far": (-1_000_000, "proxy"), "half": (-3, "proxy")})
+        self.assertIn("inf", ok(ctl.cmd_rules))
+        self.assertIn("priority 7", ok(ctl.cmd_rules, "priority", "half", "007"))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_a_stranger_sees_what_root_applied(self):
+        """The spool is the routing scope's; anyone else reads the rendered copy."""
+        ok(ctl.cmd_rules, "add", "direct", "a.example")
+        self.write("routing/rules.json", [{"name": "applied", "target": "proxy", "priority": 5, "domains": ["b.example"]}])
+        os.chmod(self.path("routing.d/rules.json"), 0)
+        self.assertEqual([r["name"] for r in ctl._runtime_rules()], ["applied"])
+        status, _, err = run(ctl.cmd_rules, "add", "direct", "c.example")
+        self.assertEqual(status, 1)
+        self.assertIn("Cannot change", err)
+
+    def test_completion(self):
+        ok(ctl.cmd_rules, "add", "direct", "a.example")
+        self.assertIn("matches", ctl._complete_tree("proxy", "rules"))
+        self.assertEqual(ctl._complete_tree("proxy", "rules", "rm"), {"direct": "-> direct"})
+        targets = ctl._complete_tree("proxy", "rules", "add")
+        self.assertTrue({"proxy", "direct", "block", "de", "fast", "--name"} <= set(targets))
 
 
 class StatusSnapshotTest(EnvTest):

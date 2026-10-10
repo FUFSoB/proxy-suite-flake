@@ -65,7 +65,7 @@ What the group may do\. Empty allows everything\.
 
  - “services”: start, stop and restart services, and ` tor newnym `\.
  - “perApp”: ` proxy-ctl apps run `\.
- - “routing”: ` proxy pin `, ` proxy unpin ` and ` proxy mode `\.
+ - “routing”: ` proxy pin `, ` proxy unpin `, ` proxy mode ` and ` proxy rules `\.
  - “outbounds”: add, remove, enable and disable outbounds and subscriptions\.
  - “secrets”: read share links, subscription URLs and running configs\.
  - “autoProxy”: see and change what autoProxy learned\.

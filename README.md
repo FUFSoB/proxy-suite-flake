@@ -172,6 +172,18 @@ Changes and secrets need root or the userControl group.
                                          lower goes first; up/down renumbers the top level
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
+  proxy rules [list]                     routing rules, the configuration's and runtime ones,
+                                         in the order they are checked
+  proxy rules add <target> <match...> [--name <name>] [--priority <n>]
+                                         send domains, addresses, geosite:x, geoip:x or ruleset:x
+                                         to proxy, direct, block or an outbound; no --name: the
+                                         rule named after the target, extended (priority 50:
+                                         ahead of the configuration's, at 100 to 500)
+  proxy rules matches <name> add|rm <match...>
+  proxy rules target <name> <target>
+  proxy rules priority <name> <n>|up|down
+                                         lower goes first; up/down moves past the next row
+  proxy rules disable|enable|rm <name>
   proxy subs [list|update]               subscriptions; update refetches them
   proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
   proxy subs rm <tag>                    remove a runtime subscription

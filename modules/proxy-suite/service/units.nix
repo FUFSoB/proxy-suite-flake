@@ -784,6 +784,21 @@ let
     }
     {
       enable = proxyEnabled;
+      name = "proxy-suite-routing-apply";
+      value = mkOneshotService {
+        description = "Apply proxy-suite routing rules added at runtime";
+        execStart = scripts.applyRoutingScript;
+        # Root, over the spool the routing scope writes: it renders the rules into the state
+        # directory and restarts the backends whose config they change.
+        stateDirectory = "proxy-suite";
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ];
+      };
+    }
+    {
+      enable = proxyEnabled;
       name = "proxy-suite-outbound-pin@";
       value = mkOneshotService {
         # %I: proxy-ctl systemd-escapes the tag, so "ssh-proxy" arrives as ssh\x2dproxy.

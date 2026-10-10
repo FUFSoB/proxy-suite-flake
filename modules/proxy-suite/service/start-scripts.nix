@@ -49,6 +49,7 @@ let
     inherit (constants) serviceUser ifPrivileged;
   };
   autoProxyMigrate = import ../autoproxy-migrate.nix { inherit pkgs; };
+  routingRuntime = import ./script-blocks/routing-runtime.nix { inherit ctx; };
   # Who reads the probe listeners' login (`proxy outbounds test`, `proxy auto probe`).
   # Local proxy auth with userControl off keeps its group as before.
   probeLoginMainGroup =
@@ -62,35 +63,18 @@ let
   userControlGroup = lib.escapeShellArg userControlCfg.group;
   chgrp = "${pkgs.coreutils}/bin/chgrp";
 
-  # Every route mode is the same four assignments over one jq program on the rule buckets.
+  # What a route mode decides beyond which rule buckets it keeps (routing-compose.jq): the
+  # final outbound, and the DNS server for names no rule takes.
   routeModeArms = [
     {
       mode = "blacklist";
       final = "proxy";
       dns = "remote";
-      rules = ''
-        .common
-        + (.custom | map(.entries) | add // [])
-        + .proxyPrimary
-        + .block
-        + .direct
-        + .safetyDirect
-        + .proxyGeo
-      '';
     }
     {
       mode = "whitelist";
       final = "direct";
       dns = "local";
-      rules = ''
-        .common
-        + (.custom | map(.entries) | add // [])
-        + .proxyPrimary
-        + .block
-        + .direct
-        + .safetyDirect
-        + .proxyGeo
-      '';
     }
     {
       # Only the proxy and block lists are kept: everything else follows the final action.
@@ -98,31 +82,18 @@ let
       final = "proxy";
       dns = "remote";
       clearDns = true;
-      rules = ''
-        .common
-        + (.custom | map(select(.category == "proxy" or .category == "block") | .entries) | add // [])
-        + .proxyPrimary
-        + .block
-        + .safetyDirect
-        + .proxyGeo
-      '';
     }
     {
       mode = "all-bypass";
       final = "direct";
       dns = "local";
       clearDns = true;
-      rules = ''
-        .common
-        + (.custom | map(select(.category == "block") | .entries) | add // [])
-        + .block
-        + .safetyDirect
-      '';
     }
   ];
+  # The configured routing.default as a mode: runtime rules compose the route without an
+  # override, and the result is the configuration's own order with theirs among it.
+  defaultRouteMode = if proxyCfg.routing.default == "proxy" then "blacklist" else "whitelist";
 
-  # Written out line by line: the block lands inside a `case`, where the indentation of an
-  # interpolated multi-line value would otherwise be lost.
   mkRouteModeArm =
     arm:
     lib.concatStringsSep "\n" (
@@ -133,14 +104,7 @@ let
         "    ROUTE_MODE_ACTIVE=true"
       ]
       ++ lib.optional (arm.clearDns or false) "    CLEAR_DNS_RULES=true"
-      ++ [ "    ROUTE_RULES_JSON=$(${jq} -c '" ]
-      ++ map (line: if line == "" then "" else "      ${line}") (
-        lib.splitString "\n" (lib.removeSuffix "\n" arm.rules)
-      )
-      ++ [
-        "    ' \"${routeModeRulesFile}\")"
-        "    ;;"
-      ]
+      ++ [ "    ;;" ]
     );
 
   routeModeCaseBlock = ''
@@ -152,6 +116,27 @@ let
         ROUTE_MODE=""
         ;;
     esac
+  '';
+
+  # The route, once a mode or a runtime rule calls for one: the buckets and runtime sections
+  # in priority order, and the DNS mirror composed alike.
+  composeRouteBlock = ''
+    if [ "$ROUTE_MODE_ACTIVE" != true ] && [ "$RUNTIME_SECTIONS_JSON" != '[]' ]; then
+      case ${defaultRouteMode} in${
+        lib.concatMapStrings (arm: "\n" + mkRouteModeArm arm) (
+          lib.filter (arm: arm.mode == defaultRouteMode) routeModeArms
+        )
+      }
+      esac
+    fi
+    if [ "$ROUTE_MODE_ACTIVE" = true ]; then
+      COMPOSED_ROUTE_JSON=$(${jq} -c --arg mode "''${ROUTE_MODE:-${defaultRouteMode}}" \
+        --slurpfile runtime <(printf '%s' "$RUNTIME_SECTIONS_JSON") \
+        -f ${routingRuntime.composeJq} "${routeModeRulesFile}")
+      ROUTE_RULES_JSON=$(${jq} -c '.rules' <<< "$COMPOSED_ROUTE_JSON")
+      ROUTE_DNS_JSON=$(${jq} -c '.dns' <<< "$COMPOSED_ROUTE_JSON")
+      STATIC_DNS_COUNT=$(${jq} '.staticDnsCount' <<< "$COMPOSED_ROUTE_JSON")
+    fi
   '';
 
   writeProxychainsConfigBlock = ''
@@ -219,6 +204,8 @@ let
       ROUTE_FINAL=""
       DNS_FINAL=""
       ROUTE_RULES_JSON='[]'
+      ROUTE_DNS_JSON=null
+      STATIC_DNS_COUNT=0
       ROUTE_MODE_ACTIVE=false
       CLEAR_DNS_RULES=false
       ${hybridRuntimeHelpersBlock routingMark xraySidecarPort xrayDnsBridgePort}
@@ -244,6 +231,10 @@ let
       GROUPS_WATCHED=${if enableOutboundTest then "true" else "false"}
       ${mkOutboundScript routingMark}
       ${lib.optionalString hybridEnabled "_proxy_suite_write_xray_sidecar_config"}
+
+      # Routing rules added at runtime, which name outbounds: after them.
+      ${routingRuntime.startBlock configFile}
+      ${composeRouteBlock}
 
       # autoProxy: a loopback listener and a learned rule-set per exit, generated here
       # because subscription tags only exist at runtime.
@@ -459,6 +450,9 @@ let
         } \
         --argjson route_enabled "$ROUTE_MODE_ACTIVE" \
         --slurpfile route_rules <(printf '%s' "$ROUTE_RULES_JSON") \
+        --slurpfile route_dns <(printf '%s' "$ROUTE_DNS_JSON") \
+        --argjson static_dns_count "$STATIC_DNS_COUNT" \
+        --slurpfile user_rule_sets <(printf '%s' "$USER_RULE_SETS_JSON") \
         --arg route_final "$ROUTE_FINAL" \
         --arg dns_final "$DNS_FINAL" \
         --argjson clear_dns_rules "$CLEAR_DNS_RULES" \

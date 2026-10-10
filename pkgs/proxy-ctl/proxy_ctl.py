@@ -13,6 +13,7 @@ import http.client
 import importlib
 import ipaddress
 import json
+import math
 import os
 import re
 import shutil
@@ -96,6 +97,18 @@ Changes and secrets need root or the userControl group.
                                          lower goes first; up/down renumbers the top level
   proxy mode [default|whitelist|blacklist|all-proxy|all-bypass]
                                          show or override the routing mode
+  proxy rules [list]                     routing rules, the configuration's and runtime ones,
+                                         in the order they are checked
+  proxy rules add <target> <match...> [--name <name>] [--priority <n>]
+                                         send domains, addresses, geosite:x, geoip:x or ruleset:x
+                                         to proxy, direct, block or an outbound; no --name: the
+                                         rule named after the target, extended (priority 50:
+                                         ahead of the configuration's, at 100 to 500)
+  proxy rules matches <name> add|rm <match...>
+  proxy rules target <name> <target>
+  proxy rules priority <name> <n>|up|down
+                                         lower goes first; up/down moves past the next row
+  proxy rules disable|enable|rm <name>
   proxy subs [list|update]               subscriptions; update refetches them
   proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
   proxy subs rm <tag>                    remove a runtime subscription
@@ -755,6 +768,7 @@ COMPLETE = {
             "groups": "outbound groups",
             "priority": "the order the top level picks in",
             "mode": "show or override the routing mode",
+            "rules": "routing rules added at runtime",
             "subs": "subscription caches",
             "rulesets": "routing rule sets",
             "tun": "global TUN mode",
@@ -841,6 +855,26 @@ COMPLETE = {
         }
     },
     "proxy rulesets": {"words": {"list": "when each rule set was fetched", "update": "fetch the rule sets now"}},
+    "proxy rules": {
+        "words": {
+            "list": "the routing rules in the order they are checked",
+            "add": "add a rule, or extend one: <target> <match...>",
+            "matches": "add or remove a rule's domains, addresses and lists",
+            "target": "where a rule sends what it matches",
+            "priority": "where a rule is checked: a number, up or down",
+            "disable": "keep a rule without applying it",
+            "enable": "apply a disabled rule again",
+            "rm": "remove a rule",
+        }
+    },
+    "proxy rules add": {
+        "args": lambda: {**_names(RULE_TARGETS), **_outbound_choices(), **_group_choices()},
+        "flags": {"--name": "the rule's name (default: the target)", "--priority": "where it is checked (default 50)"},
+    },
+    **{
+        f"proxy rules {verb}": {"args": lambda: {r["name"]: f"-> {r['target']}" for r in _runtime_rules()}}
+        for verb in ("matches", "target", "priority", "disable", "enable", "rm")
+    },
     "proxy subs link": {"args": lambda: _names(_sub_tags() + _runtime_tags("subscription")), "flags": {"--qr": "print a QR code"}},
     "proxy subs rm": {"args": lambda: _names(_runtime_tags("subscription"))},
     "proxy tun": {"words": TOGGLE},
@@ -1353,6 +1387,8 @@ def cmd_proxy(verb="status", *args):
         cmd_subscription(*args)
     elif verb == "rulesets":
         cmd_rulesets(*args)
+    elif verb == "rules":
+        cmd_rules(*args)
     elif verb in ("tun", "tproxy"):
         action = _flip(f"proxy-suite-{verb}", *args[:1])
         _toggle(f"proxy-suite-{verb}", f"proxy {verb}", action)
@@ -1367,7 +1403,7 @@ def cmd_proxy(verb="status", *args):
     elif verb in ("probe", "learn", "forget", "relearn", "queue", "learned"):
         cmd_proxy_auto(verb, *args)
     else:
-        usage("proxy [status|on|off|toggle|restart|outbounds|groups|priority|pin|unpin|mode|subs|rulesets|tun|tproxy|auto|config]")
+        usage("proxy [status|on|off|toggle|restart|outbounds|groups|priority|pin|unpin|mode|rules|subs|rulesets|tun|tproxy|auto|config]")
 
 
 def cmd_outbounds(verb="list", *args):
@@ -3201,6 +3237,433 @@ def cmd_rulesets(verb="list", *_):
         usage("proxy rulesets [list|update]")
 
 
+# --- proxy rules: routing rules added at runtime ------------------------------
+#
+# rules.json in the routing spool (RUNTIME_ROUTING_DIR), which userControl's groups with the
+# routing scope write: {"rules": [{name, target, priority, disabled, domains, ips, geosites,
+# geoips, ruleSets}]}. proxy-suite-routing-apply renders it for the backends (routing-render.jq
+# keeps what it can check) and restarts those whose config it changes; a rule's domains and
+# addresses alone reach a running sing-box without one. A rule's priority places it among the
+# configuration's sections ("sections" in ROUTING_RULES_FILE, 100 to 500): lower goes first,
+# and a runtime rule goes first among equals.
+
+ROUTING_APPLY_UNIT = "proxy-suite-routing-apply"
+RULE_DEFAULT_PRIORITY = 50
+RULE_PRIORITY_LIMIT = 1_000_000
+RULE_MATCH_KINDS = ("domains", "ips", "geosites", "geoips", "ruleSets")
+# What a match spells, as `rules add` takes it and `rules list` prints it back.
+RULE_MATCH_PREFIXES = {"geosite:": "geosites", "geoip:": "geoips", "ruleset:": "ruleSets"}
+RULE_MATCH_SPELLING = {"domains": "", "ips": "", "geosites": "geosite:", "geoips": "geoip:", "ruleSets": "ruleset:"}
+RULE_DOMAIN = re.compile(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*")
+RULE_GEO = re.compile(r"[A-Za-z0-9!@._-]{1,64}")
+RULE_TARGETS = ("proxy", "direct", "block")
+# As much as routing-render.jq reads of the spool.
+RULES_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _rules_path():
+    return os.path.join(env("RUNTIME_ROUTING_DIR", f"{state_dir()}/routing.d"), "rules.json")
+
+
+def _rules_rendered_path():
+    return os.path.join(env("ROUTING_RULES_DIR", f"{state_dir()}/routing"), "rules.json")
+
+
+def _rule_target_ok(target):
+    # As routing-render.jq: no control character ([[:cntrl:]]).
+    return 1 <= len(target) <= 128 and not re.search(r"[\x00-\x1f\x7f-\x9f]", target)
+
+
+def _rule_normal(rule):
+    """One rule with every field there and of its type, or None for what is not a rule: what
+    routing-render.jq keeps, so the list shows what root applies."""
+    if not isinstance(rule, dict) or not isinstance(rule.get("name"), str) or not isinstance(rule.get("target"), str):
+        return None
+    if not _rule_name_ok(rule["name"]) or not _rule_target_ok(rule["target"]):
+        return None
+    priority = rule.get("priority")
+    # JSON as Python reads it has Infinity and NaN too.
+    if isinstance(priority, (int, float)) and not isinstance(priority, bool) and not math.isnan(priority):
+        priority = max(-RULE_PRIORITY_LIMIT, min(RULE_PRIORITY_LIMIT, priority))
+        priority = math.floor(priority)
+    else:
+        priority = RULE_DEFAULT_PRIORITY
+    out = {
+        "name": rule["name"],
+        "target": rule["target"],
+        "priority": priority,
+        "disabled": rule.get("disabled") is True,
+    }
+    for kind in RULE_MATCH_KINDS:
+        values = rule.get(kind)
+        out[kind] = [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
+    return out
+
+
+def _rules_sorted(rules):
+    return sorted(rules, key=lambda r: (r["priority"], r["name"]))
+
+
+def _runtime_rules(writing=False):
+    """The runtime rules, in match order: as saved, or, where the spool is the routing scope's
+    alone, as root last applied them. writing: the spool or nothing."""
+    path = _rules_path()
+    try:
+        data = json.loads(read_shared_text(path, RULES_MAX_BYTES))
+        rules = data.get("rules") if isinstance(data, dict) else None
+    except FileNotFoundError:
+        rules = []
+    except PermissionError:
+        if writing:
+            denied(path, "change")
+        rules = read_json_or(_rules_rendered_path(), [])
+    except (OSError, ValueError):
+        if writing:
+            die(f"{path} is not valid; fix or remove it first.")
+        rules = []
+    # A name once, the first, as root reads it.
+    seen = {}
+    for rule in map(_rule_normal, rules if isinstance(rules, list) else []):
+        if rule and rule["name"] not in seen:
+            seen[rule["name"]] = rule
+    return _rules_sorted(seen.values())
+
+
+def _rules_save(rules):
+    path = _rules_path()
+    text = json.dumps({"rules": _rules_sorted(rules)}, indent=2, ensure_ascii=False) + "\n"
+    try:
+        _spool_write(path, text)
+    except OSError:
+        denied(path, "write")
+
+
+def _routing_apply():
+    if systemctl("start", f"{ROUTING_APPLY_UNIT}.service")[0]:
+        die(f"Saved, but applying it failed - see: proxy-ctl logs {ROUTING_APPLY_UNIT}")
+
+
+def _routing_sections():
+    """The configuration's routing, a section per priority: [{id, priority, label, entries}]."""
+    sections = read_json_or(env("ROUTING_RULES_FILE"), {}).get("sections")
+    return [s for s in sections if isinstance(s, dict) and isinstance(s.get("priority"), int)] if isinstance(sections, list) else []
+
+
+def _routing_skipped():
+    """{rule: why} for the rules the running proxy left out."""
+    skipped = read_json_or(_runtime_file("routing-skipped.json"), [])
+    return {_s(x.get("name")): _s(x.get("why")) for x in skipped if isinstance(x, dict)}
+
+
+def _rule_matches(rule, limit=None):
+    words = [f"{RULE_MATCH_SPELLING[kind]}{v}" for kind in RULE_MATCH_KINDS for v in rule.get(kind) or []]
+    if limit is not None and len(words) > limit:
+        return ", ".join(words[:limit]) + f" and {len(words) - limit} more"
+    return ", ".join(words)
+
+
+def _section_empty(section):
+    # The direct section always holds the private ranges.
+    return section.get("id") != "direct" and not any(
+        e.get(kind) for e in section.get("entries") or [] if isinstance(e, dict) for kind in RULE_MATCH_KINDS
+    )
+
+
+def _routing_rows():
+    """The routing in match order: the configuration's sections and the runtime rules, as rows
+    of {key, priority, name, target, matches, source, notes, runtime, disabled}."""
+    skipped = _routing_skipped()
+    rows = []
+    for rule in _runtime_rules():
+        notes = "disabled" if rule["disabled"] else (f"left out: {skipped[rule['name']]}" if rule["name"] in skipped else "")
+        rows.append(
+            {
+                "key": f"rule:{rule['name']}",
+                "priority": rule["priority"],
+                "name": rule["name"],
+                "target": rule["target"],
+                "matches": _rule_matches(rule, 6) or "nothing yet",
+                "source": "runtime",
+                "notes": notes,
+                "runtime": True,
+                "disabled": rule["disabled"],
+                "order": 0,
+            }
+        )
+    for section in _routing_sections():
+        if _section_empty(section):
+            continue
+        entries = [e for e in section.get("entries") or [] if isinstance(e, dict)]
+        for n, entry in enumerate(entries):
+            matches = _rule_matches(entry, 6)
+            if not matches and section.get("id") != "direct":
+                continue
+            if section.get("id") == "direct":
+                matches = ", ".join(x for x in (matches, "private addresses") if x)
+            rows.append(
+                {
+                    "key": f"config:{_s(section.get('id'))}:{n}",
+                    "priority": section["priority"],
+                    "name": _s(section.get("label") or section.get("id")),
+                    "target": _s(entry.get("target") or ""),
+                    "matches": matches,
+                    "source": "config",
+                    "notes": "",
+                    "runtime": False,
+                    "disabled": False,
+                    "order": 1,
+                }
+            )
+    # Stable: runtime rules in their order, then sections in theirs, at each priority.
+    rows.sort(key=lambda r: (r["priority"], r["order"]))
+    for r in rows:
+        del r["order"]
+    return rows
+
+
+def _rule_name_ok(name):
+    return bool(RUNTIME_TAG.fullmatch(name)) and len(name) <= 64
+
+
+def _rule_match(word):
+    """(kind, value) of one match as typed: a domain (or a URL), an address or a CIDR,
+    geosite:NAME, geoip:NAME or ruleset:NAME."""
+    for prefix, kind in RULE_MATCH_PREFIXES.items():
+        if word.lower().startswith(prefix):
+            name = word[len(prefix) :]
+            if kind == "ruleSets":
+                declared = [_s(rs.get("name")) for rs in read_json_or(env("RULE_SETS_FILE"), []) if isinstance(rs, dict)]
+                if name not in declared:
+                    die(f"No rule set named '{name}' in routing.ruleSets" + (f" (there are: {', '.join(declared)})." if declared else "."))
+                return kind, name
+            if not RULE_GEO.fullmatch(name) or name.startswith("."):
+                die(f"Not a {prefix[:-1]} name: {name}")
+            directory = env("GEODATA_GEOSITE_DIR" if kind == "geosites" else "GEODATA_GEOIP_DIR")
+            if directory and os.path.isdir(directory) and not os.path.exists(os.path.join(directory, f"{prefix[:-1]}-{name}.srs")):
+                die(f"No {prefix[:-1]} named '{name}' in this host's geodata.")
+            return kind, name
+    try:
+        return "ips", str(ipaddress.ip_network(word, strict=False))
+    except ValueError:
+        pass
+    host = word.split("://", 1)[1].split("/", 1)[0].rsplit("@", 1)[-1] if "://" in word else word
+    host = host.lower().lstrip(".")
+    if "://" in word:
+        host = re.sub(r":\d+$", "", host)
+    if RULE_DOMAIN.fullmatch(host) and len(host) <= 253:
+        return "domains", host
+    die(f"Not a domain, an address, or geosite:, geoip: or ruleset: something: {word}")
+
+
+def _rule_check_target(target):
+    if target in RULE_TARGETS:
+        return
+    if not _rule_target_ok(target):
+        die(f"Not an outbound: {target!r}")
+    tags = set(_outbound_tags()) | set(_outbound_groups())
+    if not tags:
+        print(f"Cannot check '{target}' until the proxy has run; a rule naming no outbound is left out.", file=sys.stderr)
+    elif target not in tags:
+        die(f"Unknown outbound or group: {target} (or proxy, direct, block)")
+
+
+def _rule_find(rules, name):
+    for rule in rules:
+        if rule["name"] == name:
+            return rule
+    die(f"No runtime routing rule named '{name}'. See: proxy-ctl proxy rules")
+
+
+def _rule_parse_priority(value):
+    if not re.fullmatch(r"-?[0-9]+", value or "") or abs(int(value)) > RULE_PRIORITY_LIMIT:
+        die(f"A priority is a whole number, -{RULE_PRIORITY_LIMIT} to {RULE_PRIORITY_LIMIT}: {value}")
+    return int(value)
+
+
+def _rules_edit(change):
+    """change(rules) under the spool's lock, saved and applied. It returns what to print."""
+    path = _rules_path()
+    with _file_lock(path):
+        rules = _runtime_rules(writing=True)
+        message = change(rules)
+        _rules_save(rules)
+    _routing_apply()
+    print(message)
+
+
+def _rules_move(rules, name, direction):
+    """Moves a rule one row up or down in the match order, past a runtime rule or a section of
+    the configuration, then numbers the runtime rules where it landed, 10 apart where they fit."""
+    rows = [("rule", r["name"], r["priority"]) for r in rules]
+    rows += [("section", s.get("id"), s["priority"]) for s in _routing_sections() if not _section_empty(s)]
+    rows.sort(key=lambda r: (r[2], 0 if r[0] == "rule" else 1))
+    order = [r[:2] for r in rows]
+    i = order.index(("rule", name))
+    j = i - 1 if direction == "up" else i + 1
+    if not 0 <= j < len(order):
+        return f"{name} is already {'first' if direction == 'up' else 'last'}."
+    order[i], order[j] = order[j], order[i]
+    priority = {r[:2]: r[2] for r in rows}
+    k = order.index(("rule", name))
+    # The run of runtime rules it is in now, and the sections around it.
+    lo = k
+    while lo > 0 and order[lo - 1][0] == "rule":
+        lo -= 1
+    hi = k
+    while hi + 1 < len(order) and order[hi + 1][0] == "rule":
+        hi += 1
+    below = priority[order[lo - 1]] if lo > 0 else None
+    above = priority[order[hi + 1]] if hi + 1 < len(order) else None
+    run = order[lo : hi + 1]
+    # After a section: above its number. Before one: at most its number (runtime first).
+    if below is None and above is None:
+        numbers = [10 * (n + 1) for n in range(len(run))]
+    elif below is None:
+        numbers = [above - 10 * (len(run) - n) for n in range(len(run))]
+    elif above is None:
+        numbers = [below + 10 * (n + 1) for n in range(len(run))]
+    else:
+        step = min(10, (above - below) // len(run))
+        if step < 1:
+            die(f"No room for {len(run)} rules between priorities {below} and {above}; set them by hand.")
+        numbers = [below + step * (n + 1) for n in range(len(run))]
+    by_name = {r["name"]: r for r in rules}
+    for (_, rule_name), number in zip(run, numbers, strict=True):
+        by_name[rule_name]["priority"] = number
+    return f"{name}: moved {direction}, priority {by_name[name]['priority']}"
+
+
+def _rules_list():
+    rows = _routing_rows()
+    if not rows:
+        print("No routing rules: everything goes to the final outbound.")
+        return
+    print("In the order they are checked; lower priority first, a runtime rule first among equals:")
+    width = max(len(r["name"]) for r in rows)
+    for r in rows:
+        notes = f"  ({r['notes']})" if r["notes"] else ""
+        print(f"  {r['priority']:>7}  {r['name']:<{width}}  {r['source']:<7}  -> {r['target']}: {r['matches']}{notes}")
+    print(f"Then the final outbound ({_route_mode_label(_route_mode_current())}).")
+
+
+def cmd_rules(verb="list", *args):
+    if not svc_exists("proxy-suite-socks"):
+        die("proxy is not enabled in this configuration.")
+    if verb == "list":
+        _rules_list()
+    elif verb == "add":
+        _rules_add(*args)
+    elif verb == "matches" and len(args) >= 3 and args[1] in ("add", "rm"):
+        _rules_matches(*args)
+    elif verb == "target" and len(args) == 2:
+        _rule_check_target(args[1])
+
+        def change(rules):
+            _rule_find(rules, args[0])["target"] = args[1]
+            return f"{args[0]}: -> {args[1]}"
+
+        _rules_edit(change)
+    elif verb == "priority" and len(args) == 2:
+        name, value = args
+
+        def change(rules):
+            rule = _rule_find(rules, name)
+            if value in ("up", "down"):
+                return _rules_move(rules, name, value)
+            rule["priority"] = _rule_parse_priority(value)
+            return f"{name}: priority {rule['priority']}"
+
+        _rules_edit(change)
+    elif verb in ("disable", "enable") and len(args) == 1:
+
+        def change(rules):
+            _rule_find(rules, args[0])["disabled"] = verb == "disable"
+            return f"{args[0]}: {verb}d"
+
+        _rules_edit(change)
+    elif verb == "rm" and len(args) == 1:
+
+        def change(rules):
+            rules.remove(_rule_find(rules, args[0]))
+            return f"Removed routing rule: {args[0]}"
+
+        _rules_edit(change)
+    else:
+        usage(
+            "proxy rules [list] | add <target> <match...> [--name <name>] [--priority <n>]"
+            " | matches <name> add|rm <match...> | target <name> <target>"
+            " | priority <name> <n>|up|down | disable|enable <name> | rm <name>"
+        )
+
+
+def _rules_add(*args):
+    name, priority, words = None, None, []
+    rest = list(args)
+    while rest:
+        word = rest.pop(0)
+        if word in ("--name", "--priority"):
+            if not rest:
+                usage(f"proxy rules add <target> <match...> [{word} <value>]")
+            if word == "--name":
+                name = rest.pop(0)
+            else:
+                priority = _rule_parse_priority(rest.pop(0))
+        else:
+            words.append(word)
+    if len(words) < 2:
+        usage("proxy rules add <target> <match...> [--name <name>] [--priority <n>]")
+    target, matches = words[0], [_rule_match(w) for w in words[1:]]
+    _rule_check_target(target)
+    name = name or target
+    if not _rule_name_ok(name):
+        die(f"'{name}' cannot name a rule: letters, digits, dot, dash and underscore only; give one with --name.")
+
+    def change(rules):
+        rule = next((r for r in rules if r["name"] == name), None)
+        if rule is None:
+            rule = {"name": name, "target": target, "priority": RULE_DEFAULT_PRIORITY if priority is None else priority, "disabled": False}
+            rule.update({kind: [] for kind in RULE_MATCH_KINDS})
+            rules.append(rule)
+            verb = "Added"
+        elif rule["target"] != target:
+            die(f"Rule '{name}' sends to {rule['target']}, not {target}: name another with --name, or change it with: proxy-ctl proxy rules target {name} {target}")
+        else:
+            verb = "Extended"
+            if priority is not None:
+                rule["priority"] = priority
+        added = _rule_add_matches(rule, matches)
+        return f"{verb} routing rule {name} (priority {rule['priority']}) -> {target}: {', '.join(added) or 'nothing new'}"
+
+    _rules_edit(change)
+
+
+def _rule_add_matches(rule, matches):
+    added = []
+    for kind, value in matches:
+        if value not in rule[kind]:
+            rule[kind].append(value)
+            added.append(f"{RULE_MATCH_SPELLING[kind]}{value}")
+    return added
+
+
+def _rules_matches(name, op, *words):
+    matches = [_rule_match(w) for w in words]
+
+    def change(rules):
+        rule = _rule_find(rules, name)
+        if op == "add":
+            done = _rule_add_matches(rule, matches)
+        else:
+            done = []
+            for kind, value in matches:
+                if value in rule[kind]:
+                    rule[kind].remove(value)
+                    done.append(f"{RULE_MATCH_SPELLING[kind]}{value}")
+        return f"{name}: {'added' if op == 'add' else 'removed'} {', '.join(done) or 'nothing'}"
+
+    _rules_edit(change)
+
+
 # --- proxy auto: reachability probe -------------------------------------------
 #
 # Fetches a URL through one exit after another (direct first) and finds one
@@ -4366,7 +4829,11 @@ def _where_sing_box(config, domain):
         hit = hit or next((f"domain_keyword {k}" for k in rule.get("domain_keyword") or [] if k in domain), "")
         hit = hit or next((f"domain_regex {r}" for r in rule.get("domain_regex") or [] if re.search(r, domain)), "")
         hit = hit or next(
-            (f"rule-set {t}" for t in rule.get("rule_set") or [] if _where_rule_set_match(rule_sets.get(t, {}), domain)),
+            (
+                f"runtime rule {t.removeprefix('user:')}" if t.startswith("user:") else f"rule-set {t}"
+                for t in rule.get("rule_set") or []
+                if _where_rule_set_match(rule_sets.get(t, {}), domain)
+            ),
             "",
         )
         if hit:

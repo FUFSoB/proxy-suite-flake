@@ -19,6 +19,38 @@
 
 let
   fillTemplate = import ../../lib/fill-template.nix;
+  # A guard for mixed-in's names goes just before the first direct rule that applies to
+  # mixed-in, or last for a direct final. A runtime routing rule (routing-convert.jq: its first
+  # rule set is user:<name>) does not count: one sending a name direct at the top would take the
+  # guard, and its lookup, above every proxy rule. Each such rule above the guard gets the guard
+  # to itself instead, only for what it matches.
+  insertGuardDefs = ''
+    | def runtime_rule: ((.rule_set? // [])[0] // "") | type == "string" and startswith("user:");
+      def direct_for_mixed: (.outbound? // "") == "direct"
+        and ((.inbound? // ["mixed-in"]) | index(["mixed-in"])) != null;
+      # An "and" takes the rule set as one more condition; anything else, "or" included, is
+      # wrapped whole.
+      def scoped($sets):
+        if .type? == "logical" and .mode? == "and" then .rules += [{rule_set: $sets}]
+        else {type: "logical", mode: "and",
+              rules: [del(.action, .strategy, .server), {rule_set: $sets}]}
+             + ({action, strategy, server} | with_entries(select(.value != null)))
+        end;
+      def first_direct: .route.rules | map(direct_for_mixed and (runtime_rule | not)) | index(true);
+      def insert_guard($guard):
+        (first_direct // (.route.rules | length)) as $limit
+        | .route.rules = [.route.rules | to_entries[] | .key as $i | .value
+            | if $i < $limit and direct_for_mixed and runtime_rule
+              then (. as $rule | $guard[] | scoped($rule.rule_set)), .
+              else . end]
+        | first_direct as $first_direct
+        | if $first_direct != null then
+            .route.rules = .route.rules[:$first_direct] + $guard + .route.rules[$first_direct:]
+          elif (.route.final // "direct") == "direct" then
+            .route.rules += $guard
+          else . end;
+      .
+  '';
   # XRay's port list: "80,1000-2000".
   closedPorts = map (
     r: if r.from == r.to then toString r.from else "${toString r.from}-${toString r.to}"
@@ -33,6 +65,7 @@ else
   (fillTemplate ./backend-filter-sing-box.template.jq {
     userDnsRuleCount = toString (builtins.length userDnsRules);
   })
+  + lib.optionalString (listenerExposed || proxyInboundsGuardPrivate) insertGuardDefs
   # An outbound on such an interface resolves through it (awg-dns-<tag>), as a declared one
   # does; only its server cannot be in the build-time config.
   + lib.optionalString (awgRuntimeDnsServer != null) ''
@@ -58,14 +91,7 @@ else
        {type: "logical", mode: "and",
         rules: [{inbound: ["mixed-in"], ip_cidr: ${builtins.toJSON proxyInboundsLoopback}}, $remote],
         action: "reject"}] as $guard
-    | (.route.rules
-       | map((.outbound? // "") == "direct" and ((.inbound? // ["mixed-in"]) | index(["mixed-in"])) != null)
-       | index(true)) as $first_direct
-    | if $first_direct != null then
-        .route.rules = .route.rules[:$first_direct] + $guard + .route.rules[$first_direct:]
-      elif (.route.final // "direct") == "direct" then
-        .route.rules += $guard
-      else . end
+    | insert_guard($guard)
   ''
   # No sniffing on mixed-in, where the inbounds' clients arrive: an SNI the rules send direct
   # would take their connection direct to any address. Their names still route as names.

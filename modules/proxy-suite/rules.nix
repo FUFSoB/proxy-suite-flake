@@ -109,6 +109,61 @@ let
   routingRules = singBoxRoutingRules;
   routeModeRules = singBoxRouteModeRules;
 
+  # The configuration's sections in match order, each at a fixed priority that runtime
+  # routing rules (`proxy-ctl proxy rules`) sort among; `proxy rules list` and the Routing tab
+  # show them. Tags as the user wrote them, not as the backend spells them.
+  matchFields = rule: {
+    domains = rule.domains or [ ];
+    ips = rule.ips or [ ];
+    geosites = rule.geosites or [ ];
+    geoips = rule.geoips or [ ];
+    ruleSets = rule.ruleSets or [ ];
+  };
+  routingSections = [
+    {
+      id = "rules";
+      priority = 100;
+      label = "routing.rules";
+      entries =
+        lib.concatMap (
+          ob:
+          let
+            m = matchFields ob.routing;
+          in
+          lib.optional (lib.any (v: v != [ ]) (builtins.attrValues m)) (m // { target = ob.tag; })
+        ) proxyCfg.outbounds
+        ++ map (rule: matchFields rule // { target = rule.outbound; }) r.rules;
+    }
+    {
+      id = "proxy";
+      priority = 200;
+      label = "routing.proxy: domains and ips";
+      entries = [
+        (matchFields { inherit (r.proxy) domains ips; } // { target = "proxy"; })
+      ];
+    }
+    {
+      id = "block";
+      priority = 300;
+      label = "routing.block";
+      entries = [ (matchFields r.block // { target = "block"; }) ];
+    }
+    {
+      id = "direct";
+      priority = 400;
+      label = "routing.direct, private addresses";
+      entries = [ (matchFields (direct // { inherit (r.direct) ruleSets; }) // { target = "direct"; }) ];
+    }
+    {
+      id = "proxyGeo";
+      priority = 500;
+      label = "routing.proxy: geosites, geoips and rule sets";
+      entries = [
+        (matchFields { inherit (r.proxy) geosites geoips ruleSets; } // { target = "proxy"; })
+      ];
+    }
+  ];
+
 in
 {
   inherit
@@ -124,5 +179,6 @@ in
     xrayRouteModeRules
     routeModeRules
     routingRules
+    routingSections
     ;
 }

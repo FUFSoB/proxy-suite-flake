@@ -205,8 +205,13 @@ let
   };
 
   selectedTemplates = if derived.pureXrayEnabled then xrayTemplates else singBoxTemplates;
+  # The start script composes the route from these buckets (and the runtime rules); proxy-ctl
+  # reads the sections, the configuration's part of `proxy rules list`.
   routeModeRules =
-    if derived.pureXrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules;
+    (if derived.pureXrayEnabled then rules.xrayRouteModeRules else rules.singBoxRouteModeRules)
+    // {
+      sections = rules.routingSections;
+    };
 
   tproxyFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON selectedTemplates.tproxy);
   tunFile = pkgs.writeText "proxy-suite-core" (builtins.toJSON selectedTemplates.tun);
