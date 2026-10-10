@@ -18,13 +18,15 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.markup import escape
+from textual.message import Message
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
+from textual.suggester import Suggester
 from textual.theme import Theme
-from textual.widgets import DataTable, Input, Label, OptionList, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import Collapsible, DataTable, Input, Label, OptionList, RichLog, Select, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
 import proxy_model as model
@@ -234,6 +236,256 @@ class Prompt(Dialog):
 
     def action_submit(self):
         self.dismiss(self.query_one(Input).value.strip())
+
+
+class Completer(Suggester):
+    """A field's choices, completing what is typed (its last word, in a list field's box); → takes it.
+    taken: () -> values already in the list, not offered again."""
+
+    def __init__(self, choices, words=False, taken=lambda: ()):
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.choices, self.words, self.taken = list(choices), words, taken
+
+    async def get_suggestion(self, value):
+        last = value.rsplit(" ", 1)[-1] if self.words else value
+        if not last:
+            return None
+        head = value[: len(value) - len(last)]
+        taken = {*(value.split() if self.words else ()), *self.taken()}
+        return next((head + c for c in self.choices if c.lower().startswith(last.lower()) and c != last and c not in taken), None)
+
+
+def _listing(choices, limit=6):
+    """A field's choices as its hint line lists them."""
+    names = list(choices)
+    return ", ".join(names[:limit]) + (f" and {len(names) - limit} more" if len(names) > limit else "")
+
+
+PLACEHOLDER_ROOM = 56  # of a hint, what a box shows before it cuts the rest
+
+
+def placeholder(f):
+    """(what the box shows while empty, what goes under it): a hint too long for the box goes
+    under it, whole, and the box keeps its example."""
+    if len(f.hint) <= PLACEHOLDER_ROOM:
+        return f.hint, ""
+    return model.field_example(f), f.hint
+
+
+ITEM_LOOKS = {"kept": ("  ", ""), "added": ("+ ", "green"), "removed": ("− ", "red strike dim")}
+
+
+class Items(Vertical):
+    """A list field: a box to type a value into (enter adds it; a paste of several adds each), and
+    under it the list, a value per line. Enter or a click on one takes it out, or puts back one
+    that was there. Editing what a row holds, what changes is marked: + added, − taken out."""
+
+    class Changed(Message):
+        pass
+
+    def __init__(self, f, values, was, choices, hint_text):
+        super().__init__(id=f"field-{f.name}", classes="items")
+        self.f, self.was, self.choices, self.hint_text = f, list(was), choices, hint_text
+        self.removed = {v for v in self.was if v not in values}
+        self.added = [v for v in values if v not in self.was]
+
+    @property
+    def value(self):
+        listed = [v for v in self.was if v not in self.removed] + self.added
+        # What is typed but not added yet counts too: tab or ctrl+s past it must not drop it.
+        pending = model.items(self.query_one(Input).value) if self.is_mounted else []
+        return listed + [v for v in pending if v not in listed]
+
+    def compose(self) -> ComposeResult:
+        shown, _ = placeholder(self.f)
+        yield Input(placeholder=shown or "add one", suggester=Completer(self.choices, True, lambda: self.value) if self.choices else None)
+        yield Choices(classes="item-list")
+        if self.hint_text:
+            yield Label(self.hint_text, classes="field-hint", markup=False)
+
+    def on_mount(self):
+        self.show()
+
+    def focus(self, scroll_visible=True):
+        self.query_one(Input).focus(scroll_visible)
+        return self
+
+    def show(self):
+        rows = model.item_changes(self.was, self.value)
+        listed = self.query_one(".item-list", Choices)
+        at = listed.highlighted
+        listed.clear_options()
+        for value, state in rows:
+            mark, style = ITEM_LOOKS[state if self.was else "kept"]
+            listed.add_option(Option(Text.assemble((mark, style), (printable(value), style)), id=value))
+        listed.display = bool(rows)
+        if rows and at is not None:
+            listed.highlighted = min(at, len(rows) - 1)
+        self.post_message(self.Changed())
+
+    # A highlight only while the list has focus: elsewhere it would read as a value picked.
+    def on_descendant_focus(self, event):
+        if isinstance(event.widget, Choices) and event.widget.highlighted is None and event.widget.option_count:
+            event.widget.highlighted = 0
+
+    def on_descendant_blur(self, event):
+        if isinstance(event.widget, Choices):
+            event.widget.highlighted = None
+
+    def on_input_submitted(self, event):
+        # Enter in an empty box is the form's: it runs.
+        if not event.value.strip():
+            return
+        event.stop()
+        typed = model.items(event.value)
+        event.input.value = ""
+        for v in typed:
+            self.removed.discard(v)
+            if v not in self.value:
+                self.added.append(v)
+        self.show()
+
+    def on_input_changed(self, event):
+        event.stop()
+        self.post_message(self.Changed())
+
+    def on_option_list_option_selected(self, event):
+        event.stop()
+        v = event.option.id
+        if v in self.added:
+            self.added.remove(v)
+        else:
+            self.removed.symmetric_difference_update({v})
+        self.show()
+
+
+class Form(Dialog):
+    """What an action asks for, one box per field: tab moves on, enter runs once nothing is missing.
+    Dismissed with {field: value}, or None."""
+
+    # ctrl+s runs from anywhere: enter on a list field opens the list.
+    BINDINGS = [Binding("escape", "dismiss", "cancel"), Binding("ctrl+s", "submit", "run", priority=True)]
+
+    def __init__(self, title, action, row, remembered):
+        super().__init__()
+        self.heading, self.action, self.row = title, action, row
+        self.choices = model.form_choices(action, row)
+        self.current = model.form_current(action, row)
+        self.values = model.form_start(action, row, remembered)
+        self.tried = False  # enter pressed with something missing: what is, in red
+
+    def compose(self) -> ComposeResult:
+        fields = self.action.fields
+        with Vertical(classes="dialog form"):
+            yield Label(printable(self.heading), classes="dialog-title", markup=False)
+            # Not a tab stop of its own: tab goes field to field.
+            with VerticalScroll(classes="fields", can_focus=False):
+                for f in fields:
+                    if not f.advanced:
+                        yield from self.field(f)
+                more = [f for f in fields if f.advanced]
+                if more:
+                    # Open from the start when something was typed there last time.
+                    with Collapsible(title="More options", collapsed=not any(self.values.get(f.name) for f in more)):
+                        for f in more:
+                            yield from self.field(f)
+            yield Static(classes="preview")
+            hints = ["tab next field", "→ completes"]
+            if any(f.items for f in fields):
+                hints.append("enter adds to a list; on a value, takes it out")
+            yield hint(*hints, ("enter/ctrl+s run", "submit"), ("esc cancel", "dismiss"))
+
+    def field(self, f):
+        """The label beside its box; under the box, what does not fit in it and what it can be."""
+        value, choices = self.values.get(f.name, [] if f.items else ""), self.choices.get(f.name) or {}
+        shown, below = placeholder(f)
+        if choices and not f.fixed:
+            listed = ("any of: " if f.items else "e.g. ") + _listing(choices)
+            below = f"{below}\n{listed}" if below else listed
+        with Horizontal(classes="field"):
+            # An edit of what a row holds may well end empty: nothing to mark there.
+            yield Label(Text.assemble((f.label, "bold"), ("\noptional" if f.optional and not f.current else "", "dim")), classes="field-label")
+            with Vertical(classes="field-box"):
+                if f.items:
+                    yield Items(f, model.items(value), self.current.get(f.name, []), choices, below)
+                    return
+                if f.fixed and choices:
+                    options = [(Text.assemble(c, (f"  {d}", "dim")) if d else c, c) for c, d in choices.items()]
+                    yield Select(options, prompt="default" if f.optional else "choose…", value=value if value in choices else Select.NULL, id=f"field-{f.name}")
+                    yield Label(f.hint, classes="field-hint", markup=False)
+                    return
+                yield Input(
+                    value,
+                    placeholder=shown,
+                    type="integer" if f.number else "text",
+                    suggester=Completer(choices) if choices else None,
+                    id=f"field-{f.name}",
+                )
+                if below:
+                    yield Label(below, classes="field-hint", markup=False)
+
+    def on_mount(self):
+        self.show_preview()
+
+    def read(self):
+        values = {}
+        for f in self.action.fields:
+            widget = self.query_one(f"#field-{f.name}")
+            if isinstance(widget, Items):
+                values[f.name] = widget.value
+            else:
+                values[f.name] = "" if isinstance(widget, Select) and widget.is_blank() else str(widget.value)
+        return values
+
+    def problems(self, values):
+        return model.form_problems(self.action, values, self.row, self.choices, self.current)
+
+    def show_preview(self):
+        """The command the form runs, credentials blanked, or what it still needs: red once enter found it missing."""
+        values = self.read()
+        problems = [why for _, why in self.problems(values)]
+        try:
+            if problems:
+                raise ValueError("; ".join(problems))
+            argv, stdin = model.form_argv(self.action, self.row, values, self.app.states, self.choices, self.current)
+            text = Text(printable(model.shown(argv, stdin=stdin)), style="dim")
+        except (ValueError, IndexError) as e:  # what is missing, or an unbalanced quote
+            text = Text(f"✗ {e}", style="red" if self.tried else "dim")
+        _update(self.query_one(".preview", Static), text)
+
+    def on_input_changed(self, _):
+        self.show_preview()
+
+    def on_select_changed(self, _):
+        self.show_preview()
+
+    def on_items_changed(self, _):
+        if self.is_mounted:
+            self.show_preview()
+
+    def on_input_submitted(self, event):
+        event.stop()
+        self.action_submit()
+
+    def action_submit(self):
+        values = self.read()
+        self.tried = True
+        problem = next(self.problems(values), None)
+        if problem:
+            # To the first field that needs something, out of More options if it is in there.
+            widget = self.query_one(f"#field-{problem[0]}")
+            for collapsible in widget.ancestors:
+                if isinstance(collapsible, Collapsible):
+                    collapsible.collapsed = False
+            widget.focus()
+            self.show_preview()
+            return
+        try:
+            model.form_argv(self.action, self.row, values, self.app.states, self.choices, self.current)
+        except (ValueError, IndexError):
+            self.show_preview()  # says why
+            return
+        self.dismiss(values)
 
 
 class Confirm(Dialog):
@@ -468,9 +720,28 @@ class ProxyTui(App):
     ModalScreen { align: center middle; }
     .dialog { width: 76; max-width: 95%; height: auto; max-height: 90%; border: round $border; background: $background; padding: 0 1; }
     .dialog-title { text-style: bold; color: $accent; margin-bottom: 1; }
-    .dialog-hint { text-style: dim; margin-top: 1; }
+    .dialog-hint { width: 1fr; text-style: dim; margin-top: 1; }
     .dialog Input { width: 1fr; border: tall $border-blurred; }
     .dialog Input:focus { border: tall $border; }
+    .form { width: 84; }
+    .form .fields { height: auto; max-height: 70vh; background: $background; }
+    .field { height: auto; }
+    .field-label { width: 16; padding: 1 1 0 0; }
+    .field-box { width: 1fr; height: auto; }
+    /* A hint wraps under its box rather than run off the dialog's edge. */
+    .field-hint { width: 1fr; text-style: dim; padding: 0 1; }
+    .items { height: auto; }
+    .items .item-list { height: auto; max-height: 8; border: none; padding: 0 1; background: $background; }
+    .items .item-list > .option-list--option-highlighted { background: $background; text-style: none; }
+    .items .item-list:focus > .option-list--option-highlighted { background: $block-hover-background; text-style: bold; }
+    .form Select { width: 1fr; }
+    .form Select > SelectCurrent { border: tall $border-blurred; background: $background; }
+    .form Select:focus > SelectCurrent { border: tall $border; }
+    .form Select > SelectOverlay { background: $background; }
+    .form Collapsible { border: none; padding: 0; margin-top: 1; background: $background; }
+    .form Collapsible > Contents { padding: 0; }
+    .form CollapsibleTitle { padding: 0; color: $accent; }
+    .form .preview { margin-top: 1; }
     .menu OptionList { height: auto; max-height: 20; border: none; padding: 0; background: $background; }
     /* An option list drops reverse video: the selected option gets the hover gray instead. */
     .menu OptionList > .option-list--option-highlighted { color: $foreground; background: $block-hover-background; text-style: bold; }
@@ -490,7 +761,7 @@ class ProxyTui(App):
         self.loaded = {}  # tab id -> the last load, refilled at once when sorting or filtering changes
         self.selectors = {}  # tab id -> its selector's (options, current) as last read
         self.status = []
-        self.typed = {}  # prompt title -> what was last typed there
+        self.typed = {}  # action label -> {field: value} last run from its form
         self.feedback_timer = None
         self.last_output = None  # (title, text)
         self.retry = None  # (mode, argv, stdin) of the last run that only root could do
@@ -802,10 +1073,12 @@ class ProxyTui(App):
             self.refill(self.active_tab())
             return
 
-        def with_text(text=""):
+        def with_values(values=None):
             try:
-                argv = action.argv(row, text, self.states)
-                stdin = action.stdin(row, text) if action.stdin else None
+                if action.fields:
+                    argv, stdin = model.form_argv(action, row, values, self.states)
+                else:
+                    argv, stdin = action.argv(row, {}, self.states), action.stdin(row, {}) if action.stdin else None
             except (ValueError, IndexError) as e:  # an unbalanced quote in a typed command
                 self.feedback(f"Cannot run that: {e}", False)
                 return
@@ -814,16 +1087,16 @@ class ProxyTui(App):
             else:
                 self.run_argv(action.mode, argv, stdin)
 
-        def typed(text):
-            if text:
-                self.typed[action.label] = text
-                with_text(text)
+        def filled(values):
+            if values is not None:
+                self.typed[action.label] = values
+                with_values(values)
 
-        if action.prompt:
+        if action.fields:
             title = action.label.removesuffix("…")
-            self.push_screen(Prompt(title[:1].upper() + title[1:], action.prompt, self.typed.get(action.label, "")), typed)
+            self.push_screen(Form(title[:1].upper() + title[1:], action, row, self.typed.get(action.label)), filled)
         else:
-            with_text()
+            with_values()
 
     def run_argv(self, mode, argv, stdin=None):
         """stdin: text proxy-ctl reads (argv says "-"); only for runs that stay in the TUI."""

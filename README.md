@@ -166,6 +166,8 @@ Changes and secrets need root or the userControl group.
                                          add a group (failover by default)
   proxy groups rm <tag>                  remove a group added with groups add
   proxy groups members <tag> add|rm <member...>
+  proxy groups members <tag> set [member...]
+                                         exactly these members, in this order
   proxy groups strategy <tag> failover|urltest|selector
   proxy priority [list]                  the top level in the order it is picked in
   proxy priority <tag> <n>|up|down|--clear
@@ -180,6 +182,8 @@ Changes and secrets need root or the userControl group.
                                          rule named after the target, extended (priority 50:
                                          ahead of the configuration's, at 100 to 500)
   proxy rules matches <name> add|rm <match...>
+  proxy rules matches <name> set [match...]
+                                         exactly these matches
   proxy rules target <name> <target>
   proxy rules priority <name> <n>|up|down
                                          lower goes first; up/down moves past the next row
@@ -257,6 +261,9 @@ Changes and secrets need root or the userControl group.
   inbounds users order <name> <N>        a runtime user's order (serverSource number)
   inbounds bind|unbind <user> <tag>      put a user on a listener, or take it off
                                          (a runtime user, or a runtime listener)
+  inbounds users listeners <user> [tag...]
+                                         put a user on exactly these listeners
+  inbounds users on <tag> [user...]      put exactly these users on a listener
   inbounds add <tag> <type> [--port N] [--via V] [--transport T] [--path P] [--host H]
       [--reality SNI[,SNI]] [--tls <cert>] [--alpn a,b] [--flow vision] [--method M]
       [--listen A] [--user U]... [more: see inbounds add --help]

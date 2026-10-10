@@ -13,7 +13,7 @@ import proxy_ctl as ctl
 import proxy_gui as gui
 import proxy_model as model
 import proxy_sni as sni
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons"))
 import badges  # noqa: E402
@@ -99,6 +99,25 @@ class GuiTest(unittest.TestCase):
         for name in ("wrap", "wrap-mode", "natural-wrap-mode", "lines", "ellipsize", "max-width-chars"):
             self.assertIsNotNone(Gtk.Label.find_property(name), name)
         self.assertGreater(gui.TOAST_LINES, 1)
+
+    def test_form_widgets_are_there(self):
+        """A form's rows, its dialog and what they are set up with exist in this libadwaita.
+        Built for real only with a display: GTK segfaults without one."""
+        for cls, names in (
+            (Adw.EntryRow, ("text", "activates-default", "input-purpose")),
+            (Adw.ComboRow, ("model", "selected")),
+            (Adw.ExpanderRow, ("expanded",)),
+            (Adw.Dialog, ("content-width", "default-widget")),
+            (Gtk.MenuButton, ("popover", "icon-name")),
+            (Gtk.ScrolledWindow, ("propagate-natural-height", "max-content-height")),
+        ):
+            for name in names:
+                self.assertIsNotNone(cls.find_property(name), f"{cls.__name__}:{name}")
+        self.assertTrue(callable(gui.form_dialog))
+        # A list field: enter in its entry adds, and its rows come and go inside the expander.
+        self.assertNotEqual(GObject.signal_lookup("entry-activated", Adw.EntryRow), 0)
+        self.assertTrue(callable(getattr(Adw.ExpanderRow, "remove", None)))
+        self.assertTrue(callable(getattr(Adw.ExpanderRow, "set_subtitle", None)))
 
     def test_ansi(self):
         self.assertEqual(

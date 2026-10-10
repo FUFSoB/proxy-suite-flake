@@ -300,7 +300,7 @@ class TuiTest(unittest.TestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertIsInstance(app.screen, tui.Menu)
-            self.assertEqual(self.menu_labels(app)[:2], ["add a rule…", "add domains or addresses to it…"])
+            self.assertEqual(self.menu_labels(app)[:2], ["add a rule…", "edit its domains and addresses…"])
             await pilot.press("escape")
             await pilot.pause()
             await pilot.press("minus")
@@ -318,6 +318,48 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(self.ran.pop(), ["proxy", "mode", "all-bypass"])
             app.action_choose("default")  # already: nothing runs
             self.assertEqual(self.ran, [])
+
+            # n: a form, one box per field. Enter with the target missing stays, on the target.
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, tui.Form)
+            self.assertEqual(app.focused.id, "field-target")
+            self.assertIn("✗ Target is needed; Matches is needed", str(app.screen.query_one(".preview").content))
+            await pilot.press("tab", "enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, tui.Form)
+            self.assertEqual((app.focused.id, self.ran), ("field-target", []))
+            # → takes the suggestion. Matches are a list: enter adds what is typed, a value a line,
+            # and what is typed but not added yet counts too. A priority takes digits only;
+            # the preview is the command.
+            await pilot.press(*"dir", "right", "tab", *"a.test b.test", "enter", *"c.test")
+            await pilot.pause()
+            listed = app.screen.query_one("#field-matches .item-list")
+            self.assertEqual([str(listed.get_option_at_index(i).prompt).strip() for i in range(listed.option_count)], ["a.test", "b.test"])
+            # Down into the list, enter takes b.test out; tab on to the name, then the priority.
+            await pilot.press("tab", "down", "enter", "tab", "tab", *"x1x0")
+            await pilot.pause()
+            self.assertEqual(app.screen.query_one("#field-matches").value, ["a.test", "c.test"])
+            self.assertEqual(app.screen.query_one("#field-priority").value, "10")
+            self.assertIn("proxy-ctl proxy rules add direct a.test c.test --priority 10", str(app.screen.query_one(".preview").content))
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(self.ran.pop(), ["proxy", "rules", "add", "direct", "a.test", "c.test", "--priority", "10"])
+            # One action edits a rule's matches: it opens with what the rule has, marks what
+            # changes, and runs nothing until something does.
+            await pilot.press("a")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, tui.Form)
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            self.assertIn("Nothing changed yet", str(app.screen.query_one(".preview").content))
+            await pilot.press(*"d.test", "enter", "tab", "enter")
+            await pilot.pause()
+            listed = app.screen.query_one("#field-matches .item-list")
+            self.assertEqual([str(listed.get_option_at_index(i).prompt) for i in range(listed.option_count)], ["− bank.example", "+ d.test"])
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            self.assertEqual(self.ran.pop(), ["proxy", "rules", "matches", "bank", "set", "d.test"])
 
             # Outbounds: letter shortcuts; p pins, and on the pinned row unpins; nothing removes a declared one.
             await pilot.press("right")
@@ -345,15 +387,23 @@ class TuiTest(unittest.TestCase):
             self.assertEqual(app.screen.query_one(tui.Choices).highlighted, 1)
             await pilot.press("escape")
 
-            # Prompts: add takes "<tag> <url>", the URL on stdin.
-            await pilot.press("n", *"x vless://h", "enter")
+            # Add takes a tag and a link, the link on stdin.
+            await pilot.press("n", "x", "tab", *"vless://h", "enter")
             await pilot.pause()
             self.assertEqual(self.ran.pop(), (["proxy", "outbounds", "add", "x", "-"], "vless://h"))
-            # A prompt remembers what was typed into it last.
+            # A form remembers what was typed into it last.
             await pilot.press("n")
             await pilot.pause()
-            self.assertEqual(app.screen.query_one(tui.Input).value, "x vless://h")
+            self.assertEqual([i.value for i in app.screen.query(tui.Input)], ["x", "vless://h"])
             await pilot.press("escape")
+            await pilot.pause()
+            # A group: members complete word by word, the strategy is picked from a list.
+            await pilot.press("g", *"auto", "tab", "a", "right", "tab", "tab", "tab")
+            await pilot.pause()
+            self.assertEqual((app.focused.id, app.screen.query_one("#field-members").value), ("field-strategy", ["a"]))
+            await pilot.press("enter", "down", "down", "enter", "ctrl+s")
+            await pilot.pause()
+            self.assertEqual(self.ran.pop(), ["proxy", "groups", "add", "auto", "a", "--strategy", "urltest"])
 
             # An empty tab says how to fill it.
             await pilot.press("5")

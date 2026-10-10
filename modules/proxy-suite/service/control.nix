@@ -49,6 +49,7 @@ let
   proxyInboundsSubscriptionsBaseUrl = proxyInboundsCfg.subscriptions.baseUrl;
   proxyInboundsXray = "${proxyInboundsCfg.package}/bin/xray";
   guiRefreshInterval = cfg.gui.refreshInterval;
+  guiFloating = cfg.gui.floating;
   # proxy_ctl.py reads these as "1"/"0" strings.
   flag = enabled: if enabled then "1" else "0";
 in
@@ -56,6 +57,7 @@ in
   proxyCtl = packages.mkProxyCtl {
     inherit
       guiRefreshInterval
+      guiFloating
       subscriptionTagsFile
       perAppRoutingProfilesFile
       proxychainsConfigFile

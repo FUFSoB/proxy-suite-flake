@@ -6,7 +6,7 @@
 # $watched: whether proxy-suite-outbound-groups drives this instance's failover groups through
 # its Clash API. Without it (the TUN instances) a failover group is sing-box's own urltest.
 #
-# Output: {groups: {name: {strategy, failback, interval, members, pinned}}, outbounds: [the
+# Output: {groups: {name: {strategy, failback, interval, members, listed, pinned}}, outbounds: [the
 # sing-box group outbounds], top: [what the top level picks among, in order], loops: [groups
 # inside themselves], warnings, errors}.
 # Errors mean the config cannot be built (a group inside itself); warnings are dropped members
@@ -71,9 +71,12 @@ def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\
     | .warnings += (if $usable == [] then ["group '\($g)' has no available member; it blocks until one is"] else [] end)
     | (if $all == [] then ["block"] else $all end) as $all
     | (if $usable == [] then ["block"] else $usable end) as $usable
+    # listed: the members the group names itself, which the front ends edit; members adds those
+    # its subscriptions and patterns pull in.
     | .groups[$g] = {strategy: $cfg.strategy, failback: ($cfg.failback != false),
                      interval: ($cfg.interval // (if $cfg.strategy == "urltest" then $interval else "30s" end)),
-                     members: $all, pinned: $pinned, runtime: ($cfg.runtime // false)}
+                     members: $all, listed: [($cfg.outbounds // [])[] | select(. != $g)],
+                     pinned: $pinned, runtime: ($cfg.runtime // false)}
     | .outbounds += [
         if ($cfg.strategy == "urltest" or ($cfg.strategy == "failover" and ($watched | not))) and $pinned == "" then
           {type: "urltest", tag: $g, outbounds: $usable, url: $url,

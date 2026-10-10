@@ -27,6 +27,15 @@ def walk(items):
         yield from walk(item.children)
 
 
+def form(action, row=None, **values):
+    """(argv, stdin) an action's form runs with these fields filled, as both front ends run it."""
+    return model.form_argv(action, row, values, {})
+
+
+def form_argv(action, row=None, **values):
+    return form(action, row, **values)[0]
+
+
 class ModelTest(unittest.TestCase):
     def setUp(self):
         for name, value in {
@@ -140,23 +149,36 @@ class ModelTest(unittest.TestCase):
                 bob, alice = model.inbound_user_rows({})
             self.assertEqual((bob["listeners"], alice["problems"]), ("in", "no listeners"))
             actions = {a.key: a for a in users.actions}
-            self.assertEqual(actions["n"].argv(None, "carol 7 in ws", {}),
+            self.assertEqual(form_argv(actions["n"], name="carol", order="7", listeners="in ws"),
                              ["inbounds", "users", "add", "carol", "--order", "7", "--listener", "in", "--listener", "ws"])
-            self.assertEqual(actions["n"].argv(None, "carol", {}), ["inbounds", "users", "add", "carol"])
-            self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "x", "s", "i"])
+            self.assertEqual(form_argv(actions["n"], name="carol"), ["inbounds", "users", "add", "carol"])
+            self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "s", "i"])
             self.assertEqual(actions["s"].argv(bob), ["inbounds", "sub", "bob"])
             # A URL to copy or encode only with subscriptions.baseUrl: else it is a file path.
             with mock.patch.dict(os.environ, {"INBOUNDS_SUB_BASE_URL": "https://sub.example"}):
-                self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "x", "s", "c", "Q", "i"])
+                self.assertEqual([a.key for a in model.applicable(users, bob)], ["n", "b", "s", "c", "Q", "i"])
             self.assertEqual(actions["Q"].argv(bob), ["inbounds", "sub", "bob", "--qr"])
-            self.assertEqual(actions["e"].argv(alice, " 9 ", {}), ["inbounds", "users", "order", "alice", "9"])
-            self.assertEqual(actions["b"].argv(alice, "in", {}), ["inbounds", "bind", "alice", "in"])
+            self.assertEqual(form_argv(actions["e"], alice, order=" 9 "), ["inbounds", "users", "order", "alice", "9"])
+            # One action puts a user on its listeners: those it is on now to start from.
+            with mock.patch.object(ctl, "_inbound_runtime_rows", lambda kind: rows):
+                self.assertEqual(model.form_current(actions["b"], bob), {"listeners": ["in"]})
+                self.assertEqual(form_argv(actions["b"], bob, listeners=["in", "ws"]), ["inbounds", "users", "listeners", "bob", "in", "ws"])
             actions = {a.key: a for a in inbounds.actions}
             row = {"key": "friends/alice", "tag": "friends", "user": "alice", "type": "vless", "port": "20001", "source": "runtime"}
-            self.assertEqual(actions["n"].argv(None, "friends vless --port 20001", {}), ["inbounds", "add", "friends", "vless", "--port", "20001"])
+            self.assertEqual(form_argv(actions["n"], tag="friends", type="vless", port="20001"), ["inbounds", "add", "friends", "vless", "--port", "20001"])
+            # Every field a flag, users one --user each, server names one comma-separated flag, and the rest as typed.
+            self.assertEqual(
+                form_argv(actions["n"], tag="f", type="vless", reality=["a.example", "b.example"], users=["alice", "bob"], via="de", transport="ws", extra="--path '/a b'"),
+                ["inbounds", "add", "f", "vless", "--reality", "a.example,b.example", "--user", "alice", "--user", "bob", "--via", "de", "--transport", "ws", "--path", "/a b"],
+            )
+            self.assertEqual(model.form_problem(actions["n"], {"tag": "f", "type": "ftp"}), "Type is one of: " + ", ".join(ctl.INBOUND_TYPES))
             self.assertEqual(actions["d"].argv(row), ["inbounds", "rm", "friends"])
             self.assertFalse(actions["d"].when({**row, "source": "nix"}))
-            self.assertEqual(actions["b"].argv(row, "bob", {}), ["inbounds", "bind", "bob", "friends"])
+            # And one puts users on a listener.
+            self.assertNotIn("x", {a.key for a in model.applicable(inbounds, row)})
+            with mock.patch.object(ctl, "_inbound_runtime_rows", lambda kind: [{"name": "alice", "listeners": ["friends"]}, {"name": "bob", "listeners": []}]):
+                self.assertEqual(model.form_current(actions["b"], row), {"users": ["alice"]})
+                self.assertEqual(form_argv(actions["b"], row, users=["bob"]), ["inbounds", "users", "on", "friends", "bob"])
 
     def test_inbound_rows_carry_no_presence(self):
         """XRay keys the online map by user, not by inbound, so a per-listener row
@@ -215,9 +237,8 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(keys(vk)["s"].argv(vk), ["wl", "link", "vk"])
             self.assertEqual(keys(vk)["Q"].argv(vk), ["wl", "link", "vk", "--qr"])
             self.assertEqual(keys(vk)["N"].argv(vk), ["wl", "new", "vk"])
-            self.assertEqual(keys(vk)["a"].argv(vk, "/tmp/c.json", {}), ["wl", "auth", "vk", "/tmp/c.json"])
-            self.assertEqual(keys(home)["j"].argv(home, " abc-def ", {}), ["wl", "join", "home", "-"])
-            self.assertEqual(keys(home)["j"].stdin(home, " abc-def "), "abc-def")
+            self.assertEqual(form_argv(keys(vk)["a"], vk, path="/tmp/c.json"), ["wl", "auth", "vk", "/tmp/c.json"])
+            self.assertEqual(form(keys(home)["j"], home, link=" abc-def "), (["wl", "join", "home", "-"], "abc-def"))
             self.assertNotIn("N", keys(dion))  # a fixed link: its linkFile sets the call
             self.assertNotIn("A", keys(vk))  # VK logs in only in a browser
             self.assertEqual(keys(dion)["A"].argv(dion), ["wl", "auth", "dion"])
@@ -284,8 +305,8 @@ class ModelTest(unittest.TestCase):
                 )
             self.assertEqual([a.key for a in model.applicable(zapret, None)], ["n", "X", "F", "P", "space", "ctrl+r"])
         actions = {a.key: a for a in zapret.actions}
-        self.assertEqual(actions["n"].argv(None, "example.com", {}), ["zapret", "auto", "add", "example.com"])
-        self.assertEqual(actions["X"].argv(None, "example.com", {}), ["zapret", "auto", "exclude", "example.com"])
+        self.assertEqual(form_argv(actions["n"], domain="example.com"), ["zapret", "auto", "add", "example.com"])
+        self.assertEqual(form_argv(actions["X"], domain="example.com"), ["zapret", "auto", "exclude", "example.com"])
 
     def test_routing_tab(self):
         """Rules in match order, actions on the runtime ones only, and the mode as a selector."""
@@ -310,10 +331,32 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(by(off)["e"].argv(off, "", {}), ["proxy", "rules", "enable", "off"])
         self.assertEqual(by(work)["e"].argv(work, "", {}), ["proxy", "rules", "disable", "work"])
         self.assertEqual(by(work)["plus"].argv(work, "", {}), ["proxy", "rules", "priority", "work", "up"])
-        self.assertEqual(by(work)["a"].argv(work, "a.example 1.1.1.1", {}), ["proxy", "rules", "matches", "work", "add", "a.example", "1.1.1.1"])
-        self.assertEqual(by(work)["t"].argv(work, " proxy ", {}), ["proxy", "rules", "target", "work", "proxy"])
+        self.assertEqual(form_argv(by(work)["t"], work, target=" proxy "), ["proxy", "rules", "target", "work", "proxy"])
+        # One action edits the matches: it opens with what the rule has, runs only a change,
+        # and sends the whole list, so adding and taking out are one write.
+        edit = by(work)["a"]
+        self.assertNotIn("x", by(work))
+        rules = [{"name": "work", "domains": ["work.example"], "ips": ["10.0.0.0/8"], "geosites": ["netflix"]}]
+        with mock.patch.object(ctl, "_runtime_rules", lambda: rules):
+            current = model.form_current(edit, work)
+            self.assertEqual(current, {"matches": ["work.example", "10.0.0.0/8", "geosite:netflix"]})
+            self.assertEqual(model.form_start(edit, work, {"matches": ["stale"]}), current)  # what is there, not what was typed
+            self.assertEqual(model.form_problem(edit, current, work), "Nothing changed yet")
+            self.assertEqual(form_argv(edit, work, matches=["work.example", "a.example"]), ["proxy", "rules", "matches", "work", "set", "work.example", "a.example"])
+            # All taken out is a change too.
+            self.assertEqual(form_argv(edit, work, matches=[]), ["proxy", "rules", "matches", "work", "set"])
+        self.assertEqual(
+            model.item_changes(["a", "b"], ["b", "c"]),
+            [("a", "removed"), ("b", "kept"), ("c", "added")],
+        )
         self.assertTrue(by(work)["d"].confirm)
-        self.assertEqual(by(None)["n"].argv(None, "direct bank.example --name bank", {}), ["proxy", "rules", "add", "direct", "bank.example", "--name", "bank"])
+        add = by(None)["n"]
+        self.assertEqual(form_argv(add, target="direct", matches=" bank.example  10.0.0.0/8 ", name="bank"), ["proxy", "rules", "add", "direct", "bank.example", "10.0.0.0/8", "--name", "bank"])
+        self.assertEqual(form_argv(add, target="de", matches="a.test", priority="10"), ["proxy", "rules", "add", "de", "a.test", "--priority", "10"])
+        # What the form still needs, field by field; nothing runs until it has it.
+        self.assertEqual(list(model.form_problems(add, {"priority": "soon"})), [("target", "Target is needed"), ("matches", "Matches is needed"), ("priority", "Priority is a number")])
+        with self.assertRaisesRegex(ValueError, "Target is needed"):
+            form(add, matches="a.test")
         # The mode: a selector over the table, not rows in it.
         options, current = model.selector_state(tab)
         self.assertEqual([v for v, _ in options], ["default", *ctl.ROUTE_MODES])
@@ -429,15 +472,16 @@ class ModelTest(unittest.TestCase):
                 # The Services tab's row for the instance toggles it through `awg` too.
                 self.assertEqual(model.toggle_argv({"unit": "proxy-suite-awg@added", "state": "active"}), ["awg", "off", "added"])
         add = next(a for a in tab.actions if a.key == "n")
-        self.assertEqual((add.argv(None, "work vpn://AAAA", {}), add.stdin(None, "work vpn://AAAA")), (["awg", "add", "work", "-"], "vpn://AAAA"))
-        self.assertEqual((add.argv(None, "vpn://AAAA", {}), add.stdin(None, "vpn://AAAA")), (["awg", "add", "-"], "vpn://AAAA"))
+        self.assertEqual(form(add, name="work", source="vpn://AAAA"), (["awg", "add", "work", "-"], "vpn://AAAA"))
+        self.assertEqual(form(add, source="vpn://AAAA"), (["awg", "add", "-"], "vpn://AAAA"))
         # A path goes as one: proxy-ctl reads it, and it may run as root elsewhere.
-        self.assertEqual((add.argv(None, "work /tmp/w.conf", {}), add.stdin(None, "work /tmp/w.conf")), (["awg", "add", "work", "/tmp/w.conf"], None))
+        self.assertEqual(form(add, name="work", source="/tmp/w.conf"), (["awg", "add", "work", "/tmp/w.conf"], None))
+        # A whole config, pasted into the field: on stdin.
+        conf = "[Interface]\nPrivateKey = k\n[Peer]\nPublicKey = p"
+        self.assertEqual(form(add, source=conf), (["awg", "add", "-"], conf))
         outbound_add = next(a for a in next(t for t in model.TABS if t.id == "outbounds").actions if a.key == "n")
-        self.assertEqual(outbound_add.argv(None, "de vpn://AAAA", {}), ["proxy", "outbounds", "add", "de", "-"])
-        self.assertEqual(outbound_add.stdin(None, "de vpn://AAAA"), "vpn://AAAA")
-        self.assertEqual(outbound_add.argv(None, "de vless://x", {}), ["proxy", "outbounds", "add", "de", "-"])
-        self.assertEqual(outbound_add.stdin(None, "de vless://x"), "vless://x")
+        self.assertEqual(form(outbound_add, tag="de", source="vpn://AAAA"), (["proxy", "outbounds", "add", "de", "-"], "vpn://AAAA"))
+        self.assertEqual(form(outbound_add, tag="de", source="vless://x"), (["proxy", "outbounds", "add", "de", "-"], "vless://x"))
 
     def test_popen_feeds_stdin(self):
         with mock.patch.object(model, "CTL", "cat"):
@@ -469,13 +513,38 @@ class ModelTest(unittest.TestCase):
         with mock.patch.object(ctl, "env", lambda name, default="": ""):
             self.assertEqual([a.key for a in model.applicable(tab, rows[1])], ["p", "t", "ctrl+t", "T", "n", "g", "y", "plus", "minus", "h", "H", "x", "s", "c", "Q", "J", "k", "K", "V"])
         chain = next(a for a in tab.actions if a.key == "h")
-        self.assertEqual(chain.argv(rows[1], 'c {"type": "socks"}', {}), ["proxy", "outbounds", "add", "c", "-", "--detour", "b"])
-        self.assertEqual(chain.stdin(rows[1], 'c {"type": "socks"}'), '{"type": "socks"}')
+        self.assertEqual(form(chain, rows[1], tag="c", source='{"type": "socks"}'), (["proxy", "outbounds", "add", "c", "-", "--detour", "b"], '{"type": "socks"}'))
+        through = next(a for a in tab.actions if a.key == "H")
+        self.assertEqual(form_argv(through, rows[0], hop="b"), ["proxy", "outbounds", "chain", "a", "b"])
+        self.assertEqual(form_argv(through, rows[0], hop="b", tag="a2"), ["proxy", "outbounds", "chain", "a", "b", "a2"])
+        # A group: members, subscriptions and patterns lists, a flag per value; the strategy from its list.
+        group = next(a for a in tab.actions if a.key == "g")
+        with mock.patch.object(ctl, "_outbound_inventory", lambda: inventory), mock.patch.object(ctl, "_outbound_groups", lambda: {}):
+            self.assertEqual(model.form_choices(group)["members"], {"a": "", "b": ""})
+        self.assertEqual(
+            form_argv(group, tag="g", members=["a", "b", "a"], subs=["work"], match=["de-*", "nl-*"], strategy="urltest", extra="--no-failback"),
+            ["proxy", "groups", "add", "g", "a", "b", "--sub", "work", "--match", "de-*", "--match", "nl-*", "--strategy", "urltest", "--no-failback"],
+        )
+        # Its members edited in one go: those it names itself, not what its subscription pulls in,
+        # and never itself.
+        members = next(a for a in tab.actions if a.key == "m")
+        auto = {"tag": "auto", "group": True, "runtime": True}
+        groups = {"auto": {"members": ["a", "b", "sub-1"], "listed": ["a", "b"], "runtime": True}}
+        with mock.patch.object(ctl, "_outbound_inventory", lambda: {**inventory, "groups": groups}):
+            self.assertEqual(model.form_current(members, auto), {"members": ["a", "b"]})
+            self.assertNotIn("auto", model.form_choices(members, auto)["members"])
+            self.assertEqual(form_argv(members, auto, members=["b", "c"]), ["proxy", "groups", "members", "auto", "set", "b", "c"])
+        # An inventory from before `listed`: all of them.
+        with mock.patch.object(ctl, "_outbound_inventory", lambda: {**inventory, "groups": {"auto": {"members": ["a"]}}}):
+            self.assertEqual(model.form_current(members, auto), {"members": ["a"]})
+        self.assertEqual(model.form_problem(group, {"tag": "g", "strategy": "random"}), "Strategy is one of: failover, urltest, selector")
+        with self.assertRaisesRegex(ValueError, "No closing quotation"):
+            form(group, tag="g", extra="--match 'x")
         # Probe exits go by the backend's tag.
         probe = next(a for a in tab.actions if a.key == "P")
         with mock.patch.object(ctl, "env", lambda name, default="": "1" if name == "AUTOPROXY_ENABLED" else ""), mock.patch.object(ctl, "_backend_tags", lambda: {"b": "b-backend"}):
             self.assertIn(probe, model.applicable(tab, rows[1]))
-            self.assertEqual(probe.argv(rows[1], "example.com", {}), ["proxy", "auto", "probe", "example.com", "--via", "b-backend"])
+            self.assertEqual(form_argv(probe, rows[1], domain="example.com"), ["proxy", "auto", "probe", "example.com", "--via", "b-backend"])
         broken = model.Tab("x", "X", model.ROW, [], lambda _: ctl.die("backend gone"))
         self.assertEqual(model.load_tab(broken, {}), ([], "✗ backend gone"))
         # outbounds.d is root-only: the inventory still says which are runtime, so they can be removed.
@@ -544,19 +613,32 @@ class ModelTest(unittest.TestCase):
         with mock.patch.object(ctl, "_outbound_inventory", lambda: inventory):
             self.assertEqual(model.tray_outbounds({"proxy": {"active": True}}), (["a"], ""))
 
-    def test_add_prompt_takes_an_optional_tag(self):
+    def test_add_form_takes_an_optional_tag(self):
         subs = next(t for t in model.TABS if t.id == "subs")
         add = next(a for a in subs.actions if a.key == "n")
-        self.assertIn("[tag]", add.prompt)
+        self.assertEqual([(f.name, f.optional) for f in add.fields], [("tag", True), ("source", False)])
         # The URL, token and all, on stdin.
-        self.assertEqual((add.argv(None, "https://x.test/s", {}), add.stdin(None, "https://x.test/s")), (["proxy", "subs", "add", "-"], "https://x.test/s"))
-        self.assertEqual((add.argv(None, " work  https://x.test/s ", {}), add.stdin(None, " work  https://x.test/s ")), (["proxy", "subs", "add", "work", "-"], "https://x.test/s"))
-        # Only a tag: proxy-ctl says what is missing.
-        self.assertEqual((add.argv(None, "work", {}), add.stdin(None, "work")), (["proxy", "subs", "add", "work"], None))
+        self.assertEqual(form(add, source="https://x.test/s"), (["proxy", "subs", "add", "-"], "https://x.test/s"))
+        self.assertEqual(form(add, tag=" work ", source=" https://x.test/s "), (["proxy", "subs", "add", "work", "-"], "https://x.test/s"))
+        # Only a tag: the form says what is missing, and nothing runs.
+        self.assertEqual(model.form_problem(add, {"tag": "work"}), "URL is needed")
         outbounds = next(t for t in model.TABS if t.id == "outbounds")
         add = next(a for a in outbounds.actions if a.key == "n")
         # JSON has spaces in it: all of it on stdin.
-        self.assertEqual((add.argv(None, '{"type": "socks"}', {}), add.stdin(None, '{"type": "socks"}')), (["proxy", "outbounds", "add", "-"], '{"type": "socks"}'))
+        self.assertEqual(form(add, source='{"type": "socks"}'), (["proxy", "outbounds", "add", "-"], '{"type": "socks"}'))
+
+    def test_every_form_opens(self):
+        """Every action that asks: fields named once, its choices readable or empty when state is not,
+        and an empty form says what it needs rather than running."""
+        actions = [a for t in model.TABS for a in t.actions if a.fields] + [model.WHERE]
+        with mock.patch.object(ctl, "env", lambda name, default="": default):
+            for action in actions:
+                names = [f.name for f in action.fields]
+                self.assertEqual(len(names), len(set(names)), action.label)
+                choices = model.form_choices(action, {"name": "x", "tag": "x", "profile": "x", "unit": "x"})
+                self.assertTrue(all(isinstance(c, dict) for c in choices.values()), action.label)
+                if any(not f.optional for f in action.fields):
+                    self.assertNotEqual(model.form_problem(action, {}), "", action.label)
 
     def test_shown_commands_hide_credentials(self):
         argv = ["proxy", "outbounds", "add", "de", "vless://uuid-1@de.test:443?security=reality&pbk=K&sid=S#DE"]

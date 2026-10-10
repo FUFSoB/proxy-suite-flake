@@ -35,6 +35,7 @@ ITEM_XML = """
     <method name="Activate"><arg name="x" type="i" direction="in"/><arg name="y" type="i" direction="in"/></method>
     <method name="SecondaryActivate"><arg name="x" type="i" direction="in"/><arg name="y" type="i" direction="in"/></method>
     <method name="Scroll"><arg name="delta" type="i" direction="in"/><arg name="orientation" type="s" direction="in"/></method>
+    <method name="ProvideXdgActivationToken"><arg name="token" type="s" direction="in"/></method>
     <signal name="NewTitle"/>
     <signal name="NewIcon"/>
     <signal name="NewAttentionIcon"/>
@@ -171,7 +172,8 @@ class Menu:
 class StatusNotifierItem:
     """Exports the icon and its menu on connection, and keeps it registered while a watcher runs.
 
-    on_activate(): a click on the icon. on_menu(item): a menu item was clicked.
+    on_activate(token): a click on the icon, with the host's xdg-activation token or None.
+    on_menu(item): a menu item was clicked; take_token() has the host's token for it.
     on_available(bool): whether a host shows the icon.
     """
 
@@ -180,6 +182,7 @@ class StatusNotifierItem:
         self.app_id, self.title, self.icon_theme_path = app_id, title, icon_theme_path
         self.on_activate, self.on_menu, self.on_available = on_activate, on_menu, on_available or (lambda _: None)
         self.icon, self.tooltip, self.status = "proxy-suite-disabled-unknown", "", "Active"
+        self.token = None  # from ProvideXdgActivationToken, for the click that follows
         self.menu = Menu()
         self.available = False
         self.name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
@@ -270,9 +273,17 @@ class StatusNotifierItem:
         }
         return GLib.Variant(*values[prop]) if prop in values else None
 
+    def take_token(self):
+        """The xdg-activation token the host last handed over, once: a window it opens gets focus with it."""
+        token, self.token = self.token, None
+        return token
+
     def _item_call(self, connection, sender, path, interface, method, params, invocation):
-        if method in ("Activate", "SecondaryActivate"):
-            GLib.idle_add(self.on_activate)
+        if method == "ProvideXdgActivationToken":
+            # A host that has one sends it just before Activate, or a menu click.
+            self.token = params.unpack()[0] or None
+        elif method in ("Activate", "SecondaryActivate"):
+            GLib.idle_add(lambda: self.on_activate(self.take_token()) and False)
         invocation.return_value(None)
 
     # --- com.canonical.dbusmenu ---------------------------------------------------------

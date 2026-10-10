@@ -67,6 +67,7 @@ services.proxy-suite = {
   gui = {
     autostart = true;
     enable = false;
+    floating = true;
     refreshInterval = 3;
   };
   inbounds = {

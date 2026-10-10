@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import proxy_ctl as ctl
@@ -59,17 +59,33 @@ def new_load():
 
 
 @dataclass
+class Field:
+    """One thing an action asks for before it runs: a box of its own in the form."""
+
+    name: str  # its key in the values argv and stdin get
+    label: str
+    hint: str = ""  # what it takes, or an example
+    optional: bool = False
+    choices: Callable = None  # selected row or None -> {value: description}: offered while typing; anything else still goes
+    fixed: bool = False  # the choices are the only values: picked from a list
+    items: bool = False  # a list, each value a box of its own; its value is a list of strings
+    current: Callable = None  # items: selected row -> what it holds now. The form edits that, and runs only a change
+    number: bool = False
+    advanced: bool = False  # folded away under "More options"
+
+
+@dataclass
 class Action:
     key: str
     label: str
-    argv: Callable  # (selected row or None, prompt text, unit states) -> proxy-ctl argv
+    argv: Callable  # (selected row or None, {field: value}, unit states) -> proxy-ctl argv
     when: Callable = None  # row -> applies; None: a tab-wide action that needs no row
-    prompt: str = ""  # ask for text first
+    fields: list = field(default_factory=list)  # ask for these first
     confirm: bool | Callable = False  # or row -> ask first
     mode: str = "run"  # run: result in the feedback line; dialog: output streamed into a dialog; suspend: hand over the terminal; pause: suspend, then wait for enter; copy: last line to the clipboard
     offered: Callable = None  # () -> this configuration has it; None: every one does
     tty: bool = False  # it asks on the terminal: only a front end that hands the terminal over offers it
-    stdin: Callable = None  # (selected row or None, prompt text) -> text proxy-ctl reads on stdin, or None
+    stdin: Callable = None  # (selected row or None, {field: value}) -> text proxy-ctl reads on stdin, or None
 
 
 @dataclass
@@ -110,6 +126,159 @@ def offered(action):
 
 def needs_confirm(action, row):
     return action.confirm(row) if callable(action.confirm) else action.confirm
+
+
+# --- forms --------------------------------------------------------------------
+
+
+def field_choices(f, row=None):
+    """A field's choices, {value: description}; unreadable state costs the choices, not the form."""
+    return {str(k): str(v or "") for k, v in (_safe(f.choices, row, fallback=None) or {}).items()} if f.choices else {}
+
+
+def form_choices(action, row=None):
+    """{field: its choices}, read once when a form opens."""
+    return {f.name: field_choices(f, row) for f in action.fields if f.choices}
+
+
+def items(value):
+    """A list field's value: its values in order, once each. Text is several, space-separated (a paste)."""
+    values = value.split() if isinstance(value, str) else [str(v).strip() for v in value or []]
+    return list(dict.fromkeys(v for v in values if v))
+
+
+def form_values(action, values):
+    """Every field's value: text stripped, a list field's a list; what was left out is empty."""
+    values = values or {}
+    return {f.name: items(values.get(f.name)) if f.items else str(values.get(f.name) or "").strip() for f in action.fields}
+
+
+def form_current(action, row=None):
+    """{field: what the row holds now} for the fields that edit it, read once when a form opens."""
+    return {f.name: items(_safe(f.current, row, fallback=None)) for f in action.fields if f.current}
+
+
+def form_start(action, row=None, remembered=None):
+    """What a form opens with: what is there now where it edits that, else what was last run from it."""
+    return {**{k: v for k, v in (remembered or {}).items() if k not in {f.name for f in action.fields if f.current}}, **form_current(action, row)}
+
+
+def form_problems(action, values, row=None, choices=None, current=None):
+    """(field name, why) for each field the form cannot run with yet.
+    choices and current: form_choices and form_current as already read."""
+    values = form_values(action, values)
+    for f in action.fields:
+        value = values[f.name]
+        if not value:
+            if not f.optional:
+                yield f.name, f"{f.label} is needed"
+            continue
+        if f.number and not re.fullmatch(r"-?\d+", value):
+            yield f.name, f"{f.label} is a number"
+        if f.fixed:
+            allowed = (choices or {}).get(f.name)
+            allowed = field_choices(f, row) if allowed is None else allowed
+            if allowed and value not in allowed:
+                yield f.name, f"{f.label} is one of: {', '.join(allowed)}"
+    edits = [f for f in action.fields if f.current]
+    if edits:
+        current = form_current(action, row) if current is None else current
+        if all(values[f.name] == current.get(f.name, []) for f in edits):
+            yield edits[0].name, "Nothing changed yet"
+
+
+def form_problem(action, values, row=None, choices=None, current=None):
+    """Why the form cannot run yet, or ""."""
+    return next((why for _, why in form_problems(action, values, row, choices, current)), "")
+
+
+def form_argv(action, row, values, states, choices=None, current=None):
+    """(argv, stdin) the filled form runs. ValueError: it cannot run, and why."""
+    values = form_values(action, values)
+    if problem := form_problem(action, values, row, choices, current):
+        raise ValueError(problem)
+    argv = action.argv(row, values, states)
+    return argv, action.stdin(row, values) if action.stdin else None
+
+
+def field_example(f):
+    """The example in a field's hint, or "": what an empty box shows when the whole hint does not fit."""
+    return f.hint.rpartition("e.g. ")[2] if "e.g. " in f.hint else ""
+
+
+def item_changes(was, now):
+    """A list field's edit, item by item: (value, "kept" | "added" | "removed"), what was there first."""
+    return [(v, "kept" if v in now else "removed") for v in was] + [(v, "added") for v in now if v not in was]
+
+
+def _opt(flag, value):
+    """--flag value, or nothing for an empty value."""
+    return [flag, value] if value else []
+
+
+def _each(flag, values):
+    """--flag v for every value of a list field: a repeatable flag."""
+    return [a for v in values for a in (flag, v)]
+
+
+def _extra(text):
+    """Flags typed as on the command line: the escape hatch for those without a field."""
+    return shlex.split(text) if text else []
+
+
+def _listed(words):
+    """Words that never change, as a field's choices."""
+    return lambda _: dict.fromkeys(words, "")
+
+
+# Field choices, read when a form opens. Looked up through ctl at each read: tests patch it.
+def _outbounds(_):
+    return {**ctl._outbound_choices(), **ctl._group_choices()}
+
+
+def _targets(row):
+    return {**dict.fromkeys(ctl.RULE_TARGETS, ""), **_outbounds(row)}
+
+
+def _users(_):
+    return ctl._inbound_runtime_names("users")
+
+
+def _listeners(_):
+    return ctl._inbound_runtime_names("listeners")
+
+
+def _rule_matches(row):
+    """What the selected runtime rule matches now, as `rules add` spells each."""
+    rule = next((r for r in ctl._runtime_rules() if r["name"] == row["name"]), None)
+    return [f"{ctl.RULE_MATCH_SPELLING[kind]}{v}" for kind in ctl.RULE_MATCH_KINDS for v in rule.get(kind) or []] if rule else []
+
+
+def _group_listed(row):
+    """The members a group names itself; an inventory from before `listed` has only all of them."""
+    group = ctl._outbound_groups().get(row["tag"]) or {}
+    return group.get("listed", group.get("members") or [])
+
+
+def _listener_users(row):
+    return [ctl._s(u.get("name")) for u in ctl._inbound_runtime_rows("users") if row["tag"] in (u.get("listeners") or [])]
+
+
+def _user_listeners(row):
+    user = next((u for u in ctl._inbound_runtime_rows("users") if ctl._s(u.get("name")) == row["name"]), {})
+    return [ctl._s(t) for t in user.get("listeners") or []]
+
+
+MATCHES = Field("matches", "Matches", "domains, addresses, geosite:x, geoip:x or ruleset:x - e.g. bank.example or 10.0.0.0/8", items=True)
+MEMBERS = Field("members", "Members", "outbounds and groups, in the order tried", optional=True, items=True, choices=_outbounds)
+DOMAIN = Field("domain", "Domain", "e.g. example.com")
+PROBE = Field("domain", "Domain", "e.g. example.com, or example.com/path")
+COMMAND = Field("command", "Command", "as in a shell, e.g. firefox --private-window")
+
+
+def _app_via(_):
+    # What the shell completion offers after `apps add --via`: it knows what this host can pin.
+    return ctl._complete_tree("apps", "add", "--via")
 
 
 # What proxy-ctl and systemctl print when only root may do it.
@@ -366,25 +535,14 @@ def _awg_available(_):
     return bool(ctl._awg_profiles()) or ctl.env("AWG_RUNTIME_GLOBAL") == "1"
 
 
-def _awg_add(text):
-    """[name] <config> as typed: (name or None, the config or a path to it)."""
-    text = text.strip()
-    if ctl._awg_source(text):
-        return None, text
-    parts = text.split(None, 1)
-    return (parts[0], parts[1].strip()) if len(parts) == 2 else (None, text)
-
-
-def _awg_add_argv(text):
-    name, source = _awg_add(text)
+def _awg_add_argv(v):
     # The config itself goes on stdin: in argv its keys would show in ps, sudo's log and here.
-    what = "-" if ctl._awg_source(source) else _path(source)
-    return ["awg", "add", *([name] if name else []), what]
+    what = "-" if ctl._awg_source(v["source"]) else _path(v["source"])
+    return ["awg", "add", *([v["name"]] if v["name"] else []), what]
 
 
-def _awg_add_stdin(text):
-    _, source = _awg_add(text)
-    return source if ctl._awg_source(source) else None
+def _awg_add_stdin(v):
+    return v["source"] if ctl._awg_source(v["source"]) else None
 
 
 def subscription_rows(_):
@@ -526,10 +684,8 @@ def _runtime_row(row):
     return row.get("source") == "runtime"
 
 
-def _user_add_argv(text):
-    words = shlex.split(text)
-    order = ["--order", words[1]] if len(words) > 1 else []
-    return ["inbounds", "users", "add", *words[:1], *order, *(a for t in words[2:] for a in ("--listener", t))]
+def _user_add_argv(v):
+    return ["inbounds", "users", "add", v["name"], *_opt("--order", v["order"]), *_each("--listener", v["listeners"])]
 
 
 def app_rows(_):
@@ -545,10 +701,8 @@ def app_rows(_):
     ]
 
 
-def _via_run_argv(text):
-    """<outbound> <command> [args], as typed, to `apps run --via`."""
-    words = shlex.split(text)
-    return ["apps", "run", "--via", *words[:1], "--", *words[1:]]
+def _via_run_argv(v):
+    return ["apps", "run", "--via", v["outbound"], "--", *shlex.split(v["command"])]
 
 
 def _via_offered():
@@ -643,29 +797,27 @@ def _sub_url(row, user="user"):
     return bool(row[user]) and bool(ctl.env("INBOUNDS_SUB_BASE_URL"))
 
 
-def _add_source(text):
-    """[tag] <url, JSON or config> as typed: (tag or None, the rest)."""
-    text = text.strip()
-    return (None, text) if text.startswith("{") else _awg_add(text)
-
-
 def _secret(source):
     # A link's userinfo and query, a JSON outbound, a config: credentials, all of them.
     return "://" in source or source.startswith("{") or ctl._awg_source(source)
 
 
-def _add_args(text):
+def _add_args(v):
     """[tag] <source> as `proxy-ctl ... add` takes them. A link, JSON or AmneziaWG config
     becomes "-": _add_stdin hands it over on stdin, out of ps and pkexec's or sudo's log."""
-    name, source = _add_source(text)
-    if not source:
-        return []  # proxy-ctl says what it wants
-    return [*([name] if name else []), "-" if _secret(source) else source]
+    return [*([v["tag"]] if v["tag"] else []), "-" if _secret(v["source"]) else v["source"]]
 
 
-def _add_stdin(text):
-    _, source = _add_source(text)
-    return source if source and _secret(source) else None
+def _add_stdin(v):
+    return v["source"] if _secret(v["source"]) else None
+
+
+def _source_fields(what, example):
+    """[tag] <source>: what most adds take."""
+    return [
+        Field("tag", "Tag", "derived from the link if empty", optional=True),
+        Field("source", what, example),
+    ]
 
 
 def _zapret_auto():
@@ -725,17 +877,17 @@ TABS = [
                 "j",
                 "set the call it joins…",
                 # On stdin: the call link is what lets anyone into the call.
-                lambda r, t, _: ["wl", "join", _wl_entry(r)["name"], "-"],
-                stdin=lambda r, t: t.strip(),
+                lambda r, v, _: ["wl", "join", _wl_entry(r)["name"], "-"],
+                stdin=lambda r, v: v["link"],
                 when=_wl_role("joiner"),
-                prompt="<call link> - a room id, a slug or a URL",
+                fields=[Field("link", "Call link", "a room id, a slug or a URL")],
             ),
             Action(
                 "a",
                 "replace its login with a cookies file…",
-                lambda r, t, _: ["wl", "auth", _wl_entry(r)["name"], _path(t)],
+                lambda r, v, _: ["wl", "auth", _wl_entry(r)["name"], _path(v["path"])],
                 when=_wl_role("creator"),
-                prompt="<path> - cookies exported from the desktop Creator",
+                fields=[Field("path", "Cookies file", "a path: cookies exported from the desktop Creator")],
             ),
             Action(
                 "A",
@@ -761,9 +913,12 @@ TABS = [
             Action(
                 "n",
                 "add a profile…",
-                lambda r, t, _: _awg_add_argv(t),
-                prompt="[name] <vpn://… or a .conf path> - e.g. home vpn://… (or paste a whole .conf onto the table)",
-                stdin=lambda r, t: _awg_add_stdin(t),
+                lambda r, v, _: _awg_add_argv(v),
+                fields=[
+                    Field("name", "Name", "e.g. home; from the config if empty", optional=True),
+                    Field("source", "Config", "vpn://… or a .conf path (or paste a whole .conf onto the table)"),
+                ],
+                stdin=lambda r, v: _awg_add_stdin(v),
                 offered=lambda: ctl.env("AWG_RUNTIME_GLOBAL") == "1",
             ),
             Action("d", "remove it", lambda r, *_: ["awg", "rm", r["profile"]], when=lambda r: r["source"] == "runtime", confirm=True),
@@ -788,19 +943,34 @@ TABS = [
             Action(
                 "n",
                 "add a rule…",
-                lambda r, t, _: ["proxy", "rules", "add", *shlex.split(t)],
-                prompt="<proxy|direct|block|outbound> <domain, address, geosite:x, geoip:x or ruleset:x…> [--name n] [--priority n]"
-                " - e.g. direct bank.example 10.0.0.0/8",
+                lambda r, v, _: ["proxy", "rules", "add", v["target"], *v["matches"], *_opt("--name", v["name"]), *_opt("--priority", v["priority"])],
+                fields=[
+                    Field("target", "Target", "proxy, direct, block or an outbound", choices=_targets),
+                    MATCHES,
+                    Field("name", "Name", "the target's if empty; an existing rule's name extends it", optional=True),
+                    Field("priority", "Priority", "lower goes first; 50 if empty", optional=True, number=True),
+                ],
             ),
-            Action("a", "add domains or addresses to it…", lambda r, t, _: ["proxy", "rules", "matches", r["name"], "add", *t.split()], when=_runtime_rule, prompt="<domain, address, geosite:x, geoip:x or ruleset:x…>"),
-            Action("x", "remove domains or addresses from it…", lambda r, t, _: ["proxy", "rules", "matches", r["name"], "rm", *t.split()], when=_runtime_rule, prompt="<domain, address, geosite:x, geoip:x or ruleset:x…>"),
-            Action("t", "send it elsewhere…", lambda r, t, _: ["proxy", "rules", "target", r["name"], t.strip()], when=_runtime_rule, prompt="<proxy, direct, block or an outbound>"),
+            Action(
+                "a",
+                "edit its domains and addresses…",
+                lambda r, v, _: ["proxy", "rules", "matches", r["name"], "set", *v["matches"]],
+                when=_runtime_rule,
+                fields=[replace(MATCHES, optional=True, current=_rule_matches)],
+            ),
+            Action(
+                "t",
+                "send it elsewhere…",
+                lambda r, v, _: ["proxy", "rules", "target", r["name"], v["target"]],
+                when=_runtime_rule,
+                fields=[Field("target", "Target", "proxy, direct, block or an outbound", choices=_targets)],
+            ),
             Action(
                 "y",
                 "set its priority…",
-                lambda r, t, _: ["proxy", "rules", "priority", r["name"], t.strip()],
+                lambda r, v, _: ["proxy", "rules", "priority", r["name"], v["priority"]],
                 when=_runtime_rule,
-                prompt="<number> - lower goes first; the configuration's sections are at 100 to 500",
+                fields=[Field("priority", "Priority", "lower goes first; the configuration's sections are at 100 to 500", number=True)],
             ),
             Action("plus", "move it up", lambda r, *_: ["proxy", "rules", "priority", r["name"], "up"], when=_runtime_rule),
             Action("minus", "move it down", lambda r, *_: ["proxy", "rules", "priority", r["name"], "down"], when=_runtime_rule),
@@ -833,39 +1003,57 @@ TABS = [
             Action(
                 "P",
                 "probe a domain through it…",
-                lambda r, t, _: ["proxy", "auto", "probe", t, "--via", ctl._backend_tag(r["tag"])],
+                lambda r, v, _: ["proxy", "auto", "probe", v["domain"], "--via", ctl._backend_tag(r["tag"])],
                 when=lambda r: _exit(r) and _enabled("AUTOPROXY_ENABLED")(r),
-                prompt="<domain>[/path]",
+                fields=[PROBE],
                 mode="dialog",
             ),
             Action("T", "test all", lambda r, *_: ["proxy", "outbounds", "test"], mode="dialog"),
             Action(
                 "n",
                 "add an outbound…",
-                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t)],
-                prompt="[tag] <url, JSON or vpn://> - e.g. de-1 vless://… or just vless://…",
-                stdin=lambda r, t: _add_stdin(t),
+                lambda r, v, _: ["proxy", "outbounds", "add", *_add_args(v)],
+                fields=_source_fields("Link", "vless://…, its JSON or an AmneziaWG vpn://…"),
+                stdin=lambda r, v: _add_stdin(v),
             ),
             Action(
                 "N",
                 "add an AmneziaWG outbound on an interface of its own…",
-                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--interface"],
-                prompt="[tag] <vpn://… or a .conf path> - apps can then run through it (proxy-ctl apps run --via)",
-                stdin=lambda r, t: _add_stdin(t),
+                lambda r, v, _: ["proxy", "outbounds", "add", *_add_args(v), "--interface"],
+                fields=_source_fields("Config", "vpn://… or a .conf path - apps can then run through it (proxy-ctl apps run --via)"),
+                stdin=lambda r, v: _add_stdin(v),
                 offered=lambda: ctl.env("AWG_RUNTIME_IFACE_OUTBOUNDS") == "1",
             ),
             Action(
                 "g",
                 "add a group…",
-                lambda r, t, _: ["proxy", "groups", "add", *shlex.split(t)],
-                prompt="<tag> <member…> [--sub <subscription>] [--match <pattern>] [--strategy failover|urltest|selector]",
+                lambda r, v, _: [
+                    "proxy", "groups", "add", v["tag"], *v["members"], *_each("--sub", v["subs"]), *_each("--match", v["match"]),
+                    *_opt("--strategy", v["strategy"]), *_opt("--interval", v["interval"]), *_extra(v["extra"]),
+                ],
+                fields=[
+                    Field("tag", "Tag", "the group's own tag, e.g. auto"),
+                    MEMBERS,
+                    Field("subs", "Subscriptions", "every entry of these", optional=True, items=True, choices=lambda _: dict.fromkeys(ctl._sub_tags(), "")),
+                    Field("match", "Match", "every outbound whose tag matches, e.g. de-*", optional=True, items=True),
+                    Field("strategy", "Strategy", "failover if empty", optional=True, fixed=True, choices=_listed(ctl.GROUP_STRATEGIES)),
+                    Field("interval", "Test interval", "a duration: 30s, 1m, 1m30s", optional=True, advanced=True),
+                    Field("extra", "Other flags", "as on the command line, e.g. --no-failback", optional=True, advanced=True),
+                ],
             ),
             Action(
                 "m",
-                "add members to the group…",
-                lambda r, t, _: ["proxy", "groups", "members", r["tag"], "add", *t.split()],
+                "edit the group's members…",
+                lambda r, v, _: ["proxy", "groups", "members", r["tag"], "set", *v["members"]],
                 when=lambda r: r["group"] and r["runtime"],
-                prompt="<member…>",
+                fields=[
+                    replace(
+                        MEMBERS,
+                        hint="outbounds and groups, in the order tried; its subscriptions and patterns add theirs",
+                        choices=lambda r: {t: d for t, d in _outbounds(r).items() if t != r["tag"]},  # not itself
+                        current=_group_listed,
+                    )
+                ],
             ),
             Action(
                 "M",
@@ -877,33 +1065,36 @@ TABS = [
             Action(
                 "S",
                 "change the group's strategy…",
-                lambda r, t, _: ["proxy", "groups", "strategy", r["tag"], t.strip()],
+                lambda r, v, _: ["proxy", "groups", "strategy", r["tag"], v["strategy"]],
                 when=lambda r: r["group"] and r["runtime"],
-                prompt="failover, urltest or selector",
+                fields=[Field("strategy", "Strategy", "how the group picks a member", fixed=True, choices=_listed(ctl.GROUP_STRATEGIES))],
             ),
             Action(
                 "y",
                 "set its priority…",
-                lambda r, t, _: ["proxy", "priority", r["tag"], t.strip() or "--clear"],
+                lambda r, v, _: ["proxy", "priority", r["tag"], v["priority"] or "--clear"],
                 when=lambda r: not r["parent"],
-                prompt="<number> - lower goes first; empty: back to the default order",
+                fields=[Field("priority", "Priority", "lower goes first; empty: back to the default order", optional=True, number=True)],
             ),
             Action("plus", "move it up", lambda r, *_: ["proxy", "priority", r["tag"], "up"], when=lambda r: not r["parent"]),
             Action("minus", "move it down", lambda r, *_: ["proxy", "priority", r["tag"], "down"], when=lambda r: not r["parent"]),
             Action(
                 "h",
                 "add an outbound chained through this one…",
-                lambda r, t, _: ["proxy", "outbounds", "add", *_add_args(t), "--detour", r["tag"]],
+                lambda r, v, _: ["proxy", "outbounds", "add", *_add_args(v), "--detour", r["tag"]],
                 when=_exit,
-                prompt="[tag] <url or JSON> - e.g. de-1 vless://… or just vless://…",
-                stdin=lambda r, t: _add_stdin(t),
+                fields=_source_fields("Link", "vless://… or its JSON"),
+                stdin=lambda r, v: _add_stdin(v),
             ),
             Action(
                 "H",
                 "chain it through another outbound…",
-                lambda r, t, _: ["proxy", "outbounds", "chain", r["tag"], *t.split()],
+                lambda r, v, _: ["proxy", "outbounds", "chain", r["tag"], v["hop"], *([v["tag"]] if v["tag"] else [])],
                 when=_exit,
-                prompt="<hop tag> [new tag] - a copy of this one dialing through the hop",
+                fields=[
+                    Field("hop", "Through", "the outbound a copy of this one dials through", choices=lambda _: ctl._outbound_choices()),
+                    Field("tag", "New tag", "<this>-via-<hop> if empty", optional=True),
+                ],
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "outbounds", "rm", r["tag"]], when=lambda r: r["runtime"] and not r["group"], confirm=True),
             Action("d", "remove the group", lambda r, *_: ["proxy", "groups", "rm", r["tag"]], when=lambda r: r["runtime"] and r["group"], confirm=True),
@@ -938,9 +1129,9 @@ TABS = [
             Action(
                 "n",
                 "add a subscription…",
-                lambda r, t, _: ["proxy", "subs", "add", *_add_args(t)],
-                prompt="[tag] <url> - e.g. work https://… or just https://…",
-                stdin=lambda r, t: _add_stdin(t),
+                lambda r, v, _: ["proxy", "subs", "add", *_add_args(v)],
+                fields=_source_fields("URL", "https://…"),
+                stdin=lambda r, v: _add_stdin(v),
             ),
             Action("d", "remove it", lambda r, *_: ["proxy", "subs", "rm", r["tag"]], when=lambda r: r["source"] == "runtime", confirm=True),
             Action("s", "URL", lambda r, *_: ["proxy", "subs", "link", r["tag"]], when=ROW, mode="dialog"),
@@ -959,8 +1150,8 @@ TABS = [
             Action("w", "how is it routed", lambda r, *_: ["where", r["domain"]], when=ROW, mode="dialog"),
             Action("u", "learn it now", lambda r, *_: ["proxy", "auto", "learn", r["domain"]], when=_kind("queued"), mode="dialog"),
             Action("p", "probe it through every exit", lambda r, *_: ["proxy", "auto", "probe", r["domain"], "--keep-going"], when=ROW, mode="dialog"),
-            Action("P", "probe a domain…", lambda r, t, _: ["proxy", "auto", "probe", t], prompt="<domain>[/path]", mode="dialog"),
-            Action("n", "learn a domain…", lambda r, t, _: ["proxy", "auto", "learn", t], prompt="<domain>", mode="dialog"),
+            Action("P", "probe a domain…", lambda r, v, _: ["proxy", "auto", "probe", v["domain"]], fields=[PROBE], mode="dialog"),
+            Action("n", "learn a domain…", lambda r, v, _: ["proxy", "auto", "learn", v["domain"]], fields=[DOMAIN], mode="dialog"),
             Action("f", "forget it", lambda r, *_: ["proxy", "auto", "forget", r["domain"]], when=_kind("routed"), confirm=True),
             Action("u", "relearn it from the host it was learned from", lambda r, *_: ["proxy", "auto", "relearn", r["domain"]], when=_kind("routed"), mode="dialog"),
             Action("F", "forget everything learned", lambda r, *_: ["proxy", "auto", "clear"], confirm=True),
@@ -981,8 +1172,8 @@ TABS = [
             Action("p", "unpin it", lambda r, *_: ["zapret", "auto", "unpin", r["host"]], when=_kind("pinned")),
             Action("x", "exclude it", lambda r, *_: ["zapret", "auto", "exclude", r["host"]], when=_kind("learned", "pinned")),
             Action("x", "include it again", lambda r, *_: ["zapret", "auto", "include", r["host"]], when=_kind("excluded")),
-            Action("n", "pin a host as blocked…", lambda r, t, _: ["zapret", "auto", "add", t.strip()], prompt="<domain>", offered=_zapret_auto),
-            Action("X", "exclude a host…", lambda r, t, _: ["zapret", "auto", "exclude", t.strip()], prompt="<domain>", offered=_zapret_auto),
+            Action("n", "pin a host as blocked…", lambda r, v, _: ["zapret", "auto", "add", v["domain"]], fields=[DOMAIN], offered=_zapret_auto),
+            Action("X", "exclude a host…", lambda r, v, _: ["zapret", "auto", "exclude", v["domain"]], fields=[DOMAIN], offered=_zapret_auto),
             Action("F", "forget all learned hosts", lambda r, *_: ["zapret", "auto", "clear"], confirm=True, offered=_zapret_auto),
             Action("P", "probe the line's cutoff again", lambda r, *_: ["zapret", "cutoff", "probe"], mode="dialog", offered=lambda: ctl.env("ZAPRET_CUTOFF_ENABLED") == "1"),
             Action("space", "start / stop zapret", _zapret_toggle),
@@ -1015,13 +1206,39 @@ TABS = [
             Action(
                 "n",
                 "add a listener…",
-                lambda r, t, _: ["inbounds", "add", *shlex.split(t)],
-                prompt="<tag> <type> [--port N] [--reality SNI] [--tls <cert>] [--user U]... - e.g. friends vless --port 20001 --reality www.microsoft.com",
+                lambda r, v, _: [
+                    "inbounds", "add", v["tag"], v["type"], *_opt("--port", v["port"]), *_opt("--reality", ",".join(v["reality"])),
+                    *_opt("--tls", v["tls"]), *_each("--user", v["users"]), *_opt("--via", v["via"]), *_opt("--transport", v["transport"]),
+                    *_extra(v["extra"]),
+                ],
+                fields=[
+                    Field("tag", "Tag", "e.g. friends"),
+                    Field("type", "Type", "the protocol", fixed=True, choices=_listed(ctl.INBOUND_TYPES)),
+                    Field("port", "Port", "one from inbounds.runtime.ports if empty", optional=True, number=True),
+                    Field("reality", "REALITY", "the server names it poses as, e.g. www.microsoft.com", optional=True, items=True),
+                    Field("tls", "TLS certificate", "one from inbounds.runtime.tlsCertificates", optional=True),
+                    Field("users", "Users", "who may connect", optional=True, items=True, choices=_users),
+                    Field("via", "Via", "where its traffic exits", optional=True, choices=_outbounds),
+                    Field("transport", "Transport", "raw if empty", optional=True, fixed=True, choices=_listed(("raw", "ws", "grpc", "httpupgrade", "xhttp")), advanced=True),
+                    Field(
+                        "extra",
+                        "Other flags",
+                        "as on the command line: " + " ".join(f for f in ctl.INBOUND_ADD_FLAGS if f not in ("--port", "--reality", "--tls", "--via", "--transport")),
+                        optional=True,
+                        advanced=True,
+                    ),
+                ],
                 offered=_inbounds_runtime,
             ),
             Action("d", "remove it", lambda r, *_: ["inbounds", "rm", r["tag"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
-            Action("b", "bind a user to it…", lambda r, t, _: ["inbounds", "bind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
-            Action("x", "unbind a user from it…", lambda r, t, _: ["inbounds", "unbind", t.strip(), r["tag"]], when=ROW, prompt="<user>", offered=_inbounds_runtime),
+            Action(
+                "b",
+                "edit who is on it…",
+                lambda r, v, _: ["inbounds", "users", "on", r["tag"], *v["users"]],
+                when=ROW,
+                fields=[Field("users", "Users", "who may connect through this listener", optional=True, items=True, choices=_users, current=_listener_users)],
+                offered=_inbounds_runtime,
+            ),
         ],
     ),
     Tab(
@@ -1036,11 +1253,34 @@ TABS = [
             else "Users from the configuration. inbounds.runtime would let you add and bind them here."
         ),
         actions=[
-            Action("n", "add a user…", lambda r, t, _: _user_add_argv(t), prompt="<name> [order] [listener]... - e.g. alice 7 vless-in", offered=_inbounds_runtime),
+            Action(
+                "n",
+                "add a user…",
+                lambda r, v, _: _user_add_argv(v),
+                fields=[
+                    Field("name", "Name", "e.g. alice"),
+                    Field("order", "Order", "its position in links and subscriptions", optional=True, number=True),
+                    Field("listeners", "Listeners", "the ones it may connect to", optional=True, items=True, choices=_listeners),
+                ],
+                offered=_inbounds_runtime,
+            ),
             Action("d", "remove it", lambda r, *_: ["inbounds", "users", "rm", r["name"]], when=_runtime_row, confirm=True, offered=_inbounds_runtime),
-            Action("e", "set its order…", lambda r, t, _: ["inbounds", "users", "order", r["name"], t.strip()], when=_runtime_row, prompt="<order>", offered=_inbounds_runtime),
-            Action("b", "bind it to a listener…", lambda r, t, _: ["inbounds", "bind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
-            Action("x", "unbind it from a listener…", lambda r, t, _: ["inbounds", "unbind", r["name"], t.strip()], when=ROW, prompt="<listener>", offered=_inbounds_runtime),
+            Action(
+                "e",
+                "set its order…",
+                lambda r, v, _: ["inbounds", "users", "order", r["name"], v["order"]],
+                when=_runtime_row,
+                fields=[Field("order", "Order", "its position in links and subscriptions", number=True)],
+                offered=_inbounds_runtime,
+            ),
+            Action(
+                "b",
+                "edit its listeners…",
+                lambda r, v, _: ["inbounds", "users", "listeners", r["name"], *v["listeners"]],
+                when=ROW,
+                fields=[Field("listeners", "Listeners", "the ones it may connect to", optional=True, items=True, choices=_listeners, current=_user_listeners)],
+                offered=_inbounds_runtime,
+            ),
             # The user's one subscription, as the inbounds tab has it on each of the user's rows.
             Action("s", "subscription URL", lambda r, *_: ["inbounds", "sub", r["name"]], when=ROW, mode="dialog"),
             Action("c", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["name"]], when=lambda r: _sub_url(r, "name"), mode="copy"),
@@ -1056,15 +1296,31 @@ TABS = [
         [("profile", "Profile"), ("route", "Route"), ("via", "Via"), ("source", "Source")],
         app_rows,
         actions=[
-            Action("n", "add a profile…", lambda r, t, _: ["apps", "add", *shlex.split(t)], prompt="<name> [--route tun|tproxy|…] [--via <outbound>] - e.g. game --via de"),
+            Action(
+                "n",
+                "add a profile…",
+                lambda r, v, _: ["apps", "add", v["name"], *_opt("--route", v["route"]), *_opt("--via", v["via"])],
+                fields=[
+                    Field("name", "Name", "e.g. game"),
+                    Field("route", "Route", "how its apps are routed", optional=True, fixed=True, choices=_listed(ctl.APP_ROUTES)),
+                    Field("via", "Via", "the outbound it goes through", optional=True, choices=_app_via),
+                ],
+            ),
             Action("d", "remove it", lambda r, *_: ["apps", "rm", r["profile"]], when=lambda r: r["source"] == "runtime", confirm=True),
-            Action("space", "run a command through it…", lambda r, t, _: ["apps", "run", r["profile"], "--", *shlex.split(t)], when=ROW, prompt="<command> [args]", mode="pause"),
-            Action("v", "run a command via an outbound…", lambda r, t, _: _via_run_argv(t), prompt="<outbound> <command> [args] - e.g. de firefox", mode="pause", offered=_via_offered),
+            Action("space", "run a command through it…", lambda r, v, _: ["apps", "run", r["profile"], "--", *shlex.split(v["command"])], when=ROW, fields=[COMMAND], mode="pause"),
+            Action(
+                "v",
+                "run a command via an outbound…",
+                lambda r, v, _: _via_run_argv(v),
+                fields=[Field("outbound", "Outbound", "e.g. de", choices=lambda _: dict.fromkeys(ctl._via_outbounds(), "")), COMMAND],
+                mode="pause",
+                offered=_via_offered,
+            ),
         ],
     ),
 ]
 
-WHERE = Action("w", "How is a domain routed", lambda r, t, _: ["where", t], prompt="<domain>", mode="dialog")
+WHERE = Action("w", "How is a domain routed", lambda r, v, _: ["where", v["domain"]], fields=[DOMAIN], mode="dialog")
 
 # The share-link schemes scripts/proxy_url_parsers.py parses. http(s) is both an HTTP proxy
 # and how a subscription is spelled, so for those the tab pasted into decides.
@@ -1158,7 +1414,7 @@ def load_tab(tab, states):
     except (Exception, SystemExit) as e:
         return [], f"✗ {str(e) or type(e).__name__}" + (f"\n{summary}" if summary else "")
     if not rows:
-        hints = "   ".join(f"{display_key(a.key)}: {short(a.label)}" for a in tab.actions if a.prompt and a.when is None and offered(a))
+        hints = "   ".join(f"{display_key(a.key)}: {short(a.label)}" for a in tab.actions if a.fields and a.when is None and offered(a))
         summary = "Nothing here yet." + (f"   {hints}" if hints else "") + (f"\n{summary}" if summary else "")
     return rows, summary
 

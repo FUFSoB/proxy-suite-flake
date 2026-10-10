@@ -1400,6 +1400,12 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         # Released, they go through.
         ok(ctl.cmd_groups, "members", "pool", "add", "vless-example")
         self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/pool.group")))["outbounds"], ["primary", "vless-example"])
+        # set: exactly these, in this order; never none, which would leave the group empty.
+        ok(ctl.cmd_groups, "members", "pool", "set", "vless-example", "primary", "vless-example")
+        self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/pool.group")))["outbounds"], ["vless-example", "primary"])
+        status, _, err = run(ctl.cmd_groups, "members", "pool", "set")
+        self.assertNotEqual(status, 0)
+        self.assertIn("leave 'pool' empty", err)
         # rm takes its lock file along; one waiting on the old one locks the new one instead.
         lock = self.path("outbounds.d/.pool.group.lock")
         ok(ctl.cmd_groups, "rm", "pool")
@@ -2234,6 +2240,21 @@ class InboundRuntimeTest(EnvTest):
         self.assertIn("declared in the configuration", err)
         # A refusal changes nothing, so nothing is reloaded.
         self.assertEqual(len(self.started), 2)
+        # Exactly these: what is between now and then is bound and unbound, and reloaded once.
+        ok(ctl.cmd_inbounds, "users", "add", "carol")
+        self.assertEqual(len(self.started), 3)
+        ok(ctl.cmd_inbounds, "users", "listeners", "alice", "friends")
+        ok(ctl.cmd_inbounds, "users", "on", "friends", "alice", "carol")
+        rows = {r["name"]: r for r in json.loads(ok(ctl.cmd_inbounds, "users", "--json"))}
+        self.assertEqual((rows["alice"]["listeners"], rows["carol"]["listeners"]), (["friends"], ["friends"]))
+        self.assertEqual(len(self.started), 5)
+        self.assertEqual(ok(ctl.cmd_inbounds, "users", "on", "friends", "carol", "alice"), "Nothing to change.\n")
+        self.assertEqual(len(self.started), 5)
+        # One that cannot be done stops there: bob and vless-in are both the configuration's.
+        status, _, err = run(ctl.cmd_inbounds, "users", "on", "vless-in")
+        self.assertEqual(status, 1)
+        self.assertIn("declared in the configuration", err)
+        self.assertEqual(len(self.started), 5)
         ok(ctl.cmd_inbounds, "rm", "friends")
         self.assertIn("vless-in", ok(ctl.cmd_inbounds, "users"))
 
@@ -2618,6 +2639,15 @@ class RoutingRulesTest(EnvTest):
         self.assertEqual((rule["domains"], rule["ips"], rule["target"], rule["disabled"], rule["priority"]), (["b.example"], ["1.1.1.1/32"], "de", True, 450))
         ok(ctl.cmd_rules, "enable", "direct")
         self.assertFalse(self.rules()["direct"]["disabled"])
+        # set: exactly these, in one write - what an edit in the TUI or the app sends.
+        applied = self.applied
+        self.assertEqual(ok(ctl.cmd_rules, "matches", "direct", "set", "b.example", "geosite:netflix"), "direct: b.example, geosite:netflix\n")
+        rule = self.rules()["direct"]
+        self.assertEqual((rule["domains"], rule["ips"], rule["geosites"]), (["b.example"], [], ["netflix"]))
+        self.assertEqual(self.applied, applied + 1)
+        self.assertEqual(ok(ctl.cmd_rules, "matches", "direct", "set", "b.example", "geosite:netflix"), "direct: nothing changed\n")
+        self.assertEqual(run(ctl.cmd_rules, "matches", "direct", "set", "not a match!")[0], 1)
+        self.assertEqual(ok(ctl.cmd_rules, "matches", "direct", "set"), "direct: matches nothing\n")
         self.assertEqual(run(ctl.cmd_rules, "priority", "direct", "1.5")[0], 1)
         self.assertEqual(run(ctl.cmd_rules, "rm", "nope")[0], 1)
         ok(ctl.cmd_rules, "rm", "direct")

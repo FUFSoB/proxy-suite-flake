@@ -101,6 +101,21 @@ outbound, a subscription URL a subscription. An AmneziaWG `vpn://` link or a who
 becomes a global profile, or an outbound when pasted onto the Outbounds tab. See
 [Use an AmneziaWG config](./amneziawg.md).
 
+Adding a rule, an outbound, a group, a listener or a user opens a form with one field per
+parameter. Optional fields are marked, and the values the field knows (outbounds, users,
+listeners, strategies) are offered: in the TUI, → completes one, and in the app, a list beside
+the field picks one. Less common flags sit under "More options". The command the form will run
+shows below it. In the TUI, tab moves between fields and enter or ctrl+s runs; in the app, Run
+stays off until nothing is missing.
+
+Fields that take several values (a rule's domains and addresses, a group's members, a
+listener's users) are lists: each value sits on its own line, enter adds the one typed, and
+pasting several adds each. The same lists edit what is already there: one action opens a
+rule's matches, a group's members, a listener's users or a user's listeners as they are now.
+You add or take out values in one go, and what changes is marked before you run it. It runs as
+one command (`proxy rules matches <name> set`, `proxy groups members <tag> set`,
+`inbounds users on <tag>`, `inbounds users listeners <user>`), so the inbounds restart once.
+
 ## Commands
 
 ```sh

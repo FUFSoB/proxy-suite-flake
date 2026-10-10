@@ -8,6 +8,8 @@
   # (modules/proxy-suite/service/control.nix); proxy_ctl.py reads every name with env().
   env,
   guiRefreshInterval ? 3,
+  # The window opens floating where a tiling compositor would tile it (proxy_gui.open_floating).
+  guiFloating ? true,
   # Off where proxy-suitectl runs the units (nix-on-droid): proxy-ctl reaches it through
   # SUPERVISOR_CTL, and systemd stays out of the closure.
   withSystemd ? true,
@@ -150,7 +152,8 @@ let
         }" \
         --prefix PATH : /run/wrappers/bin \
         --set PROXY_GUI_ICON_DIR "$out/share/proxy-suite-gui/icons" \
-        --set PROXY_GUI_REFRESH ${toString guiRefreshInterval} ${envFlags}
+        --set PROXY_GUI_REFRESH ${toString guiRefreshInterval} \
+        --set PROXY_GUI_FLOATING ${if guiFloating then "1" else "0"} ${envFlags}
     '';
     meta = {
       description = "Desktop app and tray icon for proxy-suite";

@@ -34,6 +34,29 @@ def refresh_seconds():
         return 3
 
 
+def floating():
+    """Whether the window opens floating (gui.floating): on unless turned off."""
+    return os.environ.get("PROXY_GUI_FLOATING", "1") != "0"
+
+
+MIN_SIZE = (360, 360)
+TILED_SIZE = (1100, 700)
+
+
+def floating_size(screen=None):
+    """A floating window's first size: most of the screen, wider than tall, within reason.
+    screen: (width, height) of the monitor, else the first one's."""
+    if screen is None:
+        display = Gdk.Display.get_default()
+        monitors = display.get_monitors() if display else None
+        geometry = monitors.get_item(0).get_geometry() if monitors and monitors.get_n_items() else None
+        screen = (geometry.width, geometry.height) if geometry else None
+    if not screen:
+        return 1280, 800
+    width, height = screen
+    return max(MIN_SIZE[0], min(int(width * 0.72), 1600)), max(MIN_SIZE[1], min(int(height * 0.78), 1000))
+
+
 STATE_CLASSES = {"active": ["success"], "inactive": ["dim-label"], "failed": ["error", "heading"], "activating": ["warning"], "deactivating": ["warning"], "reloading": ["warning"]}
 CELL_CLASSES = {
     "ok": ["success"],
@@ -280,7 +303,7 @@ def is_destructive(action):
 
 def action_icon(action):
     label = action.label.lower()
-    if action.prompt:
+    if action.fields:
         return "document-edit-symbolic"
     if "qr" in label:
         return "view-grid-symbolic"
@@ -813,13 +836,259 @@ class OutputDialog(Adw.Dialog):
 # --- window -------------------------------------------------------------------------------
 
 
+class ItemsRow:
+    """A list field: an expanded row whose first line adds a value (enter, or the + button; a
+    paste of several adds each), then a row per value with a button that takes it out. Editing
+    what a row holds, what changes is marked: added ones with a +, taken-out ones struck through,
+    with a button that puts them back. changed() after every change."""
+
+    def __init__(self, f, title, values, was, changed):
+        self.was, self.changed = list(was), changed
+        self.removed = {v for v in self.was if v not in values}
+        self.added = [v for v in values if v not in self.was]
+        self.lines = []  # the value rows shown now
+        self.expander = Adw.ExpanderRow(title=title, expanded=True)
+        example = model.field_example(f)
+        self.entry = Adw.EntryRow(title=f"Add one - e.g. {example}" if example else "Add one")
+        self.entry.connect("entry-activated", lambda *_: self.add(self.entry.get_text()))
+        self.entry.connect("changed", lambda *_: self.changed())  # typed but not added yet counts too
+        plus = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Add it", css_classes=["flat"])
+        plus.connect("clicked", lambda *_: self.add(self.entry.get_text()))
+        self.entry.add_suffix(plus)
+        self.expander.add_row(self.entry)
+        self.show()
+
+    @property
+    def value(self):
+        listed = [v for v in self.was if v not in self.removed] + self.added
+        return listed + [v for v in model.items(self.entry.get_text()) if v not in listed]
+
+    def add(self, text):
+        typed = model.items(text)
+        if text == self.entry.get_text():
+            self.entry.set_text("")
+        for v in typed:
+            self.removed.discard(v)
+            if v not in self.value:
+                self.added.append(v)
+        self.show()
+
+    def toggle(self, _, value):
+        if value in self.added:
+            self.added.remove(value)
+        else:
+            self.removed.symmetric_difference_update({value})
+        self.show()
+
+    def show(self):
+        for line in self.lines:
+            self.expander.remove(line)
+        self.lines = []
+        changes = model.item_changes(self.was, [v for v in self.was if v not in self.removed] + self.added)
+        for value, state in changes:
+            text = GLib.markup_escape_text(value)
+            line = Adw.ActionRow(title=f"<s>{text}</s>" if state == "removed" else text, css_classes=["dim-label"] if state == "removed" else [])
+            if self.was and state != "kept":
+                mark = Gtk.Image(icon_name="list-add-symbolic" if state == "added" else "list-remove-symbolic", css_classes=["success" if state == "added" else "error"])
+                line.add_prefix(mark)
+            back = state == "removed"
+            button = Gtk.Button(
+                icon_name="edit-undo-symbolic" if back else "user-trash-symbolic",
+                tooltip_text="Put it back" if back else "Take it out",
+                valign=Gtk.Align.CENTER,
+                css_classes=["flat"],
+            )
+            button.connect("clicked", self.toggle, value)
+            line.add_suffix(button)
+            self.expander.add_row(line)
+            self.lines.append(line)
+        added = sum(1 for _, s in changes if s == "added")
+        removed = sum(1 for _, s in changes if s == "removed")
+        kept = len(changes) - removed
+        summary = [f"{kept} in the list" if kept else "None yet"]
+        if self.was:
+            summary += [f"{added} added"] * bool(added) + [f"{removed} taken out"] * bool(removed)
+        self.expander.set_subtitle(" · ".join(summary))
+        self.changed()
+
+
+class Form:
+    """What an action asks for, a row per field: an entry, a drop-down where only some values go,
+    and a menu of the known ones beside an entry that takes others too. Under the rows, the hint
+    of the field in focus and the command the form runs."""
+
+    def __init__(self, action, row, remembered, states, changed):
+        self.action, self.row, self.states, self.changed = action, row, states, changed
+        self.choices = model.form_choices(action, row)
+        self.current = model.form_current(action, row)
+        self.rows = {}  # field name -> its Adw.EntryRow, Adw.ComboRow or ItemsRow's expander
+        self.lists = {}  # list field name -> its ItemsRow
+        self.built = False  # rows call update as they are made; it waits for all of them
+        values = model.form_start(action, row, remembered)
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        rows = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+        for f in action.fields:
+            if not f.advanced:
+                rows.append(self.field(f, values.get(f.name, "")))
+        more = [f for f in action.fields if f.advanced]
+        if more:
+            # Open from the start when something was typed there last time.
+            expander = Adw.ExpanderRow(title="More options", expanded=any(values.get(f.name) for f in more))
+            for f in more:
+                expander.add_row(self.field(f, values.get(f.name, "")))
+            rows.append(expander)
+        self.hint = Gtk.Label(xalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, css_classes=["dim-label", "caption"])
+        self.preview = Gtk.Label(xalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, selectable=True, css_classes=["monospace", "caption"])
+        for widget in (rows, self.hint, self.preview):
+            self.widget.append(widget)
+        self.show_hint(action.fields[0])
+        self.built = True
+        self.update()
+
+    def field(self, f, value):
+        # An edit of what a row holds may well end empty: nothing to mark there.
+        title = f"{f.label} (optional)" if f.optional and not f.current else f.label
+        choices = self.choices.get(f.name) or {}
+        if f.items:
+            items = ItemsRow(f, title, model.items(value), self.current.get(f.name, []), self.update)
+            if choices:
+                items.entry.add_suffix(self.choice_menu(f, items.add, choices))
+            self.lists[f.name] = items
+            row = items.expander
+        elif f.fixed and choices:
+            names = list(choices)
+            row = Adw.ComboRow(title=title, model=Gtk.StringList.new(["Default" if f.optional else "Choose…", *names]))
+            row.set_selected(names.index(value) + 1 if value in names else 0)
+            row.connect("notify::selected", lambda *_: self.update())
+        else:
+            row = Adw.EntryRow(title=title, text=value, activates_default=True)
+            if f.number:
+                row.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            row.connect("changed", lambda *_: self.update())
+            if choices:
+                row.add_suffix(self.choice_menu(f, lambda value, entry=row: (entry.set_text(value), entry.set_position(-1)), choices))
+        row.set_tooltip_text(f.hint or None)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("enter", lambda *_: self.show_hint(f))
+        row.add_controller(focus)
+        self.rows[f.name] = row
+        return row
+
+    def focus(self, name):
+        (self.lists[name].entry if name in self.lists else self.rows[name]).grab_focus()
+
+    def choice_menu(self, f, pick_value, choices):
+        """The known values, a click away: pick_value(value) sets the field, or adds it to a list."""
+        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        popover = Gtk.Popover(child=Gtk.ScrolledWindow(child=items, propagate_natural_height=True, max_content_height=320, hscrollbar_policy=Gtk.PolicyType.NEVER))
+
+        def pick(_, value):
+            pick_value(value)
+            popover.popdown()
+
+        for value, description in choices.items():
+            line = Gtk.Box(spacing=12)
+            line.append(Gtk.Label(label=value, xalign=0, hexpand=True))
+            if description:
+                line.append(Gtk.Label(label=description, xalign=1, css_classes=["dim-label", "caption"]))
+            button = Gtk.Button(child=line, css_classes=["flat"])
+            button.connect("clicked", pick, value)
+            items.append(button)
+        return Gtk.MenuButton(icon_name="pan-down-symbolic", popover=popover, valign=Gtk.Align.CENTER, tooltip_text="Known values", css_classes=["flat"])
+
+    def show_hint(self, f):
+        choices = self.choices.get(f.name) or {}
+        listed = ""
+        if choices and not f.fixed:
+            names = list(choices)
+            listed = ("Any of: " if f.items else "For example: ") + ", ".join(names[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+        how = "Enter or + adds one; a paste of several adds each." if f.items else ""
+        self.hint.set_label(" · ".join(p for p in (f"{f.label}: {f.hint}" if f.hint else "", listed, how) if p))
+        self.hint.set_visible(bool(self.hint.get_label()))
+
+    def values(self):
+        values = {}
+        for f in self.action.fields:
+            row = self.rows[f.name]
+            if f.name in self.lists:
+                values[f.name] = self.lists[f.name].value
+            elif isinstance(row, Adw.ComboRow):
+                names = list(self.choices.get(f.name) or {})
+                index = row.get_selected()
+                values[f.name] = names[index - 1] if 0 < index <= len(names) else ""
+            else:
+                values[f.name] = row.get_text()
+        return values
+
+    def update(self):
+        """The preview, the rows that hold something wrong, and whether it can run: changed(ok)."""
+        if not self.built:
+            return
+        values = self.values()
+        problems = list(model.form_problems(self.action, values, self.row, self.choices, self.current))
+        filled = model.form_values(self.action, values)
+        # Red for what is there and wrong; what is missing, or not changed yet, is only listed.
+        wrong = {name for name, _ in problems if filled[name] and name not in self.current}
+        for name, row in self.rows.items():
+            if name in wrong:
+                row.add_css_class("error")
+            else:
+                row.remove_css_class("error")
+        try:
+            if problems:
+                raise ValueError("; ".join(why for _, why in problems))
+            argv, stdin = model.form_argv(self.action, self.row, values, self.states, self.choices, self.current)
+            self.preview.set_label(model.shown(argv, stdin=stdin))
+            self.preview.remove_css_class("dim-label")
+            ok = True
+        except (ValueError, IndexError) as e:  # what is missing, or an unbalanced quote
+            self.preview.set_label(str(e) if problems else f"Cannot run that: {e}")
+            self.preview.add_css_class("dim-label")
+            ok = False
+        self.changed(ok)
+
+
+FORM_WIDTH = 540  # an alert dialog's width cramps a form of several fields
+
+
+def form_dialog(title, action, row, values, states, ran):
+    """An action's form in a dialog: Cancel and Run in its header, Run only once the form can run.
+    ran({field: value}) when Run is pressed. Returns (dialog, form)."""
+    dialog = Adw.Dialog(title=title, content_width=FORM_WIDTH)
+    cancel = Gtk.Button(label="Cancel")
+    cancel.connect("clicked", lambda *_: dialog.close())
+    run = Gtk.Button(label="Run", css_classes=["suggested-action"])
+    header = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
+    header.pack_start(cancel)
+    header.pack_end(run)
+    form = Form(action, row, values, states, run.set_sensitive)
+    form.widget.set_margin_top(12)
+    form.widget.set_margin_bottom(18)
+    form.widget.set_margin_start(18)
+    form.widget.set_margin_end(18)
+    view = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=form.widget, propagate_natural_height=True, hscrollbar_policy=Gtk.PolicyType.NEVER))
+    view.add_top_bar(header)
+    dialog.set_child(view)
+    dialog.set_default_widget(run)  # enter in an entry runs
+
+    def clicked(_):
+        values = form.values()
+        dialog.close()
+        ran(values)
+
+    run.connect("clicked", clicked)
+    return dialog, form
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title=TITLE, default_width=1100, default_height=700, icon_name=APP_ID)
+        super().__init__(application=app, title=TITLE, default_width=TILED_SIZE[0], default_height=TILED_SIZE[1], icon_name=APP_ID)
         self.app = app
-        self.set_size_request(360, 360)
+        self.set_size_request(*MIN_SIZE)
+        self.unfix = None  # the map handler that lets a window opened floating resize again
+        self.shown_size = None  # (width, height) when last hidden to the tray
         self.pages = {}
-        self.typed = {}  # action label -> what was last typed there
+        self.typed = {}  # action label -> {field: value} last run from its form
         self.last_output = None  # (title, text)
         self.last_retry = None  # () -> the last run again as root, when only root could do it
 
@@ -913,6 +1182,38 @@ class Window(Adw.ApplicationWindow):
             app.set_accels_for_action(f"win.tab({n - 1})", [f"<Alt>{n}"])
 
         self.connect("close-request", self.on_close)
+
+    def open_floating(self, width, height):
+        """The next time it maps, open floating at this size. Nothing on Wayland asks for that,
+        but niri, sway, Hyprland and i3 float a window that opens at a fixed size: so it is fixed
+        until its first frame is on screen, then resizes as any window does. Elsewhere it just
+        opens at this size."""
+        if self.unfix:
+            self.disconnect(self.unfix)
+        self.set_default_size(width, height)
+        self.set_size_request(width, height)
+        self.set_resizable(False)
+
+        def mapped(_):
+            self.disconnect(self.unfix)
+            self.unfix = None
+            clock = self.get_frame_clock()
+            painted = None
+
+            def unfix(*_):
+                # After the frame that maps it: the compositor has decided by then.
+                if painted is not None:
+                    clock.disconnect(painted)
+                self.set_resizable(True)
+                self.set_size_request(*MIN_SIZE)
+                self.set_default_size(width, height)
+
+            if clock is None:
+                GLib.idle_add(lambda: unfix() and False)
+            else:
+                painted = clock.connect("after-paint", unfix)
+
+        self.unfix = self.connect("map", mapped)
 
     # --- tabs ----------------------------------------------------------------------------------
 
@@ -1053,10 +1354,12 @@ class Window(Adw.ApplicationWindow):
                 page.refill()
             return
 
-        def with_text(text=""):
+        def with_values(values=None):
             try:
-                argv = action.argv(row, text, self.app.states)
-                stdin = action.stdin(row, text) if action.stdin else None
+                if action.fields:
+                    argv, stdin = model.form_argv(action, row, values, self.app.states)
+                else:
+                    argv, stdin = action.argv(row, {}, self.app.states), action.stdin(row, {}) if action.stdin else None
             except (ValueError, IndexError) as e:
                 self.toast(f"Cannot run that: {e}")
                 return
@@ -1065,28 +1368,17 @@ class Window(Adw.ApplicationWindow):
             else:
                 self.app.run_argv(action.mode, argv, self, stdin=stdin)
 
-        if not action.prompt:
-            with_text()
+        if not action.fields:
+            with_values()
             return
-        title = action.label.removesuffix("…")
-        dialog = Adw.AlertDialog(heading=cap(title), close_response="cancel", default_response="run")
-        entry = Gtk.Entry(placeholder_text=action.prompt, text=self.typed.get(action.label, ""), activates_default=True, width_chars=40)
-        dialog.set_extra_child(entry)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("run", "Run")
-        dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_response_enabled("run", bool(entry.get_text().strip()))
-        entry.connect("changed", lambda e: dialog.set_response_enabled("run", bool(e.get_text().strip())))
+        def ran(values):
+            self.typed[action.label] = values
+            with_values(values)
 
-        def responded(_, response):
-            text = entry.get_text().strip()
-            if response == "run" and text:
-                self.typed[action.label] = text
-                with_text(text)
-
-        dialog.connect("response", responded)
+        title = cap(action.label.removesuffix("…"))
+        dialog, form = form_dialog(title, action, row, self.typed.get(action.label), self.app.states, ran)
         dialog.present(self)
-        entry.grab_focus()
+        form.focus(action.fields[0].name)
 
     def toast(self, message, output=None, retry=None):
         # A toast title is one ellipsized line, which hides most of what a command said:
@@ -1139,9 +1431,15 @@ class Window(Adw.ApplicationWindow):
             website="https://github.com/FUFSoB/proxy-suite-flake", license_type=Gtk.License.CUSTOM,
         ).present(self)
 
+    def hide_to_tray(self):
+        """To the tray, keeping the size it had: it opens at that size again."""
+        if self.get_width() and self.get_height():
+            self.shown_size = (self.get_width(), self.get_height())
+        self.set_visible(False)
+
     def on_close(self, _):
         if self.app.tray and self.app.tray.available:
-            self.set_visible(False)
+            self.hide_to_tray()
             return True  # the tray icon brings it back
         self.app.quit()
         return False
@@ -1218,7 +1516,10 @@ class ProxySuiteGui(Adw.Application):
             self.timer = GLib.timeout_add_seconds(self.refresh, self.tick)
             self.reload()
         if not options.get("hidden"):
-            self.present(options.get("tab"))
+            # A launcher's token comes along when the running instance is asked to show itself.
+            platform = command_line.get_platform_data()
+            token = platform.lookup_value("activation-token", None) if platform else None
+            self.present(options.get("tab"), token=token.get_string() if token else None)
         return 0
 
     def do_activate(self):
@@ -1242,7 +1543,9 @@ class ProxySuiteGui(Adw.Application):
             self.window.root_badge.set_visible(value.get_boolean())
         self.reload(fresh_root=True)  # tabs only root can read
 
-    def present(self, tab=None):
+    def present(self, tab=None, token=None):
+        """token: an xdg-activation token, from the tray or a launcher: with it the compositor
+        gives the window focus, which it may refuse a window that only asks."""
         if self.window is None:
             self.window = Window(self)
             # Hidden to the tray or switched away from: what it showed has been seen.
@@ -1250,16 +1553,20 @@ class ProxySuiteGui(Adw.Application):
             self.window.show_tabs(model.available_tabs(self.states) if self.states else ["services"])
         if tab and tab in self.window.pages:
             self.window.stack.set_visible_child_name(tab)
+        if floating() and not self.window.get_visible():
+            self.window.open_floating(*(self.window.shown_size or floating_size()))
+        if token:
+            self.window.set_startup_id(token)
         self.window.present()
         if page := self.window.page():
             page.focus_default()
         self.reload()
 
-    def toggle_window(self):
+    def toggle_window(self, token=None):
         if self.window and self.window.get_visible() and self.window.is_active():
-            self.window.set_visible(False)
+            self.window.hide_to_tray()
         else:
-            self.present()
+            self.present(token=token)
 
     def leave_window(self):
         if self.viewing:
@@ -1395,7 +1702,7 @@ class ProxySuiteGui(Adw.Application):
 
     def on_tray_menu(self, item):
         if item.app == "open":
-            self.present()
+            self.present(token=self.tray.take_token() if self.tray else None)
         elif item.app == "quit":
             self.quit()
         elif item.argv:

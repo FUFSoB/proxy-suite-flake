@@ -20,5 +20,15 @@ in
       default = 3;
       description = "How often the status refreshes, in seconds.";
     };
+
+    floating = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Open the window floating, sized to the screen, where a tiling compositor (niri, sway,
+        Hyprland, i3) would tile it. It opens at a fixed size, which those compositors float,
+        then resizes as usual. Turn off to let the compositor tile it.
+      '';
+    };
   };
 }

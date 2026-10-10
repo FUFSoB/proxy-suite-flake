@@ -91,6 +91,8 @@ Changes and secrets need root or the userControl group.
                                          add a group (failover by default)
   proxy groups rm <tag>                  remove a group added with groups add
   proxy groups members <tag> add|rm <member...>
+  proxy groups members <tag> set [member...]
+                                         exactly these members, in this order
   proxy groups strategy <tag> failover|urltest|selector
   proxy priority [list]                  the top level in the order it is picked in
   proxy priority <tag> <n>|up|down|--clear
@@ -105,6 +107,8 @@ Changes and secrets need root or the userControl group.
                                          rule named after the target, extended (priority 50:
                                          ahead of the configuration's, at 100 to 500)
   proxy rules matches <name> add|rm <match...>
+  proxy rules matches <name> set [match...]
+                                         exactly these matches
   proxy rules target <name> <target>
   proxy rules priority <name> <n>|up|down
                                          lower goes first; up/down moves past the next row
@@ -182,6 +186,9 @@ Changes and secrets need root or the userControl group.
   inbounds users order <name> <N>        a runtime user's order (serverSource number)
   inbounds bind|unbind <user> <tag>      put a user on a listener, or take it off
                                          (a runtime user, or a runtime listener)
+  inbounds users listeners <user> [tag...]
+                                         put a user on exactly these listeners
+  inbounds users on <tag> [user...]      put exactly these users on a listener
   inbounds add <tag> <type> [--port N] [--via V] [--transport T] [--path P] [--host H]
       [--reality SNI[,SNI]] [--tls <cert>] [--alpn a,b] [--flow vision] [--method M]
       [--listen A] [--user U]... [more: see inbounds add --help]
@@ -998,8 +1005,12 @@ COMPLETE = {
             "add": "add a user at runtime",
             "rm": "remove a runtime user",
             "order": "set a runtime user's order",
+            "listeners": "put a user on exactly these listeners",
+            "on": "put exactly these users on a listener",
         }
     },
+    "inbounds users listeners": {"args": lambda: {**_inbound_runtime_names("users"), **_inbound_runtime_names("listeners")}, "repeat": True},
+    "inbounds users on": {"args": lambda: {**_inbound_runtime_names("listeners"), **_inbound_runtime_names("users")}, "repeat": True},
     "inbounds users add": {"flags": {"--order": "its serverSource number", "--listener": "a listener to put it on"}},
     "inbounds users rm": {"args": lambda: _inbound_runtime_names("users", "runtime")},
     "inbounds users order": {"args": lambda: _inbound_runtime_names("users", "runtime")},
@@ -2599,8 +2610,8 @@ def cmd_groups(verb="list", *args):
         _runtime_reload()
         print(f"Removed group: {tag}")
     elif verb == "members":
-        if len(args) < 3 or args[1] not in ("add", "rm"):
-            usage("proxy groups members <tag> add|rm <member...>")
+        if not (len(args) >= 3 and args[1] in ("add", "rm") or len(args) >= 2 and args[1] == "set"):
+            usage("proxy groups members <tag> add|rm <member...> | set [member...]")
         tag, action, names = args[0], args[1], list(args[2:])
         with _group_lock(tag):
             data = _read_group_file(tag)
@@ -2608,6 +2619,12 @@ def cmd_groups(verb="list", *args):
             if action == "add":
                 _group_check_members(tag, names)
                 members += [n for n in names if n not in members]
+            elif action == "set":
+                # Exactly these, in this order: an edit that adds some and takes others out, in one reload.
+                _group_check_members(tag, names)
+                members = list(dict.fromkeys(names))
+                if not members and not data.get("subscriptions") and not data.get("match"):
+                    die(f"That would leave '{tag}' empty; remove the group instead: proxy-ctl proxy groups rm {tag}")
             else:
                 missing = [n for n in names if n not in members]
                 if missing:
@@ -3553,7 +3570,7 @@ def cmd_rules(verb="list", *args):
         _rules_list()
     elif verb == "add":
         _rules_add(*args)
-    elif verb == "matches" and len(args) >= 3 and args[1] in ("add", "rm"):
+    elif verb == "matches" and (len(args) >= 3 and args[1] in ("add", "rm") or len(args) >= 2 and args[1] == "set"):
         _rules_matches(*args)
     elif verb == "target" and len(args) == 2:
         _rule_check_target(args[1])
@@ -3591,7 +3608,7 @@ def cmd_rules(verb="list", *args):
     else:
         usage(
             "proxy rules [list] | add <target> <match...> [--name <name>] [--priority <n>]"
-            " | matches <name> add|rm <match...> | target <name> <target>"
+            " | matches <name> add|rm <match...> | matches <name> set [match...] | target <name> <target>"
             " | priority <name> <n>|up|down | disable|enable <name> | rm <name>"
         )
 
@@ -3651,6 +3668,14 @@ def _rules_matches(name, op, *words):
 
     def change(rules):
         rule = _rule_find(rules, name)
+        if op == "set":
+            # One write for an edit that adds some and takes others out: what the front ends send.
+            before = _rule_matches(rule)
+            for kind in RULE_MATCH_KINDS:
+                rule[kind] = []
+            _rule_add_matches(rule, matches)
+            after = _rule_matches(rule)
+            return f"{name}: {after or 'matches nothing'}" if after != before else f"{name}: nothing changed"
         if op == "add":
             done = _rule_add_matches(rule, matches)
         else:
@@ -6115,6 +6140,38 @@ def _inbound_runtime_change(*args, stdin=None):
     """A change to the spool, then the reload that applies it, then what it left out."""
     _, out = _inbound_runtime(*args, stdin=stdin)
     sys.stdout.write(out)
+    _inbound_runtime_apply()
+
+
+def _inbound_bindings_set(user=None, tag=None, wanted=()):
+    """One user on exactly these listeners, or one listener with exactly these users: the binds
+    and unbinds between what is and what is wanted, then one reload, so connections drop once."""
+    rows = _inbound_runtime_rows("users")
+    if user is not None:
+        row = next((r for r in rows if _s(r.get("name")) == user), None)
+        if row is None:
+            die(f"Unknown user: {user}")
+        now = {(user, _s(t)) for t in row.get("listeners") or []}
+        want = {(user, t) for t in wanted}
+    else:
+        now = {(_s(r.get("name")), tag) for r in rows if tag in (r.get("listeners") or [])}
+        want = {(u, tag) for u in wanted}
+    changes = [("unbind", *pair) for pair in sorted(now - want)] + [("bind", *pair) for pair in sorted(want - now)]
+    if not changes:
+        print("Nothing to change.")
+        return
+    applied = False
+    try:
+        for verb, u, t in changes:
+            sys.stdout.write(_inbound_runtime(verb, u, t)[1])
+            applied = True
+    finally:
+        # One that failed stops the rest; those before it are saved, and applied here.
+        if applied:
+            _inbound_runtime_apply()
+
+
+def _inbound_runtime_apply():
     if systemctl("start", "proxy-suite-inbounds-reload.service")[0]:
         die("Saved, but applying it failed - see: proxy-ctl logs proxy-suite-inbounds-reload")
     p = subprocess.run(
@@ -6135,8 +6192,15 @@ def _inbound_users(verb="list", *args):
         _inbound_runtime_change("users", "rm", *args)
     elif verb == "order" and len(args) == 2:
         _inbound_runtime_change("users", "order", *args)
+    elif verb == "listeners" and args:
+        _inbound_bindings_set(user=args[0], wanted=args[1:])
+    elif verb == "on" and args:
+        _inbound_bindings_set(tag=args[0], wanted=args[1:])
     else:
-        usage("inbounds users [list] | add <name> [--order N] [--listener <tag>]... | rm <name> | order <name> <N>")
+        usage(
+            "inbounds users [list] | add <name> [--order N] [--listener <tag>]... | rm <name> | order <name> <N>"
+            " | listeners <name> [tag...] | on <tag> [user...]"
+        )
 
 
 def cmd_inbounds(verb="list", *args):
