@@ -4,17 +4,22 @@
 }:
 
 let
-  mkZapret2 =
-    zapret:
+  # `extra`: more of services.proxy-suite, beside zapret.
+  mkZapret2With =
+    extra: zapret:
     evalProxySuite [
       baseModule
       {
-        services.proxy-suite.zapret = {
-          engine = "zapret2";
+        services.proxy-suite = {
+          zapret = {
+            engine = "zapret2";
+          }
+          // zapret;
         }
-        // zapret;
+        // extra;
       }
     ];
+  mkZapret2 = mkZapret2With { };
 in
 {
   zapretDiscordYoutubeGlobal = evalProxySuite [
@@ -40,7 +45,7 @@ in
     }
   ];
 
-  zapret2Tuned = mkZapret2 {
+  zapret2Tuned = mkZapret2With { debug.zapret2.autoHostlist = true; } {
     enable = true;
     zapret2 = {
       domains = [ "pinned.example" ];
@@ -56,7 +61,6 @@ in
         failThreshold = 5;
         failTime = 120;
         retransThreshold = 4;
-        debugLog = true;
         extendedDetection = false;
       };
     };
@@ -78,6 +82,7 @@ in
       strategySource = "z2k";
       ports.extraTcp = [ 8444 ];
       strategyLog = false;
+      # The old name of debug.zapret2.packets: the alias must still reach nfqws2.
       debug = true;
       autoHostlist.extendedDetection = false;
     };

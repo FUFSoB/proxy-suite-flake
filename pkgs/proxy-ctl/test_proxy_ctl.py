@@ -2558,6 +2558,100 @@ class WhereTest(EnvTest):
         )
 
 
+class ConnectionLogTest(unittest.TestCase):
+    """`debug conns`: opens, stalls and closes read off successive /connections looks."""
+
+    @staticmethod
+    def conn(cid, up, down, host="pbs.twimg.com", inbound="tproxy/tproxy-in", address="199.232.172.159"):
+        return {
+            "id": cid,
+            "upload": up,
+            "download": down,
+            "chains": ["vps", "proxy"],
+            "rule": "final",
+            "rulePayload": "",
+            "metadata": {"type": inbound, "network": "tcp", "host": host, "destinationIP": address,
+                         "destinationPort": "443", "sourcePort": "40000"},
+        }
+
+    def test_stall_resume_close(self):
+        log = ctl.ConnectionLog(stall=5)
+        [opened] = log.step([self.conn("a", 500, 0)], 0)
+        self.assertEqual(
+            opened, "open    tproxy-in tcp :40000 -> pbs.twimg.com:443 (199.232.172.159) via proxy>vps [final]"
+        )
+        # Sent and waited since it opened: stalled once, not on every look.
+        self.assertEqual(log.step([self.conn("a", 500, 0)], 4), [])
+        [stalled] = log.step([self.conn("a", 500, 0)], 5)
+        self.assertTrue(stalled.startswith("stalled ") and "no answer for 5s" in stalled)
+        self.assertEqual(log.step([self.conn("a", 500, 0)], 9), [])
+        [resumed] = log.step([self.conn("a", 500, 9000)], 10)
+        self.assertTrue(resumed.startswith("resumed ") and resumed.endswith("after 10.0s"))
+        # Idle both ways is not a stall; a new request waits from when it is seen sent.
+        self.assertEqual(log.step([self.conn("a", 500, 9000)], 30), [])
+        self.assertEqual(log.step([self.conn("a", 800, 9000)], 31), [])
+        self.assertEqual(log.step([self.conn("a", 800, 9000)], 35), [])
+        self.assertIn("no answer for 5s", log.step([self.conn("a", 800, 9000)], 36)[0])
+        [closed] = log.step([], 40)
+        self.assertTrue(closed.startswith("close ") and closed.endswith("up 800 B, down 9000 B at the last look, 40.0s, stalled"))
+
+    def test_short_connection_is_not_called_unanswered(self):
+        # Gone before a look saw its answer: the API keeps no closed connections.
+        log = ctl.ConnectionLog(stall=5)
+        log.step([self.conn("a", 1500, 0)], 0)
+        [closed] = log.step([], 0.5)
+        self.assertNotIn("never answered", closed)
+        log.step([self.conn("b", 1500, 0)], 1)
+        log.step([self.conn("b", 1500, 0)], 7)
+        self.assertTrue(log.step([], 8)[0].endswith("stalled, never answered"))
+
+    def test_filters(self):
+        log = ctl.ConnectionLog(hosts=["twimg.com", "1.1.1.1"], inbounds=["tproxy"])
+        conns = [
+            self.conn("sub", 1, 0, host="pbs.twimg.com"),
+            self.conn("other", 1, 0, host="nottwimg.com"),
+            self.conn("mixed", 1, 0, inbound="mixed/mixed-in"),
+            self.conn("ip", 1, 0, host="", address="1.1.1.1"),
+        ]
+        log.step(conns, 0)
+        self.assertEqual(sorted(log.live), ["ip", "sub"])
+        self.assertEqual(ctl.ConnectionLog(stall=0).step([self.conn("a", 1, 0)], 0)[0][:4], "open")
+
+    def test_lost_backend(self):
+        log = ctl.ConnectionLog()
+        log.step([self.conn("a", 1, 0), self.conn("b", 1, 0)], 0)
+        self.assertEqual(log.lost(), "the backend's Clash API is not answering; 2 connections lost from view")
+        self.assertEqual(log.step([], 1), [])
+
+    def test_arguments(self):
+        for args in (["--stall"], ["--host", ""], ["--bogus"], [""], ["--backend", "xray"]):
+            self.assertEqual(run(ctl._debug_conns, *args)[0], 1, args)
+        status, _, err = run(ctl._debug_conns, "--interval", "0")
+        self.assertEqual((status, err.strip()), (1, "--interval takes a number of seconds, above 0."))
+        status, _, err = run(ctl._debug_conns, "--stall", "x")
+        self.assertIn("--stall takes a number of seconds", err)
+
+    def test_tun_backends_read_their_own_api(self):
+        with tempfile.TemporaryDirectory() as run_dir, mock.patch.dict(
+            os.environ, {"RUNTIME_DIR": run_dir, "CLASH_API_TUN": "http://127.0.0.1:19181"}
+        ), mock.patch.object(ctl, "_clash_direct", return_value=(200, {"connections": None})) as direct:
+            get = ctl._debug_clash("tun")
+            # Not up: no secret yet, so no API to ask.
+            self.assertEqual(get(), (0, None))
+            direct.assert_not_called()
+            os.mkdir(os.path.join(run_dir, "proxy-suite-tun"))
+            with open(os.path.join(run_dir, "proxy-suite-tun", "clash-secret"), "w") as f:
+                f.write("s3cret\n")
+            self.assertEqual(get(), (200, {"connections": None}))
+            direct.assert_called_once_with("GET", "/connections", None, 5, "s3cret", "http://127.0.0.1:19181")
+
+    def test_needs_the_secrets_scope(self):
+        with mock.patch.object(ctl, "_clash", return_value=(403, None)):
+            status, _, err = run(ctl._debug_conns)
+        self.assertEqual(status, 1)
+        self.assertIn("secrets scope", err)
+
+
 class RoutingRulesTest(EnvTest):
     """proxy rules: the spool proxy-ctl writes, and where each rule lands among the configuration's."""
 

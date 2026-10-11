@@ -193,6 +193,7 @@ let
         ]
         ++ map (l: "--listen ${l}") listeners
         ++ map (a: "--bind ${a}") bind
+        ++ lib.optional ctx.cfg.debug.perAppDns "--log"
         ++ [ ctx.constants.perAppDnsUpstream ]
       );
       runtimeDirectory = "proxy-suite-per-app-${route}-dns";

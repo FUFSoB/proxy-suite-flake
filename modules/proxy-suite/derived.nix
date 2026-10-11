@@ -628,6 +628,17 @@ let
   collapseNamedOutbounds = selectionMode == "first";
   # Always on with sing-box: `proxy-ctl proxy outbounds test` needs it in every selection mode.
   clashApiEnabled = singBoxEnabled;
+  # debug.logLevel, in each backend's words.
+  singBoxLogLevel = cfg.debug.logLevel;
+  xrayLogLevel =
+    {
+      warn = "warning";
+      info = "info";
+      debug = "debug";
+      trace = "debug";
+    }
+    .${cfg.debug.logLevel};
+  connectionLogEnabled = cfg.enable && clashApiEnabled && cfg.debug.connectionLog.enable;
   perAppZapretEnabled = perAppZapretCfg.enable;
   # The global units each per-app backend steps aside for (constants.refuseUnderGlobal), as
   # systemctl patterns: they stop it as they start, and the standby unit waits them out.
@@ -1159,6 +1170,8 @@ let
       ipv6 = "fd66:21::${lib.toLower (lib.toHexString (slot + 2))}";
     };
     perAppTunClashApiPort = 19180;
+    # The global TUN backend's, for debug.connectionLog alone.
+    globalTunClashApiPort = 19181;
     # The DNS forwarders of per-app TUN and TProxy apps (proxy-suite-per-app-<route>-dns): the
     # route's at the base, pin slot n's at base + 1 + n; they ask perAppDnsUpstream with its mark.
     perAppTproxyDnsBasePort = 19200;
@@ -1230,6 +1243,9 @@ in
   inherit
     proxyCfg
     localProxy
+    singBoxLogLevel
+    xrayLogLevel
+    connectionLogEnabled
     singBoxCfg
     xrayCfg
     proxyEnabled

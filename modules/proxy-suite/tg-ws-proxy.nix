@@ -39,7 +39,7 @@ let
       else
         "args+=(--secret=${lib.escapeShellArg t.secret})"
     }
-    ${dcArgs}${mkFlagArg t.log.verbose "--verbose"}${
+    ${dcArgs}${mkFlagArg cfg.debug.tgWsProxy "--verbose"}${
       mkOptionalValueArg (t.log.file != null) "--log-file" t.log.file
     }${lib.optionalString (t.log.file != null) (mkRawValueArg "--log-max-mb" t.log.maxSizeMiB)}${
       lib.optionalString (t.log.file != null) (mkRawValueArg "--log-backups" t.log.keep)

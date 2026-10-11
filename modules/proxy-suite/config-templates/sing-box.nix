@@ -19,6 +19,8 @@ let
     perAppPinSlots
     perAppPinTproxy
     perAppPinTun
+    singBoxLogLevel
+    connectionLogEnabled
     ;
   inherit (constants)
     xrayDnsBridgePorts
@@ -188,7 +190,7 @@ let
     lib.recursiveUpdate
       (
         {
-          log.level = "warn";
+          log.level = singBoxLogLevel;
 
           dns = mkDnsConfig {
             localDetour = if forceLocalDnsViaProxy then "proxy" else null;
@@ -297,8 +299,8 @@ let
         // lib.optionalAttrs enableClashApi (clashApiBlock clashApiPort)
       )
       # Fake addresses handed out survive a restart, so apps still holding one keep working. The
-      # start script creates the directory; nothing else is stored, since TUN configs have no
-      # Clash API to switch a selector with.
+      # start script creates the directory; nothing else is stored, since no selector of a TUN
+      # config is switched through the Clash API.
       (
         lib.optionalAttrs fakeIp {
           experimental.cache_file = {
@@ -330,7 +332,9 @@ in
     tunAutoRedirect = true;
     tunStrictRoute = true;
     forceLocalDnsViaProxy = false;
-    enableClashApi = false;
+    # Only for debug.connectionLog to read the connections.
+    enableClashApi = connectionLogEnabled;
+    clashApiPort = constants.globalTunClashApiPort;
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
     fakeIpCache = "tun";
   };
@@ -341,8 +345,8 @@ in
     tunAddress = perAppRoutingTun.address;
     tunIPv6Address = constants.perAppTunIPv6Address;
     pins = if perAppPinTun then tunPins else null;
-    # The pins' selectors are switched through it.
-    enableClashApi = perAppPinTun;
+    # The pins' selectors are switched through it; debug.connectionLog reads the connections.
+    enableClashApi = perAppPinTun || connectionLogEnabled;
     clashApiPort = constants.perAppTunClashApiPort;
     tunMtu = perAppRoutingTun.mtu;
     tunAutoRoute = false;

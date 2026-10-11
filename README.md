@@ -141,6 +141,13 @@ Changes and secrets need root or the userControl group.
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
                                          terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
+  debug conns [--backend socks|tun|per-app-tun] [--host <domain|address>]... [--inbound <tag>]...
+              [--stall <s>] [--interval <s>]
+                                         the backend's connections as they open, stall and
+                                         close, with their rule, exit and bytes (needs root or
+                                         the secrets scope); --host, --inbound: only these;
+                                         --backend tun, per-app-tun: the TUN ones (root, and
+                                         debug.connectionLog on)
 
   proxy [status|on|off]                  local proxy
   proxy outbounds [list]                 outbounds, their source, and the current pick

@@ -24,7 +24,6 @@ Part of the [proxy-suite options reference](./index.md).
     - [file](#services-proxy-suite-tgwsproxy-log-file)
     - [keep](#services-proxy-suite-tgwsproxy-log-keep)
     - [maxSizeMiB](#services-proxy-suite-tgwsproxy-log-maxsizemib)
-    - [verbose](#services-proxy-suite-tgwsproxy-log-verbose)
   - [poolSize](#services-proxy-suite-tgwsproxy-poolsize)
   - [proxyProtocol](#services-proxy-suite-tgwsproxy-proxyprotocol)
   - [secret](#services-proxy-suite-tgwsproxy-secret)
@@ -146,14 +145,6 @@ Rotate the log at this size, in MiB\.
 
 **Type:** positive integer or floating point number, meaning >0\
 **Default:** `5.0`
-
-<a id="services-proxy-suite-tgwsproxy-log-verbose"></a>
-## services\.proxy-suite\.tgWsProxy\.log\.verbose
-
-Log debug messages\.
-
-**Type:** boolean\
-**Default:** `false`
 
 <a id="services-proxy-suite-tgwsproxy-poolsize"></a>
 ## services\.proxy-suite\.tgWsProxy\.poolSize

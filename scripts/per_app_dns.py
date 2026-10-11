@@ -18,9 +18,47 @@ import re
 import socket
 import struct
 import sys
+import time
 
 TIMEOUT = 4.0
 MAX_MESSAGE = 65535
+
+# --log (debug.perAppDns): a line per lookup sent on, to the journal.
+LOG = False
+QTYPES = {1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX", 16: "TXT", 28: "AAAA", 33: "SRV", 64: "SVCB", 65: "HTTPS"}
+RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN", 4: "NOTIMP", 5: "REFUSED"}
+
+
+def question(query: bytes) -> str:
+    """The query's question as "name TYPE"; "?" for one that does not parse.
+
+    The name is the app's to choose: anything but printable ASCII is shown as "?".
+    """
+    try:
+        labels, pos = [], 12
+        while (length := query[pos]) != 0:
+            # A question has no compression pointers.
+            if length & 0xC0:
+                return "?"
+            labels.append(re.sub(r"[^\x21-\x7e]", "?", query[pos + 1 : pos + 1 + length].decode("latin-1")))
+            pos += 1 + length
+        (qtype,) = struct.unpack_from("!H", query, pos + 1)
+    except (IndexError, struct.error):
+        return "?"
+    return f"{'.'.join(labels) or '.'} {QTYPES.get(qtype, qtype)}"
+
+
+def log_lookup(port: int, proto: str, query: bytes, reply: bytes | None, started: float):
+    if not LOG:
+        return
+    if reply is None:
+        outcome = "no answer"
+    elif len(reply) < 4:
+        outcome = "malformed answer"
+    else:
+        outcome = RCODES.get(reply[3] & 0x0F, f"rcode {reply[3] & 0x0F}")
+    took = (time.monotonic() - started) * 1000
+    print(f"per-app-dns: :{port} {proto} {question(query)}: {outcome} in {took:.0f} ms", flush=True)
 
 
 # The source address of the queries sent on (--bind): on a TProxy route's local route the
@@ -62,9 +100,10 @@ async def ask_udp(query: bytes, servers: list[str], mark: int) -> bytes | None:
 
 
 class UdpListener(asyncio.DatagramProtocol):
-    def __init__(self, servers: list[str], mark: int):
+    def __init__(self, servers: list[str], mark: int, port: int):
         self.servers = servers
         self.mark = mark
+        self.port = port
         self.transport = None
 
     def connection_made(self, transport):
@@ -74,7 +113,9 @@ class UdpListener(asyncio.DatagramProtocol):
         asyncio.ensure_future(self.answer(data, addr))
 
     async def answer(self, query, addr):
+        started = time.monotonic()
         reply = await ask_udp(query, self.servers, self.mark)
+        log_lookup(self.port, "udp", query, reply, started)
         if reply is not None and self.transport is not None:
             self.transport.sendto(reply, addr)
 
@@ -113,11 +154,13 @@ async def ask_tcp(query: bytes, servers: list[str], mark: int) -> bytes | None:
     return None
 
 
-def tcp_handler(servers: list[str], mark: int):
+def tcp_handler(servers: list[str], mark: int, port: int):
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             while (query := await asyncio.wait_for(read_message(reader), 30)) is not None:
+                started = time.monotonic()
                 reply = await ask_tcp(query, servers, mark)
+                log_lookup(port, "tcp", query, reply, started)
                 if reply is None:
                     break
                 writer.write(struct.pack("!H", len(reply)) + reply)
@@ -156,9 +199,9 @@ async def serve(listeners: list[tuple[int, int]], servers: list[str]):
         for host in ("127.0.0.1", "::1"):
             try:
                 await loop.create_datagram_endpoint(
-                    lambda mark=mark: UdpListener(servers, mark), local_addr=(host, port)
+                    lambda mark=mark, port=port: UdpListener(servers, mark, port), local_addr=(host, port)
                 )
-                await asyncio.start_server(tcp_handler(servers, mark), host, port)
+                await asyncio.start_server(tcp_handler(servers, mark, port), host, port)
             except OSError as exc:
                 # IPv6 may be off.
                 if host == "127.0.0.1":
@@ -187,8 +230,11 @@ def main() -> int:
         metavar="ADDRESS",
         help="the source address of the queries sent on, one per family",
     )
+    parser.add_argument("--log", action="store_true", help="log every lookup sent on, and its answer")
     parser.add_argument("servers", nargs="*", help="resolver addresses, asked in order")
     args = parser.parse_args()
+    global LOG
+    LOG = args.log
     for address in args.bind:
         BIND[socket.AF_INET6 if ":" in address else socket.AF_INET] = address
     listeners = []

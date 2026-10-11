@@ -120,14 +120,9 @@ in
       default = true;
       description = ''
         Log each counted failure and strategy switch to the journal, per site
-        (`proxy-ctl logs proxy-suite-zapret`). Without it nfqws2 logs them only with `debug`.
+        (`proxy-ctl logs proxy-suite-zapret`). Without it nfqws2 logs them only with
+        `debug.zapret2.packets`.
       '';
-    };
-
-    debug = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Log everything nfqws2 does to the journal, every packet included. Very verbose: for troubleshooting.";
     };
 
     ipv6 = mkOption {
@@ -159,12 +154,6 @@ in
       incomingMaxseq = int 4096 "After this many bytes received, a reset or redirect is not a failure.";
       udpOut = int 4 "UDP packets sent, with at most `udpIn` replies, that count as a failure.";
       udpIn = int 1 "Most UDP replies that still count as no answer (see `udpOut`).";
-
-      debugLog = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Log why sites are or are not learned (nfqws2's own learner).";
-      };
 
       extendedDetection = mkOption {
         type = types.bool;

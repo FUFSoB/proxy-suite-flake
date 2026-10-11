@@ -20,6 +20,7 @@ examples follow below.
 | [Group outbounds and fail over](./groups.md) | Several exits for one job, moving off one that stops working |
 | [Other Linux and Android](./other-hosts.md) | You are not on NixOS |
 | [Get past mobile whitelists](./whitelist-bypass.md) | Mobile internet lets only whitelisted services through |
+| [Track down a problem](./debug.md) | Something fails now and then, and you want to see why |
 
 ## Complete examples
 

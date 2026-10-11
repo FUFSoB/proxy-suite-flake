@@ -257,7 +257,7 @@ let
     set -euo pipefail
     ${resolveInstance}
     ${dnsServers}
-    exec ${python3} ${proxySuiteScriptsDir}/per_app_dns.py --port "$dns_port" --mark "$mark" "''${servers[@]}"
+    exec ${python3} ${proxySuiteScriptsDir}/per_app_dns.py --port "$dns_port" --mark "$mark" ${lib.optionalString cfg.debug.perAppDns "--log "}"''${servers[@]}"
   '';
 
   # A failure keeps the marking and the unreachable rule, so the apps are turned away rather

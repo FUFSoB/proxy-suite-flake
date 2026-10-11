@@ -223,6 +223,98 @@ let
     };
   };
 
+  # debug.connectionLog: `proxy-ctl debug conns` into the journal, a unit per sing-box
+  # instance, up while it is.
+  connectionLogUnit =
+    let
+      logCfg = cfg.debug.connectionLog;
+      instances = [
+        {
+          unit = "proxy-suite-connection-log";
+          backend = "socks";
+          service = "proxy-suite-socks.service";
+        }
+      ]
+      ++ lib.optional globalTun.enable {
+        unit = "proxy-suite-connection-log-tun";
+        backend = "tun";
+        service = "proxy-suite-tun.service";
+      }
+      ++ lib.optional perAppRoutingTun.enable {
+        unit = "proxy-suite-connection-log-per-app-tun";
+        backend = "per-app-tun";
+        service = "proxy-suite-per-app-tun.service";
+      };
+    in
+    lib.mkIf derived.connectionLogEnabled {
+      services.proxy-suite.internal.services = lib.listToAttrs (
+        map (instance: {
+          name = instance.unit;
+          value = mkConnectionLog logCfg instance;
+        }) instances
+      );
+    };
+  mkConnectionLog =
+    logCfg:
+    { backend, service, ... }:
+    {
+      description = "proxy-suite - record the ${backend} backend's connections (debug.connectionLog)";
+      after = [ service ];
+      # Not BindsTo: per-app TUN stops when no app needs it, and this must not count as one.
+      partOf = [ service ];
+      wantedBy = [ service ];
+      serviceConfig = {
+        ExecStart = lib.escapeShellArgs (
+          [
+            "${control.proxyCtl}/bin/proxy-ctl"
+            "debug"
+            "conns"
+            "--backend"
+            backend
+            "--stall"
+            (toString logCfg.stallAfter)
+            "--interval"
+            (toString logCfg.interval)
+          ]
+          ++ lib.concatMap (h: [
+            "--host"
+            h
+          ]) logCfg.hosts
+          ++ lib.concatMap (i: [
+            "--inbound"
+            i
+          ]) logCfg.inbounds
+        );
+        Restart = "on-failure";
+        RestartSec = 5;
+        # Root for the Clash API secret's sake (its file is root's), with no capability at all.
+        CapabilityBoundingSet = [ "" ];
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        # Root without capabilities still owns the disks' device nodes.
+        PrivateDevices = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ProtectClock = true;
+        ProtectControlGroups = true;
+        ProtectHostname = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+        # The API is on loopback; nothing else to reach.
+        IPAddressAllow = [ "localhost" ];
+        IPAddressDeny = [ "any" ];
+      };
+    };
+
   # userControl.groups cannot own the spools the way userControl.group does: POSIX ACLs let
   # them in, set again on every boot and whenever the groups change (a changed unit
   # restarts), so a group dropped from the configuration loses what it had. With
@@ -261,6 +353,7 @@ lib.mkMerge [
   autoProxyUnits
   outboundGroupsUnit
   clashBrokerUnit
+  connectionLogUnit
   aclUnit
   {
     services.proxy-suite.internal = {

@@ -40,7 +40,6 @@ Part of the [proxy-suite options reference](./index.md).
   - zapret2
     - autoHostlist
       - [enable](#services-proxy-suite-zapret-zapret2-autohostlist-enable)
-      - [debugLog](#services-proxy-suite-zapret-zapret2-autohostlist-debuglog)
       - [extendedDetection](#services-proxy-suite-zapret-zapret2-autohostlist-extendeddetection)
       - [failThreshold](#services-proxy-suite-zapret-zapret2-autohostlist-failthreshold)
       - [failTime](#services-proxy-suite-zapret-zapret2-autohostlist-failtime)
@@ -54,7 +53,6 @@ Part of the [proxy-suite options reference](./index.md).
     - cutoff
       - [enable](#services-proxy-suite-zapret-zapret2-cutoff-enable)
       - [proxyFallback](#services-proxy-suite-zapret-zapret2-cutoff-proxyfallback)
-    - [debug](#services-proxy-suite-zapret-zapret2-debug)
     - [domains](#services-proxy-suite-zapret-zapret2-domains)
     - [excludeDomains](#services-proxy-suite-zapret-zapret2-excludedomains)
     - [ipv6](#services-proxy-suite-zapret-zapret2-ipv6)
@@ -322,14 +320,6 @@ blocked\. When off, only ` zapret2.domains ` and ` proxy-ctl zapret auto add ` a
 **Type:** boolean\
 **Default:** `true`
 
-<a id="services-proxy-suite-zapret-zapret2-autohostlist-debuglog"></a>
-## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.debugLog
-
-Log why sites are or are not learned (nfqws2’s own learner)\.
-
-**Type:** boolean\
-**Default:** `false`
-
 <a id="services-proxy-suite-zapret-zapret2-autohostlist-extendeddetection"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.autoHostlist\.extendedDetection
 
@@ -436,14 +426,6 @@ sees by IP (TUN, TProxy, per-app routing)\. Explicit direct rules still win\.
 **Type:** boolean\
 **Default:** `true`
 
-<a id="services-proxy-suite-zapret-zapret2-debug"></a>
-## services\.proxy-suite\.zapret\.zapret2\.debug
-
-Log everything nfqws2 does to the journal, every packet included\. Very verbose: for troubleshooting\.
-
-**Type:** boolean\
-**Default:** `false`
-
 <a id="services-proxy-suite-zapret-zapret2-domains"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.domains
 
@@ -544,7 +526,8 @@ only where it sees the address)\. ` proxy-ctl zapret auto retry ` gives one anot
 ## services\.proxy-suite\.zapret\.zapret2\.strategyLog
 
 Log each counted failure and strategy switch to the journal, per site
-(` proxy-ctl logs proxy-suite-zapret `)\. Without it nfqws2 logs them only with ` debug `\.
+(` proxy-ctl logs proxy-suite-zapret `)\. Without it nfqws2 logs them only with
+` debug.zapret2.packets `\.
 
 **Type:** boolean\
 **Default:** `true`

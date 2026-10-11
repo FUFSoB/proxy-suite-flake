@@ -66,6 +66,13 @@ Changes and secrets need root or the userControl group.
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
                                          terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
+  debug conns [--backend socks|tun|per-app-tun] [--host <domain|address>]... [--inbound <tag>]...
+              [--stall <s>] [--interval <s>]
+                                         the backend's connections as they open, stall and
+                                         close, with their rule, exit and bytes (needs root or
+                                         the secrets scope); --host, --inbound: only these;
+                                         --backend tun, per-app-tun: the TUN ones (root, and
+                                         debug.connectionLog on)
 
   proxy [status|on|off]                  local proxy
   proxy outbounds [list]                 outbounds, their source, and the current pick
@@ -760,7 +767,18 @@ COMPLETE = {
             "wl": "whitelist-bypass creators and joiners",
             "apps": "per-app routing profiles",
             "inbounds": "server inbounds",
+            "debug": "troubleshooting views",
             "help": "usage",
+        }
+    },
+    "debug": {"words": {"conns": "connections as they open, stall and close"}},
+    "debug conns": {
+        "flags": {
+            "--backend": "socks (default), tun or per-app-tun",
+            "--host": "only this domain, its subdomains, or this address",
+            "--inbound": "only listeners whose tag starts with this (tproxy, mixed-in, tun-in)",
+            "--stall": "seconds without an answer before a connection is stalled (0: never)",
+            "--interval": "seconds between looks",
         }
     },
     "status": {"flags": {"--json": "machine-readable state, with the GUI's overall state"}},
@@ -1538,7 +1556,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _clash_direct(method, path, body, timeout, secret):
+def _clash_direct(method, path, body, timeout, secret, api=None):
+    """api: another backend's Clash API than CLASH_API's (`debug conns --backend`)."""
     # The API is on loopback: never through the shell's HTTP(S)_PROXY.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
     data = None if body is None else json.dumps(body).encode()
@@ -1549,7 +1568,7 @@ def _clash_direct(method, path, body, timeout, secret):
     try:
         # Building the request is part of reaching the API: an unset or malformed
         # CLASH_API is "unreachable", not a traceback out of `status` or `where`.
-        request = urllib.request.Request(f"{env('CLASH_API')}{path}", data=data, method=method, headers=headers)
+        request = urllib.request.Request(f"{api or env('CLASH_API')}{path}", data=data, method=method, headers=headers)
         with opener.open(request, timeout=timeout) as r:
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
@@ -6281,6 +6300,181 @@ ALIASES = {
 }
 
 
+# --- debug ----------------------------------------------------------------------
+#
+# `debug conns`: the backend's connections as they open, stall and close, from the Clash
+# API, for failures that come and go. proxy-suite-connection-log (debug.connectionLog) runs
+# it into the journal, to look back at the time one happened.
+
+DEBUG_CONNS_SHAPE = (
+    "debug conns [--backend socks|tun|per-app-tun] [--host <domain|address>]... [--inbound <tag>]... "
+    "[--stall <seconds>] [--interval <seconds>]"
+)
+# The sing-box instances: the one behind the local proxy, global and per-app TProxy (the broker's,
+# for userControl), and the TUN ones, whose API is up only with debug.connectionLog (root's).
+DEBUG_CONNS_BACKENDS = {
+    "socks": None,
+    "tun": ("proxy-suite-tun", "CLASH_API_TUN"),
+    "per-app-tun": ("proxy-suite-per-app-tun", "CLASH_API_PER_APP_TUN"),
+}
+
+
+def _debug_clash(backend):
+    """A /connections getter for the backend: (status, body), as _clash returns."""
+    if DEBUG_CONNS_BACKENDS[backend] is None:
+        return lambda: _clash("GET", "/connections", timeout=5)
+    unit, api = DEBUG_CONNS_BACKENDS[backend]
+
+    def get():
+        # Read on every look: each start of the backend writes a new one.
+        try:
+            with open(os.path.join(runtime_dir(), unit, "clash-secret"), encoding="utf-8") as f:
+                secret = f.read().strip()
+        except FileNotFoundError:
+            return 0, None
+        except PermissionError:
+            die(f"The {backend} backend's connections need root.")
+        except (OSError, UnicodeError):
+            return 0, None
+        return _clash_direct("GET", "/connections", None, 5, secret, env(api))
+
+    return get
+
+
+class ConnectionLog:
+    """Lines for what changed between two looks at the Clash API's connections.
+
+    A connection stalls when it has sent since it last received, then receives nothing for
+    `stall` seconds: it waits on an answer. One idle both ways is not stalled. Byte counts are
+    the last look's, at most an interval old.
+    """
+
+    def __init__(self, hosts=(), inbounds=(), stall=10.0):
+        self.hosts = [h.lower().rstrip(".") for h in hosts]
+        self.inbounds = list(inbounds)
+        self.stall = stall
+        self.live = {}
+
+    def wanted(self, metadata):
+        inbound = _s(metadata.get("type") or "").partition("/")[2]
+        if self.inbounds and not any(inbound.startswith(i) for i in self.inbounds):
+            return False
+        if not self.hosts:
+            return True
+        host = _s(metadata.get("host") or "").lower().rstrip(".")
+        address = _s(metadata.get("destinationIP") or "")
+        return any(h == address or (host and _where_suffix(host, h)) for h in self.hosts)
+
+    @staticmethod
+    def describe(conn):
+        m = conn.get("metadata") or {}
+        # "tproxy/tproxy-in": the listener's tag after the type.
+        kind = _s(m.get("type") or "")
+        inbound = kind.partition("/")[2] or kind
+        address, port, host = (_s(m.get(k) or "") for k in ("destinationIP", "destinationPort", "host"))
+        dest = f"{host}:{port} ({address})" if host and host != address else f"{address}:{port}"
+        # The API lists the chain from the outbound that dials out.
+        chain = ">".join(_s(x) for x in reversed(conn.get("chains") or [])) or "?"
+        rule = " ".join(x for x in (_s(conn.get("rule") or ""), _s(conn.get("rulePayload") or "")) if x)
+        return f"{inbound} {_s(m.get('network') or '')} :{_s(m.get('sourcePort') or '')} -> {dest} via {chain} [{rule}]"
+
+    def step(self, connections, now):
+        lines, seen = [], set()
+        for conn in connections:
+            if not isinstance(conn, dict) or not conn.get("id") or not self.wanted(conn.get("metadata") or {}):
+                continue
+            seen.add(conn["id"])
+            up, down = (v if isinstance(v, int) else 0 for v in (conn.get("upload"), conn.get("download")))
+            st = self.live.get(conn["id"])
+            if st is None:
+                st = self.live[conn["id"]] = {
+                    "desc": self.describe(conn), "opened": now, "up": 0, "down": 0,
+                    "answered": 0, "waiting": None, "stalled": False,
+                }
+                lines.append(f"open    {st['desc']}")
+            if down != st["down"]:
+                if st["stalled"]:
+                    lines.append(f"resumed {st['desc']}, after {now - st['waiting']:.1f}s")
+                st.update(answered=up, waiting=None, stalled=False)
+            elif up > st["answered"] and st["waiting"] is None:
+                # A new connection has waited since it opened.
+                st["waiting"] = st["opened"] if not st["down"] else now
+            if self.stall and st["waiting"] is not None and not st["stalled"] and now - st["waiting"] >= self.stall:
+                st["stalled"] = True
+                lines.append(f"stalled {st['desc']}: no answer for {now - st['waiting']:.0f}s, up {up} B, down {down} B")
+            st["up"], st["down"] = up, down
+        # A closed connection is gone from the API: what it moved after the last look is unknown,
+        # so a short one that looked unanswered may well have been answered.
+        for cid in [c for c in self.live if c not in seen]:
+            st = self.live.pop(cid)
+            note = (", stalled, never answered" if not st["down"] else ", stalled") if st["stalled"] else ""
+            lines.append(
+                f"close   {st['desc']}: up {st['up']} B, down {st['down']} B at the last look, "
+                f"{now - st['opened']:.1f}s{note}"
+            )
+        return lines
+
+    def lost(self):
+        """Forget every connection: the backend stopped answering, or restarted."""
+        count, self.live = len(self.live), {}
+        return f"the backend's Clash API is not answering{f'; {count} connections lost from view' if count else ''}"
+
+
+def _debug_conns(*args):
+    hosts, inbounds, stall, interval, backend = [], [], 10.0, 0.5, "socks"
+    it = iter(args)
+    for arg in it:
+        value = next(it, "") if arg in ("--backend", "--host", "--inbound", "--stall", "--interval") else None
+        if not value:
+            usage(DEBUG_CONNS_SHAPE)
+        if arg == "--backend":
+            if value not in DEBUG_CONNS_BACKENDS:
+                die(f"--backend is one of: {', '.join(DEBUG_CONNS_BACKENDS)}")
+            backend = value
+        elif arg == "--host":
+            hosts.append(value)
+        elif arg == "--inbound":
+            inbounds.append(value)
+        else:
+            try:
+                number = float(value)
+            except ValueError:
+                number = -1.0
+            if number < 0 or (arg == "--interval" and number == 0):
+                die(f"{arg} takes a number of seconds{', above 0' if arg == '--interval' else ''}.")
+            stall, interval = (number, interval) if arg == "--stall" else (stall, number)
+    log = ConnectionLog(hosts, inbounds, stall)
+    connections = _debug_clash(backend)
+    # The journal stamps its own lines.
+    stamped = sys.stdout.isatty()
+    answering = None
+    while True:
+        status, body = connections()
+        now = time.monotonic()
+        if status == 403:
+            die(f"Live connections show every site visited: they need the secrets scope - {ask_group()}")
+        if status != 200 or not isinstance(body, dict):
+            lines = [log.lost()] if answering is not False else []
+            answering = False
+        else:
+            lines = ["the backend's Clash API answers again"] if answering is False else []
+            answering = True
+            # sing-box sends null with no connections.
+            lines += log.step(body.get("connections") or [], now)
+        for line in lines:
+            if stamped:
+                line = f"{time.strftime('%H:%M:%S')}.{int(time.time() * 1000) % 1000:03d} {line}"
+            print(line, flush=True)
+        time.sleep(interval if answering else 2)
+
+
+def cmd_debug(verb="", *args):
+    if verb == "conns":
+        _debug_conns(*args)
+    else:
+        usage(DEBUG_CONNS_SHAPE)
+
+
 LOGS_BACKLOG = 1000
 
 
@@ -6358,6 +6552,7 @@ COMMANDS = {
     "apps": cmd_apps,
     "inbounds": cmd_inbounds,
     "where": cmd_where,
+    "debug": cmd_debug,
     "__complete": cmd_complete,
 }
 

@@ -119,6 +119,10 @@ import ./options-doc/render-options-markdown.nix {
       name = "tools";
       summary = "Heavy helpers `proxy-ctl` can do without: lnav and curl-impersonate.";
     }
+    {
+      name = "debug";
+      summary = "Troubleshooting: backend log levels, a connection recorder, DNS and zapret2 logs.";
+    }
   ];
   defaultConfigText = lib.generators.toPretty { allowPrettyValues = true; } (
     visibleConfig eval.options.services.proxy-suite eval.config.services.proxy-suite

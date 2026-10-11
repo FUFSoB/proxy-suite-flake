@@ -13,6 +13,7 @@ let
     globalTun
     globalTproxy
     perAppRoutingTun
+    xrayLogLevel
     ;
   inherit (constants)
     globalTunIPv6Address
@@ -296,7 +297,7 @@ let
         ++ [ (finalRule (if (proxyCfg.routing.default == "proxy") then "proxy" else "direct")) ];
     in
     {
-      log.loglevel = "warning";
+      log.loglevel = xrayLogLevel;
       dns = mkDnsConfig { fakeDns = enableTunFakeDns; };
       inbounds =
         lib.optional enableMixed {

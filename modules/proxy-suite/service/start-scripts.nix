@@ -13,6 +13,7 @@ let
     xrayEnabled
     hybridEnabled
     pureXrayEnabled
+    xrayLogLevel
     constants
     zapretCutoffProxyFallback
     zapret2DirectSync
@@ -196,7 +197,8 @@ let
       RUNTIME_DIR="${runtimeDir}"
       ROUTE_MODE_STATE_FILE="${routeModeStateFile}"
       BACKEND_JQ_FILTER=${lib.escapeShellArg backendJqFilterFile}
-      XRAY_LOGLEVEL=""
+      # debug.logLevel; empty keeps each config's own "warning".
+      XRAY_LOGLEVEL=${lib.escapeShellArg (lib.optionalString (xrayLogLevel != "warning") xrayLogLevel)}
       XRAY_SINGLE_PROXY_TAG=""
       mkdir -p "$RUNTIME_DIR"
       OUTBOUNDS_JSON='[]'

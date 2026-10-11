@@ -23,6 +23,13 @@ in
     (lib.mkRenamedOptionModule (p "tray.autostart") (p "gui.autostart"))
     (lib.mkRenamedOptionModule (p "tray.pollInterval") (p "gui.refreshInterval"))
 
+    # Troubleshooting switches gathered under debug.
+    (lib.mkRenamedOptionModule (p "zapret.zapret2.debug") (p "debug.zapret2.packets"))
+    (lib.mkRenamedOptionModule (p "zapret.zapret2.autoHostlist.debugLog") (
+      p "debug.zapret2.autoHostlist"
+    ))
+    (lib.mkRenamedOptionModule (p "tgWsProxy.log.verbose") (p "debug.tgWsProxy"))
+
     # These were aliases; they are removal notices now, so there is one
     # compatibility policy instead of two.
     (rm "proxyInbounds" "Use services.proxy-suite.inbounds.")
@@ -65,7 +72,7 @@ in
     (rm "tgWsProxy.cfProxyFallback" "Use services.proxy-suite.tgWsProxy.cloudflare.fallback.")
     (rm "tgWsProxy.bufKb" "Use services.proxy-suite.tgWsProxy.bufferKiB.")
     (rm "tgWsProxy.routingMark" "Use services.proxy-suite.tgWsProxy.fwmark.")
-    (rm "tgWsProxy.verbose" "Use services.proxy-suite.tgWsProxy.log.verbose.")
+    (rm "tgWsProxy.verbose" "Use services.proxy-suite.debug.tgWsProxy.")
     (rm "tgWsProxy.logFile" "Use services.proxy-suite.tgWsProxy.log.file.")
     (rm "tgWsProxy.logMaxMb" "Use services.proxy-suite.tgWsProxy.log.maxSizeMiB.")
     (rm "tgWsProxy.logBackups" "Use services.proxy-suite.tgWsProxy.log.keep.")

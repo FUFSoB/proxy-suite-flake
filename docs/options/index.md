@@ -24,6 +24,7 @@ Update the module option docs there instead of editing these files by hand.
 | [gui](./gui.md) | The desktop app with a tray icon. |
 | [tui](./tui.md) | The `proxy-tui` terminal UI. |
 | [tools](./tools.md) | Heavy helpers `proxy-ctl` can do without: lnav and curl-impersonate. |
+| [debug](./debug.md) | Troubleshooting: backend log levels, a connection recorder, DNS and zapret2 logs. |
 
 <a id="services-proxy-suite-enable"></a>
 ## services\.proxy-suite\.enable
@@ -53,6 +54,22 @@ services.proxy-suite = {
     toolsPackage = ‹proxy-suite's patched amneziawg-tools (pkgs/amneziawg.nix)›;
     userspacePackage = ‹proxy-suite's patched amneziawg-go (pkgs/amneziawg.nix)›;
     wireproxyPackage = ‹proxy-suite's wireproxy-awg (pkgs/wireproxy-awg.nix)›;
+  };
+  debug = {
+    connectionLog = {
+      enable = false;
+      hosts = [ ];
+      inbounds = [ ];
+      interval = 0.5;
+      stallAfter = 10;
+    };
+    logLevel = "warn";
+    perAppDns = false;
+    tgWsProxy = false;
+    zapret2 = {
+      autoHostlist = false;
+      packets = false;
+    };
   };
   enable = false;
   geodata = {
@@ -319,7 +336,6 @@ services.proxy-suite = {
       file = null;
       keep = 1;
       maxSizeMiB = 5.0;
-      verbose = false;
     };
     poolSize = 4;
     proxyProtocol = false;
@@ -413,7 +429,6 @@ services.proxy-suite = {
     };
     zapret2 = {
       autoHostlist = {
-        debugLog = false;
         enable = true;
         extendedDetection = true;
         failThreshold = 3;
@@ -430,7 +445,6 @@ services.proxy-suite = {
         enable = true;
         proxyFallback = true;
       };
-      debug = false;
       domains = [ ];
       excludeDomains = [ ];
       ipv6 = false;

@@ -25,6 +25,7 @@
     ./user-control.nix
     ./kill-switch.nix
     ./host.nix
+    ./debug.nix
   ];
 
   options.services.proxy-suite.enable = lib.mkEnableOption "proxy-suite";

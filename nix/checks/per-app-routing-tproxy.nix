@@ -41,6 +41,33 @@ let
         cfg = perAppRoutingTproxyFixture.config.services.proxy-suite;
       }).perAppTproxyRulesFile;
 
+  debugFixture = evalProxySuite [
+    baseModule
+    {
+      services.proxy-suite = {
+        proxy.tun.enable = true;
+        perAppRouting = {
+          enable = true;
+          tproxy.enable = true;
+          tun.enable = true;
+        };
+        debug = {
+          logLevel = "trace";
+          perAppDns = true;
+          connectionLog = {
+            enable = true;
+            hosts = [ "twimg.com" ];
+            inbounds = [ "tproxy" ];
+            stallAfter = 3;
+          };
+        };
+      };
+    }
+  ];
+  debugServices = debugFixture.config.systemd.services;
+  dnsExecStart =
+    fixture: fixture.config.systemd.services.proxy-suite-per-app-tproxy-dns.serviceConfig.ExecStart;
+
   keepRunningFixture = evalProxySuite [
     baseModule
     {
@@ -236,6 +263,49 @@ in
       assert pkgs.lib.hasInfix "rule add fwmark 17 table 102" perAppRoutingTproxyStartScript;
       assert pkgs.lib.hasInfix "set +e" perAppRoutingTproxyStopScript;
       assert pkgs.lib.hasInfix "rule del fwmark 17 table 102" perAppRoutingTproxyStopScript;
+      true
+    )
+
+    # -- debug: the forwarder logs lookups, the recorder runs, XRay follows the level --
+    (
+      assert pkgs.lib.hasInfix " --log " (dnsExecStart debugFixture);
+      assert !pkgs.lib.hasInfix "--log" (dnsExecStart perAppRoutingTproxyFixture);
+      assert !(perAppRoutingTproxyFixture.config.systemd.services ? proxy-suite-connection-log);
+      assert pkgs.lib.hasInfix "/bin/proxy-ctl debug conns --backend socks --stall 3 --interval "
+        debugServices.proxy-suite-connection-log.serviceConfig.ExecStart;
+      assert pkgs.lib.hasSuffix " --host twimg.com --inbound tproxy"
+        debugServices.proxy-suite-connection-log.serviceConfig.ExecStart;
+      # One per sing-box instance, up with it, never keeping it up.
+      assert builtins.all
+        (
+          { name, backend }:
+          let
+            unit = debugServices."proxy-suite-connection-log${name}";
+            service = "proxy-suite-${backend}.service";
+          in
+          pkgs.lib.hasInfix " --backend ${backend} " unit.serviceConfig.ExecStart
+          && unit.partOf == [ service ]
+          && unit.wantedBy == [ service ]
+          && unit.bindsTo or [ ] == [ ]
+        )
+        [
+          {
+            name = "";
+            backend = "socks";
+          }
+          {
+            name = "-tun";
+            backend = "tun";
+          }
+          {
+            name = "-per-app-tun";
+            backend = "per-app-tun";
+          }
+        ];
+      # XRay has no "trace".
+      assert pkgs.lib.hasInfix "\nXRAY_LOGLEVEL=debug\n" (
+        generated.readDerivation debugServices.proxy-suite-socks.serviceConfig.ExecStart
+      );
       true
     )
   ];

@@ -32,7 +32,6 @@ let
         listener.port = 2443;
         listener.address = "0.0.0.0";
         secretFile = "/run/secrets/tg-ws-proxy";
-        log.verbose = true;
         log.file = "/var/log/tg-ws-proxy.log";
         log.maxSizeMiB = 2.5;
         log.keep = 3;
@@ -47,6 +46,7 @@ let
         fakeTlsDomain = "mask.example.com";
         proxyProtocol = true;
       };
+      services.proxy-suite.debug.tgWsProxy = true;
     }
   ];
   tgAllOptionsStartScript = unitScript tgAllOptions "proxy-suite-tg-ws-proxy";

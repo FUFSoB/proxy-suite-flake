@@ -68,6 +68,9 @@ in
     withCurlImpersonate = cfg.tools.curlImpersonate.enable;
     env = {
       CLASH_API = "http://127.0.0.1:${toString singBoxCfg.clashApiPort}";
+      # The TUN backends' own, root's alone (`debug conns --backend`).
+      CLASH_API_TUN = "http://127.0.0.1:${toString constants.globalTunClashApiPort}";
+      CLASH_API_PER_APP_TUN = "http://127.0.0.1:${toString constants.perAppTunClashApiPort}";
       SELECTION = selectionMode;
       SUB_TAGS_FILE = toString subscriptionTagsFile;
       SUB_CACHE_DIR = subscriptionCacheDir;

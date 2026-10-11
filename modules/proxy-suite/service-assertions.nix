@@ -289,6 +289,9 @@ let
     (mkAssertion (!(proxyCfg.autoProxy.enable && pureXrayEnabled))
       "proxy-suite: proxy.autoProxy needs the sing-box backend: learned routes are local rule-sets that sing-box reloads from disk, and pure XRay has no equivalent"
     )
+    (mkAssertion (!cfg.debug.connectionLog.enable || singBoxEnabled)
+      "proxy-suite: debug.connectionLog reads sing-box's Clash API: it needs proxy.enable = true and proxy.backend = \"sing-box\" or \"hybrid\""
+    )
     (mkAssertion
       (!cfg.sshProxy.enable || (cfg.sshProxy.server.user != null && cfg.sshProxy.server.host != null))
       "proxy-suite: sshProxy.server.user and sshProxy.server.host are required when sshProxy.enable = true"

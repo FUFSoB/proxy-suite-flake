@@ -176,7 +176,7 @@ let
   # (an app or a domain sent through a tunnel) it would otherwise take the default route,
   # away from the connection it was meant to precede; without such routing it is a no-op.
   optPrefix = lib.concatStringsSep " " (
-    lib.optional zapret2Cfg.debug "--debug=1"
+    lib.optional cfg.debug.zapret2.packets "--debug=1"
     ++ [
       "--bind-fix4"
       "--bind-fix6"
@@ -265,7 +265,7 @@ let
             "AUTOHOSTLIST_INCOMING_MAXSEQ=${toString autoCfg.incomingMaxseq}"
             "AUTOHOSTLIST_UDP_OUT=${toString autoCfg.udpOut}"
             "AUTOHOSTLIST_UDP_IN=${toString autoCfg.udpIn}"
-            "AUTOHOSTLIST_DEBUGLOG=${if autoCfg.debugLog then "1" else "0"}"
+            "AUTOHOSTLIST_DEBUGLOG=${if cfg.debug.zapret2.autoHostlist then "1" else "0"}"
             ""
           ]
         )

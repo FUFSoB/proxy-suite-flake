@@ -94,12 +94,6 @@ in
     };
 
     log = {
-      verbose = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Log debug messages.";
-      };
-
       file = mkOption {
         type = types.nullOr types.str;
         default = null;
