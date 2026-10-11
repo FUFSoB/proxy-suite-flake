@@ -132,6 +132,8 @@ def _xray_stream(listener: dict, tag: str) -> dict:
         masquerade = hysteria.get("masquerade")
         if masquerade:
             settings["masquerade"] = {"type": "proxy", "url": masquerade, "rewriteHost": hysteria.get("rewriteHost", True)}
+            if hysteria.get("xForwarded"):
+                settings["masquerade"]["xForwarded"] = True
         stream = {
             "network": "hysteria",
             "hysteriaSettings": settings,

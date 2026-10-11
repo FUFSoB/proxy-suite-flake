@@ -604,6 +604,19 @@ let
           '';
         };
 
+        hysteria.xForwarded = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Tell `masquerade` the client's address in `X-Forwarded-For` (with
+            `X-Forwarded-Host` and `X-Forwarded-Proto`), for a `masquerade` that is this
+            host's own web server: what it shows or limits is then the client's, not this
+            host's. The header is XRay's alone (any the client sent is dropped), so trust it
+            only from the address XRay connects from. Another operator's site would learn
+            every probe's address.
+          '';
+        };
+
         hysteria.salamander = {
           enable = mkOption {
             type = types.bool;

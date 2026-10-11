@@ -344,6 +344,7 @@ LISTENER_SCHEMA = {
     "hysteria": {
         "masquerade": _nullable(_nonspace),
         "rewriteHost": _is_bool,
+        "xForwarded": _is_bool,
         "salamander": {
             "enable": _is_bool,
             "password": _nullable(_nonspace),
@@ -669,6 +670,8 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool, shared: 
          "hysteria.masquerade is for hysteria2 listeners only")
     need(hysteria.get("rewriteHost", True) or hysteria.get("masquerade") is not None,
          "hysteria.rewriteHost = false needs hysteria.masquerade")
+    need(not hysteria.get("xForwarded", False) or hysteria.get("masquerade") is not None,
+         "hysteria.xForwarded needs hysteria.masquerade")
     # XRay dials both for anyone, past routing: not this host or its LAN (a local decoy is
     # declared). Names are not resolved, so port 443 keeps one that resolves inside to TLS.
     if reality["enable"]:
@@ -1303,6 +1306,8 @@ def listener_from_flags(kind: str, args: argparse.Namespace) -> dict:
         hysteria["masquerade"] = args.masquerade
     if args.keep_host:
         hysteria["rewriteHost"] = False
+    if args.x_forwarded:
+        hysteria["xForwarded"] = True
     if args.salamander:
         hysteria["salamander"] = {"enable": True}
     if hysteria:
@@ -1464,6 +1469,7 @@ def main(argv: list[str] | None = None) -> int:
                        ("--masquerade", str)):
         add.add_argument(flag, type=kind)
     add.add_argument("--keep-host", action="store_true")
+    add.add_argument("--x-forwarded", action="store_true")
     add.add_argument("--salamander", action="store_true")
     add.add_argument("--user", action="append", default=[])
 

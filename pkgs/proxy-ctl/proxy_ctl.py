@@ -239,6 +239,7 @@ INBOUND_ADD_FLAGS = {
     "--order": "position in links and subscriptions",
     "--masquerade": "hysteria2: site shown to anything else",
     "--keep-host": "hysteria2: pass --masquerade the name asked for (this host's own web server)",
+    "--x-forwarded": "hysteria2: tell --masquerade the client's address (this host's own web server)",
     "--salamander": "hysteria2: Salamander obfuscation",
     "--user": "a user it accepts",
 }

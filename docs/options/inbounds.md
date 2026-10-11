@@ -68,6 +68,7 @@ Part of the [proxy-suite options reference](./index.md).
           - [enable](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-enable)
           - [password](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-password)
           - [passwordFile](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-passwordfile)
+        - [xForwarded](#services-proxy-suite-inbounds-listeners-name-hysteria-xforwarded)
       - [jsonFile](#services-proxy-suite-inbounds-listeners-name-jsonfile)
       - [method](#services-proxy-suite-inbounds-listeners-name-method)
       - [order](#services-proxy-suite-inbounds-listeners-name-order)
@@ -698,6 +699,19 @@ generated on first start and kept in the state directory\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"/run/secrets/proxy-inbound-salamander"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-xforwarded"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.xForwarded
+
+Tell ` masquerade ` the client’s address in ` X-Forwarded-For ` (with
+` X-Forwarded-Host ` and ` X-Forwarded-Proto `), for a ` masquerade ` that is this
+host’s own web server: what it shows or limits is then the client’s, not this
+host’s\. The header is XRay’s alone (any the client sent is dropped), so trust it
+only from the address XRay connects from\. Another operator’s site would learn
+every probe’s address\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-inbounds-listeners-name-jsonfile"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.jsonFile

@@ -1384,6 +1384,9 @@ let
       == "https://www.example.com"
     ))
     (ok (lib.head (builtins.filter (l: l.tag == "hy2-in") firewallSpec.listeners)).hysteria.rewriteHost)
+    (ok (
+      !(lib.head (builtins.filter (l: l.tag == "hy2-in") firewallSpec.listeners)).hysteria.xForwarded
+    ))
     (ok (noFirewallFixture.config.networking.firewall.allowedTCPPorts == [ ]))
 
     # The unit exists, and only waits on the client stack when it relays.

@@ -860,6 +860,9 @@ let
         !proxyInboundsEnabled || l.hysteria.rewriteHost || l.hysteria.masquerade != null
       ) "${prefix}: hysteria.rewriteHost = false needs hysteria.masquerade")
       (mkAssertion (
+        !proxyInboundsEnabled || !l.hysteria.xForwarded || l.hysteria.masquerade != null
+      ) "${prefix}: hysteria.xForwarded needs hysteria.masquerade")
+      (mkAssertion (
         !proxyInboundsEnabled
         || (!l.hysteria.salamander.enable && l.hysteria.portHopping == null)
         || l.type == "hysteria2"
