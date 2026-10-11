@@ -857,6 +857,9 @@ let
         !proxyInboundsEnabled || l.hysteria.masquerade == null || l.type == "hysteria2"
       ) "${prefix}: hysteria.masquerade is for hysteria2 listeners only")
       (mkAssertion (
+        !proxyInboundsEnabled || l.hysteria.rewriteHost || l.hysteria.masquerade != null
+      ) "${prefix}: hysteria.rewriteHost = false needs hysteria.masquerade")
+      (mkAssertion (
         !proxyInboundsEnabled
         || (!l.hysteria.salamander.enable && l.hysteria.portHopping == null)
         || l.type == "hysteria2"

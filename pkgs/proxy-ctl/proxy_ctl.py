@@ -238,6 +238,7 @@ INBOUND_ADD_FLAGS = {
     "--fingerprint": "browser fingerprint in share links (fp)",
     "--order": "position in links and subscriptions",
     "--masquerade": "hysteria2: site shown to anything else",
+    "--keep-host": "hysteria2: pass --masquerade the name asked for (this host's own web server)",
     "--salamander": "hysteria2: Salamander obfuscation",
     "--user": "a user it accepts",
 }

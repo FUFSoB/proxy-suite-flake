@@ -465,7 +465,11 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(stream["network"], "hysteria")
         self.assertEqual(stream["security"], "tls")
         self.assertEqual(stream["tlsSettings"]["alpn"], ["h3"])
-        self.assertEqual(stream["hysteriaSettings"]["masquerade"]["url"], "https://www.example.com")
+        self.assertEqual(stream["hysteriaSettings"]["masquerade"],
+                         {"type": "proxy", "url": "https://www.example.com", "rewriteHost": True})
+        # This host's own web server: the name the client asked for goes on to it.
+        own = render_xray_inbound(dict(spec, hysteria={"masquerade": "https://www.example.com", "rewriteHost": False}))
+        self.assertFalse(own["streamSettings"]["hysteriaSettings"]["masquerade"]["rewriteHost"])
         link = build_share_link(spec, "vpn.example.com")
         self.assertTrue(link.startswith("hysteria2://p%40ss%2Fword@vpn.example.com:8443?"), link)
         self.assertEqual(link_params(link)["alpn"], "h3")

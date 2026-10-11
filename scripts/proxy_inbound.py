@@ -128,9 +128,10 @@ def _xray_stream(listener: dict, tag: str) -> dict:
     if listener["type"] == "hysteria2":
         # QUIC: the transport is hysteria's own, always under TLS.
         settings = {"version": 2}
-        masquerade = (listener.get("hysteria") or {}).get("masquerade")
+        hysteria = listener.get("hysteria") or {}
+        masquerade = hysteria.get("masquerade")
         if masquerade:
-            settings["masquerade"] = {"type": "proxy", "url": masquerade, "rewriteHost": True}
+            settings["masquerade"] = {"type": "proxy", "url": masquerade, "rewriteHost": hysteria.get("rewriteHost", True)}
         stream = {
             "network": "hysteria",
             "hysteriaSettings": settings,

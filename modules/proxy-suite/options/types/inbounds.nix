@@ -593,6 +593,17 @@ let
           `null`: answer 404.
         '' "https://www.example.com";
 
+        hysteria.rewriteHost = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Ask `masquerade` for its own name, whatever name the client asked for. `false`
+            passes the client's on, for a `masquerade` that is this host's own web server: a
+            probe then gets the site it named, as it would over TCP, instead of the same one
+            for every name. Another operator's site would answer those names with an error.
+          '';
+        };
+
         hysteria.salamander = {
           enable = mkOption {
             type = types.bool;

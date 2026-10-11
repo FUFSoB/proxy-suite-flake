@@ -63,6 +63,7 @@ Part of the [proxy-suite options reference](./index.md).
       - hysteria
         - [masquerade](#services-proxy-suite-inbounds-listeners-name-hysteria-masquerade)
         - [portHopping](#services-proxy-suite-inbounds-listeners-name-hysteria-porthopping)
+        - [rewriteHost](#services-proxy-suite-inbounds-listeners-name-hysteria-rewritehost)
         - salamander
           - [enable](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-enable)
           - [password](#services-proxy-suite-inbounds-listeners-name-hysteria-salamander-password)
@@ -656,6 +657,17 @@ ephemeral range (32768 and up on Linux)\.
 **Type:** null or string matching the pattern \[0-9]±\[0-9]+\
 **Default:** `null`\
 **Example:** `"20000-30000"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-hysteria-rewritehost"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.rewriteHost
+
+Ask ` masquerade ` for its own name, whatever name the client asked for\. ` false `
+passes the client’s on, for a ` masquerade ` that is this host’s own web server: a
+probe then gets the site it named, as it would over TCP, instead of the same one
+for every name\. Another operator’s site would answer those names with an error\.
+
+**Type:** boolean\
+**Default:** `true`
 
 <a id="services-proxy-suite-inbounds-listeners-name-hysteria-salamander-enable"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.salamander\.enable

@@ -19,7 +19,8 @@ LISTENER_DEFAULTS = {
     "address": "::",
     "fallbacks": [],
     "flow": None,
-    "hysteria": {"masquerade": None, "portHopping": None, "salamander": {"enable": False, "password": None, "passwordFile": None}},
+    "hysteria": {"masquerade": None, "portHopping": None, "rewriteHost": True,
+                 "salamander": {"enable": False, "password": None, "passwordFile": None}},
     "method": "2022-blake3-aes-128-gcm",
     "order": 1000,
     "port": 443,
@@ -278,7 +279,7 @@ class RuntimeTest(unittest.TestCase):
             port=20001, listen=None, via=None, share_port=None, share_address=None, fingerprint="firefox", order=None, method=None,
             flow="vision", transport=None, path=None, host=None, mode=None, service_name=None, tls=None, alpn=None,
             sni=None, reality="www.example.com,example.com", reality_dest=None, short_id=None, masquerade=None,
-            salamander=False, user=["bob"],
+            keep_host=False, salamander=False, user=["bob"],
         )
         entry = rt.listener_from_flags("vless", args)
         self.assertEqual(entry["reality"]["dest"], "www.example.com:443")
@@ -345,6 +346,11 @@ class RuntimeTest(unittest.TestCase):
             # A name may resolve inside (localtest.me is 127.0.0.1): a web port only.
             ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
               "hysteria": {"masquerade": "http://localtest.me:9090/"}}, "masquerade .* port 80 or 443"),
+            # Nothing to pass the name to: XRay answers 404.
+            ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
+              "hysteria": {"rewriteHost": False}}, "rewriteHost = false needs hysteria.masquerade"),
+            ({"type": "hysteria2", "port": 20001, "tls": {"certificate": "main"},
+              "hysteria": {"masquerade": "https://www.example.com", "rewriteHost": "no"}}, "rewriteHost: invalid value"),
             # Values XRay refuses, with the declared listeners along with them.
             ({"type": "vless", "port": 20001, "reality": {"enable": True, "serverNames": ["a.com"], "shortIds": ["abc"]}},
              "shortIds: invalid"),
@@ -556,6 +562,12 @@ class RuntimeTest(unittest.TestCase):
         self.assertIn("already exists", err)
         status, out, _ = self.run_main("show", "hy")
         self.assertTrue(json.loads(out)["hysteria"]["salamander"]["enable"])
+        self.assertNotIn("rewriteHost", json.loads(out)["hysteria"])
+        status, out, _ = self.run_main("add", "hy-own", "hysteria2", "--port", "20007", "--tls", "main",
+                                       "--masquerade", "https://www.example.com", "--keep-host", "--user", "alice")
+        self.assertEqual(status, 0, out)
+        status, out, _ = self.run_main("show", "hy-own")
+        self.assertEqual(json.loads(out)["hysteria"], {"masquerade": "https://www.example.com", "rewriteHost": False})
 
     def test_check_names_the_awg_unit_when_its_peers_change(self):
         users = os.path.join(self.tmp.name, "users.json")
