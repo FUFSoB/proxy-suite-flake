@@ -305,7 +305,9 @@ let
       }
 
       # $1 kind, $2 the outbound: whether its backend takes it, as one it refuses would fail
-      # the whole start. Alone (its references dropped), as the service user, from stdin.
+      # the whole start. Alone (its references dropped), as the service user, from stdin:
+      # read off fd 0 ("stdin", "stdin:"), as reopening /dev/stdin - root's 0600 pipe - is
+      # denied to the service user.
       _proxy_suite_check_json_outbound() {
         local kind="$1" ob="$2" as=()
         [ "$(${pkgs.coreutils}/bin/id -u)" = 0 ] && as=(${constants.runAsServiceUser pkgs [ ]})
@@ -313,7 +315,7 @@ let
           ${lib.optionalString (singBoxBin != null) ''
             sing-box)
               ${jq} -c '{outbounds: [del(.detour, .domain_resolver) | select(.type != "selector" and .type != "urltest")]}' <<< "$ob" \
-                | "''${as[@]}" ${singBoxBin} check -c /dev/stdin >/dev/null 2>&1
+                | "''${as[@]}" ${singBoxBin} check -c stdin >/dev/null 2>&1
               ;;
           ''}
           ${lib.optionalString (xrayBin != null) ''
