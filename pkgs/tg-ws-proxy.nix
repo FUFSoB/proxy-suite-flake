@@ -5,8 +5,8 @@ let
   src = pkgs.fetchFromGitHub {
     owner = "Flowseal";
     repo = "tg-ws-proxy";
-    rev = "v1.11.1";
-    hash = "sha256-kn+OsMxgwbM+KsKj+E4Qq7JZXzB9Lco83W1/tgxRVwc=";
+    rev = "v1.11.2";
+    hash = "sha256-oX6fdrsqeLwcwGJsI+0bj/y+5JM2ap+d3HuqLmnViho=";
   };
 
   pythonEnv = pkgs.python3.withPackages (
