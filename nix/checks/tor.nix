@@ -88,6 +88,8 @@ let
 
   relayTorStart = torStartOf (mkFixture "sing-box" { tor.clientOnly = false; });
 
+  awakeTorStart = torStartOf (mkFixture "sing-box" { tor.keepAwake = true; });
+
   noOnion = mkFixture "sing-box" { tor.routeOnion = false; };
   noOnionTun = mkTunConfig noOnion;
 
@@ -469,6 +471,9 @@ in
         && hasInfix "DNSPort 0" singBoxTorStart
         && hasInfix "ClientOnly 1" singBoxTorStart
         && !(hasInfix "ClientOnly" relayTorStart)
+        && !(hasInfix "Dormant" singBoxTorStart)
+        && hasInfix "DormantTimeoutEnabled 0" awakeTorStart
+        && hasInfix "DormantCanceledByStartup 1" awakeTorStart
         && hasInfix "ControlSocket unix:$RUNTIME_DIRECTORY/control/socket" singBoxTorStart
         && !(hasInfix "UseBridges" singBoxTorStart)
         && !(hasInfix "Socks5Proxy" singBoxTorStart)

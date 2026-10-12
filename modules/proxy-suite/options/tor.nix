@@ -56,6 +56,17 @@ in
       '';
     };
 
+    keepAwake = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Never let Tor go dormant. By default it does after a day without use, and from then on
+        only rebuilds its circuits when the next connection comes: the first .onion after a quiet
+        spell may wait long enough to fail. Turn on where clients expect .onion at once, as on a
+        server whose inbounds route it. A dormant Tor also starts dormant again; this wakes it.
+      '';
+    };
+
     upstream = mkOption {
       type = types.enum [
         "direct"

@@ -89,6 +89,10 @@ let
         "CookieAuthentication 0"
       ]
       ++ lib.optional t.clientOnly "ClientOnly 1"
+      ++ lib.optionals t.keepAwake [
+        "DormantTimeoutEnabled 0"
+        "DormantCanceledByStartup 1"
+      ]
       ++ (if t.asOutbound then [ "SocksPort 127.0.0.1:${toString t.socksPort}" ] else [ "SocksPort 0" ])
       ++ lib.optionals bridgesEnabled [
         "UseBridges 1"

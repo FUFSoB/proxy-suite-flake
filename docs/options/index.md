@@ -359,6 +359,7 @@ services.proxy-suite = {
     clientOnly = true;
     enable = false;
     extraConfig = "";
+    keepAwake = false;
     lyrebirdPackage = pkgs.lyrebird;
     onionService = {
       enable = false;

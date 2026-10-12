@@ -15,6 +15,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [lines](#services-proxy-suite-tor-bridges-lines)
   - [clientOnly](#services-proxy-suite-tor-clientonly)
   - [extraConfig](#services-proxy-suite-tor-extraconfig)
+  - [keepAwake](#services-proxy-suite-tor-keepawake)
   - [lyrebirdPackage](#services-proxy-suite-tor-lyrebirdpackage)
   - onionService
     - [enable](#services-proxy-suite-tor-onionservice-enable)
@@ -100,6 +101,17 @@ Extra torrc lines\.
   StrictNodes 1
 ''
 ```
+
+<a id="services-proxy-suite-tor-keepawake"></a>
+## services\.proxy-suite\.tor\.keepAwake
+
+Never let Tor go dormant\. By default it does after a day without use, and from then on
+only rebuilds its circuits when the next connection comes: the first \.onion after a quiet
+spell may wait long enough to fail\. Turn on where clients expect \.onion at once, as on a
+server whose inbounds route it\. A dormant Tor also starts dormant again; this wakes it\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-tor-lyrebirdpackage"></a>
 ## services\.proxy-suite\.tor\.lyrebirdPackage
