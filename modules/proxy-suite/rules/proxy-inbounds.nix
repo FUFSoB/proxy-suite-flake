@@ -61,6 +61,22 @@ let
     outboundTag = "block";
   };
 
+  # Whatever the listener, its via, or a proxy exception: what hosters close servers over.
+  # Sniffing tells BitTorrent apart whatever destOverride lists (proxy_inbound.py).
+  abuseRules =
+    lib.optional proxyInboundsCfg.routing.blockTorrent {
+      type = "field";
+      ruleTag = "inbound-block-torrent";
+      protocol = [ "bittorrent" ];
+      outboundTag = "block";
+    }
+    ++ lib.optional (proxyInboundsCfg.routing.blockPorts != [ ]) {
+      type = "field";
+      ruleTag = "inbound-block-ports";
+      port = lib.concatMapStringsSep "," toString proxyInboundsCfg.routing.blockPorts;
+      outboundTag = "block";
+    };
+
   # The address clients dial must stay reachable even when blockRu covers it
   # (a .ru domain or IP). After blockPrivate, so it cannot open the LAN. Its aliases
   # too: routing.via usually cannot loop back to this host, so they would fail there.
@@ -308,6 +324,7 @@ let
   xrayInboundRules =
     onionRule
     ++ blockPrivateRule
+    ++ abuseRules
     ++ serverAddressRule
     ++ proxyDomainRule
     ++ proxyIpRule

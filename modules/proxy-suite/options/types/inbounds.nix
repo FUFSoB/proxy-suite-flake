@@ -35,6 +35,86 @@ let
         AmneziaWG tunnel IPv4 address, inside `amneziaWg.subnet`. `null`: the lowest free one,
         kept for as long as the user exists.
       '' "10.66.0.10";
+
+      # Read by scripts/inbound_policy.py, with inbounds.manager. What the manager is told at
+      # runtime (`proxy-ctl inbounds users set`, its API) overrides these field by field.
+      policy = {
+        enabled = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Whether the user may connect. Needs `inbounds.manager`, as every `policy` field does.";
+        };
+        expiresAt = mkOption {
+          type = types.nullOr (
+            types.either types.ints.unsigned (
+              types.strMatching "[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.]+([+-][0-9:]+|Z)?)?"
+            )
+          );
+          default = null;
+          description = ''
+            When the user's access ends: a date (the end of that day, local time), an ISO time,
+            or a Unix time. Their connections are cut then, and their subscription still says
+            when it ended.
+          '';
+          example = "2026-12-31";
+        };
+        expiresAfter = mkOption {
+          type = types.nullOr (types.either types.ints.positive (types.strMatching "[0-9]+[mhdw]"));
+          default = null;
+          description = ''
+            A term that starts with the user's first connection, for access sold ahead: seconds,
+            or a number with m, h, d or w. Until they connect the user is on hold, and when
+            they do `expiresAt` is set to that much later. An `expiresAt` given wins.
+          '';
+          example = "30d";
+        };
+        trafficLimit = mkOption {
+          type = types.nullOr (
+            types.either types.ints.unsigned (types.strMatching "[0-9]+(\\.[0-9]+)?[KMGTP]?(i?B)?")
+          );
+          default = null;
+          description = ''
+            Traffic allowance, up and down together: bytes, or with K, M, G, T (binary units, as
+            clients show them). Past it the user is switched off until the period renews or the
+            traffic is reset.
+          '';
+          example = "50G";
+        };
+        trafficPeriod = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "daily"
+              "weekly"
+              "monthly"
+            ]
+          );
+          default = null;
+          description = ''
+            How often the allowance renews, at local midnight: daily, weekly, or monthly on the
+            day the count began. `null`: never; only a reset starts it over.
+          '';
+        };
+        ipLimit = mkOption {
+          type = types.nullOr types.ints.positive;
+          default = null;
+          description = ''
+            How many addresses may use the user at once. The ones past it that came last are
+            banned for `inbounds.manager.ipLimit.banTime` from the user's ports. Not on
+            AmneziaWG, whose peer has one address anyway, nor behind a PROXY-protocol front.
+          '';
+          example = 2;
+        };
+        speedLimit = mkOption {
+          type = types.nullOr (types.strMatching "[0-9]+(\\.[0-9]+)?[kKMG]?(/[0-9]+(\\.[0-9]+)?[kKMG]?)?");
+          default = null;
+          description = ''
+            Speed limit in bits per second, decimal (k, M, G): one rate for both ways, or
+            "down/up". Needs `inbounds.manager.speedLimits.enable`. On socks and http listeners
+            it does not apply.
+          '';
+          example = "20M/5M";
+        };
+      };
     };
   };
 

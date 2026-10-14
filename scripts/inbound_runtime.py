@@ -37,6 +37,8 @@ import time
 import urllib.parse
 import uuid
 
+import inbound_policy
+
 # User names and listener tags: they become file names, XRay emails and tags, and URL parts.
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 MAX_ENTRY_BYTES = 65536
@@ -841,17 +843,55 @@ def number_users(spec: dict, names: list[str], state_users: dict, warnings: list
     return numbered
 
 
-def merge_state(spec: dict, state: dict, check_ports: bool = False) -> tuple[dict, dict, list[str]]:
+# Listener types whose XRay inbound runs with no client at all, so a user switched off by
+# the manager leaves it in place, ready to take them back without a restart. A Shadowsocks
+# listener has a client list only with more than one user (render_xray_inbound).
+EMPTY_CLIENTS_TYPES = ("vless", "vmess", "trojan", "hysteria2")
+
+
+def _runs_without_clients(listener: dict) -> bool:
+    if listener.get("type") in EMPTY_CLIENTS_TYPES:
+        return True
+    return listener.get("type") == "shadowsocks" and len(listener["users"]) > 1
+
+
+def apply_statuses(merged: dict, statuses: dict, warnings: list[str]) -> None:
+    """The manager's view of each user (inbound_policy.statuses): "active" and "level" on
+    every listener's users. A listener whose users are all switched off stays when it runs
+    without clients, and is left out otherwise, as one without users is."""
+    kept = []
+    for listener in merged["listeners"]:
+        for user in listener["users"]:
+            view = statuses.get(user["name"]) or {}
+            user["active"] = view.get("active", True)
+            user["level"] = view.get("level", 0)
+        if (
+            listener["users"]
+            and listener.get("type") not in (None, "amneziawg")
+            and not any(user["active"] for user in listener["users"])
+            and not _runs_without_clients(listener)
+        ):
+            warnings.append(f"listener '{listener['tag']}' has no active users; not started")
+            continue
+        kept.append(listener)
+    merged["listeners"] = kept
+
+
+def merge_state(spec: dict, state: dict, check_ports: bool | set = False, statuses: dict | None = None) -> tuple[dict, dict, list[str]]:
     """The spec with the runtime entries merged in, what was made of them, and warnings.
 
     The result's "runtime" key holds {"listeners": [runtime tags kept], "users": [runtime
     names kept], "selfSources": [...], "problems": {("user"|"listener", name): [why]}}.
+    statuses: the manager's, by user name (inbound_policy.statuses); None leaves everyone
+    active, at level 0.
     """
     runtime = spec.get("runtime")
     merged = copy.deepcopy(spec)
     result = {"listeners": [], "users": [], "selfSources": [], "problems": {}}
     if not runtime:
-        return merged, result, []
+        warnings: list[str] = []
+        apply_statuses(merged, statuses or {}, warnings)
+        return merged, result, warnings
     warnings: list[str] = []
     problems: dict = result["problems"]
 
@@ -948,7 +988,11 @@ def merge_state(spec: dict, state: dict, check_ports: bool = False) -> tuple[dic
             why = [f"cannot be checked: {exc}"]
         if listener["port"] in declared_ports or listener["port"] in used_ports:
             why.append(f"port {listener['port']} is taken by another listener")
-        if not why and check_ports and not port_free(listener["listen"], listener["port"], _protocols(listener)):
+        # check_ports may name the ports the running XRay holds already (inbound_apply.py):
+        # those are its own, not taken.
+        held = check_ports if isinstance(check_ports, (set, frozenset)) else set()
+        if (not why and check_ports and listener["port"] not in held
+                and not port_free(listener["listen"], listener["port"], _protocols(listener))):
             why.append(f"port {listener['port']} is in use on this host")
         if why:
             for message in why:
@@ -1005,16 +1049,21 @@ def merge_state(spec: dict, state: dict, check_ports: bool = False) -> tuple[dic
     }
     result["users"] = sorted(users)
     result["selfSources"] = number_users(spec, sorted(on_xray), state["users"], warnings)
+    apply_statuses(merged, statuses or {}, warnings)
+    result["listeners"] = [tag for tag in result["listeners"] if any(l["tag"] == tag for l in merged["listeners"])]
     return merged, result, warnings
 
 
-def merge(spec: dict, check_ports: bool = False) -> tuple[dict, dict, list[str]]:
-    """merge_state() on the spool the spec names, as the services read it at start."""
+def merge(spec: dict, check_ports: bool | set = False, now: float | None = None) -> tuple[dict, dict, list[str]]:
+    """merge_state() on the spool the spec names, as the services read it at start, with
+    the manager's statuses when it is on."""
     runtime = spec.get("runtime")
-    if not runtime:
-        return spec, {"listeners": [], "users": [], "selfSources": [], "problems": {}}, []
-    state, warnings = load_spool(runtime["spool"])
-    merged, result, more = merge_state(spec, state, check_ports)
+    state, warnings = load_spool(runtime["spool"]) if runtime else ({"users": {}, "listeners": {}}, [])
+    statuses = inbound_policy.statuses(spec, state["users"], now) if spec.get("manager") else None
+    merged, result, more = merge_state(spec, state, check_ports, statuses)
+    if spec.get("manager"):
+        # Users whose subscription URL the manager moved on (proxy_inbound.subscription_token).
+        merged["subscriptionSalts"] = inbound_policy.load_state(spec["manager"]["stateFile"])["subscriptions"]
     return merged, result, warnings + more
 
 

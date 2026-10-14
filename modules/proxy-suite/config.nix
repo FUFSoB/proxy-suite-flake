@@ -114,6 +114,18 @@ let
   # appear here only as paths; the script reads them at runtime.
   proxyInboundsSpec = {
     runtime = if derived.proxyInboundsRuntimeEnabled then runtimeSpec else null;
+    # inbounds.manager, for inbound_policy.py: where the policies and what they are measured
+    # against are. null: every user active, at level 0, as without it.
+    manager =
+      if derived.proxyInboundsManagerEnabled then
+        {
+          policyFile = "${derived.constants.inboundsManagerDir}/policy.json";
+          stateFile = "${derived.constants.inboundsManagerDir}/state.json";
+          statsFile = derived.constants.inboundStatsFile;
+          speedLimits = derived.proxyInboundsSpeedLimits;
+        }
+      else
+        null;
     # Every declared user, on a listener or not, and their serverSource numbers: what
     # `proxy-ctl inbounds users` lists, and what runtime users go around. Secrets as paths.
     users = derived.proxyInboundsCfg.users;
@@ -126,6 +138,18 @@ let
     };
     serverAddress = derived.proxyInboundsCfg.serverAddress;
     shareLinks = derived.proxyInboundsCfg.shareLinks;
+    # The config's key (a path), or where the generated one is kept (null: the renderer makes
+    # it on first start), or neither (false).
+    subscriptionKeyFile =
+      let
+        keyFile = derived.proxyInboundsCfg.subscriptions.keyFile;
+      in
+      if builtins.isString keyFile then keyFile else null;
+    subscriptionKeyStateFile =
+      if derived.proxyInboundsCfg.subscriptions.keyFile == null then
+        "${cfg.host.stateDir}/inbounds/subscription-key"
+      else
+        null;
     # Listeners the onion service carries, which get a second set of links to it.
     onionListeners = map (ib: ib.tag) derived.torOnionInbounds;
     inherit (inboundRules) sniffDomainsExcluded;

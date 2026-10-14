@@ -2175,6 +2175,141 @@ class OutboundTestTest(EnvTest):
         self.assertIn("proxy-suite group, or re-run with sudo", err)
 
 
+class InboundManagerTest(EnvTest):
+    """inbounds.manager through proxy-ctl: requests to its socket, its answers shown."""
+
+    ROW = {
+        "name": "alice", "source": "runtime", "active": False, "reasons": ["traffic"], "listeners": ["vless-in"],
+        "problems": [], "policy": {"trafficLimit": 1073741824, "trafficPeriod": "monthly", "expiresAt": None, "ipLimit": 2,
+                                   "speedLimit": {"up": 5000000, "down": 20000000}, "meta": {"tg": "42"}, "enabled": True},
+        "stored": {"ipLimit": 2}, "declared": {},
+        "traffic": {"up": 1, "down": 1073741823, "used": 1073741824, "limit": 1073741824, "periodStart": 1700000000,
+                    "periodEnd": 1702592000},
+        "expiresAt": None, "online": {"ips": ["198.51.100.7"], "lastSeen": None},
+        "subscription": {"token": "a" * 32, "url": "https://vpn.example.com/sub/" + "a" * 32},
+    }
+
+    def setUp(self):
+        super().setUp()
+        import http.server
+        import socketserver
+
+        self.requests = []
+        self.answers = {}
+        test = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def address_string(self):
+                return "unix"
+
+            def handle_one(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length)) if length else None
+                test.requests.append((self.command, self.path, body))
+                status, value = test.answers.get((self.command, self.path.split("?")[0]), (200, test.ROW))
+                raw = json.dumps(value).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            do_GET = do_POST = do_PATCH = do_DELETE = handle_one
+
+        class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+            daemon_threads = True
+
+            def get_request(self):
+                request, _ = super().get_request()
+                return request, ("unix", 0)
+
+        sock = self.path("api.sock")
+        server = Server(sock, Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        os.environ.update(INBOUNDS_ENABLED="1", INBOUNDS_MANAGER_SOCKET=sock)
+
+    def test_set_unset_and_the_rest(self):
+        out = ok(ctl.cmd_inbounds, "users", "set", "alice", "--traffic", "1G", "--speed=20M/5M", "--meta", "tg=42", "--disable",
+                 "--expires", "+30d")
+        self.assertEqual(self.requests[-1], ("PATCH", "/api/v1/users/alice", {
+            "trafficLimit": "1G", "speedLimit": "20M/5M", "meta": {"tg": "42"}, "enabled": False, "expiresAt": "+30d"}))
+        self.assertIn("alice (runtime): off: traffic", out)
+        self.assertIn("down 20 Mbit/s, up 5 Mbit/s", out)
+        self.assertIn("https://vpn.example.com/sub/", out)
+        ok(ctl.cmd_inbounds, "users", "unset", "alice", "ips", "speed")
+        self.assertEqual(self.requests[-1][2], {"unset": ["ipLimit", "speedLimit"]})
+        ok(ctl.cmd_inbounds, "users", "extend", "alice", "30d")
+        self.assertEqual(self.requests[-1], ("POST", "/api/v1/users/alice/extend", {"by": "30d"}))
+        ok(ctl.cmd_inbounds, "users", "reset", "alice")
+        self.assertEqual(self.requests[-1][:2], ("POST", "/api/v1/users/alice/reset-traffic"))
+        ok(ctl.cmd_inbounds, "users", "add", "bob", "--listener", "vless-in", "--ips", "3", "--order", "7")
+        self.assertEqual(self.requests[-1], ("POST", "/api/v1/users", {
+            "name": "bob", "listeners": ["vless-in"], "policy": {"ipLimit": "3"}, "order": 7}))
+        rows = json.loads(ok(ctl.cmd_inbounds, "users", "show", "alice", "--json"))
+        self.assertEqual(rows["name"], "alice")
+
+    def test_on_hold_and_renewals(self):
+        ok(ctl.cmd_inbounds, "users", "add", "bob", "--on-hold", "30d")
+        self.assertEqual(self.requests[-1][2]["policy"], {"expiresAfter": "30d"})
+        ok(ctl.cmd_inbounds, "users", "unset", "bob", "hold")
+        self.assertEqual(self.requests[-1][2], {"unset": ["expiresAfter"]})
+        ok(ctl.cmd_inbounds, "users", "extend", "alice", "30d", "--reset")
+        self.assertEqual(self.requests[-1], ("POST", "/api/v1/users/alice/extend", {"by": "30d", "resetTraffic": True}))
+        ok(ctl.cmd_inbounds, "users", "extend", "alice", "--until", "2027-01-31")
+        self.assertEqual(self.requests[-1][2], {"until": "2027-01-31"})
+        held = {**self.ROW, "active": True, "reasons": [], "onHold": True,
+                "policy": {**self.ROW["policy"], "expiresAfter": 30 * 86400}}
+        self.answers[("GET", "/api/v1/users")] = (200, [held])
+        out = ok(ctl.cmd_inbounds, "users")
+        self.assertIn("on hold", out)
+        self.assertIn("+30d on 1st use", out)
+
+    def test_list_table(self):
+        self.answers[("GET", "/api/v1/users")] = (200, [self.ROW])
+        out = ok(ctl.cmd_inbounds, "users")
+        self.assertIn("alice", out)
+        self.assertIn("1.0 GiB / 1.0 GiB", out)
+        self.assertIn("off: traffic", out)
+
+    def test_errors_and_absence(self):
+        self.answers[("PATCH", "/api/v1/users/zed")] = (404, {"error": "no user 'zed'"})
+        status, _, err = run(ctl.cmd_inbounds, "users", "set", "zed", "--ips", "1")
+        self.assertEqual(status, 1)
+        self.assertIn("no user 'zed'", err)
+        os.environ["INBOUNDS_MANAGER_SOCKET"] = ""
+        status, _, err = run(ctl.cmd_inbounds, "users", "set", "zed", "--ips", "1")
+        self.assertIn("need the inbound manager", err)
+        os.environ["INBOUNDS_MANAGER_SOCKET"] = self.path("nothing.sock")
+        status, _, err = run(ctl.cmd_inbounds, "bans")
+        self.assertIn("not running", err)
+
+    def test_subscription_urls_from_the_manager(self):
+        os.environ.update(INBOUNDS_SUBS_FILE=self.path("absent.json"), INBOUNDS_SUB_BASE_URL="https://vpn.example.com/sub")
+        self.answers[("GET", "/api/v1/users")] = (200, [self.ROW])
+        self.assertEqual(ok(ctl.cmd_inbounds, "sub", "alice"), "https://vpn.example.com/sub/" + "a" * 32 + "\n")
+        self.assertIn("alice", ok(ctl.cmd_inbounds, "sub"))
+
+    def test_bans_export_import(self):
+        self.answers[("GET", "/api/v1/bans")] = (200, [{"ip": "203.0.113.9", "port": 443, "expires": 120}])
+        self.assertIn("203.0.113.9", ok(ctl.cmd_inbounds, "bans"))
+        self.answers[("DELETE", "/api/v1/bans/203.0.113.9")] = (200, {"ip": "203.0.113.9", "lifted": 1})
+        self.assertIn("1 ban(s) lifted", ok(ctl.cmd_inbounds, "bans", "rm", "203.0.113.9"))
+        bundle = {"format": "proxy-suite-inbounds", "version": 1, "runtime": {"users": {"a": {}}}, "policies": {}}
+        self.answers[("GET", "/api/v1/export")] = (200, bundle)
+        target = self.path("export.json")
+        ok(ctl.cmd_inbounds, "export", target, "--no-stats")
+        self.assertEqual(self.requests[-1][1], "/api/v1/export?stats=0")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o600)
+        self.answers[("POST", "/api/v1/import")] = (200, {"users": ["a"], "skipped": [], "applied": ["vless-in: +a"]})
+        out = ok(ctl.cmd_inbounds, "import", target, "--replace")
+        self.assertEqual(self.requests[-1][2], {"bundle": bundle, "replace": True})
+        self.assertIn("users: a", out)
+
+
 class InboundRuntimeTest(EnvTest):
     """inbounds.runtime through proxy-ctl: the tool does the work, proxy-ctl reloads after."""
 

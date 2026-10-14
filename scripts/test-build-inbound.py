@@ -707,6 +707,47 @@ class BuildInboundsTests(unittest.TestCase):
         self.assertNotEqual(token, next(s["token"] for s in rotated if s["user"] == "fufsob"))
         # No links, nothing to subscribe to.
         self.assertEqual(build_inbounds(spec(share=False), "vpn.example.com")["subscriptions"], [])
+        # Under a key only the server holds, the credentials alone do not give the token away.
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file = os.path.join(tmp, "key")
+            with open(key_file, "w", encoding="utf-8") as handle:
+                handle.write("k" * 64 + "\n")
+            keyed = {s["user"]: s["token"] for s in build_inbounds({**spec(), "subscriptionKeyFile": key_file},
+                                                                  "vpn.example.com")["subscriptions"]}
+            self.assertRegex(keyed["fufsob"], "^[0-9a-f]{32}$")
+            self.assertNotEqual(keyed["fufsob"], token)
+            self.assertEqual(keyed["fufsob"], subscription_token("fufsob", ["uuid-fufsob"], "k" * 64))
+            self.assertNotEqual(keyed["fufsob"], subscription_token("fufsob", ["uuid-fufsob"], "other"))
+            # The manager's salt moves one user's on, the rest stay.
+            salted = {s["user"]: s["token"] for s in build_inbounds(
+                {**spec(), "subscriptionKeyFile": key_file, "subscriptionSalts": {"fufsob": "ab" * 16}},
+                "vpn.example.com")["subscriptions"]}
+            self.assertNotEqual(salted["fufsob"], keyed["fufsob"])
+            self.assertEqual(salted["teri"], keyed["teri"])
+            # Without a key too: a salt is a secret of the server's.
+            self.assertNotEqual(subscription_token("fufsob", ["uuid-fufsob"], salt="ab" * 16), token)
+            # No key file: one generated on first start, kept, and used from then on.
+            state = os.path.join(tmp, "state", "subscription-key")
+            generated = {s["user"]: s["token"] for s in build_inbounds(
+                {**spec(), "subscriptionKeyStateFile": state}, "vpn.example.com")["subscriptions"]}
+            with open(state, encoding="utf-8") as handle:
+                kept = handle.read().strip()
+            self.assertRegex(kept, "^[0-9a-f]{64}$")
+            self.assertEqual(os.stat(state).st_mode & 0o777, 0o600)
+            self.assertEqual(generated["fufsob"], subscription_token("fufsob", ["uuid-fufsob"], kept))
+            self.assertEqual(generated, {s["user"]: s["token"] for s in build_inbounds(
+                {**spec(), "subscriptionKeyStateFile": state}, "vpn.example.com")["subscriptions"]})
+            # The config's key wins over it.
+            self.assertEqual(keyed, {s["user"]: s["token"] for s in build_inbounds(
+                {**spec(), "subscriptionKeyFile": key_file, "subscriptionKeyStateFile": state},
+                "vpn.example.com")["subscriptions"]})
+            # A key file that is empty or not there stops the rendering, as a secret's would.
+            with open(key_file, "w", encoding="utf-8") as handle:
+                handle.write("\n")
+            with self.assertRaises(ValueError):
+                build_inbounds({**spec(), "subscriptionKeyFile": key_file}, "vpn.example.com")
+            with self.assertRaises(OSError):
+                build_inbounds({**spec(), "subscriptionKeyFile": os.path.join(tmp, "none")}, "vpn.example.com")
 
     def test_share_port_overrides_the_bound_port(self):
         spec = {

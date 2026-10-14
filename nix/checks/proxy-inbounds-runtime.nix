@@ -13,6 +13,10 @@ let
   serverAddress = "11.0.0.1";
   # XRay refuses plain VLESS to a public IP, so the client dials a private one.
   serverPrivateAddress = "10.0.0.1";
+  # The inbounds' own XRay, for its API.
+  xrayApi = "${
+    import ../../pkgs/xray.nix { inherit pkgs; }
+  }/bin/xray api inbounduser --server=unix:///run/proxy-suite-inbounds/api/stats.sock -tag=vless-in";
 
   network = public: private: {
     networking.useDHCP = false;
@@ -191,10 +195,12 @@ pkgs.testers.runNixOSTest {
 
     with subtest("runtime users and listeners"):
         cfg = "/run/proxy-suite-inbounds/config.json"
+        # A user comes through XRay's API: the same XRay, config.json kept in step with it.
+        pid = server.succeed("systemctl show -p MainPID --value proxy-suite-inbounds.service").strip()
         server.succeed("proxy-ctl inbounds users add friend --listener vless-in")
-        # The reload's restart returns once the start script is forked: config.json is
-        # gone until it renders it again.
         server.wait_until_succeeds(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\", \"friend\"]' {cfg}")
+        server.succeed("${xrayApi} | grep -q friend")
+        assert server.succeed("systemctl show -p MainPID --value proxy-suite-inbounds.service").strip() == pid
         server.succeed("proxy-ctl inbounds add rt vless --port 9001 --user friend")
         server.wait_for_open_port(9001)
         server.succeed("proxy-ctl inbounds users | grep friend | grep -q rt")
@@ -225,7 +231,10 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"jq -e '[.inbounds[].tag] | index(\"rt\") == null' {cfg}")
         server.succeed("journalctl -u proxy-suite-inbounds | grep -q \"ignoring runtime listener 'rt'\"")
         server.succeed("rm /var/lib/proxy-suite/inbounds.d/listeners/rt.json")
+        pid = server.succeed("systemctl show -p MainPID --value proxy-suite-inbounds.service").strip()
         server.succeed("proxy-ctl inbounds users rm friend")
         server.wait_until_succeeds(f"jq -e '.inbounds[] | select(.tag == \"vless-in\") | .settings.clients | map(.email) == [\"tester\"]' {cfg}")
+        server.fail("${xrayApi} | grep -q friend")
+        assert server.succeed("systemctl show -p MainPID --value proxy-suite-inbounds.service").strip() == pid
   '';
 }

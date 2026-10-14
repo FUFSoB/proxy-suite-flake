@@ -24,7 +24,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - AmneziaWG 1.x–3.x from `.conf`, `vpn://` or Nix
 - Cloudflare WARP, Tor (with bridges and an onion service), an SSH tunnel and a Telegram proxy
 - Tunnels through video-call servers, to get past mobile internet whitelists
-- Server inbounds (XRay protocols, hysteria2, AmneziaWG) with share links, QR codes, subscriptions and traffic stats
+- Server inbounds (XRay protocols, hysteria2, AmneziaWG) with share links, QR codes, subscriptions in each client's format (links, Clash, sing-box, a web page) and traffic stats; users with expiry, traffic, device and speed limits
 - A desktop GUI with a tray icon, the `proxy-ctl` CLI and the `proxy-tui` terminal UI
 
 ## Setup
@@ -279,5 +279,28 @@ Changes and secrets need root or the userControl group.
   inbounds rm <tag>                      remove a runtime listener
   inbounds show <tag>                    a runtime listener's JSON
   inbounds online                        who is online, and when others were last seen
+
+  With inbounds.manager (users' policies; the API proxy-ctl and bots use):
+  inbounds users [list] [--json]         users, whether they may connect, traffic, expiry
+  inbounds users show <name> [--json]    one user: policy, traffic, online, subscription
+  inbounds users add <name> [...] [policy flags]
+                                         add a runtime user with a policy
+  inbounds users set <name> [--expires 2026-12-31|+30d] [--on-hold 30d] [--traffic 50G]
+      [--period monthly] [--ips 2] [--speed 20M/5M] [--enable|--disable] [--meta key=value]...
+                                         change a user's policy (declared users too);
+                                         --on-hold: a term that starts on the first connection
+  inbounds users unset <name> <expires|hold|traffic|period|ips|speed|meta|enabled>...
+                                         back to the config's value, or none
+  inbounds users enable|disable <name>   switch a user on or off
+  inbounds users reset <name>            start their traffic over
+  inbounds users extend <name> 30d [--reset]
+                                         move the expiry on (from now, or from it if later;
+                                         on hold: a longer term); --reset: traffic anew too
+  inbounds users extend <name> --until <time> [--reset]
+  inbounds users rotate-sub <name>       a new subscription URL, the old one stops answering
+  inbounds bans [rm <address>]           addresses banned past a user's ipLimit
+  inbounds export [file] [--no-stats]    users, policies, keys and traffic, to move them
+  inbounds import <file|-> [--replace]   take them in on this server
+  inbounds events [N]                    what the manager did and told its webhooks
 ```
 <!-- proxy-ctl-help:end -->

@@ -129,16 +129,29 @@ in
     }
   ];
   stats = { };
+  # Handler and Routing: users, rules and outbounds changed in place (scripts/inbound_apply.py).
   api = {
     tag = "api";
-    services = [ "StatsService" ];
+    services = [
+      "StatsService"
+      "HandlerService"
+      "RoutingService"
+    ];
   };
   policy = {
-    levels."0" = {
-      statsUserUplink = true;
-      statsUserDownlink = true;
-      statsUserOnline = true;
-    };
+    # Level 0, and with speed limits one more per slot: a limited user's level, which the
+    # exits mark its sockets with. A level XRay has no policy for would count no stats.
+    levels =
+      let
+        level = {
+          statsUserUplink = true;
+          statsUserDownlink = true;
+          statsUserOnline = true;
+        };
+        slots =
+          if derived.proxyInboundsSpeedLimits then derived.proxyInboundsManagerCfg.speedLimits.slots else 0;
+      in
+      lib.genAttrs (map toString (lib.range 0 slots)) (_: level);
     system = {
       statsInboundUplink = true;
       statsInboundDownlink = true;

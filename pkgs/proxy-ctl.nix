@@ -115,9 +115,10 @@ let
       Name=Proxy Suite
       GenericName=Proxy Control
       Comment=Control proxy-suite services, routing and outbounds
-      Exec=$out/bin/proxy-suite-gui
+      Exec=$out/bin/proxy-suite-gui %u
       Icon=io.github.FUFSoB.ProxySuite
       Categories=Network;System;
+      MimeType=x-scheme-handler/proxy-suite;
       Keywords=proxy;vpn;sing-box;zapret;tray;
       StartupNotify=true
       Terminal=false

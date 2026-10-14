@@ -223,9 +223,11 @@ pkgs.testers.runNixOSTest {
         assert server.succeed("jq -S .users /var/lib/proxy-suite/awg-inbounds/roam/state.json") == before
         through_server(alice, timeout=90)
 
-    with subtest("a runtime user becomes a peer, and only its listener's interfaces restart"):
+    with subtest("a runtime user becomes a peer, synced in: the interfaces do not restart"):
+        since = server.succeed("systemctl show -p ActiveEnterTimestampMonotonic --value proxy-suite-inbounds-awg.service").strip()
         server.succeed("proxy-ctl inbounds users add ring --listener roam")
         server.wait_until_succeeds("awg show awgi-roam peers | wc -l | grep -qx 3", timeout=30)
+        assert server.succeed("systemctl show -p ActiveEnterTimestampMonotonic --value proxy-suite-inbounds-awg.service").strip() == since
         server.succeed("jq -e '.users.ring.publicKey' /var/lib/proxy-suite/awg-inbounds/roam/state.json")
         server.succeed("proxy-ctl inbounds link roam ring --config | grep -q '^PrivateKey'")
         # A change that leaves the peers alone restarts only XRay.

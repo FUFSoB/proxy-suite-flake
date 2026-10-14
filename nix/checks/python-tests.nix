@@ -67,6 +67,35 @@ pkgs.lib.mapAttrs mkPythonCheck {
     file = "${scripts}/test-inbound-runtime.py";
     env = withPath scripts;
   };
+  # inbounds.manager: policies and the traffic they are measured by, the statuses the
+  # renderers take; changes through XRay's API, against proxy-suite's own XRay; the daemon,
+  # its API and subscriptions, with apply and nftables stubbed.
+  inbound-policy = {
+    file = "${scripts}/test-inbound-policy.py";
+    env = withPath scripts;
+  };
+  inbound-apply = {
+    file = "${scripts}/test-inbound-apply.py";
+    env = withPath scripts // {
+      XRAY = "${import ../../pkgs/xray.nix { inherit pkgs; }}/bin/xray";
+    };
+  };
+  inbound-manager = {
+    file = "${scripts}/test-inbound-manager.py";
+    env = withPath scripts;
+  };
+  # The subscription in each client's format: sing-box checks its config; node runs the page's
+  # QR encoder and zbar reads what it drew.
+  inbound-subscription = {
+    file = "${scripts}/test-inbound-subscription.py";
+    env =
+      withPath scripts
+      // singBox
+      // {
+        NODE = "${pkgs.nodejs-slim}/bin/node";
+        ZBARIMG = "${pkgs.zbar}/bin/zbarimg";
+      };
+  };
   # The NFQWS_OPT rewrites the zapret v1 package build applies.
   patch-zapret-config = {
     file = "${scripts}/test-patch-zapret-config.py";

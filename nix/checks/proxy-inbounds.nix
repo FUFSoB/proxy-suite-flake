@@ -251,10 +251,58 @@ let
   );
   runtimeNoPortsFixture = mkInbounds (runtimeInbounds // { runtime.enable = true; });
 
+  # inbounds.manager: the daemon, its spec and the XRay config it changes in place.
+  managerInbounds = runtimeInbounds // {
+    manager = {
+      enable = true;
+      speedLimits = {
+        enable = true;
+        slots = 3;
+      };
+      api = {
+        listen = "127.0.0.1:9180";
+        tokensFile = "/run/secrets/manager-tokens";
+      };
+      webhooks = [ { url = "http://127.0.0.1:8088/hook"; } ];
+    };
+  };
+  managerFixture = mkInbounds managerInbounds;
+  managerConfig = mkInboundsConfig managerFixture;
+  managerSpec = mkInboundsSpec managerFixture;
+  managerService = managerFixture.config.systemd.services."proxy-suite-inbounds-manager";
+  policyWithoutManagerFixture = evalWithUsers [
+    baseModule
+    {
+      services.proxy-suite.inbounds = {
+        enable = true;
+        listeners.vless-in = realityListener;
+        users.user.policy.trafficLimit = "10G";
+      };
+    }
+  ];
+  speedWithoutLimitsFixture = mkInbounds (
+    lib.recursiveUpdate managerInbounds {
+      manager.speedLimits.enable = false;
+      users.user.policy.speedLimit = "20M/5M";
+    }
+  );
+  unpatchedXrayFixture = mkInbounds (managerInbounds // { package = pkgs.xray; });
+  tokenlessApiFixture = mkInbounds (
+    lib.recursiveUpdate managerInbounds { manager.api.tokensFile = null; }
+  );
+  # subscriptions.keyFile: null generates one, a path is the config's, false is none.
+  keySpec =
+    keyFile:
+    mkInboundsSpec (
+      mkInbounds (lib.recursiveUpdate runtimeInbounds { subscriptions.keyFile = keyFile; })
+    );
+
   unguardedFixture = mkInbounds {
     routing = {
       blockRu = false;
       blockPrivate = false;
+      blockTorrent = false;
+      blockPorts = [ ];
     };
     listeners.vless-in = realityListener;
   };
@@ -915,14 +963,23 @@ let
     (ok ((ruleByTag relayConfig "inbound-block-ru-domain").domain == [ "geosite:category-ru" ]))
     (ok ((ruleByTag relayConfig "inbound-block-ru-ip").ip == [ "geoip:ru" ]))
     (ok (!builtins.elem "inbound-block-private" (ruleTags unguardedConfig)))
+    # What hosters close servers over, ahead of every exception: no listener or via lets it by.
+    (ok ((ruleByTag relayConfig "inbound-block-torrent").protocol == [ "bittorrent" ]))
+    (ok (!(ruleByTag relayConfig "inbound-block-torrent") ? inboundTag))
+    (ok ((ruleByTag relayConfig "inbound-block-ports").port == "25"))
+    (ok ((ruleByTag relayConfig "inbound-block-ports").outboundTag == "block"))
+    (ok (!builtins.elem "inbound-block-torrent" (ruleTags unguardedConfig)))
+    (ok (!builtins.elem "inbound-block-ports" (ruleTags unguardedConfig)))
     # serverAddress is exempt after blockPrivate, before the country blocks. Sniffing is
     # routeOnly, so a connection to another IP naming this host in its handshake would match
     # the name: the guard before it sends those the listener's way.
     (
       assert
-        lib.take 5 (ruleTags namedConfig) == [
+        lib.take 7 (ruleTags namedConfig) == [
           "inbound-stats-api"
           "inbound-block-private"
+          "inbound-block-torrent"
+          "inbound-block-ports"
           "inbound-server-address-sniffed-proxy"
           "inbound-server-address-direct"
           "inbound-block-ru-domain"
@@ -1501,6 +1558,80 @@ let
       true
     )
     (ok (!lib.hasInfix "masquerade" (awgRules awgProxyFixture)))
+
+    (
+      let
+        generated = keySpec null;
+        own = keySpec "/run/secrets/sub-key";
+        none = keySpec false;
+      in
+      assert generated.subscriptionKeyFile == null;
+      assert generated.subscriptionKeyStateFile == "/var/lib/proxy-suite/inbounds/subscription-key";
+      assert own.subscriptionKeyFile == "/run/secrets/sub-key";
+      assert own.subscriptionKeyStateFile == null;
+      assert none.subscriptionKeyFile == null;
+      assert none.subscriptionKeyStateFile == null;
+      true
+    )
+
+    # inbounds.manager
+    (
+      assert
+        managerSpec.manager == {
+          policyFile = "/var/lib/proxy-suite/inbounds-manager/policy.json";
+          stateFile = "/var/lib/proxy-suite/inbounds-manager/state.json";
+          statsFile = "/var/lib/proxy-suite/inbound-stats.json";
+          speedLimits = true;
+        };
+      assert runtimeSpec.manager == null;
+      # A level per speed slot, and the API services that change users and rules in place.
+      assert
+        builtins.attrNames managerConfig.policy.levels == [
+          "0"
+          "1"
+          "2"
+          "3"
+        ];
+      assert builtins.attrNames relayConfig.policy.levels == [ "0" ];
+      assert builtins.elem "HandlerService" relayConfig.api.services;
+      assert builtins.elem "RoutingService" relayConfig.api.services;
+      true
+    )
+    (
+      let
+        start = readInboundsStart managerFixture;
+      in
+      assert lib.hasInfix "rendered.json" start;
+      assert lib.hasInfix "render-args.json" start;
+      assert lib.hasInfix "--argjson exit_mark 1140850688" start;
+      assert lib.hasInfix "--argjson exit_mark null" (readInboundsStart relayFixture);
+      true
+    )
+    (
+      assert builtins.elem "multi-user.target" managerService.wantedBy;
+      assert builtins.elem "proxy-suite-inbounds.service" managerService.after;
+      assert managerService.serviceConfig.RuntimeDirectory == "proxy-suite-inbounds-manager";
+      assert lib.hasInfix "inbound_manager.py" (
+        (import ./read-generated.nix).readDerivation managerService.serviceConfig.ExecStart
+      );
+      assert !(runtimeFixture.config.systemd.services ? "proxy-suite-inbounds-manager");
+      # Runtime changes go through the API now, a restart only where it cannot.
+      assert lib.hasInfix "inbound_apply.py" (
+        (import ./read-generated.nix).readDerivation
+          runtimeFixture.config.systemd.services."proxy-suite-inbounds-reload".serviceConfig.ExecStart
+      );
+      assert builtins.elem "-/run/proxy-suite-inbounds" (
+        runtimeFixture.config.systemd.services."proxy-suite-inbounds-reload".serviceConfig.ReadWritePaths
+      );
+      true
+    )
+    (ok (failedMessages managerFixture == [ ]))
+    (ok (hasFailed policyWithoutManagerFixture "policy needs inbounds.manager.enable"))
+    (ok (
+      hasFailed speedWithoutLimitsFixture "policy.speedLimit needs inbounds.manager.speedLimits.enable"
+    ))
+    (ok (hasFailed unpatchedXrayFixture "needs proxy-suite's XRay"))
+    (ok (hasFailed tokenlessApiFixture "api.listen needs inbounds.manager.api.tokensFile"))
 
   ]
   ++ failing;

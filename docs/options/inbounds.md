@@ -113,10 +113,41 @@ Part of the [proxy-suite options reference](./index.md).
       - [users](#services-proxy-suite-inbounds-listeners-name-users)
       - [via](#services-proxy-suite-inbounds-listeners-name-via)
       - [xrayJson](#services-proxy-suite-inbounds-listeners-name-xrayjson)
+  - manager
+    - [enable](#services-proxy-suite-inbounds-manager-enable)
+    - api
+      - [group](#services-proxy-suite-inbounds-manager-api-group)
+      - [listen](#services-proxy-suite-inbounds-manager-api-listen)
+      - [tokensFile](#services-proxy-suite-inbounds-manager-api-tokensfile)
+    - [deleteExpiredAfter](#services-proxy-suite-inbounds-manager-deleteexpiredafter)
+    - [interval](#services-proxy-suite-inbounds-manager-interval)
+    - ipLimit
+      - [banTime](#services-proxy-suite-inbounds-manager-iplimit-bantime)
+    - notify
+      - [expiryDays](#services-proxy-suite-inbounds-manager-notify-expirydays)
+      - [trafficPercent](#services-proxy-suite-inbounds-manager-notify-trafficpercent)
+    - speedLimits
+      - [enable](#services-proxy-suite-inbounds-manager-speedlimits-enable)
+      - [slots](#services-proxy-suite-inbounds-manager-speedlimits-slots)
+    - subscriptions
+      - [enable](#services-proxy-suite-inbounds-manager-subscriptions-enable)
+      - [group](#services-proxy-suite-inbounds-manager-subscriptions-group)
+      - [listen](#services-proxy-suite-inbounds-manager-subscriptions-listen)
+      - [profileTitle](#services-proxy-suite-inbounds-manager-subscriptions-profiletitle)
+      - [supportUrl](#services-proxy-suite-inbounds-manager-subscriptions-supporturl)
+      - [updateInterval](#services-proxy-suite-inbounds-manager-subscriptions-updateinterval)
+      - [webPageUrl](#services-proxy-suite-inbounds-manager-subscriptions-webpageurl)
+    - [webhooks](#services-proxy-suite-inbounds-manager-webhooks)
+      - item
+        - [events](#services-proxy-suite-inbounds-manager-webhooks-events)
+        - [secretFile](#services-proxy-suite-inbounds-manager-webhooks-secretfile)
+        - [url](#services-proxy-suite-inbounds-manager-webhooks-url)
   - [openFirewall](#services-proxy-suite-inbounds-openfirewall)
   - routing
+    - [blockPorts](#services-proxy-suite-inbounds-routing-blockports)
     - [blockPrivate](#services-proxy-suite-inbounds-routing-blockprivate)
     - [blockRu](#services-proxy-suite-inbounds-routing-blockru)
+    - [blockTorrent](#services-proxy-suite-inbounds-routing-blocktorrent)
     - proxy
       - [domains](#services-proxy-suite-inbounds-routing-proxy-domains)
       - [geoips](#services-proxy-suite-inbounds-routing-proxy-geoips)
@@ -146,12 +177,21 @@ Part of the [proxy-suite options reference](./index.md).
     - [enable](#services-proxy-suite-inbounds-subscriptions-enable)
     - [baseUrl](#services-proxy-suite-inbounds-subscriptions-baseurl)
     - [group](#services-proxy-suite-inbounds-subscriptions-group)
+    - [keyFile](#services-proxy-suite-inbounds-subscriptions-keyfile)
   - [users](#services-proxy-suite-inbounds-users)
     - `<name>`
       - [address](#services-proxy-suite-inbounds-users-name-address)
       - [order](#services-proxy-suite-inbounds-users-name-order)
       - [password](#services-proxy-suite-inbounds-users-name-password)
       - [passwordFile](#services-proxy-suite-inbounds-users-name-passwordfile)
+      - policy
+        - [enabled](#services-proxy-suite-inbounds-users-name-policy-enabled)
+        - [expiresAfter](#services-proxy-suite-inbounds-users-name-policy-expiresafter)
+        - [expiresAt](#services-proxy-suite-inbounds-users-name-policy-expiresat)
+        - [ipLimit](#services-proxy-suite-inbounds-users-name-policy-iplimit)
+        - [speedLimit](#services-proxy-suite-inbounds-users-name-policy-speedlimit)
+        - [trafficLimit](#services-proxy-suite-inbounds-users-name-policy-trafficlimit)
+        - [trafficPeriod](#services-proxy-suite-inbounds-users-name-policy-trafficperiod)
       - [presharedKeyFile](#services-proxy-suite-inbounds-users-name-presharedkeyfile)
       - [privateKeyFile](#services-proxy-suite-inbounds-users-name-privatekeyfile)
       - [publicKey](#services-proxy-suite-inbounds-users-name-publickey)
@@ -1132,6 +1172,219 @@ Raw XRay inbound JSON (ends up in the Nix store)\. Its tag is replaced; a missin
 **Default:** `null`\
 **Example:** `{ protocol = "dokodemo-door"; settings = { port = 8080; }; }`
 
+<a id="services-proxy-suite-inbounds-manager-enable"></a>
+## services\.proxy-suite\.inbounds\.manager\.enable
+
+The inbound manager, a daemon that keeps the users’ policies (` inbounds.users.<name>.policy `,
+and what it is told at runtime): who is switched off, whose time ran out, who used up
+their traffic, how many addresses and how much speed each may have\. It applies them to
+the running inbounds without a restart, answers an HTTP+JSON API for proxy-ctl and bots,
+serves subscriptions with the traffic and expiry clients show, and calls webhooks\.
+Users and listeners added through it need ` inbounds.runtime `\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-inbounds-manager-api-group"></a>
+## services\.proxy-suite\.inbounds\.manager\.api\.group
+
+Group that may use the API socket, /run/proxy-suite-inbounds-manager/api\.sock: all of
+it, every user’s secrets included\. ` null `: ` userControl.group ` when it has the
+“inbounds” scope, root only otherwise\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"vpn-admins"`
+
+<a id="services-proxy-suite-inbounds-manager-api-listen"></a>
+## services\.proxy-suite\.inbounds\.manager\.api\.listen
+
+Address and port the API also listens on over TCP, for a bot on another host\. Plain
+HTTP: put it on loopback behind a TLS proxy\. Needs ` tokensFile `; the firewall is not
+opened for it\.
+
+**Type:** null or string matching the pattern (\[\[]\[0-9A-Fa-f:\.]+\[]]|\[0-9\.]+|localhost):\[0-9]{1,5}\
+**Default:** `null`\
+**Example:** `"127.0.0.1:9180"`
+
+<a id="services-proxy-suite-inbounds-manager-api-tokensfile"></a>
+## services\.proxy-suite\.inbounds\.manager\.api\.tokensFile
+
+File with the bearer tokens the TCP API takes, one per line, “name:token” or the token
+alone\. Read at start\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/inbounds-manager-tokens"`
+
+<a id="services-proxy-suite-inbounds-manager-deleteexpiredafter"></a>
+## services\.proxy-suite\.inbounds\.manager\.deleteExpiredAfter
+
+Delete runtime users this long after their ` expiresAt `, as ` proxy-ctl inbounds users rm `
+would: their secrets, policy and subscription go\. A number with m, h, d or w\. Users
+declared in the config stay\. ` null `: never\.
+
+**Type:** null or string matching the pattern \[0-9]+\[mhdw]\
+**Default:** `null`\
+**Example:** `"30d"`
+
+<a id="services-proxy-suite-inbounds-manager-interval"></a>
+## services\.proxy-suite\.inbounds\.manager\.interval
+
+Seconds between two rounds of counting traffic and checking the policies\.
+
+**Type:** integer between 5 and 3600 (both inclusive)\
+**Default:** `30`
+
+<a id="services-proxy-suite-inbounds-manager-iplimit-bantime"></a>
+## services\.proxy-suite\.inbounds\.manager\.ipLimit\.banTime
+
+Seconds an address past a user’s ` ipLimit ` is banned for\.
+
+**Type:** positive integer, meaning >0\
+**Default:** `600`
+
+<a id="services-proxy-suite-inbounds-manager-notify-expirydays"></a>
+## services\.proxy-suite\.inbounds\.manager\.notify\.expiryDays
+
+Days before the expiry that send a user\.expiring event\.
+
+**Type:** list of (positive integer, meaning >0)\
+**Default:** `[ 3 1 ]`
+
+<a id="services-proxy-suite-inbounds-manager-notify-trafficpercent"></a>
+## services\.proxy-suite\.inbounds\.manager\.notify\.trafficPercent
+
+Shares of the traffic allowance used that send a user\.traffic event, once per period\.
+
+**Type:** list of integer between 1 and 100 (both inclusive)\
+**Default:** `[ 80 100 ]`
+
+<a id="services-proxy-suite-inbounds-manager-speedlimits-enable"></a>
+## services\.proxy-suite\.inbounds\.manager\.speedLimits\.enable
+
+Speed limits (` policy.speedLimit `)\. XRay marks the sockets its exits dial for a limited
+user with the user’s slot, which proxy-suite’s XRay build carries a patch for
+(pkgs/patches/xray-user-level-mark\.patch), and nftables polices each mark’s
+traffic both ways\. AmneziaWG peers are policed by their tunnel address\. Needs root\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-inbounds-manager-speedlimits-slots"></a>
+## services\.proxy-suite\.inbounds\.manager\.speedLimits\.slots
+
+How many users may have a speed limit at once: an XRay user level each\.
+
+**Type:** integer between 1 and 65535 (both inclusive)\
+**Default:** `512`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-enable"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.enable
+
+Serve each user’s subscription from /run/proxy-suite-inbounds-manager/sub\.sock, with the
+headers clients read their traffic, allowance and expiry from (subscription-userinfo),
+a title and an update interval\. The token is the last part of the path, the same
+as the static files’ (` inbounds.subscriptions `), so their URLs keep working:
+
+```nix
+services.nginx.virtualHosts."vpn.example.com".locations."/sub/".proxyPass =
+  "http://unix:/run/proxy-suite-inbounds-manager/sub.sock:";
+```
+
+**Type:** boolean\
+**Default:** `config.services.proxy-suite.inbounds.shareLinks`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-group"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.group
+
+Group of the web server that connects to the subscription socket\.
+
+**Type:** string\
+**Default:** `config.services.proxy-suite.inbounds.subscriptions.group`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-listen"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.listen
+
+Address and port the subscriptions are also served on over TCP, for a web server that cannot reach the socket\.
+
+**Type:** null or string matching the pattern (\[\[]\[0-9A-Fa-f:\.]+\[]]|\[0-9\.]+|localhost):\[0-9]{1,5}\
+**Default:** `null`\
+**Example:** `"127.0.0.1:9181"`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-profiletitle"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.profileTitle
+
+The profile’s name in clients; {user} is the user’s\.
+
+**Type:** string\
+**Default:** `"{user}"`\
+**Example:** `"My VPN ({user})"`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-supporturl"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.supportUrl
+
+Where clients send users for help (support-url), such as a Telegram link\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"https://t.me/my_vpn_support"`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-updateinterval"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.updateInterval
+
+Hours between clients’ updates of the subscription (profile-update-interval)\.
+
+**Type:** null or (positive integer, meaning >0)\
+**Default:** `12`
+
+<a id="services-proxy-suite-inbounds-manager-subscriptions-webpageurl"></a>
+## services\.proxy-suite\.inbounds\.manager\.subscriptions\.webPageUrl
+
+The service’s page (profile-web-page-url)\.
+
+**Type:** null or string\
+**Default:** `null`
+
+<a id="services-proxy-suite-inbounds-manager-webhooks"></a>
+## services\.proxy-suite\.inbounds\.manager\.webhooks
+
+Where to tell about users created, deleted, updated, switched off (with why) and back
+on, their traffic reset, their term started on their first connection (user\.activated), thresholds of their allowance, coming expiries and addresses
+banned past their ipLimit\. Retried a few times; a hook that stays down misses them\.
+
+**Type:** list of (submodule)\
+**Default:** `[ ]`\
+**Example:**
+
+```nix
+[ { url = "http://127.0.0.1:8088/proxy-suite"; secretFile = "/run/secrets/hook"; } ]
+
+```
+
+<a id="services-proxy-suite-inbounds-manager-webhooks-events"></a>
+## services\.proxy-suite\.inbounds\.manager\.webhooks\.\*\.events
+
+Events to send\. Empty: all of them\.
+
+**Type:** list of (one of “user\.created”, “user\.deleted”, “user\.updated”, “user\.enabled”, “user\.disabled”, “user\.reset”, “user\.activated”, “user\.traffic”, “user\.expiring”, “user\.ip-limit”)\
+**Default:** `[ ]`
+
+<a id="services-proxy-suite-inbounds-manager-webhooks-secretfile"></a>
+## services\.proxy-suite\.inbounds\.manager\.webhooks\.\*\.secretFile
+
+File with a secret: each body is signed, X-Proxy-Suite-Signature: sha256=\<HMAC-SHA256 hex>\.
+
+**Type:** null or string\
+**Default:** `null`
+
+<a id="services-proxy-suite-inbounds-manager-webhooks-url"></a>
+## services\.proxy-suite\.inbounds\.manager\.webhooks\.\*\.url
+
+URL the events are POSTed to as JSON: {event, user, at, data}\.
+
+**Type:** string
+
 <a id="services-proxy-suite-inbounds-openfirewall"></a>
 ## services\.proxy-suite\.inbounds\.openFirewall
 
@@ -1139,6 +1392,17 @@ Open the firewall for every listener not on loopback\.
 
 **Type:** boolean\
 **Default:** `true`
+
+<a id="services-proxy-suite-inbounds-routing-blockports"></a>
+## services\.proxy-suite\.inbounds\.routing\.blockPorts
+
+Destination ports clients may not reach, TCP and UDP: single ports and “from-to”
+ranges\. Port 25 by default: mail sent straight to other servers, which spam goes
+out by and hosters close\. Mail clients’ own ports (465, 587) stay open\.
+
+**Type:** list of (16 bit unsigned integer; between 0 and 65535 (both inclusive) or string matching the pattern \[0-9]±\[0-9]+)\
+**Default:** `[ 25 ]`\
+**Example:** `[ 25 "6881-6889" ]`
 
 <a id="services-proxy-suite-inbounds-routing-blockprivate"></a>
 ## services\.proxy-suite\.inbounds\.routing\.blockPrivate
@@ -1155,6 +1419,17 @@ reachable only on the listener ports and ` serverPorts `, whichever ` via ` a cl
 ## services\.proxy-suite\.inbounds\.routing\.blockRu
 
 Block Russian destinations (geosite “category-ru”, geoip “ru”)\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-inbounds-routing-blocktorrent"></a>
+## services\.proxy-suite\.inbounds\.routing\.blockTorrent
+
+Block BitTorrent: connections XRay’s sniffing recognizes by the peers’ handshake, and µTP\.
+Not trackers or DHT, nor what a client encrypts (MSE): it makes downloading slow, not
+impossible\. Hosters act on the copyright notices torrents bring\. Listeners given as raw
+XRay JSON need sniffing on for it\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -1427,6 +1702,25 @@ Group of the web server that serves the subscription files\.
 **Default:** `"nginx"`\
 **Example:** `"caddy"`
 
+<a id="services-proxy-suite-inbounds-subscriptions-keyfile"></a>
+## services\.proxy-suite\.inbounds\.subscriptions\.keyFile
+
+The key the subscription tokens are an HMAC under\. Changing it changes every user’s
+URL\.
+
+ - ` null `: generated on first start and kept in the state directory
+   (inbounds/subscription-key), where ` proxy-ctl inbounds export ` takes it from\.
+ - a file with a secret, such as ` openssl rand -hex 32 `: that one, read at start and
+   at each runtime change\.
+ - ` false `: no key\. A token is a hash of the user’s name and credentials alone, as
+   before there was a key: whoever learns one of a user’s links can work out their
+   subscription URL, and from it every other link of theirs\. For a server that gave
+   URLs out before\.
+
+**Type:** null or value false (singular enum) or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/inbounds-subscription-key"`
+
 <a id="services-proxy-suite-inbounds-users"></a>
 ## services\.proxy-suite\.inbounds\.users
 
@@ -1488,6 +1782,78 @@ File with the password\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"/run/secrets/proxy-inbound-password"`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-enabled"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.enabled
+
+Whether the user may connect\. Needs ` inbounds.manager `, as every ` policy ` field does\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-expiresafter"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.expiresAfter
+
+A term that starts with the user’s first connection, for access sold ahead: seconds,
+or a number with m, h, d or w\. Until they connect the user is on hold, and when
+they do ` expiresAt ` is set to that much later\. An ` expiresAt ` given wins\.
+
+**Type:** null or positive integer, meaning >0, or string matching the pattern \[0-9]+\[mhdw]\
+**Default:** `null`\
+**Example:** `"30d"`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-expiresat"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.expiresAt
+
+When the user’s access ends: a date (the end of that day, local time), an ISO time,
+or a Unix time\. Their connections are cut then, and their subscription still says
+when it ended\.
+
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern \[0-9]{4}-\[0-9]{2}-\[0-9]{2}(\[T ]\[0-9:\.]+(\[±]\[0-9:]+|Z)?)?\
+**Default:** `null`\
+**Example:** `"2026-12-31"`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-iplimit"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.ipLimit
+
+How many addresses may use the user at once\. The ones past it that came last are
+banned for ` inbounds.manager.ipLimit.banTime ` from the user’s ports\. Not on
+AmneziaWG, whose peer has one address anyway, nor behind a PROXY-protocol front\.
+
+**Type:** null or (positive integer, meaning >0)\
+**Default:** `null`\
+**Example:** `2`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-speedlimit"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.speedLimit
+
+Speed limit in bits per second, decimal (k, M, G): one rate for both ways, or
+“down/up”\. Needs ` inbounds.manager.speedLimits.enable `\. On socks and http listeners
+it does not apply\.
+
+**Type:** null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[kKMG]?(/\[0-9]+(\\\.\[0-9]+)?\[kKMG]?)?\
+**Default:** `null`\
+**Example:** `"20M/5M"`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-trafficlimit"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.trafficLimit
+
+Traffic allowance, up and down together: bytes, or with K, M, G, T (binary units, as
+clients show them)\. Past it the user is switched off until the period renews or the
+traffic is reset\.
+
+**Type:** null or unsigned integer, meaning >=0, or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[KMGTP]?(i?B)?\
+**Default:** `null`\
+**Example:** `"50G"`
+
+<a id="services-proxy-suite-inbounds-users-name-policy-trafficperiod"></a>
+## services\.proxy-suite\.inbounds\.users\.\<name>\.policy\.trafficPeriod
+
+How often the allowance renews, at local midnight: daily, weekly, or monthly on the
+day the count began\. ` null `: never; only a reset starts it over\.
+
+**Type:** null or one of “daily”, “weekly”, “monthly”\
+**Default:** `null`
 
 <a id="services-proxy-suite-inbounds-users-name-presharedkeyfile"></a>
 ## services\.proxy-suite\.inbounds\.users\.\<name>\.presharedKeyFile

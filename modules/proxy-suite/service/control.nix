@@ -159,6 +159,9 @@ in
       INBOUNDS_RUNTIME_ENABLED = flag proxyInboundsRuntimeEnabled;
       INBOUNDS_RUNTIME_TOOL = "${proxySuiteScriptsDir}/inbound_runtime.py";
       INBOUNDS_SPEC_FILE = "${proxyInboundsSpecFile}";
+      # inbounds.manager: `inbounds users show|set|...`, bans, export and import go to its API.
+      INBOUNDS_MANAGER_SOCKET =
+        if ctx.proxyInboundsManagerEnabled then constants.inboundsManagerApiSocket else "";
       # Only the system-wide instance reads the site lists; per-app zapret handles all traffic.
       ZAPRET_AUTO_ENABLED = flag (zapretEngine == "zapret2" && zapretGlobalEnabled);
       ZAPRET_STATE_DIR = constants.zapret2StateDir;

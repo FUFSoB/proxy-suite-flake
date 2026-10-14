@@ -204,6 +204,29 @@ Changes and secrets need root or the userControl group.
   inbounds rm <tag>                      remove a runtime listener
   inbounds show <tag>                    a runtime listener's JSON
   inbounds online                        who is online, and when others were last seen
+
+  With inbounds.manager (users' policies; the API proxy-ctl and bots use):
+  inbounds users [list] [--json]         users, whether they may connect, traffic, expiry
+  inbounds users show <name> [--json]    one user: policy, traffic, online, subscription
+  inbounds users add <name> [...] [policy flags]
+                                         add a runtime user with a policy
+  inbounds users set <name> [--expires 2026-12-31|+30d] [--on-hold 30d] [--traffic 50G]
+      [--period monthly] [--ips 2] [--speed 20M/5M] [--enable|--disable] [--meta key=value]...
+                                         change a user's policy (declared users too);
+                                         --on-hold: a term that starts on the first connection
+  inbounds users unset <name> <expires|hold|traffic|period|ips|speed|meta|enabled>...
+                                         back to the config's value, or none
+  inbounds users enable|disable <name>   switch a user on or off
+  inbounds users reset <name>            start their traffic over
+  inbounds users extend <name> 30d [--reset]
+                                         move the expiry on (from now, or from it if later;
+                                         on hold: a longer term); --reset: traffic anew too
+  inbounds users extend <name> --until <time> [--reset]
+  inbounds users rotate-sub <name>       a new subscription URL, the old one stops answering
+  inbounds bans [rm <address>]           addresses banned past a user's ipLimit
+  inbounds export [file] [--no-stats]    users, policies, keys and traffic, to move them
+  inbounds import <file|-> [--replace]   take them in on this server
+  inbounds events [N]                    what the manager did and told its webhooks
 """
 
 ROUTE_MODES = ["whitelist", "blacklist", "all-proxy", "all-bypass"]
@@ -1016,19 +1039,46 @@ COMPLETE = {
             "add": "add a listener at runtime",
             "rm": "remove a runtime listener",
             "show": "a runtime listener's JSON",
+            "bans": "addresses banned past a user's ipLimit",
+            "export": "users, policies, keys and traffic as JSON",
+            "import": "take an export in",
+            "events": "what the inbound manager did",
         }
     },
+    "inbounds import": {"flags": {"--replace": "the export wins over what is here"}},
+    "inbounds export": {"flags": {"--no-stats": "leave the traffic counts out"}},
     "inbounds stats": {"flags": {"--by": "user, inbound or outbound"}},
     "inbounds users": {
         "words": {
             "list": "users, their order, address and listeners",
+            "show": "one user's policy, traffic and subscription",
             "add": "add a user at runtime",
             "rm": "remove a runtime user",
             "order": "set a runtime user's order",
             "listeners": "put a user on exactly these listeners",
             "on": "put exactly these users on a listener",
+            "set": "change a user's policy",
+            "unset": "drop policy fields set at runtime",
+            "enable": "switch a user on",
+            "disable": "switch a user off",
+            "reset": "start a user's traffic over",
+            "extend": "move a user's expiry on",
+            "rotate-sub": "give a user a new subscription URL",
         }
     },
+    "inbounds users show": {"args": lambda: _inbound_runtime_names("users")},
+    "inbounds users set": {
+        "args": lambda: _inbound_runtime_names("users"),
+        "flags": {"--expires": "a date, +30d, never", "--on-hold": "30d: from the first connection", "--traffic": "50G, none", "--period": "daily, weekly, monthly, none",
+                  "--ips": "addresses at once", "--speed": "20M or down/up", "--enable": "switch on",
+                  "--disable": "switch off", "--meta": "key=value"},
+    },
+    "inbounds users unset": {"args": lambda: {**_inbound_runtime_names("users"), **{k: "" for k in POLICY_NAMES}}, "repeat": True},
+    "inbounds users enable": {"args": lambda: _inbound_runtime_names("users")},
+    "inbounds users disable": {"args": lambda: _inbound_runtime_names("users")},
+    "inbounds users reset": {"args": lambda: _inbound_runtime_names("users")},
+    "inbounds users extend": {"args": lambda: _inbound_runtime_names("users")},
+    "inbounds users rotate-sub": {"args": lambda: _inbound_runtime_names("users")},
     "inbounds users listeners": {"args": lambda: {**_inbound_runtime_names("users"), **_inbound_runtime_names("listeners")}, "repeat": True},
     "inbounds users on": {"args": lambda: {**_inbound_runtime_names("listeners"), **_inbound_runtime_names("users")}, "repeat": True},
     "inbounds users add": {"flags": {"--order": "its serverSource number", "--listener": "a listener to put it on"}},
@@ -6088,11 +6138,17 @@ def _inbound_subscriptions(*args):
             user = arg
     path = env("INBOUNDS_SUBS_FILE", f"{runtime_dir()}/proxy-suite-inbounds/subscriptions.json")
     base = env("INBOUNDS_SUB_BASE_URL")
-    if not os.path.isfile(path):
+    if not os.path.isfile(path) and _manager_enabled():
+        # Served by the manager only (no static files): its API knows the tokens.
+        rows = [r for r in _manager("GET", "/users") if r.get("subscription")]
+        subs = [{"user": r["name"], "token": r["subscription"]["token"]} for r in rows]
+        path = ""
+    elif not os.path.isfile(path):
         die("No subscriptions available. Is proxy-suite-inbounds running, and is inbounds.subscriptions enabled?")
-    if not readable(path):
+    elif not readable(path):
         denied(path)
-    subs = read_json(path)
+    else:
+        subs = read_json(path)
     if not user:
         if qr:
             usage("inbounds sub <user> --qr")
@@ -6109,7 +6165,8 @@ def _inbound_subscriptions(*args):
     else:
         if qr:
             die("A QR code needs inbounds.subscriptions.baseUrl.")
-        print(f"{path.removesuffix('.json')}/{_s(token)}")
+        # The manager's: the token, which its socket serves at any path ending in it.
+        print(f"{path.removesuffix('.json')}/{_s(token)}" if path else _s(token))
         sys.stdout.flush()
         print("Set inbounds.subscriptions.baseUrl to get a URL instead of a path.", file=sys.stderr)
 
@@ -6204,7 +6261,311 @@ def _inbound_runtime_apply():
         print(f"warning: {line}", file=sys.stderr)
 
 
+# --- the inbound manager --------------------------------------------------------
+#
+# inbounds.manager: a daemon with an HTTP+JSON API on a Unix socket (scripts/inbound_manager.py),
+# which bots use too. `inbounds users show|set|unset|enable|disable|reset|extend`, bans, export
+# and import go to it; with it on, adding and removing users do as well, so a user's policy
+# comes and goes with them.
+
+MANAGER_TIMEOUT = 120
+# The CLI's names for the policy's fields, as `users set` takes them and `users unset` names them.
+POLICY_FLAGS = {
+    "--expires": "expiresAt",
+    "--on-hold": "expiresAfter",
+    "--traffic": "trafficLimit",
+    "--period": "trafficPeriod",
+    "--ips": "ipLimit",
+    "--speed": "speedLimit",
+}
+POLICY_NAMES = {
+    "expires": "expiresAt",
+    "hold": "expiresAfter",
+    "traffic": "trafficLimit",
+    "period": "trafficPeriod",
+    "ips": "ipLimit",
+    "speed": "speedLimit",
+    "meta": "meta",
+    "enabled": "enabled",
+}
+
+
+def _manager_enabled():
+    return bool(env("INBOUNDS_MANAGER_SOCKET"))
+
+
+def _manager(method, path, body=None):
+    """One call to the manager's API: its JSON, or its complaint as ours."""
+    socket_path = env("INBOUNDS_MANAGER_SOCKET")
+    if not socket_path:
+        die("The inbound manager is not enabled in this configuration (inbounds.manager.enable).")
+    conn = _UnixHTTPConnection(socket_path, MANAGER_TIMEOUT)
+    try:
+        conn.request(method, "/api/v1" + path, body=None if body is None else json.dumps(body),
+                     headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        status, raw = response.status, response.read()
+    except PermissionError:
+        die(f"Cannot use the inbound manager ({socket_path}): permission denied - {ask_group()}.", 77)
+    except (FileNotFoundError, ConnectionRefusedError):
+        die("The inbound manager is not running - see: proxy-ctl logs proxy-suite-inbounds-manager")
+    except (OSError, http.client.HTTPException) as e:
+        die(f"Cannot reach the inbound manager: {e}")
+    finally:
+        conn.close()
+    try:
+        value = json.loads(raw) if raw else None
+    except ValueError:
+        value = None
+    if status >= 400:
+        error = value.get("error") if isinstance(value, dict) else None
+        die(error or f"The inbound manager answered {status}.")
+    return value
+
+
+def _when(ts):
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "-"
+
+
+def _rate(bits):
+    if not bits:
+        return "-"
+    for unit, size in (("Gbit/s", 1e9), ("Mbit/s", 1e6), ("kbit/s", 1e3)):
+        if bits >= size:
+            return f"{bits / size:g} {unit}"
+    return f"{bits} bit/s"
+
+
+def _user_status(row):
+    if not row.get("active"):
+        return "off: " + ",".join(row.get("reasons") or [])
+    return "on hold" if row.get("onHold") else "active"
+
+
+def _user_expiry(row):
+    if row.get("onHold"):
+        return f"+{_span((row.get('policy') or {}).get('expiresAfter'))} on 1st use"
+    return _when(row.get("expiresAt"))
+
+
+def _span(seconds):
+    for unit, size in (("w", 604800), ("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds and seconds % size == 0:
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s"
+
+
+def _user_traffic(row):
+    traffic = row.get("traffic") or {}
+    used = _human_bytes(traffic.get("used") or 0)
+    return f"{used} / {_human_bytes(traffic['limit'])}" if traffic.get("limit") else used
+
+
+def _manager_users_table(rows):
+    line = "  {:<20} {:<18} {:<24} {:<17} {}"
+    print(line.format("USER", "STATUS", "TRAFFIC", "EXPIRES", "LISTENERS").rstrip())
+    for row in rows:
+        print(line.format(_s(row["name"]), _user_status(row), _user_traffic(row), _user_expiry(row),
+                          ",".join(row.get("listeners") or []) or "-").rstrip())
+        for problem in row.get("problems") or []:
+            print(f"    ! {problem}")
+
+
+def _manager_user_show(row):
+    policy = row.get("policy") or {}
+    traffic = row.get("traffic") or {}
+    speed = policy.get("speedLimit") or {}
+    out = [
+        f"{row['name']} ({row.get('source')}): {_user_status(row)}",
+        f"  listeners  {', '.join(row.get('listeners') or []) or '-'}",
+        f"  expires    {_user_expiry(row)}",
+        f"  traffic    {_user_traffic(row)} (down {_human_bytes(traffic.get('down') or 0)}, up {_human_bytes(traffic.get('up') or 0)})"
+        + (f", renews {policy['trafficPeriod']} at {_when(traffic.get('periodEnd'))}" if traffic.get("periodEnd") else ""),
+        f"  since      {_when(traffic.get('periodStart'))}",
+        f"  addresses  {policy.get('ipLimit') or 'any number'} at once; online: {', '.join(row['online']['ips']) or '-'}",
+        f"  speed      down {_rate(speed.get('down'))}, up {_rate(speed.get('up'))}",
+    ]
+    if row.get("subscription") and row["subscription"].get("url"):
+        out.append(f"  sub        {row['subscription']['url']}")
+    for key, value in sorted((policy.get("meta") or {}).items()):
+        out.append(f"  meta.{key} = {value}")
+    overridden = sorted(set(row.get("stored") or {}) & set(row.get("declared") or {}))
+    if overridden:
+        out.append(f"  (set at runtime over the config: {', '.join(overridden)})")
+    for problem in row.get("problems") or []:
+        out.append(f"  ! {problem}")
+    print("\n".join(out))
+
+
+def _policy_args(args):
+    """Policy fields from `users set`'s flags; the arguments that are none of them."""
+    fields, rest, i = {}, [], 0
+    args = list(args)
+    while i < len(args):
+        arg = args[i]
+        flag, has_value, value = arg.partition("=")
+        if flag in POLICY_FLAGS or flag == "--meta":
+            if not has_value:
+                if i + 1 >= len(args):
+                    usage(f"inbounds users set <name> {flag} <value>")
+                value = args[i + 1]
+                i += 1
+            if flag == "--meta":
+                key, sep, item = value.partition("=")
+                if not sep:
+                    usage("inbounds users set <name> --meta <key>=<value>")
+                fields.setdefault("meta", {})[key] = item
+            else:
+                fields[POLICY_FLAGS[flag]] = value
+        elif arg in ("--enable", "--disable"):
+            fields["enabled"] = arg == "--enable"
+        else:
+            rest.append(arg)
+        i += 1
+    return fields, rest
+
+
+def _manager_users(verb, args):
+    """`inbounds users ...` with the manager on. False: not one of its verbs."""
+    as_json = "--json" in args
+    args = [a for a in args if a != "--json"]
+
+    def show(row):
+        print(_json_text(row)) if as_json else _manager_user_show(row)
+
+    if verb in ("list", "--json"):
+        rows = _manager("GET", "/users")
+        print(_json_text(rows)) if as_json or verb == "--json" else _manager_users_table(rows)
+    elif verb == "show" and len(args) == 1:
+        show(_manager("GET", f"/users/{urllib.parse.quote(args[0], safe='')}"))
+    elif verb == "add" and args:
+        fields, rest = _policy_args(args[1:])
+        listeners, order, i = [], None, 0
+        while i < len(rest):
+            if rest[i] in ("--listener", "--order") and i + 1 < len(rest):
+                if rest[i] == "--listener":
+                    listeners.append(rest[i + 1])
+                else:
+                    order = int(rest[i + 1]) if rest[i + 1].isdigit() else die(f"Not an order: {rest[i + 1]}")
+                i += 2
+            else:
+                usage("inbounds users add <name> [--order N] [--listener <tag>]... [policy flags: see users set]")
+        body = {"name": args[0], "listeners": listeners, "policy": fields}
+        if order is not None:
+            body["order"] = order
+        show(_manager("POST", "/users", body))
+    elif verb == "rm" and len(args) == 1:
+        print(_manager("DELETE", f"/users/{urllib.parse.quote(args[0], safe='')}").get("message", ""))
+    elif verb == "set" and args:
+        fields, rest = _policy_args(args[1:])
+        if rest or not fields:
+            usage("inbounds users set <name> [--expires T] [--traffic SIZE] [--period daily|weekly|monthly|none]"
+                  " [--ips N] [--speed RATE[/RATE]] [--enable|--disable] [--meta k=v]...")
+        show(_manager("PATCH", f"/users/{urllib.parse.quote(args[0], safe='')}", fields))
+    elif verb == "unset" and len(args) >= 2:
+        unknown = [a for a in args[1:] if a not in POLICY_NAMES]
+        if unknown:
+            usage(f"inbounds users unset <name> <{'|'.join(POLICY_NAMES)}>...")
+        show(_manager("PATCH", f"/users/{urllib.parse.quote(args[0], safe='')}", {"unset": [POLICY_NAMES[a] for a in args[1:]]}))
+    elif verb in ("enable", "disable") and len(args) == 1:
+        show(_manager("POST", f"/users/{urllib.parse.quote(args[0], safe='')}/{verb}"))
+    elif verb == "reset" and len(args) == 1:
+        show(_manager("POST", f"/users/{urllib.parse.quote(args[0], safe='')}/reset-traffic"))
+    elif verb == "extend" and len([a for a in args if a != "--reset"]) in (2, 3):
+        reset = "--reset" in args
+        rest = [a for a in args if a != "--reset"]
+        if len(rest) == 2:
+            body = {"by": rest[1]}
+        elif rest[1] == "--until":
+            body = {"until": rest[2]}
+        else:
+            usage("inbounds users extend <name> <30d | --until <time>> [--reset]")
+        if reset:
+            body["resetTraffic"] = True
+        show(_manager("POST", f"/users/{urllib.parse.quote(rest[0], safe='')}/extend", body))
+    elif verb == "rotate-sub" and len(args) == 1:
+        show(_manager("POST", f"/users/{urllib.parse.quote(args[0], safe='')}/rotate-subscription"))
+    else:
+        return False
+    return True
+
+
+def _inbound_bans(*args):
+    as_json = "--json" in args
+    args = [a for a in args if a != "--json"]
+    if args[:1] == ["rm"] and len(args) == 2:
+        result = _manager("DELETE", f"/bans/{urllib.parse.quote(args[1], safe='')}")
+        print(f"{result['ip']}: {result['lifted']} ban(s) lifted")
+        return
+    if args:
+        usage("inbounds bans [--json] | bans rm <address>")
+    bans = _manager("GET", "/bans")
+    if as_json:
+        print(_json_text(bans))
+        return
+    if not bans:
+        print("No address is banned.")
+        return
+    print("  {:<40} {:<6} {}".format("ADDRESS", "PORT", "LEFT"))
+    for ban in bans:
+        print("  {:<40} {:<6} {}".format(ban["ip"], ban["port"], f"{ban['expires']}s" if ban.get("expires") is not None else "-"))
+
+
+def _inbound_export(*args):
+    """The users, their policies, keys and traffic, as JSON: to a file (0600) or stdout."""
+    rest = [a for a in args if a != "--no-stats"]
+    if len(rest) > 1:
+        usage("inbounds export [file] [--no-stats]")
+    bundle = _manager("GET", "/export" + ("?stats=0" if "--no-stats" in args else ""))
+    text = json.dumps(bundle, indent=2) + "\n"
+    if not rest or rest[0] == "-":
+        sys.stdout.write(text)
+        return
+    fd = os.open(rest[0], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # A file that was there keeps its mode through O_CREAT: this one holds every secret.
+        os.fchmod(f.fileno(), 0o600)
+        f.write(text)
+    users = len(((bundle.get("runtime") or {}).get("users") or {}))
+    print(f"Exported {users} runtime user(s), {len(bundle.get('policies') or {})} policies to {rest[0]} - it holds their secrets.")
+
+
+def _inbound_import(*args):
+    rest = [a for a in args if a != "--replace"]
+    if len(rest) != 1:
+        usage("inbounds import <file|-> [--replace]")
+    try:
+        text = sys.stdin.read() if rest[0] == "-" else open(rest[0], encoding="utf-8").read()
+        bundle = json.loads(text)
+    except (OSError, ValueError) as e:
+        die(f"Cannot read {rest[0]}: {e}")
+    report = _manager("POST", "/import", {"bundle": bundle, "replace": "--replace" in args})
+    for key in ("users", "listeners", "policies", "amneziaWg", "salamander"):
+        if report.get(key):
+            print(f"{key}: {', '.join(report[key])}")
+    if report.get("subscriptionKey"):
+        print("subscriptionKey: taken; the subscription URLs are the exported server's")
+    for line in report.get("skipped") or []:
+        print(f"skipped: {line}")
+    for line in report.get("applied") or []:
+        print(f"applied: {line}")
+
+
+def _inbound_events(*args):
+    limit = args[0] if args and args[0].isdigit() else "50"
+    events = _manager("GET", f"/events?limit={limit}")
+    if "--json" in args:
+        print(_json_text(events))
+        return
+    for event in events:
+        print(f"{_when(event['at'])}  {event['event']:<15} {event.get('user') or '-':<20} {json.dumps(event.get('data') or {}, sort_keys=True)}")
+
+
 def _inbound_users(verb="list", *args):
+    if _manager_enabled() and _manager_users(verb, list(args)):
+        return
+    if verb in ("show", "set", "unset", "enable", "disable", "reset", "extend", "rotate-sub"):
+        die("Policies need the inbound manager (inbounds.manager.enable).")
     if verb in ("list", "--json"):
         sys.stdout.write(_inbound_runtime("users", *(["--json"] if "--json" in (verb, *args) else []), listing=True)[1])
     elif verb == "add" and args:
@@ -6219,8 +6580,10 @@ def _inbound_users(verb="list", *args):
         _inbound_bindings_set(tag=args[0], wanted=args[1:])
     else:
         usage(
-            "inbounds users [list] | add <name> [--order N] [--listener <tag>]... | rm <name> | order <name> <N>"
-            " | listeners <name> [tag...] | on <tag> [user...]"
+            "inbounds users [list] [--json] | show <name> | add <name> [--order N] [--listener <tag>]... | rm <name>"
+            " | order <name> <N> | listeners <name> [tag...] | on <tag> [user...]"
+            " | set <name> [policy flags] | unset <name> <field>... | enable|disable|reset <name>"
+            " | extend <name> <30d>|--until <time> | rotate-sub <name>"
         )
 
 
@@ -6285,8 +6648,19 @@ def cmd_inbounds(verb="list", *args):
         _inbound_online()
     elif verb == "sub":
         _inbound_subscriptions(*args)
+    elif verb == "bans":
+        _inbound_bans(*args)
+    elif verb == "export":
+        _inbound_export(*args)
+    elif verb == "import":
+        _inbound_import(*args)
+    elif verb == "events":
+        _inbound_events(*args)
     else:
-        usage("inbounds [list] | link <tag> [user] [--qr] | sub [user] [--qr] | stats [days] [--by user|inbound|outbound] | online")
+        usage(
+            "inbounds [list] | link <tag> [user] [--qr] | sub [user] [--qr] | stats [days] [--by user|inbound|outbound]"
+            " | online | users ... | bans | export [file] | import <file> | events"
+        )
 
 
 # --- main ---------------------------------------------------------------------

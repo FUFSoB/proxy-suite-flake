@@ -91,11 +91,52 @@ services.proxy-suite = {
     accessLog = false;
     enable = false;
     listeners = { };
+    manager = {
+      api = {
+        group = null;
+        listen = null;
+        tokensFile = null;
+      };
+      deleteExpiredAfter = null;
+      enable = false;
+      interval = 30;
+      ipLimit = {
+        banTime = 600;
+      };
+      notify = {
+        expiryDays = [
+          3
+          1
+        ];
+        trafficPercent = [
+          80
+          100
+        ];
+      };
+      speedLimits = {
+        enable = false;
+        slots = 512;
+      };
+      subscriptions = {
+        enable = config.services.proxy-suite.inbounds.shareLinks;
+        group = config.services.proxy-suite.inbounds.subscriptions.group;
+        listen = null;
+        profileTitle = "{user}";
+        supportUrl = null;
+        updateInterval = 12;
+        webPageUrl = null;
+      };
+      webhooks = [ ];
+    };
     openFirewall = true;
     package = ‹proxy-suite's xray (pkgs/xray.nix)›;
     routing = {
+      blockPorts = [
+        25
+      ];
       blockPrivate = true;
       blockRu = true;
+      blockTorrent = true;
       proxy = {
         domains = [ ];
         geoips = [ ];
@@ -125,6 +166,7 @@ services.proxy-suite = {
       baseUrl = null;
       enable = false;
       group = "nginx";
+      keyFile = null;
     };
     users = { };
   };

@@ -1515,12 +1515,25 @@ class ProxySuiteGui(Adw.Application):
         if self.timer is None:
             self.timer = GLib.timeout_add_seconds(self.refresh, self.tick)
             self.reload()
-        if not options.get("hidden"):
+        # proxy-suite:// links, from xdg-open (the .desktop file's %u): shown even to --hidden.
+        links = [a for a in command_line.get_arguments()[1:] if a.lower().startswith(model.DEEP_LINK_SCHEME + ":")]
+        if not options.get("hidden") or links:
             # A launcher's token comes along when the running instance is asked to show itself.
             platform = command_line.get_platform_data()
             token = platform.lookup_value("activation-token", None) if platform else None
             self.present(options.get("tab"), token=token.get_string() if token else None)
+        for link in links:
+            self.open_link(link)
         return 0
+
+    def open_link(self, link):
+        """A proxy-suite:// link: what it adds, run once confirmed."""
+        argv, why, stdin = model.deep_link_argv(link)
+        if argv is None:
+            self.window.toast(why)
+            return
+        # Asked first, as a paste is: any web page can open such a link.
+        self.confirm(argv, lambda: self.run_argv("run", argv, self.window, stdin=stdin), self.window, stdin=stdin)
 
     def do_activate(self):
         self.present()

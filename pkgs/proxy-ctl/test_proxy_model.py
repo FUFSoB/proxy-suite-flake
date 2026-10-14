@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.parse
 import zlib
 from unittest import mock
 
@@ -405,6 +406,35 @@ class ModelTest(unittest.TestCase):
     def test_tray_menu_unreadable(self):
         self.assertEqual([i.id for i in model.tray_menu(None)], ["status", "open", "sep-0", "quit"])
         self.assertEqual(model.icon_name(ctl._overall_state(None)), "proxy-suite-disabled-unknown")
+
+    def test_deep_link_argv(self):
+        link = model.deep_link_argv
+        sub = "https://vpn.test/sub/" + "a" * 32 + "?format=links&x=1"
+        quoted = urllib.parse.quote(sub, safe="")
+        # The URL on stdin, as pasted; the name made a tag, one not taken yet.
+        with mock.patch.object(ctl, "_runtime_tags", lambda kind: ["work"]), \
+                mock.patch.object(ctl, "_sub_tags", lambda: ["home"]):
+            self.assertEqual(link(f"proxy-suite://install-config?url={quoted}&name=VPN%20alice"),
+                             (["proxy", "subs", "add", "VPN-alice", "-"], "", sub))
+            for name, tag in [("work", "work-2"), ("home", "home-2"), ("tor", "tor-2"), ("..%2F..%2Fx", "x"),
+                              ("%F0%9F%87%A9%F0%9F%87%AA%20" + "y" * 40, "y" * 32)]:
+                self.assertEqual(link(f"proxy-suite://install-config?url={quoted}&name={name}")[0][3], tag, name)
+            # No name, or none left of it: proxy-ctl names it after its host.
+            for name in ["", "&name=", "&name=%F0%9F%87%A9%F0%9F%87%AA"]:
+                self.assertEqual(link(f"proxy-suite://install-config?url={quoted}{name}")[0], ["proxy", "subs", "add", "-"], name)
+        self.assertEqual(link(f"PROXY-SUITE://installconfig?url={quoted}")[2], sub)
+        for text in [
+            "",
+            f"clash://install-config?url={quoted}",
+            f"proxy-suite://import?url={quoted}",
+            "proxy-suite://install-config?name=x",
+            "proxy-suite://install-config?url=vless%3A%2F%2Fu%40a.test%3A443",
+            "proxy-suite://install-config?url=https%3A%2F%2Fa.test%2F%0Ahttps%3A%2F%2Fb.test%2F",
+        ]:
+            argv, why, stdin = link(text)
+            self.assertIsNone(argv, text)
+            self.assertIsNone(stdin)
+            self.assertTrue(why)
 
     def test_paste_argv(self):
         paste = model.paste_argv

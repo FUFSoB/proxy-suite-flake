@@ -10,6 +10,7 @@ without changing the spec or the link generator.
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -73,7 +74,11 @@ def _salamander(listener: dict) -> str | None:
         return _resolve(
             salamander.get("password"), salamander.get("passwordFile"), "salamander password", listener["tag"]
         )
-    path = listener["salamanderStateFile"]
+    return _kept_secret(listener["salamanderStateFile"], lambda: secrets.token_urlsafe(24))
+
+
+def _kept_secret(path: str, generate) -> str:
+    """The secret kept in path, or one generated now and kept there for the next start."""
     try:
         stored = _read_secret(path)
     except FileNotFoundError:
@@ -81,7 +86,7 @@ def _salamander(listener: dict) -> str | None:
     if stored:
         return stored
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    generated = secrets.token_urlsafe(24)
+    generated = generate()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(generated + "\n")
@@ -100,8 +105,13 @@ def _share_port(listener: dict) -> int:
 
 
 def _clients(listener: dict, tag: str) -> list[dict]:
+    """The users XRay accepts: those the manager has switched off are left out (their links
+    stay), and a speed-limited one carries its slot as its level, which the patched XRay
+    marks its sockets with (pkgs/patches/xray-user-level-mark.patch)."""
     clients = []
     for index, user in enumerate(listener["users"]):
+        if user.get("active") is False:
+            continue
         secret = _user_secret(user, listener["type"], tag)
         email = user.get("name") or f"{tag}-{index}"
         if listener["type"] in UUID_TYPES:
@@ -112,6 +122,8 @@ def _clients(listener: dict, tag: str) -> list[dict]:
             client = {"auth": secret, "email": email}
         else:
             client = {"password": secret, "email": email}
+        if user.get("level"):
+            client["level"] = user["level"]
         clients.append(client)
     return clients
 
@@ -119,6 +131,8 @@ def _clients(listener: dict, tag: str) -> list[dict]:
 def _accounts(listener: dict, tag: str) -> list[dict]:
     accounts = []
     for index, user in enumerate(listener["users"]):
+        if user.get("active") is False:
+            continue
         secret = _user_secret(user, listener["type"], tag)
         accounts.append({"user": user.get("name") or f"{tag}-{index}", "pass": secret})
     return accounts
@@ -226,6 +240,8 @@ def render_xray_inbound(listener: dict) -> dict:
         if len(users) == 1:
             settings["password"] = _user_secret(users[0], listener_type, tag)
             settings["email"] = users[0].get("name") or f"{tag}-0"
+            if users[0].get("level"):
+                settings["level"] = users[0]["level"]
             keys = [(settings["email"], settings["password"])]
         else:
             # Multi-user is 2022-blake3-aes only: the server key, then one key per user.
@@ -558,15 +574,33 @@ def client_outbound(link: str, tag: str) -> dict | None:
     return None
 
 
-def subscription_token(name: str, secrets: list[str]) -> str:
+def subscription_token(name: str, secrets: list[str], key: str | None = None, salt: str = "") -> str:
     """Name of a user's subscription file, and so the secret part of its URL.
 
-    Derived from the user's own credentials rather than stored: there is no
-    second secret to manage, it stays put for as long as they do, and rotating
-    the user's uuid rotates the URL with it.
+    Derived from the user's own credentials rather than stored: it stays put for
+    as long as they do, and rotating the user's uuid rotates the URL with it.
+    key (inbounds.subscriptions.keyFile, or the one generated) makes it an HMAC under
+    a secret only this server holds: whoever learns one of a user's links cannot work
+    the URL out from it. salt (the manager's, `proxy-ctl inbounds users rotate-sub`) moves one
+    user's URL on without new credentials. Neither: the plain hash of before.
     """
-    material = "\n".join(["proxy-suite-subscription", name, *sorted(set(secrets))])
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+    material = "\n".join(["proxy-suite-subscription", name, *sorted(set(secrets)), *([salt] if salt else [])])
+    if key is None:
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+    return hmac.new(key.encode("utf-8"), material.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+def _subscription_key(spec: dict) -> str | None:
+    """The config's key file; else the one generated on first start (subscriptions.keyFile
+    null); else none (false)."""
+    path = spec.get("subscriptionKeyFile")
+    if not path:
+        state = spec.get("subscriptionKeyStateFile")
+        return _kept_secret(state, lambda: secrets.token_hex(32)) if state else None
+    key = _read_secret(path)
+    if not key:
+        raise ValueError(f"subscription key file '{path}' is empty")
+    return key
 
 
 def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> dict:
@@ -628,10 +662,12 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
                     "outbound": None,
                 }
             )
+    key = _subscription_key(spec) if by_user else None
+    salts = spec.get("subscriptionSalts") or {}
     subscriptions = [
         {
             "user": name,
-            "token": subscription_token(name, entry["secrets"]),
+            "token": subscription_token(name, entry["secrets"], key, salts.get(name, "")),
             "body": base64.b64encode("\n".join(entry["links"]).encode("utf-8")).decode("ascii"),
         }
         for name, entry in by_user.items()

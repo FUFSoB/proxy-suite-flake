@@ -24,6 +24,8 @@ let
     whitelistBypassJoiners
     proxyInboundsEnabled
     proxyInboundsRuntimeEnabled
+    proxyInboundsManagerEnabled
+    proxyInboundsAwg
     proxyInboundsNeedLocalProxy
     scripts
     perAppRouting
@@ -60,6 +62,7 @@ let
     subscriptionUpdate = "proxy-suite-subscription-update";
     inbounds = "proxy-suite-inbounds";
     inboundStats = "proxy-suite-inbound-stats";
+    inboundsManager = "proxy-suite-inbounds-manager";
   };
 
   backendDescription =
@@ -267,6 +270,10 @@ let
       // lib.optionalAttrs (extra != [ ]) { ReadWritePaths = map (path: "-${path}") extra; }
     );
   socksRuntimeDir = "${ctx.constants.runtimeDir}/${serviceNames.socks}";
+  inboundsRuntimeDirs = [
+    "${ctx.constants.runtimeDir}/${serviceNames.inbounds}"
+    "${ctx.constants.runtimeDir}/proxy-suite-inbounds-awg"
+  ];
 
   # XRay finds geoip.dat/geosite.dat through this; sing-box ignores it.
   xrayAssetEnv = lib.optionalAttrs (geodata.xray.assets != null) {
@@ -361,11 +368,30 @@ let
         description = "Apply proxy-suite inbound users and listeners added at runtime";
         execStart = scripts.reloadInbounds;
         stateDirectory = "proxy-suite";
-        # Root, over the spool userControl's group writes.
+        # Root, over the spool userControl's group writes. It renders into the inbounds' and
+        # the AmneziaWG listeners' runtime directories, and changes the running ones in place.
         extraServiceConfig = {
           RemainAfterExit = false;
         }
-        // spoolReaderSandbox [ ];
+        // spoolReaderSandbox inboundsRuntimeDirs;
+      };
+    }
+    {
+      enable = proxyInboundsManagerEnabled;
+      name = serviceNames.inboundsManager;
+      value = mkRestartingService {
+        description = "proxy-suite inbound manager - users' policies, API and subscriptions";
+        after = [
+          "${serviceNames.inbounds}.service"
+          "nftables.service"
+        ]
+        ++ lib.optional (proxyInboundsAwg != [ ]) "proxy-suite-inbounds-awg.service";
+        wants = [ "${serviceNames.inbounds}.service" ];
+        wantedBy = [ "multi-user.target" ];
+        execStart = scripts.runManager;
+        runtimeDirectory = serviceNames.inboundsManager;
+        stateDirectory = "proxy-suite";
+        extraServiceConfig = spoolReaderSandbox inboundsRuntimeDirs;
       };
     }
     {

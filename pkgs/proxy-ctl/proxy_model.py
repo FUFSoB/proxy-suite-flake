@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 import zlib
 from dataclasses import dataclass, field, replace
 from typing import Callable
@@ -1358,6 +1359,28 @@ def paste_argv(tab_id, text):
     if HOST.fullmatch(text) and tab_id in HOST_ARGV:
         return [*HOST_ARGV[tab_id], text], "", None
     return None, "Not a share link, a subscription URL or a host.", None
+
+
+DEEP_LINK_SCHEME = "proxy-suite"
+
+
+def deep_link_argv(link):
+    """What a proxy-suite://install-config?url=<subscription>&name=... link runs, as paste_argv.
+
+    The subscription pages of inbounds.manager offer it on Linux, as clash:// for Clash. Any web
+    page can open one, so the GUI asks first. Only a subscription: the URL on stdin, and
+    proxy-ctl refuses plain http. name is a title, so it is made a tag as proxy-ctl makes one
+    (-2, -3... when taken); without one left, proxy-ctl names it after its host.
+    """
+    parts = urllib.parse.urlsplit((link or "").strip())
+    if parts.scheme.lower() != DEEP_LINK_SCHEME or parts.netloc.lower() not in ("install-config", "installconfig"):
+        return None, f"Not a {DEEP_LINK_SCHEME}://install-config link.", None
+    query = urllib.parse.parse_qs(parts.query)
+    url = (query.get("url") or [""])[0].strip()
+    if url.split("://", 1)[0].lower() not in ("http", "https") or len(url.splitlines()) > 1:
+        return None, "The link carries no subscription URL.", None
+    tag = ctl._unique_runtime_tag("subscription", (query.get("name") or [""])[0], "")
+    return ["proxy", "subs", "add", *([tag] if tag else []), "-"], "", url
 
 
 def _awg_paste(tab_id, text):

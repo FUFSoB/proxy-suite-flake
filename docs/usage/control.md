@@ -101,6 +101,12 @@ outbound, a subscription URL a subscription. An AmneziaWG `vpn://` link or a who
 becomes a global profile, or an outbound when pasted onto the Outbounds tab. See
 [Use an AmneziaWG config](./amneziawg.md).
 
+The app also opens `proxy-suite://install-config?url=<subscription URL>` links, which the
+subscription page of a proxy-suite server offers on Linux: it shows the `proxy subs add` it
+would run and waits for you to confirm it. The link's `name` becomes the subscription's tag
+(`VPN alice` as `VPN-alice`, with `-2` after it when taken); without one, it is named after
+the URL's host.
+
 Adding a rule, an outbound, a group, a listener or a user opens a form with one field per
 parameter. Optional fields are marked, and the values the field knows (outbounds, users,
 listeners, strategies) are offered: in the TUI, → completes one, and in the app, a list beside

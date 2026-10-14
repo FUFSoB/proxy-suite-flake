@@ -665,6 +665,57 @@ let
     (mkAssertion (!derived.proxyInboundsRuntimeEnabled || derived.proxyInboundRuntimePorts != [ ])
       "proxy-suite: inbounds.runtime.enable needs inbounds.runtime.ports, the ports runtime listeners may use"
     )
+  ]
+  # inbounds.manager and the users' policies.
+  ++ (
+    let
+      mgr = cfg.inbounds.manager;
+      defaultPolicy = {
+        enabled = true;
+        expiresAt = null;
+        expiresAfter = null;
+        trafficLimit = null;
+        trafficPeriod = null;
+        ipLimit = null;
+        speedLimit = null;
+      };
+      withPolicy = lib.attrNames (
+        lib.filterAttrs (_: user: user.policy != defaultPolicy) cfg.inbounds.users
+      );
+      withSpeed = lib.attrNames (
+        lib.filterAttrs (_: user: user.policy.speedLimit != null) cfg.inbounds.users
+      );
+      withIpLimit = lib.attrNames (
+        lib.filterAttrs (_: user: user.policy.ipLimit != null) cfg.inbounds.users
+      );
+      speedOn = mgr.enable && mgr.speedLimits.enable;
+    in
+    [
+      (mkAssertion (withPolicy == [ ] || derived.proxyInboundsManagerEnabled)
+        "proxy-suite: inbounds.users.<name>.policy needs inbounds.manager.enable, which keeps it (set on: ${lib.concatStringsSep ", " withPolicy})"
+      )
+      (mkAssertion (withSpeed == [ ] || speedOn)
+        "proxy-suite: inbounds.users.<name>.policy.speedLimit needs inbounds.manager.speedLimits.enable (set on: ${lib.concatStringsSep ", " withSpeed})"
+      )
+      (mkAssertion (
+        !speedOn || cfg.host.privileged
+      ) "proxy-suite: inbounds.manager.speedLimits needs root: nftables polices the users' traffic")
+      # Without root the manager has no nftables, and an ipLimit would hold nobody back.
+      (mkAssertion (withIpLimit == [ ] || cfg.host.privileged)
+        "proxy-suite: inbounds.users.<name>.policy.ipLimit needs root: nftables bans the addresses past it (set on: ${lib.concatStringsSep ", " withIpLimit})"
+      )
+      (mkAssertion (!speedOn || (cfg.inbounds.package.passthru.userLevelMark or false))
+        "proxy-suite: inbounds.manager.speedLimits needs proxy-suite's XRay (inbounds.package), whose patch marks a limited user's sockets"
+      )
+      (mkAssertion (mgr.api.listen == null || mgr.api.tokensFile != null)
+        "proxy-suite: inbounds.manager.api.listen needs inbounds.manager.api.tokensFile: the TCP API takes bearer tokens only"
+      )
+      (mkAssertion (
+        !mgr.subscriptions.enable || !mgr.enable || cfg.inbounds.shareLinks
+      ) "proxy-suite: inbounds.manager.subscriptions.enable needs inbounds.shareLinks")
+    ]
+  )
+  ++ [
     (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
       "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
     )

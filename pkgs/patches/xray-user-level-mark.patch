@@ -1,0 +1,47 @@
+--- a/transport/internet/system_dialer.go
++++ b/transport/internet/system_dialer.go
+@@ -6,8 +6,11 @@
+ 	"syscall"
+ 	"time"
+ 
++	"google.golang.org/protobuf/proto"
++
+ 	"github.com/xtls/xray-core/common/errors"
+ 	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/session"
+ 	"github.com/xtls/xray-core/features/dns"
+ 	"github.com/xtls/xray-core/features/outbound"
+ )
+@@ -46,8 +49,32 @@
+ 	}
+ }
+ 
++// proxy-suite: an outbound whose sockopt.mark carries userLevelMarkFlag marks each socket
++// with the rest of the mark plus the level of the inbound user it dials for, and leaves
++// those of level 0 unmarked: one outbound, and one routing rule, for users the kernel
++// tells apart (their speed limits).
++const userLevelMarkFlag = 0x40000000
++
++func userLevelMark(ctx context.Context, sockopt *SocketConfig) *SocketConfig {
++	if sockopt == nil || sockopt.Mark&userLevelMarkFlag == 0 {
++		return sockopt
++	}
++	var level int32
++	if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.User != nil {
++		level = int32(inbound.User.Level)
++	}
++	marked := proto.Clone(sockopt).(*SocketConfig)
++	if level == 0 {
++		marked.Mark = 0
++	} else {
++		marked.Mark = sockopt.Mark&^userLevelMarkFlag + level
++	}
++	return marked
++}
++
+ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest net.Destination, sockopt *SocketConfig) (net.Conn, error) {
+ 	errors.LogDebug(ctx, "dialing to "+dest.String())
++	sockopt = userLevelMark(ctx, sockopt)
+ 
+ 	if dest.Network == net.Network_UDP {
+ 		destAddr, err := net.ResolveUDPAddr("udp", dest.NetAddr())

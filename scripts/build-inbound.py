@@ -5,8 +5,7 @@ import argparse
 import json
 import sys
 
-import inbound_runtime
-from proxy_inbound import build_inbounds
+from inbound_apply import render
 
 
 def main() -> None:
@@ -42,14 +41,13 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        spec, runtime, warnings = inbound_runtime.merge(spec, check_ports=True)
-        for warning in warnings:
-            print(f"proxy-suite: warning: {warning}", file=sys.stderr)
-        result = build_inbounds(spec, server_address, args.onion_address)
+        template = None
         if args.template and spec.get("runtime"):
             with open(args.template, encoding="utf-8") as handle:
                 template = json.load(handle)
-            result.update(inbound_runtime.routing(spec, runtime, template["routing"]["rules"]))
+        result, warnings = render(spec, server_address, args.onion_address, template, check_ports=True)
+        for warning in warnings:
+            print(f"proxy-suite: warning: {warning}", file=sys.stderr)
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

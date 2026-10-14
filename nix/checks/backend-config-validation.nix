@@ -52,6 +52,11 @@ let
         enable = true;
         serverAddress = "vpn.example.com";
         users.user.uuidFile = "/run/secrets/uuid";
+        # A policy level per speed slot and the API services the manager uses: XRay must take them.
+        manager = {
+          enable = true;
+          speedLimits.enable = true;
+        };
         listeners.vless-in = {
           type = "vless";
           port = 443;

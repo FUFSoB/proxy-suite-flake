@@ -323,6 +323,11 @@ let
   # inbounds.runtime: listeners added with proxy-ctl may exit by these, so everything built
   # per exit (rules, outbounds, the local proxy, name resolution) is there for them too.
   proxyInboundsRuntimeEnabled = proxyInboundsEnabled && proxyInboundsCfg.runtime.enable;
+  # inbounds.manager: users' policies kept by a daemon; speed limits need root (nftables).
+  proxyInboundsManagerCfg = proxyInboundsCfg.manager;
+  proxyInboundsManagerEnabled = proxyInboundsEnabled && proxyInboundsManagerCfg.enable;
+  proxyInboundsSpeedLimits =
+    proxyInboundsManagerEnabled && proxyInboundsManagerCfg.speedLimits.enable && cfg.host.privileged;
   proxyInboundsRuntimeVias = lib.optionals proxyInboundsRuntimeEnabled (
     lib.unique ([ proxyInboundsCfg.routing.via ] ++ proxyInboundsCfg.runtime.vias ++ [ "block" ])
   );
@@ -1185,6 +1190,15 @@ let
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
     inboundStatsFile = "${stateDir}/inbound-stats.json";
+    # inbounds.manager: its policy and state files (root's), its sockets, and its nftables
+    # table (scripts/inbound_netfilter.py). The exits' sockopt.mark when speed limits are on:
+    # the XRay patch's flag (0x40000000) and the base users' levels are added to (0x04000000).
+    inboundsManagerDir = "${stateDir}/inbounds-manager";
+    inboundsManagerRuntimeDir = "${runtimeDir}/proxy-suite-inbounds-manager";
+    inboundsManagerApiSocket = "${runtimeDir}/proxy-suite-inbounds-manager/api.sock";
+    inboundsManagerSubSocket = "${runtimeDir}/proxy-suite-inbounds-manager/sub.sock";
+    inboundLimitsTable = "proxy_suite_inbound_limits";
+    inboundExitMark = 1140850688;
     # Written by proxy-suite-tor as it starts, before it reaches the network.
     torOnionHostnameFile = "${stateDir}/tor/onion/hostname";
     # proxy-ctl tor status|newnym.
@@ -1324,6 +1338,9 @@ in
     proxyInboundsEnabled
     proxyInbounds
     proxyInboundsRuntimeEnabled
+    proxyInboundsManagerCfg
+    proxyInboundsManagerEnabled
+    proxyInboundsSpeedLimits
     proxyInboundsRuntimeVias
     proxyInboundRuntimePorts
     proxyInboundRuntimeSinglePorts

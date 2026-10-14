@@ -240,6 +240,9 @@ def render_server_config(listener: dict, state: dict) -> str:
     awg = listener["amneziaWg"]
     peers = []
     for user in listener["users"]:
+        # Switched off by the manager: no peer, but the keys and address stay in the state.
+        if user.get("active") is False:
+            continue
         entry = state["users"][user["name"]]
         peer: dict[str, Any] = {
             "publicKey": entry["publicKey"],

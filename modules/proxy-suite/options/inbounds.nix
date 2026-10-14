@@ -106,6 +106,24 @@ in
         description = "Public URL of the subscription directory, used by `proxy-ctl inbounds sub`.";
         example = "https://vpn.example.com/sub";
       };
+
+      keyFile = mkOption {
+        type = types.nullOr (types.either (types.enum [ false ]) types.str);
+        default = null;
+        description = ''
+          The key the subscription tokens are an HMAC under. Changing it changes every user's
+          URL.
+          - `null`: generated on first start and kept in the state directory
+            (inbounds/subscription-key), where `proxy-ctl inbounds export` takes it from.
+          - a file with a secret, such as `openssl rand -hex 32`: that one, read at start and
+            at each runtime change.
+          - `false`: no key. A token is a hash of the user's name and credentials alone, as
+            before there was a key: whoever learns one of a user's links can work out their
+            subscription URL, and from it every other link of theirs. For a server that gave
+            URLs out before.
+        '';
+        example = "/run/secrets/inbounds-subscription-key";
+      };
     };
 
     # Mirrors proxy.routing, for traffic arriving from outside instead of from this host.
@@ -132,6 +150,25 @@ in
         addresses (loopback, and its public ones as its interfaces carry them at start) are
         reachable only on the listener ports and `serverPorts`, whichever `via` a client takes.
       '';
+      blockTorrent = bool true ''
+        Block BitTorrent: connections XRay's sniffing recognizes by the peers' handshake, and µTP.
+        Not trackers or DHT, nor what a client encrypts (MSE): it makes downloading slow, not
+        impossible. Hosters act on the copyright notices torrents bring. Listeners given as raw
+        XRay JSON need sniffing on for it.
+      '';
+      blockPorts = mkOption {
+        type = types.listOf (types.either types.port (types.strMatching "[0-9]+-[0-9]+"));
+        default = [ 25 ];
+        description = ''
+          Destination ports clients may not reach, TCP and UDP: single ports and "from-to"
+          ranges. Port 25 by default: mail sent straight to other servers, which spam goes
+          out by and hosters close. Mail clients' own ports (465, 587) stay open.
+        '';
+        example = [
+          25
+          "6881-6889"
+        ];
+      };
 
       zapretDirect = bool true "Send zapret hostlist sites direct, so this host's zapret unblocks them. Only for the default `via`. With a direct listener or the XRay backend, only by IP: XRay matches names by what a client puts in its handshake, whatever address it connects to.";
 

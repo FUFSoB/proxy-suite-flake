@@ -197,6 +197,7 @@ let
     stopInboundsInterface
     collectInboundStats
     reloadInbounds
+    runManager
     ;
   proxyInboundsLinksFile = proxyInboundsScripts.linksFile;
   proxyInboundsSubscriptionsFile = proxyInboundsScripts.subscriptionsFile;
@@ -236,6 +237,7 @@ in
     stopInboundsInterface
     collectInboundStats
     reloadInbounds
+    runManager
     ;
   inherit
     proxyInboundsLinksFile

@@ -9,6 +9,7 @@
     ./proxy-tun.nix
     ./proxy-tproxy.nix
     ./inbounds.nix
+    ./inbounds-manager.nix
     ./per-app-routing.nix
     ./zapret.nix
     ./zapret2.nix

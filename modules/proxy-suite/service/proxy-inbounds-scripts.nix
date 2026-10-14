@@ -28,8 +28,13 @@ let
     proxyInboundsSpecFile
     proxyInboundsSelfSources
     proxyInboundsRuntimeEnabled
+    proxyInboundsManagerEnabled
+    proxyInboundsManagerCfg
+    proxyInboundsSpeedLimits
+    proxySuiteScriptsDir
     builders
     constants
+    cfg
     ;
   # A value in a shell comment, on that one line: a newline in a tag (types.str) would end
   # the comment and run the rest as root.
@@ -198,6 +203,11 @@ let
       --spec ${proxyInboundsSpecFile} \
       --server-address "$SERVER_ADDRESS" \
       --onion-address "$ONION_ADDRESS"${lib.optionalString proxyInboundsRuntimeEnabled " \\\n      --template ${proxyInboundsFile}"})
+    # What runs, and from what: inbound_apply.py renders again with these and changes the
+    # difference through XRay's API instead of restarting.
+    printf '%s' "$RENDERED" > "$RUNTIME_DIR/rendered.json"
+    ${jq} -n --arg server "$SERVER_ADDRESS" --arg onion "$ONION_ADDRESS" \
+      '{serverAddress: $server, onionAddress: $onion}' > "$RUNTIME_DIR/render-args.json"
 
     INBOUNDS_JSON=$(${jq} -c '.inbounds' <<< "$RENDERED")
 
@@ -230,6 +240,9 @@ let
           "--arg password ''"
       } \
       --argjson runtime ${if proxyInboundsRuntimeEnabled then "true" else "false"} \
+      --argjson exit_mark ${
+        if proxyInboundsSpeedLimits then toString constants.inboundExitMark else "null"
+      } \
       --slurpfile rendered <(printf '%s' "$RENDERED") \
       --argjson host_addresses "$HOST_ADDRESSES" \
       '.inbounds += $ibs[0]
@@ -251,6 +264,13 @@ let
        | if $auth_enabled then
            (.outbounds[] | select(.tag == "proxy") | .settings.servers[0].users)
              = [{user:$user,pass:$password}]
+         else . end
+       # Speed limits: every exit marks the sockets of a limited user with their level (the
+       # XRay patch), for nftables. Not the serverSource outbounds, nor one marked already.
+       | if $exit_mark != null then
+           (.outbounds[] | select(.protocol != "blackhole" and .tag != "api"
+                                  and ((.tag // "") | startswith("direct-self") | not)))
+             |= (.streamSettings.sockopt.mark //= $exit_mark)
          else . end' \
       ${proxyInboundsFile} > "$RUNTIME_DIR/config.json.tmp"
 
@@ -368,16 +388,108 @@ let
   '';
   # inbounds.runtime: after proxy-ctl changes the spool. The AmneziaWG interfaces only when
   # their peers changed: restarting them cuts off every one of their clients for a moment.
+  # Users through XRay's API and AmneziaWG peers through `awg syncconf`, so the others keep
+  # their connections; a restart only for what those cannot change (inbound_apply.py).
   reloadInbounds = pkgs.writeShellScript "proxy-suite-inbounds" ''
     set -euo pipefail
-    restart=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${parserScriptsPythonPath}/inbound_runtime.py \
-      --spec ${proxyInboundsSpecFile} check${
-        lib.optionalString (
-          proxyInboundsAwg != [ ]
-        ) " --awg-users ${constants.runtimeDir}/proxy-suite-inbounds-awg/users.json"
-      })
-    # shellcheck disable=SC2086
-    ${constants.systemctl} try-restart $restart proxy-suite-inbounds.service
+    PYTHONPATH="${parserScriptsPythonPath}" exec ${python3} ${parserScriptsPythonPath}/inbound_apply.py \
+      --config ${applyConfigFile} --spec ${proxyInboundsSpecFile}
+  '';
+
+  # The links and subscriptions of a rendering saved by the start script, written as it
+  # writes them: for inbound_apply.py, after users changed without a restart.
+  writeInboundOutputs = pkgs.writeShellScript "proxy-suite-inbounds" ''
+    set -euo pipefail
+    umask 077
+    RENDERED=$(cat "$1")
+    ${writeLinksBlock}
+    ${writeSubscriptionsBlock}
+  '';
+
+  # What inbound_apply.py works with: the binaries, units and names it may touch.
+  applyConfig = {
+    inherit runtimeDir;
+    unit = "proxy-suite-inbounds.service";
+    template = "${proxyInboundsFile}";
+    inherit xray;
+    api = "unix://${constants.inboundStatsApiSocket}";
+    ip = "${pkgs.iproute2}/bin/ip";
+    selfInterface =
+      if selfInterfaceWanted then proxyInboundsCfg.routing.serverSource.interface else null;
+    outputsScript = "${writeInboundOutputs}";
+    inherit (constants) systemctl;
+    tmpDir = runtimeDir;
+    env = lib.optionalAttrs (cfg.geodata.xray.assets != null) {
+      XRAY_LOCATION_ASSET = "${cfg.geodata.xray.assets}/share/v2ray";
+    };
+  }
+  # Killing a cut user's sockets, and the table their UDP is dropped in, take root.
+  // lib.optionalAttrs constants.privileged {
+    ss = "${pkgs.iproute2}/bin/ss";
+  }
+  // lib.optionalAttrs (constants.privileged && proxyInboundsManagerEnabled) {
+    nft = "${pkgs.nftables}/bin/nft";
+    nftTable = constants.inboundLimitsTable;
+  }
+  // lib.optionalAttrs (proxyInboundsAwg != [ ]) {
+    awg = awgBin;
+    awgRuntimeDir = "${constants.runtimeDir}/proxy-suite-inbounds-awg";
+    awgUnit = "proxy-suite-inbounds-awg.service";
+  };
+  applyConfigFile = pkgs.writeText "proxy-suite-inbounds" (builtins.toJSON applyConfig);
+
+  # The manager's own: where it keeps things, what it serves, whom it tells.
+  mgr = proxyInboundsManagerCfg;
+  managerApiGroup =
+    if mgr.api.group != null then
+      mgr.api.group
+    else if userControlAllows "inbounds" then
+      userControlCfg.group
+    else
+      null;
+  managerConfig = {
+    apply = applyConfig;
+    policyFile = "${constants.inboundsManagerDir}/policy.json";
+    stateFile = "${constants.inboundsManagerDir}/state.json";
+    statsFile = constants.inboundStatsFile;
+    collector = "${collectInboundStats}";
+    inherit (mgr)
+      interval
+      webhooks
+      notify
+      deleteExpiredAfter
+      ;
+    api = {
+      socket = constants.inboundsManagerApiSocket;
+      group = managerApiGroup;
+      mode = if managerApiGroup == null then "0600" else "0660";
+      inherit (mgr.api) listen tokensFile;
+    };
+    subscriptions = {
+      socket = if mgr.subscriptions.enable then constants.inboundsManagerSubSocket else null;
+      inherit (mgr.subscriptions)
+        group
+        listen
+        profileTitle
+        updateInterval
+        supportUrl
+        webPageUrl
+        ;
+      inherit (subsCfg) baseUrl;
+    };
+    ipLimit.banSeconds = mgr.ipLimit.banTime;
+    speedLimits = proxyInboundsSpeedLimits;
+    inherit (mgr.speedLimits) slots;
+    nft = if constants.privileged then "${pkgs.nftables}/bin/nft" else null;
+  };
+  managerConfigFile = pkgs.writeText "proxy-suite-inbounds-manager" (builtins.toJSON managerConfig);
+  runManager = pkgs.writeShellScript "proxy-suite-inbounds-manager" ''
+    set -euo pipefail
+    umask 077
+    mkdir -p ${lib.escapeShellArg constants.inboundsManagerDir}
+    export PYTHONPATH=${proxySuiteScriptsDir}
+    exec ${python3} ${proxySuiteScriptsDir}/inbound_manager.py \
+      --config ${managerConfigFile} --spec ${proxyInboundsSpecFile} serve
   '';
 
   stopInboundsInterface =
@@ -392,6 +504,7 @@ in
     stopInboundsInterface
     collectInboundStats
     reloadInbounds
+    runManager
     linksFile
     subscriptionsFile
     ;
