@@ -1,0 +1,14 @@
+# The workflows pin actions by commit SHA; Dependabot moves the SHA and its version
+# comment together. Nix inputs and pinned sources are dependency-updates.yml's job.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(ci)"

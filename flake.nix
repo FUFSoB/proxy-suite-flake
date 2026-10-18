@@ -146,6 +146,7 @@
             tg-ws-proxy
             whitelist-bypass
             wireproxy-awg
+            z2k-detect
             zapret2
             ;
           xray = import ./pkgs/xray.nix { inherit pkgs; };

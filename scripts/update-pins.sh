@@ -8,8 +8,14 @@
 #                that must stay in lockstep.
 #   flake-attr   package built to recompute vendorHash; "-" when there is none.
 #
+# LOCKED_PINS are sources whose rev comes from a flake.lock input, so `nix flake update`
+# moves them: their hash and vendorHash are refreshed when the source no longer matches.
+# Table columns: nix-file|flake-input|flake-attr.
+#
 # Prints one "updated <repo>: <old> -> <new>" line per change on stdout; progress
-# and errors go to stderr. `--attrs` lists the flake attrs instead.
+# and errors go to stderr. A pin whose update fails (no tarball, no vendorHash to read
+# from the build) is put back as it was and printed as a "skipped <name>: <reason>"
+# line instead; the others still go through. `--attrs` lists the flake attrs instead.
 set -euo pipefail
 
 PINS=(
@@ -17,15 +23,26 @@ PINS=(
   "pkgs/zapret2.nix|bol-van|zapret2|version|zapret2"
   "pkgs/xray.nix|XTLS|Xray-core|version|xray"
   "pkgs/whitelist-bypass.nix|kulikov0|whitelist-bypass|version|whitelist-bypass"
+  "pkgs/wireproxy-awg.nix|artem-russkikh|wireproxy-awg|version|wireproxy-awg"
+)
+
+LOCKED_PINS=(
+  "pkgs/z2k-detect.nix|z2k|z2k-detect"
 )
 
 FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 if [[ "${1:-}" == "--attrs" ]]; then
-  for pin in "${PINS[@]}"; do
-    IFS='|' read -r _ _ _ _ attr <<<"$pin"
-    [[ "$attr" == "-" ]] || printf '.#%s\n' "$attr"
-  done | sort -u
+  {
+    for pin in "${PINS[@]}"; do
+      IFS='|' read -r _ _ _ _ attr <<<"$pin"
+      [[ "$attr" == "-" ]] || printf '.#%s\n' "$attr"
+    done
+    for pin in "${LOCKED_PINS[@]}"; do
+      IFS='|' read -r _ _ attr <<<"$pin"
+      printf '.#%s\n' "$attr"
+    done
+  } | sort -u
   exit 0
 fi
 
@@ -109,7 +126,7 @@ refresh_vendor_hash() {
     return 1
   fi
   set_attr "$file" "$repo" vendorHash "$got"
-  echo "updated ${repo} vendorHash: ${got}"
+  echo "updated ${repo:-$attr} vendorHash: ${got}"
 }
 
 
@@ -155,47 +172,125 @@ fi
 
 declare -A BUMPED=()
 
-for pin in "${PINS[@]}"; do
-  IFS='|' read -r file owner repo key attr <<<"$pin"
-  [[ -f "$file" ]] || { echo "missing ${file}" >&2; exit 1; }
+# One tag pin, in this shell so BUMPED sticks. Lines for stdout collect in PIN_OUT and
+# are printed only once the whole pin went through; a failure sets SKIP_REASON and
+# returns 1, and the caller puts the file back.
+update_pin() {
+  local file=$1 owner=$2 repo=$3 key=$4 attr=$5 current new tag tag_ref hash commit vendor
+  PIN_OUT="" SKIP_REASON=""
 
   if [[ "$key" == =* ]]; then
     # Lockstep source: refetch only when the key it follows actually moved.
     key=${key#=}
-    [[ -n "${BUMPED[$key]:-}" ]] || { echo "${repo}: follows ${key}, unchanged" >&2; continue; }
+    [[ -n "${BUMPED[$key]:-}" ]] || { echo "${repo}: follows ${key}, unchanged" >&2; return 0; }
     new=$(get_key "$file" "$key")
     current=$new
   else
     current=$(get_key "$file" "$key")
     [[ -n "$current" ]] || { echo "could not read ${key} from ${file}" >&2; exit 1; }
-    tag=$(latest_tag "$owner" "$repo")
+    tag=$(latest_tag "$owner" "$repo") || { SKIP_REASON="could not list its tags"; return 1; }
     # Keep whatever "v" convention the file already uses.
     if [[ "$current" == v* ]]; then new=$tag; else new=${tag#v}; fi
     if [[ "$current" == "$new" ]]; then
       echo "${repo}: already at ${current}" >&2
-      continue
+      return 0
     fi
     # These pins exist because they are ahead of nixpkgs; never walk one back.
     if [[ "$(newest "$current" "$new")" != "$new" ]]; then
       echo "${repo}: pinned ${current} is newer than upstream ${new}, keeping it" >&2
-      continue
+      return 0
     fi
   fi
 
   tag_ref=$new
   [[ "$tag_ref" == v* ]] || tag_ref="v${tag_ref}"
   hash=$(nix store prefetch-file --json --unpack \
-    "https://github.com/${owner}/${repo}/archive/refs/tags/${tag_ref}.tar.gz" | jq -r '.hash')
-  [[ -n "$hash" && "$hash" != "null" ]] || { echo "could not hash ${repo} ${tag_ref}" >&2; exit 1; }
+    "https://github.com/${owner}/${repo}/archive/refs/tags/${tag_ref}.tar.gz" | jq -r '.hash') || hash=""
+  [[ -n "$hash" && "$hash" != "null" ]] || { SKIP_REASON="could not fetch ${tag_ref}, kept ${current}"; return 1; }
 
   if [[ "$current" != "$new" ]]; then
     set_attr "$file" "" "$key" "$new" || { echo "could not write ${key} in ${file}" >&2; exit 1; }
-    BUMPED[$key]=1
     # The commit the tag names now, for the review: a moved tag shows up as a commit that
     # is not on the project's history.
     commit=$(gh_api "https://api.github.com/repos/${owner}/${repo}/commits/${tag_ref}" | jq -r '.sha // empty') || true
-    echo "updated ${repo}: ${current} -> ${new} (commit ${commit:-unknown})"
+    PIN_OUT+="updated ${repo}: ${current} -> ${new} (commit ${commit:-unknown})"$'\n'
   fi
   set_attr "$file" "$repo" hash "$hash" || { echo "could not write hash for ${repo}" >&2; exit 1; }
-  refresh_vendor_hash "$file" "$repo" "$attr"
+  vendor=$(refresh_vendor_hash "$file" "$repo" "$attr") ||
+    { SKIP_REASON="${new} does not build far enough to give its vendorHash, kept ${current}"; return 1; }
+  [[ -z "$vendor" ]] || PIN_OUT+="${vendor}"$'\n'
+  [[ "$current" == "$new" ]] || BUMPED[$key]=1
+}
+
+# Locked sources: the fetch is named after the rev, so a moved input always refetches
+# and a stale hash shows up as a mismatch here instead of reusing the old checkout.
+update_locked_pin() {
+  local file=$1 input=$2 attr=$3 rev log got vendor
+  PIN_OUT="" SKIP_REASON=""
+  rev=$(jq -r --arg input "$input" '.nodes[$input].locked.rev // empty' flake.lock)
+  [[ -n "$rev" ]] || { echo "no locked rev for ${input} in flake.lock" >&2; exit 1; }
+  if log=$(nix build --no-link ".#${attr}.src" 2>&1); then
+    echo "${attr}: source matches ${input} ${rev:0:7}" >&2
+    return 0
+  fi
+  got=$(grep -oE 'got: +sha256-[A-Za-z0-9+/]{43}=' <<<"$log" | grep -oE 'sha256-.*' | tail -n1)
+  if [[ -z "$got" ]]; then
+    echo "could not fetch the source of ${attr}:" >&2
+    tail -n 30 <<<"$log" >&2
+    SKIP_REASON="could not fetch ${input} ${rev:0:7}"
+    return 1
+  fi
+  set_attr "$file" "" hash "$got" || { echo "could not write hash in ${file}" >&2; exit 1; }
+  PIN_OUT+="updated ${attr}: source to ${input} ${rev:0:7}"$'\n'
+  vendor=$(refresh_vendor_hash "$file" "" "$attr") ||
+    { SKIP_REASON="${input} ${rev:0:7} does not build far enough to give its vendorHash"; return 1; }
+  [[ -z "$vendor" ]] || PIN_OUT+="${vendor}"$'\n'
+}
+
+# Put a locked input back at the committed rev, so the source and its hashes stay a
+# matching pair. Only a node with no inputs of its own (a `flake = false` source) can be
+# swapped alone; any other is left moved, and its package build fails in the open.
+restore_locked_input() {
+  local input=$1 old tmp
+  old=$(git show HEAD:flake.lock 2>/dev/null | jq -c --arg input "$input" '.nodes[$input] // empty') || old=""
+  if [[ -z "$old" ]] || jq -e --arg input "$input" '.nodes[$input].inputs' flake.lock >/dev/null; then
+    return 1
+  fi
+  tmp=$(mktemp)
+  jq --arg input "$input" --argjson old "$old" '.nodes[$input] = $old' flake.lock >"$tmp"
+  mv "$tmp" flake.lock
+}
+
+snapshot=$(mktemp)
+trap 'rm -f "$snapshot"' EXIT
+
+for pin in "${PINS[@]}"; do
+  IFS='|' read -r file owner repo key attr <<<"$pin"
+  [[ -f "$file" ]] || { echo "missing ${file}" >&2; exit 1; }
+  cp "$file" "$snapshot"
+  if update_pin "$file" "$owner" "$repo" "$key" "$attr"; then
+    printf '%s' "$PIN_OUT"
+  else
+    cp "$snapshot" "$file"
+    echo "${repo}: ${SKIP_REASON}" >&2
+    echo "skipped ${repo}: ${SKIP_REASON}"
+  fi
+done
+
+for pin in "${LOCKED_PINS[@]}"; do
+  IFS='|' read -r file input attr <<<"$pin"
+  [[ -f "$file" ]] || { echo "missing ${file}" >&2; exit 1; }
+  cp "$file" "$snapshot"
+  if update_locked_pin "$file" "$input" "$attr"; then
+    printf '%s' "$PIN_OUT"
+  else
+    cp "$snapshot" "$file"
+    if restore_locked_input "$input"; then
+      SKIP_REASON+=", kept ${input} at the committed rev"
+    else
+      SKIP_REASON+=", ${input} stays moved with stale hashes"
+    fi
+    echo "${attr}: ${SKIP_REASON}" >&2
+    echo "skipped ${attr}: ${SKIP_REASON}"
+  fi
 done

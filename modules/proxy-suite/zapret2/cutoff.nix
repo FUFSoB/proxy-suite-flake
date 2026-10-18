@@ -7,6 +7,7 @@
   lib,
   pkgs,
   cfg,
+  packages,
   zapret2Sources,
   nft,
 }:
@@ -29,16 +30,8 @@ let
     lib.optional zapretGlobalEnabled "proxy-suite-zapret.service"
     ++ lib.optional cfg.perAppRouting.zapret.enable "proxy-suite-per-app-zapret.service";
 
-  z2kDetect = pkgs.buildGoModule {
-    pname = "z2k-detect";
-    version = "0-unstable-${z2k.shortRev or "local"}";
-    src = "${z2k}/z2k-detect";
-    vendorHash = "sha256-9Qv6O6/8MP9N44GPSDULEV/NcrHdEC3YZmIQmpaa1nE=";
-    subPackages = [ "cmd/z2k-detect" ];
-    # Its tests open raw sockets and dial out.
-    doCheck = false;
-    meta.mainProgram = "z2k-detect";
-  };
+  # The z2k flake.lock holds, whatever `z2k` the consumer passes (pkgs/z2k-detect.nix).
+  z2kDetect = packages.z2k-detect;
 
   # $1 asn.txt, $2 sni.txt, $3 AS-to-prefix map; prints a sing-box source rule-set
   # with the prefixes of every cut-off network that no whitelisted name fixes.

@@ -135,6 +135,7 @@ let
       lib
       pkgs
       cfg
+      packages
       zapret2Sources
       nft
       ;

@@ -25,7 +25,9 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       has_changes: ${{ steps.changes.outputs.has_changes }}
-      checks_failed: ${{ steps.checks.outputs.failed }}
+      # A skipped pin, failed package build or failed check: the pull request opens as a
+      # draft and the run ends red.
+      failed: ${{ (steps.pins.outputs.skipped == 'true' || steps.builds.outputs.failed == 'true' || steps.checks.outputs.failed == 'true') && 'true' || 'false' }}
     steps:
       # No token left in .git/config for the steps that run fetched code (flake updates,
       # update-pins.sh, nix builds); create-pull-request authenticates on its own.
@@ -55,15 +57,24 @@ jobs:
           else
             echo "Skipping nixpkgs update: watched package versions on nixos-unstable are unchanged."
           fi
-          nix flake update zapret
+          # Every other input, every run; update-pins.sh then refreshes the hashes of the
+          # sources that follow one (z2k-detect follows z2k).
+          nix flake update zapret z2k nfqws2-keenetic disko
 
+      # A pin that cannot be updated is put back and listed as "skipped"; the rest go through.
       - name: Update pinned sources
+        id: pins
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           scripts/update-pins.sh --self-test
           scripts/update-pins.sh | tee "$RUNNER_TEMP/pin-updates.txt"
+          if grep -q '^skipped ' "$RUNNER_TEMP/pin-updates.txt"; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # A nixpkgs bump can bring a nixfmt whose style differs; restyle the tree with
       # it so the nix-format check passes and the restyle rides along in the PR.
@@ -80,12 +91,25 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # One build per package, so a failure names it; like the checks, a failure makes the
+      # pull request a draft instead of holding the update back.
       - name: Build updated packages
+        id: builds
         if: steps.changes.outputs.has_changes == 'true'
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mapfile -t attrs < <(scripts/update-pins.sh --attrs)
-          nix build --no-link "${attrs[@]}"
+          : > "$RUNNER_TEMP/failed-builds.txt"
+          for attr in "${attrs[@]}"; do
+            echo "::group::nix build ${attr}"
+            nix build --no-link --print-build-logs "$attr" || echo "${attr#.#}" >> "$RUNNER_TEMP/failed-builds.txt"
+            echo "::endgroup::"
+          done
+          if [[ -s "$RUNNER_TEMP/failed-builds.txt" ]]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # A failing check does not hold the update back: the pull request opens as a draft
       # naming the failures, and the run still ends red (open-pull-request's last step).
@@ -112,6 +136,8 @@ jobs:
         env:
           SHOULD_UPDATE_NIXPKGS: ${{ steps.nixpkgs_gate.outputs.should_update_nixpkgs }}
           CHANGED_WATCH_ATTRS: ${{ steps.nixpkgs_gate.outputs.nixpkgs_changed_watch_attrs }}
+          PINS_SKIPPED: ${{ steps.pins.outputs.skipped }}
+          BUILDS_FAILED: ${{ steps.builds.outputs.failed }}
           CHECKS_FAILED: ${{ steps.checks.outputs.failed }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -122,6 +148,9 @@ jobs:
             echo "Managed by CI; the \`ci/update-dependencies\` branch is reused across runs."
             echo
             echo "### Pinned sources"
+            if [[ "$PINS_SKIPPED" == "true" ]]; then
+              echo "Some could not be updated and were kept, so this pull request is a draft ([run log]($RUN_URL))."
+            fi
             if [[ -s "$RUNNER_TEMP/pin-updates.txt" ]]; then
               sed 's/^/- /' "$RUNNER_TEMP/pin-updates.txt"
             else
@@ -131,7 +160,21 @@ jobs:
             echo "### Flake inputs"
             echo "- nixpkgs updated: \`$SHOULD_UPDATE_NIXPKGS\`"
             echo "- changed watched attrs: \`$CHANGED_WATCH_ATTRS\`"
-            echo "- zapret: refreshed every run"
+            # The locked revs that moved, against the checked-out lock file.
+            git show HEAD:flake.lock | jq -r --slurpfile new flake.lock '
+              .nodes as $old | $new[0].nodes | to_entries[]
+              | select(.value.locked.rev? != null)
+              | (.value.locked.rev) as $rev | ($old[.key].locked.rev // "none") as $prev
+              | select($rev != $prev)
+              | "- \(.key): `\($prev[0:7])` -> `\($rev[0:7])`"'
+            echo
+            echo "### Package builds"
+            if [[ "$BUILDS_FAILED" == "true" ]]; then
+              echo "Failed, so this pull request is a draft ([run log]($RUN_URL)):"
+              while IFS= read -r attr; do echo "- \`$attr\`"; done < "$RUNNER_TEMP/failed-builds.txt"
+            else
+              echo "- all built"
+            fi
             echo
             echo "### Flake checks"
             if [[ "$CHECKS_FAILED" == "true" ]]; then
@@ -170,9 +213,18 @@ jobs:
             ${{ runner.temp }}/dependency-updates.md
           retention-days: 1
 
+      # With nothing else to propose there is no pull request to carry a skipped pin.
       - name: No dependency changes
         if: steps.changes.outputs.has_changes != 'true'
-        run: echo "No dependency updates detected."
+        env:
+          PINS_SKIPPED: ${{ steps.pins.outputs.skipped }}
+        run: |
+          set -euo pipefail
+          if [[ "$PINS_SKIPPED" == "true" ]]; then
+            grep '^skipped ' "$RUNNER_TEMP/pin-updates.txt" | sed 's/^/::error::/'
+            exit 1
+          fi
+          echo "No dependency updates detected."
 
   open-pull-request:
     needs: update-dependencies
@@ -210,7 +262,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # always-true also turns an open pull request back into a draft.
-          draft: ${{ needs.update-dependencies.outputs.checks_failed == 'true' && 'always-true' || 'false' }}
+          draft: ${{ needs.update-dependencies.outputs.failed == 'true' && 'always-true' || 'false' }}
           branch: ci/update-dependencies
           delete-branch: false
           add-paths: |
@@ -224,9 +276,9 @@ jobs:
             dependencies
             nix
 
-      # draft: false leaves an existing draft alone; once the checks pass, mark it ready.
+      # draft: false leaves an existing draft alone; once nothing was skipped or failed, mark it ready.
       - name: Mark the pull request ready for review
-        if: needs.update-dependencies.outputs.checks_failed != 'true' && steps.pr.outputs.pull-request-operation == 'updated'
+        if: needs.update-dependencies.outputs.failed != 'true' && steps.pr.outputs.pull-request-operation == 'updated'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
@@ -236,10 +288,10 @@ jobs:
             gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
           fi
 
-      - name: Fail the run on failed checks
-        if: needs.update-dependencies.outputs.checks_failed == 'true'
+      - name: Fail the run on skipped pins, failed builds or checks
+        if: needs.update-dependencies.outputs.failed == 'true'
         env:
           PR_URL: ${{ steps.pr.outputs.pull-request-url }}
         run: |
-          echo "::error::Flake checks failed; the update is a draft pull request: $PR_URL"
+          echo "::error::Pins were skipped, or package builds or flake checks failed; the update is a draft pull request: $PR_URL"
           exit 1

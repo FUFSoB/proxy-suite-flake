@@ -4,6 +4,7 @@ let
   mkTgWsProxy = _args: import ./tg-ws-proxy.nix { inherit pkgs; };
   zapret2 = import ./zapret2.nix { inherit pkgs; };
   whitelist-bypass = import ./whitelist-bypass.nix { inherit pkgs; };
+  z2k-detect = import ./z2k-detect.nix { inherit pkgs; };
   mkProxySuiteSupervisor = import ./proxy-suite-supervisor.nix {
     lib = pkgs.lib;
     inherit pkgs;
@@ -24,6 +25,7 @@ in
     mkProxySuiteSupervisor
     zapret2
     whitelist-bypass
+    z2k-detect
     ;
   tg-ws-proxy = mkTgWsProxy { };
 }
