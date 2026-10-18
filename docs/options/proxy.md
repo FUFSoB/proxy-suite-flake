@@ -140,6 +140,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [url](#services-proxy-suite-proxy-urltest-url)
   - xray
     - [package](#services-proxy-suite-proxy-xray-package)
+    - [xhttpXmux](#services-proxy-suite-proxy-xray-xhttpxmux)
 
 <a id="services-proxy-suite-proxy-enable"></a>
 ## services\.proxy-suite\.proxy\.enable
@@ -1213,3 +1214,28 @@ XRay package, for the “xray” and “hybrid” backends\.
 **Type:** package\
 **Default:** proxy-suite’s ` xray ` (` pkgs/xray.nix `)\
 **Example:** `pkgs.xray`
+
+<a id="services-proxy-suite-proxy-xray-xhttpxmux"></a>
+## services\.proxy-suite\.proxy\.xray\.xhttpXmux
+
+XRay’s ` xmux ` for every XHTTP outbound whose link sets none (in its ` extra `): how
+its connections are spread over HTTP/2 or HTTP/3 connections to the server, and how
+soon a dead one is noticed\. XRay notices a connection that stopped answering only by
+` hKeepAlivePeriod `’s ping: after that many seconds without a frame, plus 15 for the
+ping, default 45, so a minute in which everything on it hangs, new connections too\.
+XRay applies its own defaults (` maxConnections ` 3, ` hMaxRequestTimes ` “600-900”,
+` hMaxReusableSecs ` “1800-3000”) only to an empty ` xmux `: give them here too\.
+` null `: XRay’s defaults\.
+
+**Type:** null or (attribute set of (signed integer or string matching the pattern \[0-9]+(-\[0-9]+)?))\
+**Default:** `null`\
+**Example:**
+
+```nix
+{
+  hKeepAlivePeriod = 10;
+  hMaxRequestTimes = "600-900";
+  hMaxReusableSecs = "1800-3000";
+  maxConnections = 3;
+}
+```

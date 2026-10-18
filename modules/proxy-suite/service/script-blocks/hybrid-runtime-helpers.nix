@@ -7,6 +7,7 @@ let
     jq
     hybridEnabled
     xraySidecarRoutingMark
+    xhttpXmuxJq
     ;
 in
 
@@ -21,6 +22,7 @@ lib.optionalString hybridEnabled (
     setSidecarMark = lib.optionalString (
       xraySidecarRoutingMark != null
     ) "| .streamSettings.sockopt.mark = $mark";
+    setXhttpXmux = xhttpXmuxJq;
     hopRoutingMark = lib.optionalString (
       routingMark != null
     ) " + {routing_mark: ${toString routingMark}}";

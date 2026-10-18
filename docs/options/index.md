@@ -335,6 +335,7 @@ services.proxy-suite = {
     };
     xray = {
       package = ‹proxy-suite's xray (pkgs/xray.nix)›;
+      xhttpXmux = null;
     };
   };
   sshProxy = {

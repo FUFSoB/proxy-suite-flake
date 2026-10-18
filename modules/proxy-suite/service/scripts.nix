@@ -167,7 +167,7 @@ let
       proxyInboundsGuardStrategy
       ;
     proxyInboundsBlockPrivate = proxyInboundsCfg.routing.blockPrivate;
-    inherit (ctx) proxyInboundsLoopback proxyInboundsHostClosedPorts;
+    inherit (ctx) proxyInboundsLoopback proxyInboundsHostClosedPorts xhttpXmuxJq;
     listenerExposed =
       let
         address = proxyCfg.listener.address;

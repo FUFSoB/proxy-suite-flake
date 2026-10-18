@@ -2394,15 +2394,21 @@ class GroupWatch:
         return status == 200 and isinstance(body, dict) and "delay" in body
 
     def record(self, tag, ok, hinted=False):
+        # Logged: each miss of a member still up, and its going down and up. A hiccup that heals
+        # before the member goes down leaves those misses, and nothing else, behind.
         h = self.health.setdefault(tag, {"up": True, "misses": 0, "passes": 0, "since": self.wall()})
         if ok:
             h["misses"], h["passes"] = 0, h["passes"] + 1
             if not h["up"] and h["passes"] >= GROUP_PASSES_UP:
                 h["up"], h["since"] = True, self.wall()
+                print(f"{tag}: up again", file=sys.stderr)
         else:
             h["passes"], h["misses"] = 0, h["misses"] + 1
+            if h["up"]:
+                print(f"{tag}: test failed ({h['misses']}/{1 if hinted else GROUP_MISSES_DOWN}{', after a hint' if hinted else ''})", file=sys.stderr)
             if h["up"] and (hinted or h["misses"] >= GROUP_MISSES_DOWN):
                 h["up"], h["since"] = False, self.wall()
+                print(f"{tag}: down", file=sys.stderr)
 
     def up(self, tag):
         return self.health.get(tag, {}).get("up", True)

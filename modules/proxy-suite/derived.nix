@@ -644,6 +644,12 @@ let
     }
     .${cfg.debug.logLevel};
   connectionLogEnabled = cfg.enable && clashApiEnabled && cfg.debug.connectionLog.enable;
+  # proxy.xray.xhttpXmux, as a jq step over one XRay outbound: an XHTTP one whose link set no
+  # xmux takes it. JSON is a jq literal.
+  xhttpXmuxJq = lib.optionalString (xrayCfg.xhttpXmux != null) ''
+    | if .streamSettings.network? == "xhttp" and ((.streamSettings.xhttpSettings.extra.xmux? // {}) == {})
+      then .streamSettings.xhttpSettings.extra.xmux = ${builtins.toJSON xrayCfg.xhttpXmux}
+      else . end'';
   perAppZapretEnabled = perAppZapretCfg.enable;
   # The global units each per-app backend steps aside for (constants.refuseUnderGlobal), as
   # systemctl patterns: they stop it as they start, and the standby unit waits them out.
@@ -1260,6 +1266,7 @@ in
     singBoxLogLevel
     xrayLogLevel
     connectionLogEnabled
+    xhttpXmuxJq
     singBoxCfg
     xrayCfg
     proxyEnabled

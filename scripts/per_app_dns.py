@@ -21,6 +21,8 @@ import sys
 import time
 
 TIMEOUT = 4.0
+# A UDP query is sent again after this long without an answer (ask_udp).
+RESEND_AFTER = 1.5
 MAX_MESSAGE = 65535
 
 # --log (debug.perAppDns): a line per lookup sent on, to the journal.
@@ -48,7 +50,7 @@ def question(query: bytes) -> str:
     return f"{'.'.join(labels) or '.'} {QTYPES.get(qtype, qtype)}"
 
 
-def log_lookup(port: int, proto: str, query: bytes, reply: bytes | None, started: float):
+def log_lookup(port: int, proto: str, query: bytes, reply: bytes | None, started: float, asked: int = 1):
     if not LOG:
         return
     if reply is None:
@@ -58,7 +60,8 @@ def log_lookup(port: int, proto: str, query: bytes, reply: bytes | None, started
     else:
         outcome = RCODES.get(reply[3] & 0x0F, f"rcode {reply[3] & 0x0F}")
     took = (time.monotonic() - started) * 1000
-    print(f"per-app-dns: :{port} {proto} {question(query)}: {outcome} in {took:.0f} ms", flush=True)
+    again = f", asked {asked} times" if asked > 1 else ""
+    print(f"per-app-dns: :{port} {proto} {question(query)}: {outcome} in {took:.0f} ms{again}", flush=True)
 
 
 # The source address of the queries sent on (--bind): on a TProxy route's local route the
@@ -80,23 +83,51 @@ def upstream_socket(server: str, kind: int, mark: int) -> socket.socket:
     return sock
 
 
-async def ask_udp(query: bytes, servers: list[str], mark: int) -> bytes | None:
-    """The first answer any server gives, in order; None when none does."""
+async def ask_udp_once(query: bytes, server: str, mark: int) -> bytes:
     loop = asyncio.get_running_loop()
+    sock = upstream_socket(server, socket.SOCK_DGRAM, mark)
+    try:
+        await loop.sock_connect(sock, (server, 53))
+        await loop.sock_sendall(sock, query)
+        return await loop.sock_recv(sock, MAX_MESSAGE)
+    finally:
+        sock.close()
+
+
+async def ask_udp(query: bytes, servers: list[str], mark: int) -> tuple[bytes | None, int]:
+    """(the first answer any server gives, in order, or None; how many times it was asked).
+
+    Unanswered after RESEND_AFTER, a query goes again from a new socket, the first still
+    waiting: through a proxy one is often lost (a tunnel that stalled, a session it was
+    opening), and the app asks again only after its own timeout, glibc's 5 s. Silence, not
+    SERVFAIL, when none answers: on SERVFAIL glibc gives up, on silence it retries.
+    """
+    loop = asyncio.get_running_loop()
+    asked = 0
     for server in servers:
+        attempts = []
+        deadline = loop.time() + TIMEOUT
+        # Set as each attempt goes out; the first goes out at once.
+        resend_at = loop.time()
         try:
-            sock = upstream_socket(server, socket.SOCK_DGRAM, mark)
-        except OSError:
-            continue
-        try:
-            await loop.sock_connect(sock, (server, 53))
-            await loop.sock_sendall(sock, query)
-            return await asyncio.wait_for(loop.sock_recv(sock, MAX_MESSAGE), TIMEOUT)
-        except (OSError, asyncio.TimeoutError):
-            continue
+            while loop.time() < deadline:
+                pending = [a for a in attempts if not a.done()]
+                if not pending and len(attempts) == 2:
+                    break
+                if not pending or (len(attempts) == 1 and loop.time() >= resend_at):
+                    attempts.append(asyncio.ensure_future(ask_udp_once(query, server, mark)))
+                    asked += 1
+                    resend_at = loop.time() + RESEND_AFTER
+                    pending = [a for a in attempts if not a.done()]
+                wake = min(deadline, resend_at) if len(attempts) == 1 else deadline
+                done, _ = await asyncio.wait(pending, timeout=max(0, wake - loop.time()), return_when=asyncio.FIRST_COMPLETED)
+                for attempt in done:
+                    if attempt.exception() is None:
+                        return attempt.result(), asked
         finally:
-            sock.close()
-    return None
+            for attempt in attempts:
+                attempt.cancel()
+    return None, asked
 
 
 class UdpListener(asyncio.DatagramProtocol):
@@ -114,8 +145,8 @@ class UdpListener(asyncio.DatagramProtocol):
 
     async def answer(self, query, addr):
         started = time.monotonic()
-        reply = await ask_udp(query, self.servers, self.mark)
-        log_lookup(self.port, "udp", query, reply, started)
+        reply, asked = await ask_udp(query, self.servers, self.mark)
+        log_lookup(self.port, "udp", query, reply, started, asked)
         if reply is not None and self.transport is not None:
             self.transport.sendto(reply, addr)
 

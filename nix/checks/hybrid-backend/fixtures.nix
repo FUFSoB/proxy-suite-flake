@@ -36,6 +36,10 @@ let
     };
   };
   hybridFixture = evalProxySuite [ hybridModule ];
+  hybridXmuxStartScript = startScript (evalProxySuite [
+    hybridModule
+    { services.proxy-suite.proxy.xray.xhttpXmux.hKeepAlivePeriod = 10; }
+  ]);
   hybridTproxyConfig = mkTProxyConfig hybridFixture;
   hybridTunConfig = mkTunConfig hybridFixture;
   hybridStartScript = startScript hybridFixture;
@@ -106,6 +110,7 @@ in
     hybridTproxyConfig
     hybridTunConfig
     hybridTunStartScript
+    hybridXmuxStartScript
     hybridXrayRawStartScript
     ;
 }

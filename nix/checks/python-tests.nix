@@ -96,6 +96,11 @@ pkgs.lib.mapAttrs mkPythonCheck {
         ZBARIMG = "${pkgs.zbar}/bin/zbarimg";
       };
   };
+  # The per-app routes' DNS forwarder: its log lines, and a lost query asked again.
+  per-app-dns = {
+    file = "${scripts}/test-per-app-dns.py";
+    env = withPath scripts;
+  };
   # The NFQWS_OPT rewrites the zapret v1 package build applies.
   patch-zapret-config = {
     file = "${scripts}/test-patch-zapret-config.py";

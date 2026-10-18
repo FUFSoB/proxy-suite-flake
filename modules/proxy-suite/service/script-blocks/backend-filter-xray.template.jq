@@ -46,6 +46,8 @@ def xray_pin_server_names:
 # Slurped (a list of one), not an argument: it grows with the rules.
 $route_rules[0] as $route_rules
 | .outbounds = ($obs[0] + .outbounds)
+  # proxy.xray.xhttpXmux.
+  | .outbounds |= map(. @setXhttpXmux@)
   | if $xray_loglevel == "" then . else .log.loglevel = $xray_loglevel end
   | if $auth_enabled then
       (.inbounds[] | select(.protocol == "socks" and .tag == "mixed-in") | .settings.auth) = "password"

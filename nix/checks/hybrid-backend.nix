@@ -30,6 +30,7 @@ let
     hybridTproxyConfig
     hybridTunConfig
     hybridTunStartScript
+    hybridXmuxStartScript
     hybridXrayRawStartScript
     ;
 in
@@ -90,6 +91,10 @@ in
       assert pkgs.lib.hasInfix "--backend sing-box" hybridStartScript;
       assert pkgs.lib.hasInfix "--backend xray" hybridStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridStartScript;
+      # proxy.xray.xhttpXmux reaches the sidecar's outbounds, and nothing without it.
+      assert !pkgs.lib.hasInfix "xmux" hybridStartScript;
+      assert pkgs.lib.hasInfix ''.streamSettings.xhttpSettings.extra.xmux = {"hKeepAlivePeriod":10}''
+        hybridXmuxStartScript;
       # The outbounds test pings a sidecar outbound's real server, over UDP when XRay dials
       # XHTTP over HTTP/3 or mKCP: no TCP handshake to time there.
       assert pkgs.lib.hasInfix ''.streamSettings.tlsSettings.alpn? == ["h3"]'' hybridStartScript;

@@ -195,6 +195,28 @@ in
         example = literalExpression "pkgs.xray";
         description = ''XRay package, for the "xray" and "hybrid" backends.'';
       };
+
+      xhttpXmux = mkOption {
+        # A number, or a range XRay picks from at random.
+        type = types.nullOr (types.attrsOf (types.either types.int (types.strMatching "[0-9]+(-[0-9]+)?")));
+        default = null;
+        description = ''
+          XRay's `xmux` for every XHTTP outbound whose link sets none (in its `extra`): how
+          its connections are spread over HTTP/2 or HTTP/3 connections to the server, and how
+          soon a dead one is noticed. XRay notices a connection that stopped answering only by
+          `hKeepAlivePeriod`'s ping: after that many seconds without a frame, plus 15 for the
+          ping, default 45, so a minute in which everything on it hangs, new connections too.
+          XRay applies its own defaults (`maxConnections` 3, `hMaxRequestTimes` "600-900",
+          `hMaxReusableSecs` "1800-3000") only to an empty `xmux`: give them here too.
+          `null`: XRay's defaults.
+        '';
+        example = {
+          maxConnections = 3;
+          hMaxRequestTimes = "600-900";
+          hMaxReusableSecs = "1800-3000";
+          hKeepAlivePeriod = 10;
+        };
+      };
     };
   };
 }

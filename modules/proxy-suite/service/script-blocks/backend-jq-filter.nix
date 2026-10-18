@@ -15,6 +15,8 @@
   awgRuntimeDnsServer ? null,
   # proxy.listener on an address other machines reach (0.0.0.0, a LAN address).
   listenerExposed ? false,
+  # derived.xhttpXmuxJq.
+  xhttpXmuxJq ? "",
 }:
 
 let
@@ -60,6 +62,7 @@ if pureXrayEnabled then
   (fillTemplate ./backend-filter-xray.template.jq {
     inherit selectionMode;
     hostClosedPorts = lib.concatStringsSep "," closedPorts;
+    setXhttpXmux = xhttpXmuxJq;
   })
 else
   (fillTemplate ./backend-filter-sing-box.template.jq {

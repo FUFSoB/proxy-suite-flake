@@ -30,6 +30,7 @@ _proxy_suite_add_xray_sidecar_obs() {
       | .value.tag as $tag
       | {outbound: (.value
            @setSidecarMark@
+           @setXhttpXmux@
            | .streamSettings.sockopt.domainStrategy = (.streamSettings.sockopt.domainStrategy // "UseIP")),
          client: {id: $id, email: $tag},
          rule: {type: "field", inboundTag: ["sidecar-in"], user: [$tag], outboundTag: $tag},

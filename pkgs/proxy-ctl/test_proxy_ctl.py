@@ -419,6 +419,25 @@ class GroupWatchTest(EnvTest):
         self.assertEqual(self.step(), [])
         self.assertEqual(self.step(), [("warp", "warp-1")])
 
+    def test_logs_misses_and_outages(self):
+        def lines(fn, *args):
+            return run(fn, *args)[2].splitlines()
+
+        self.step(0)
+        self.working["warp-1"] = False
+        # A hiccup that heals before the member goes down still leaves its miss behind.
+        self.assertEqual(lines(self.step), ["warp-1: test failed (1/2)"])
+        self.working["warp-1"] = True
+        self.assertEqual(lines(self.step), [])
+        self.working["warp-1"] = False
+        self.assertEqual(lines(self.step), ["warp-1: test failed (1/2)"])
+        self.assertEqual(lines(self.step), ["warp-1: test failed (2/2)", "warp-1: down", "warp: warp-1 -> warp-2"])
+        # Down, its misses are not repeated every test.
+        self.assertEqual(lines(self.step), [])
+        self.working["warp-1"] = True
+        self.step(), self.step()
+        self.assertEqual(lines(self.step), ["warp-1: up again", "warp: warp-2 -> warp-1"])
+
     def test_a_hint_moves_at_once(self):
         self.step(0)
         self.working["warp-1"] = False
