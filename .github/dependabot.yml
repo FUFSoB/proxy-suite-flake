@@ -12,3 +12,8 @@ updates:
       - github-actions
     commit-message:
       prefix: "chore(ci)"
+    # Every action bump in one pull request, not one each.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
