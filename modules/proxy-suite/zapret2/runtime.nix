@@ -437,8 +437,14 @@ let
     . "$ZAPRET_BASE/init.d/sysv/functions"
     opt="--qnum=$QNUM $NFQWS2_OPT"
     filter_apply_hostlist_target opt
+    # --user=root leaves nfqws2 root's own groups (initgroups), and with them only
+    # CAP_NET_ADMIN and CAP_NET_RAW: the unit's Group= and SupplementaryGroups=, through
+    # which it appends to the lists the zapret scope's group renames in (theirs, then),
+    # would be gone. --uid after it keeps uid 0 and the groups the unit started it with.
+    uid=
+    if [ "$(id -u)" = 0 ]; then uid="--uid=0:$(id -G | tr ' ' ,)"; fi
     set -f
-    exec "$NFQWS2" $NFQWS2_OPT_BASE $opt
+    exec "$NFQWS2" $NFQWS2_OPT_BASE $uid $opt
   '';
 in
 {

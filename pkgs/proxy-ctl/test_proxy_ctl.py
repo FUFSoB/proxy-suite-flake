@@ -1702,6 +1702,20 @@ class ZapretAutoTest(EnvTest):
             ctl._replace_lines(path, lambda line: "b.example" not in line)
         self.assertEqual(ctl.read_text(path), "works\ta.example\ttcp\nworks\tc.example\ttcp\n")
 
+    def test_rewrite_stays_writable_for_the_group_nfqws2_appends_through(self):
+        """A member's rewrite makes the list theirs: group-writable where the directory is, for nfqws2."""
+        path = self.write("verdicts.tsv", "works\ta.example\ttcp\n")
+        os.chmod(path, 0o644)
+        os.chmod(self.dir, 0o2775)
+        ctl._replace_lines(path, lambda _: True)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o664)
+        os.chmod(self.dir, 0o755)
+        ctl._replace_lines(path, lambda _: True)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o664)
+        os.chmod(path, 0o644)
+        ctl._replace_lines(path, lambda _: True)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o644)
+
     def test_rewrites_take_the_lock(self):
         """Another proxy-ctl mid-edit holds .<name>.lock: this one waits for it, then gives up."""
         path = self.write("zapret-hosts-auto.txt", "a.example\n")

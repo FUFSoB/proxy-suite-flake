@@ -90,8 +90,14 @@ pkgs.testers.runNixOSTest {
       ];
       networking.hosts."203.0.113.3" = [ "blocked.test" ];
       environment.systemPackages = [ pkgs.curl ];
+      # A member of the group, whose edits leave the lists theirs.
+      users.users.alice = {
+        isNormalUser = true;
+        extraGroups = [ "proxy-suite" ];
+      };
       services.proxy-suite = {
         enable = true;
+        userControl.enable = true;
         # An outbound to hand what zapret2 cannot fix to; nothing here dials it.
         proxy = {
           enable = true;
@@ -146,6 +152,11 @@ pkgs.testers.runNixOSTest {
 
     def learned(host):
         return f"grep -qx {host} ${state}/zapret-hosts-auto.txt"
+
+    with subtest("lists a member rewrote are theirs, and nfqws2 still writes to them"):
+        client.succeed("touch ${state}/verdicts.tsv", "su - alice -c 'proxy-ctl zapret auto clear'")
+        client.succeed("test \"$(stat -c %U ${state}/zapret-hosts-auto.txt ${state}/verdicts.tsv | sort -u)\" = alice")
+        # Everything below learns into them and judges into them.
 
     with subtest("a site blocked two times in three is learned, successes in between"):
         for _ in range(9):

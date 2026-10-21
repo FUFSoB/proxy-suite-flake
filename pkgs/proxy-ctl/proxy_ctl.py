@@ -4476,21 +4476,25 @@ def _replace_lines(path, keep, extra=()):
     """Rewrites path with the lines keep() accepts, plus extra.
 
     Via a temp file in the same directory, with the old file's owner and mode (a new one
-    world-readable: unprivileged proxy-ctl reads these lists too). Locked against another
-    proxy-ctl; what nfqws2 appended meanwhile, unlocked, is carried over before the rename.
+    world-readable: unprivileged proxy-ctl reads these lists too), group-writable where the
+    directory is: renamed in by a member, the file is theirs, and nfqws2 appends to it as one
+    of the group. Locked against another proxy-ctl; what nfqws2 appended meanwhile,
+    unlocked, is carried over before the rename.
     """
     with _file_lock(path):
         try:
             old = os.lstat(path) if os.path.lexists(path) else None
             text = read_shared_text(path) if old else ""
-            fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=os.path.dirname(path) or ".")
+            directory = os.path.dirname(path) or "."
+            shared = os.stat(directory).st_mode & stat.S_IWGRP
+            fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", dir=directory)
         except OSError:
             denied(path, "write")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.writelines(f"{line}\n" for line in [*filter(keep, lines(text)), *extra])
                 # By fd, not path: tmp's name could be swapped for a symlink in between.
-                os.fchmod(f.fileno(), stat.S_IMODE(old.st_mode) & 0o777 if old else 0o644)
+                os.fchmod(f.fileno(), (stat.S_IMODE(old.st_mode) & 0o777 if old else 0o644) | shared)
                 if old and os.geteuid() == 0:
                     os.fchown(f.fileno(), old.st_uid, old.st_gid)
                 # Newer than anything this edit means to drop: kept as they came.

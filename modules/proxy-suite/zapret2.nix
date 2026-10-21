@@ -109,6 +109,21 @@ let
     touch ${runtime.autoHostlistFile} ${runtime.userHostlistFile} ${runtime.excludeHostlistFile}
     # In this unit's sandbox: a name a member left here leads nowhere else.
     ${constants.grantDirAcl pkgs runtime.stateDir (userControlExtraGroupsFor "zapret") "rwX"}
+    ${lib.optionalString (userControlAnyAllows "zapret") ''
+      # A list a member renamed in is theirs: nfqws2 appends to it through the group
+      # (after the ACLs, whose mask the group bits are).
+      for f in ${
+        lib.escapeShellArgs [
+          runtime.autoHostlistFile
+          runtime.userHostlistFile
+          runtime.excludeHostlistFile
+          "${runtime.stateDir}/verdicts.tsv"
+          "${runtime.circularStateDir}/state.tsv"
+        ]
+      }; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then chmod g+w -- "$f"; fi
+      done
+    ''}
     ${runtime.initScript} start_fw
   '';
 
@@ -125,6 +140,11 @@ let
     # systemd gives the state directory the unit's group on every start: the group's, which
     # edits the lists (as autoProxy's units do).
     // lib.optionalAttrs (userControlAllows "zapret") { Group = cfg.userControl.group; }
+    # userControl.groups' members own what they rename in, writable by their ACL groups:
+    # nfqws2 keeps these groups (runtime.daemonScript) to append to it.
+    // lib.optionalAttrs (userControlExtraGroupsFor "zapret" != [ ]) {
+      SupplementaryGroups = userControlExtraGroupsFor "zapret";
+    }
     # nfqws2 runs as root and writes its lists in a directory the zapret scope's group
     # writes to as well.
     // constants.rootInSharedDirConfig

@@ -38,6 +38,9 @@ in
     # Ahead of the proxy at boot, so it starts with the hosts already in.
     before = [ "proxy-suite-socks.service" ];
     wantedBy = [ "multi-user.target" ];
+    # nfqws2 writes verdicts in bursts (a page's unanswered addresses), each a start: the
+    # start limit would fail the path unit with it, and nothing would sync until a reboot.
+    startLimitIntervalSec = 0;
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${sync} ${lib.escapeShellArg stateDir} ${lib.escapeShellArg outDir}";
