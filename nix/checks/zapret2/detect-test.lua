@@ -235,6 +235,34 @@ end
 assert(verdicts()["149.154.167.99 ip"] == "blocked" and not verdicts()["192.168.1.1 ip"], "blocked by address")
 syn("149.154.167.99", true)
 assert(verdicts()["149.154.167.99 ip"] == "reachable", "an answer clears it")
+-- A learned site a strategy got through, cut short past the first 4 KB since: three cut
+-- transfers keep it on the proxy. Finished ones, ones the client hung up on, and ones
+-- past the queue window say nothing.
+local function watch(track, outgoing, opts) ps_watch(nil, packet(track, outgoing, opts)) end
+for i = 1, 3 do
+  local t = flow("i.scdn.co")
+  watch(t, true, { l7 = "tls_client_hello", payload = "hello" })
+  watch(t, false, { s = 1, payload = record(16000) .. string.rep("x", 6000), n = 5 })
+  watch(t, false, { s = 6006, payload = string.rep("x", 2000), n = 7 })
+  fire("psws_")
+  assert((verdicts()["i.scdn.co cutoff"] == "stalls") == (i == 3), "stalls after three cut transfers")
+end
+for _, case in ipairs({ "whole", "hangup", "big" }) do
+  for _ = 1, 3 do
+    local t = flow(case .. ".example")
+    if case == "whole" then
+      watch(t, false, { s = 1, payload = record(3) .. "abc", n = 2 })
+    elseif case == "hangup" then
+      watch(t, false, { s = 1, payload = record(16000) .. "x", n = 2 })
+      watch(t, true, { flags = TH_FIN + 16 })
+    else
+      watch(t, false, { s = 1, payload = record(60000) .. "z", n = 32 })
+    end
+    fire("psws_")
+  end
+  assert(not verdicts()[case .. ".example cutoff"], case .. ": no verdict")
+end
+
 -- A wildcard domain whose every fresh name resets: past its share of the list, the site
 -- itself is learned, which covers the rest, rather than one more name of it.
 local f2 = io.open(auto, "a")

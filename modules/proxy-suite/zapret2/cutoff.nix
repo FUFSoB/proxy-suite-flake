@@ -33,6 +33,11 @@ let
   # The z2k flake.lock holds, whatever `z2k` the consumer passes (pkgs/z2k-detect.nix).
   z2kDetect = packages.z2k-detect;
 
+  # Only z2k's own profiles put the name in (z2k-tcp16.lua, ahead of rotation; ahead of
+  # the nfqws2-keenetic strategies it broke hosts, sources.nix). Elsewhere a name found
+  # fixes nothing: every cut-off network goes to the proxy, and no name is searched for.
+  namesApply = cfg.zapret.zapret2.strategySource == "z2k" && cfg.zapret.zapret2.profiles == null;
+
   # $1 asn.txt, $2 sni.txt, $3 AS-to-prefix map; prints a sing-box source rule-set
   # with the prefixes of every cut-off network that no whitelisted name fixes.
   proxyRules = pkgs.writeShellScript "proxy-suite-zapret2" ''
@@ -59,6 +64,7 @@ let
         z2kDetect
       ];
       dir = lib.escapeShellArg dir;
+      names = if namesApply then "1" else "0";
       inherit lists proxyRules;
       restartUnits = lib.escapeShellArgs restartUnits;
     }

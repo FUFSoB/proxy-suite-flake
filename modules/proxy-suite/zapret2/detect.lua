@@ -19,8 +19,9 @@
 -- "kind<TAB>name<TAB>proto<TAB>note<TAB>time" (the last line per name and proto wins), for
 -- direct-sync.template.sh and proxy-ctl:
 -- - works <site> tcp|udp: a strategy got through; only then does a learned site go direct;
--- - stalls <host> cutoff: learned from transfers cut short (the 16 KB cutoff); such a site
---   keeps the proxy's route whatever "works" says, as success is judged on the first 4 KB;
+-- - stalls <host> cutoff: learned from transfers cut short (the 16 KB cutoff), or learned
+--   otherwise and cut short since (ps_watch); such a site keeps the proxy's route whatever
+--   "works" says, as success is judged on the first 4 KB;
 -- - unfixable <site> tcp|udp: every strategy failed in turn; the proxy carries it;
 -- - blocked <ip> ip: connections to it go unanswered (blocked by address, ps_syn), and
 --   reachable <ip> ip once one is answered again;
@@ -355,6 +356,30 @@ local function feed(st, data)
   end
 end
 
+-- The server's next segment: fed in order, one that came early held until the gap fills.
+local function receive(st, desync, payload)
+  local s = pos_get(desync, "s")
+  if s == st.next then
+    feed(st, payload)
+    st.next = s + #payload
+    while st.pending[st.next] do
+      local p = st.pending[st.next]
+      st.pending[st.next] = nil
+      feed(st, p)
+      st.next = st.next + #p
+    end
+  elseif s > st.next then
+    st.pending[s] = payload
+  end
+end
+
+-- The server went quiet inside a TLS record, while the window still showed its packets.
+-- Past the NFQUEUE window nothing more is seen: no telling a stall from the rest.
+local function cut_short(st, arg)
+  if st.done or st.notls or st.inpk >= (tonumber(arg.win) or 15) then return false end
+  return st.need > 0 or #st.hdr > 0 or next(st.pending) ~= nil
+end
+
 -- nfqws2's own fast fail: a reset to the client retransmitting into silence, so it
 -- gives up (and tries again) instead of waiting out its timeouts.
 local function reset_client(desync)
@@ -377,9 +402,7 @@ end
 
 function ps_learn_stall(_, data)
   local st = data.st
-  -- Past the NFQUEUE window nothing more is seen: no telling a stall from the rest.
-  if st.done or st.notls or st.inpk >= (tonumber(data.arg.win) or 15) then return end
-  if st.need > 0 or #st.hdr > 0 or next(st.pending) then
+  if cut_short(st, data.arg) then
     failure(st, data.arg, "transfer stalled after " .. math.floor((st.next - 1) / 1024) .. " KB", true)
   end
 end
@@ -419,23 +442,61 @@ function ps_learn(_, desync)
   end
   if #payload > 0 then
     st.answered = true
-    local s = pos_get(desync, "s")
-    if s == st.next then
-      feed(st, payload)
-      st.next = s + #payload
-      while st.pending[st.next] do
-        local p = st.pending[st.next]
-        st.pending[st.next] = nil
-        feed(st, p)
-        st.next = st.next + #p
-      end
-    elseif s > st.next then
-      st.pending[s] = payload
-    end
+    receive(st, desync, payload)
     if st.name then
       -- Replacing the timer restarts its countdown: it fires once the server goes quiet.
       timer_set("psls_" .. st.name, ps_learn_stall, STALL_MS, true, { st = st, arg = desync.arg })
     end
+  end
+  if bitand(flags, TH_FIN) ~= 0 then st.done = true end
+end
+
+-- --- learned sites cut off ---------------------------------------------------------------
+
+-- A learned site goes direct once a strategy gets it through, judged on the first 4 KB,
+-- which the 16 KB cutoff lets through; a site learned for another failure (a ClientHello
+-- retransmitted) carries no "stalls" verdict from ps_learn, which sees no listed site.
+-- ps_watch, ahead of rotation in the profile that takes the learned sites, follows each
+-- transfer on: one cut short `fails` times within `time` seconds is a "stalls" verdict,
+-- and the site keeps the proxy's route.
+
+function ps_watch_stall(_, data)
+  local st = data.st
+  if not cut_short(st, data.arg) then return end
+  st.done = true
+  local n, need = tally("cut " .. st.host, tonumber(data.arg.time) or 300), tonumber(data.arg.fails) or 3
+  if data.arg.log then
+    say(st.host .. ": transfer stalled after " .. math.floor((st.next - 1) / 1024) .. " KB (" .. n .. "/" .. need .. " to keep it on the proxy)")
+  end
+  if n >= need then
+    if status[st.host .. " cutoff"] ~= "stalls" then say(st.host .. ": its transfers are cut short, the proxy carries it") end
+    verdict("stalls", st.host, "cutoff", "transfers cut short")
+  end
+end
+
+function ps_watch(_, desync)
+  local track, dis = desync.track, desync.dis
+  if not (track and dis and dis.tcp) or not track.hostname or track.hostname_is_ip then return end
+  local st = track.lua_state.ps_watch
+  if not st then
+    st = { host = track.hostname:lower(), next = 1, need = 0, hdr = "", pending = {}, inpk = 0 }
+    track.lua_state.ps_watch = st
+  end
+  if st.done then return end
+  local flags = dis.tcp.th_flags
+  -- A client that hangs up mid-transfer (a cancelled page) says nothing of the site.
+  if bitand(flags, TH_RST) ~= 0 or (desync.outgoing and bitand(flags, TH_FIN) ~= 0) then
+    st.done = true
+    return
+  end
+  if desync.outgoing then return end
+  st.inpk = pos_get(desync, "n") or (st.inpk + 1)
+  local payload = dis.payload or ""
+  if #payload > 0 then
+    receive(st, desync, payload)
+    -- Named by the server's direction, the one it is reset by.
+    st.name = st.name or dis_timer_name(dis)
+    timer_set("psws_" .. st.name, ps_watch_stall, STALL_MS, true, { st = st, arg = desync.arg })
   end
   if bitand(flags, TH_FIN) ~= 0 then st.done = true end
 end

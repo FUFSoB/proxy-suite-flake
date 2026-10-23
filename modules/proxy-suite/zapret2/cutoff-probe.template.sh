@@ -10,6 +10,22 @@ for f in asn.txt sni.txt asn.new sni.new proxy.json proxy.json.tmp egress ts for
   fi
 done
 touch asn.txt sni.txt
+# The rule-set from the maps as they stand, rewritten only when it changes: sing-box
+# reloads it on every rename.
+rules() {
+  @proxyRules@ asn.txt sni.txt @lists@/tcp16_nets.txt >proxy.json.tmp
+  if cmp -s proxy.json.tmp proxy.json; then
+    rm -f proxy.json.tmp
+  else
+    mv -f proxy.json.tmp proxy.json
+  fi
+}
+# Names no profile puts in fix nothing: none kept from when one did, so every cut-off
+# network goes to the proxy now, not after the next probe.
+if [ @names@ = 0 ] && [ -s sni.txt ]; then
+  : >sni.txt
+  rules
+fi
 force=0
 if [ -e requests/force ] || [ -L requests/force ]; then
   force=1
@@ -59,8 +75,13 @@ z2k-detect tcp16 -targets @lists@/tcp16_targets.txt -parallel 50 -asn-out asn.ne
 case "$rc" in
   1)
     rc=0
-    z2k-detect tcp16 -targets @lists@/tcp16_targets.txt -scan @lists@/sni_wl_candidates.txt \
-      -per-asn -batch 5 -parallel 50 -sni-out sni.new || rc=$?
+    # No profile puts a name in: the cut-off networks are all there is to know.
+    if [ @names@ = 0 ]; then
+      : >sni.new
+    else
+      z2k-detect tcp16 -targets @lists@/tcp16_targets.txt -scan @lists@/sni_wl_candidates.txt \
+        -per-asn -batch 5 -parallel 50 -sni-out sni.new || rc=$?
+    fi
     # 2: no network took any name; the list of cut-off networks still stands.
     if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
       rm -f asn.new sni.new
@@ -84,8 +105,7 @@ changed=0
 { cmp -s asn.new asn.txt && cmp -s sni.new sni.txt; } || changed=1
 mv -f asn.new asn.txt
 mv -f sni.new sni.txt
-@proxyRules@ asn.txt sni.txt @lists@/tcp16_nets.txt >proxy.json.tmp
-mv -f proxy.json.tmp proxy.json
+rules
 printf '%s\n' "$egress" >egress
 printf '%s\n' "$now" >ts
 echo "cut-off networks: $(grep -c '^[0-9]' asn.txt || true), with a name: $(grep -c '^[0-9]' sni.txt || true)"

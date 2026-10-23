@@ -50,6 +50,8 @@ let
   daemonStart = zapret2Global.config.systemd.services.${globalService}.serviceConfig.ExecStart;
   cutoffProbe =
     zapret2Global.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
+  z2kCutoffProbe =
+    zapret2Z2k.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
   directSync = builtins.head (
     lib.splitString " " zapret2Global.config.systemd.services.proxy-suite-zapret2-direct.serviceConfig.ExecStart
@@ -319,6 +321,13 @@ in
         # nfqws2-keenetic learns with detect.lua too: its own profile only reads the auto list.
         grep -qE -- " --new --filter-tcp=443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=[^ ]+:exclude=[^ ]+/etc/nfqws2/lists/exclude.list,[^ ]+zapret-hosts-user-exclude.txt:" "${globalRuntime}/config"
         test "$(grep -oF -- '<HOSTLIST>' "${globalRuntime}/config" | wc -l)" = 0
+        # The profile that takes the learned sites follows their transfers ahead of rotation,
+        # its filters back at their defaults after; circular keeps its name for its sites.
+        grep -qE -- " --in-range=-s65536 --payload=all --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --in-range=-s5556 [^ ]+ --lua-desync=circular:[^ ]*:key=circular_3_1:" "${globalRuntime}/config"
+        grep -qE -- " --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --out-range=-s34228 --in-range=-s5556 --lua-desync=z2k_sni_pick:[^ ]*:key=rkn_tcp:" "${z2kRuntime}/config"
+        test "$(grep -oF -- 'ps_watch:' "${z2kRuntime}/config" | wc -l)" = 1
+        if grep -qF -- 'ps_watch' "${tunedRuntime}/config"; then exit 1; fi
+        if grep -qF -- '<STALLWATCH>' "${tunedRuntime}/config"; then exit 1; fi
         # Counted failures and switches, named by circular key and host; the switch
         # is the one that stuck, after the state layer's revert.
         LOG=$(grep -oE '/nix/store/[^ ]+-strategy-log\.lua' "${z2kRuntime}/config") lua -e '
@@ -455,6 +464,11 @@ in
         test "$("$rules" asn.txt sni.txt nets.txt)" = '{"version":1,"rules":[{"ip_cidr":["104.131.0.0/16","2604:a880::/32"]}]}'
         printf '24940\t300.ya.ru\n14061\tad.adriver.ru\n' >sni.txt
         test "$("$rules" asn.txt sni.txt nets.txt)" = '{"version":1,"rules":[]}'
+
+        # A name helps only where z2k's profiles put it in: elsewhere none is searched for,
+        # one kept from before is dropped, and every cut-off network goes to the proxy.
+        grep -qF -- 'if [ 0 = 0 ] && [ -s sni.txt ]; then' ${cutoffProbe}
+        grep -qF -- 'if [ 1 = 0 ] && [ -s sni.txt ]; then' ${z2kCutoffProbe}
 
         # The probe is built from z2k's source and knows its tcp16 mode.
         detect=$(grep -o '/nix/store/[^:]*-z2k-detect-[^:/]*/bin' ${cutoffProbe} | head -n1)

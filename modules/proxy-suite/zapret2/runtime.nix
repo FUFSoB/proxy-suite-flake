@@ -70,11 +70,13 @@ let
 
   # lib.trim drops string context: without it the source's list paths are no build input,
   # so lazy trees never materialize them and the closure omits them.
+  # <STALLWATCH>: where the source's profile for learned sites takes stallWatch.
   renderProfile =
     profile:
-    lib.replaceStrings hostlistMarkers (map (
-      marker: marker + withSpaces staticListArgs
-    ) hostlistMarkers) (lib.addContextFrom profile (lib.trim profile));
+    lib.replaceStrings (hostlistMarkers ++ [ "<STALLWATCH> " ]) (
+      map (marker: marker + withSpaces staticListArgs) hostlistMarkers
+      ++ [ (lib.optionalString (stallWatch != "") (stallWatch + " ")) ]
+    ) (lib.addContextFrom profile (lib.trim profile));
 
   # detect.lua learns in place of nfqws2's autohostlist, in a last TLS profile of its
   # own: z2k-profiles.template.sh puts it there, tailProfiles for nfqws2-keenetic.
@@ -97,8 +99,25 @@ let
     )
   );
 
+  # detect.lua's ps_watch, ahead of every other instance of the profile that takes the
+  # learned sites, so rotation (an orchestrator: it runs the instances after it) leaves it
+  # be; it sees the server's bytes past what rotation judges a success on, and the
+  # profile's filters are back at nfqws2's defaults after it.
+  stallWatch = lib.optionalString learnLua (
+    "--in-range=-s65536 --payload=all --lua-desync=ps_watch:"
+    + lib.concatStringsSep ":" (
+      [
+        "fails=${toString autoCfg.failThreshold}"
+        "time=${toString autoCfg.failTime}"
+        "win=${toString packetWindow.tcpIn}"
+      ]
+      ++ lib.optional zapret2Cfg.strategyLog "log"
+    )
+    + " --in-range=x --payload=all"
+  );
+
   z2kGenerated = sources.z2k.mkProfiles {
-    inherit learnArgs;
+    inherit learnArgs stallWatch;
     hostlistSuffix = withSpaces staticListArgs;
     # z2k's category profiles filter on their own lists, not on a marker.
     excludeSuffix = withSpaces ([ "--hostlist-exclude=${excludeHostlistFile}" ] ++ excludeDomainArgs);

@@ -326,7 +326,9 @@ blocked\. When off, only ` zapret2.domains ` and ` proxy-ctl zapret auto add ` a
 Learn with proxy-suite’s detector instead of nfqws2’s\. It also learns sites blocked
 only some of the time (a working connection no longer clears the failures before it),
 downloads that stall partway (the 16 KB cutoff), and requests that never get an
-answer\. Learned sites are logged with ` strategyLog `\. Only with the source’s own
+answer\. It also follows learned sites past the first 4 KB a strategy is judged on:
+one whose downloads keep stalling keeps the proxy’s route (` zapret.directSync `)\.
+Learned sites are logged with ` strategyLog `\. Only with the source’s own
 ` profiles `, and for TLS: nfqws2-keenetic no longer learns plain HTTP sites\.
 
 **Type:** boolean\
@@ -409,9 +411,11 @@ Extra fake payloads by name (blob=\<name>): a file in zapret2’s files/fake, or
 ## services\.proxy-suite\.zapret\.zapret2\.cutoff\.enable
 
 Work around ISPs that cut TLS to some hosting networks after about 16 KB, which no
-strategy fixes\. A daily probe finds the affected networks and a whitelisted name that
-gets through for each\. Only with ` strategySource = "z2k" `\. Each run makes thousands of
-short direct connections\. ` proxy-ctl zapret cutoff ` shows the results\.
+strategy fixes\. A daily probe finds the affected networks, and with
+` strategySource = "z2k" ` (and its own ` profiles `) a whitelisted name that gets
+through for each, which z2k puts into a fake ClientHello\. Otherwise no name is
+searched for, and every affected network is left to ` proxyFallback `\. Each run makes
+thousands of short direct connections\. ` proxy-ctl zapret cutoff ` shows the results\.
 
 **Type:** boolean\
 **Default:** `true`

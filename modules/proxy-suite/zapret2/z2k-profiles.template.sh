@@ -44,11 +44,14 @@ grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no prof
 # instead, in the same last place. It cannot ride along on the autohostlist profile:
 # nfqws2 applies nothing there to a host in no list, Lua included. It writes the
 # same auto list and reads the same excludes, which it checks itself.
+#
+# $stallWatch (detect.lua's ps_watch) goes first among the instances of the profile
+# that takes the learned sites, ahead of its in-profile filters, which it resets after.
 awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
     -v wl="--hostlist-exclude=$root/lists/whitelist.txt" \
     -v yt="--hostlist-exclude=$root/extra_strats/TCP/YT/List.txt --hostlist-exclude=$root/extra_strats/TCP/YT_GV/List.txt" \
     -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" \
-    -v learn="$learnArgs" -v wlfile="$root/lists/whitelist.txt" '
+    -v learn="$learnArgs" -v wlfile="$root/lists/whitelist.txt" -v watch="$stallWatch" '
   {
     for (i = 1; i <= NF; i++) {
       t = $i
@@ -57,9 +60,18 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
       } else if (t ~ /^--filter-tcp=/ && !(prof in ports)) {
         ports[prof] = substr(t, 14)
       }
+      pre = ""
+      if (t ~ /^--(in-range|out-range|payload|lua-desync)=/) {
+        if (watch != "" && seen && prof == learner && !watched++) pre = watch " "
+        filtered[prof] = 1
+      }
       if (t == disc) {
         t = "<HOSTLIST_NOAUTO>" hsuf
-        if (!seen++) { t = t " " yt; learner = prof }
+        if (!seen++) {
+          t = t " " yt
+          learner = prof
+          if (prof in filtered) { print "z2k general TLS profile: hostlist after its instances" > "/dev/stderr"; exit 1 }
+        }
       } else if (t == wl) {
         t = t esuf
       } else if (t ~ /^--lua-desync=circular:/) {
@@ -68,11 +80,12 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
         for (j = 1; j <= n; j++)
           if (p[j] !~ /^(retrans|maxseq|inseq)=/ && p[j] != "reset") t = t ":" p[j]
       }
-      printf "%s%s", (i > 1 ? " " : ""), t
+      printf "%s%s%s", (i > 1 ? " " : ""), pre, t
     }
   }
   END {
     if (!seen || !(learner in ports)) { print "z2k general TLS profile not found" > "/dev/stderr"; exit 1 }
+    if (watch != "" && !watched) { print "z2k general TLS profile has no instances" > "/dev/stderr"; exit 1 }
     if (learn == "")
       printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
     else {

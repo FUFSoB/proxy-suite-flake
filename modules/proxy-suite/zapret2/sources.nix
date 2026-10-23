@@ -83,9 +83,12 @@ let
         # No 16 KB cutoff name step: its fake ClientHello ahead of these strategies
         # broke every host on a line where the strategies alone work. Its HTTP strategy
         # has no strategy=N, so circular must not take http_req: it would skip it.
+        # <STALLWATCH>: it takes the learned sites (runtime.nix). ps_watch there makes
+        # circular the profile's second instance: keyed as nfqws2 named it before
+        # (<func>_<profile>_<nth instance>), its sites keep the strategies remembered.
         "${
           patch "NFQWS_ARGS" "${tcpPayload} ${circular}"
-            "--in-range=-s5556 ${tcpPayload},tls_server_hello,empty,unknown ${circular} --in-range=x ${tcpPayload}"
+            "<STALLWATCH> --in-range=-s5556 ${tcpPayload},tls_server_hello,empty,unknown ${circular}:key=circular_3_1 --in-range=x ${tcpPayload}"
             (args "NFQWS_ARGS")
         } <HOSTLIST> ${lists}"
       ];
@@ -166,6 +169,7 @@ let
           hostlistSuffix,
           excludeSuffix,
           learnArgs ? "",
+          stallWatch ? "",
         }:
         pkgs.runCommand "proxy-suite-zapret2-z2k-profiles" {
           nativeBuildInputs = with pkgs; [
@@ -176,7 +180,12 @@ let
             gnugrep
             gnused
           ];
-          inherit hostlistSuffix excludeSuffix learnArgs;
+          inherit
+            hostlistSuffix
+            excludeSuffix
+            learnArgs
+            stallWatch
+            ;
         } (fillTemplate ./z2k-profiles.template.sh { z2k = src; });
     };
 in
