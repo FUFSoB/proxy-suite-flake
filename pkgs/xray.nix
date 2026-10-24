@@ -25,7 +25,7 @@ let
               rev = "v${finalAttrs.version}";
               hash = "sha256-1FwcB/qZaH7W9b+GSe+CG/s+uStaDjz792OxDc3uAyg=";
             };
-            vendorHash = "sha256-XfTEpPMKyIhaoG53omH5rewI86QFNc9pnzhvZvxgFp0=";
+            vendorHash = "sha256-o4mKfCGgI4r5ZatnA4AsK4zR0/qOl2qpqCmoJmE2jBQ=";
           }
         );
 in
