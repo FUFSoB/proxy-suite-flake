@@ -53,9 +53,13 @@ let
   z2kCutoffProbe =
     zapret2Z2k.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
-  directSync = builtins.head (
-    lib.splitString " " zapret2Global.config.systemd.services.proxy-suite-zapret2-direct.serviceConfig.ExecStart
-  );
+  directSyncOf =
+    fixture:
+    builtins.head (
+      lib.splitString " " fixture.config.systemd.services.proxy-suite-zapret2-direct.serviceConfig.ExecStart
+    );
+  directSync = directSyncOf zapret2Global;
+  noAutoDirectSync = directSyncOf zapret2NoAuto;
 
   proxyCtlEnv = fixture: (mkProxyCtlDerived fixture).wrapperEnv;
 in
@@ -523,6 +527,10 @@ in
         ${directSync} direct-lists out dns-cache
         test "$(stat -c %i out/direct.json)" = "$inode"
         test "$(cat out/names.tsv)" = "$(printf '149.154.167.99\tother.example,www.example.com')"
+        # Learning off: nfqws2 ignores what was learned, so the proxy does too.
+        mkdir no-auto-out
+        ${noAutoDirectSync} direct-lists no-auto-out dns-cache
+        test "$(cat no-auto-out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["pinned.example"]}]}'
         ${directSync} empty-lists empty-out
         test "$(cat empty-out/direct.json)" = '{"version":1,"rules":[]}'
         test "$(cat empty-out/proxy.json)" = '{"version":1,"rules":[]}'

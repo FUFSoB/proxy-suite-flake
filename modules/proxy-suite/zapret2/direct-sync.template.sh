@@ -3,7 +3,8 @@
 # direct.json: the hosts zapret2 handles, so the proxy sends them direct and zapret2 sees
 #   them: the pinned ones, and the learned ones once a strategy got through for them
 #   (detect.lua's "works"), unless learned from transfers cut short ("stalls"); a learned
-#   site zapret2 cannot fix keeps the proxy's route.
+#   site zapret2 cannot fix keeps the proxy's route. With learning off
+#   (autoHostlist.enable), the pinned ones alone: nfqws2 no longer reads the learned list.
 # proxy.json: what zapret2 cannot fix, for the proxy to carry: sites every strategy failed
 #   for ("unfixable": all of a site's TCP, or only its QUIC), and addresses that leave
 #   connections unanswered ("blocked").
@@ -18,6 +19,7 @@ export PATH=@path@
 dir=$1
 out=$2
 cache=${3:-}
+learned=@learned@
 
 # The zapret scope's group writes these: never through a symlink it left (to a file only
 # root may read, which would land in the world-readable rule-sets), nor into a FIFO.
@@ -67,7 +69,7 @@ hosts='def octet: "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
 
 jq -n -c \
   --rawfile user <(lists "$dir/zapret-hosts-user.txt") \
-  --rawfile auto <(lists "$dir/zapret-hosts-auto.txt") \
+  --rawfile auto <(if [ "$learned" = 1 ]; then lists "$dir/zapret-hosts-auto.txt"; fi) \
   --rawfile excluded <(lists "$dir/zapret-hosts-user-exclude.txt") \
   --rawfile verdicts <(lists "$dir/verdicts.tsv") \
   "$hosts"'

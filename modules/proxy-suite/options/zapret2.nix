@@ -136,7 +136,9 @@ in
         default = true;
         description = ''
           Learn blocked sites: after `failThreshold` failed connections, a site is treated as
-          blocked. When off, only `zapret2.domains` and `proxy-ctl zapret auto add` are used.
+          blocked. When off, only `zapret2.domains` and `proxy-ctl zapret auto add` are used:
+          the sites already learned are kept but ignored, by zapret2 and `zapret.directSync`
+          alike, until it is back on. Each site's strategy is still remembered.
         '';
       };
 

@@ -15,9 +15,12 @@ let
   inherit (import ../derived.nix { inherit lib cfg; }) constants;
   stateDir = constants.zapret2StateDir;
   outDir = constants.zapret2DirectDir;
+  # Without learning nfqws2 no longer reads the learned list: neither does the sync.
+  learn = cfg.zapret.zapret2.autoHostlist.enable;
 
   sync = pkgs.writeShellScript "proxy-suite-zapret2" (
     fillTemplate ./direct-sync.template.sh {
+      learned = if learn then "1" else "0";
       path = lib.makeBinPath [
         pkgs.coreutils
         pkgs.diffutils
@@ -55,11 +58,13 @@ in
   path = {
     description = "proxy-suite - watch zapret2's host lists and verdicts";
     wantedBy = [ "paths.target" ];
-    pathConfig.PathChanged = map (name: "${stateDir}/${name}") [
-      "zapret-hosts-user.txt"
-      "zapret-hosts-auto.txt"
-      "zapret-hosts-user-exclude.txt"
-      "verdicts.tsv"
-    ];
+    pathConfig.PathChanged = map (name: "${stateDir}/${name}") (
+      [ "zapret-hosts-user.txt" ]
+      ++ lib.optional learn "zapret-hosts-auto.txt"
+      ++ [
+        "zapret-hosts-user-exclude.txt"
+        "verdicts.tsv"
+      ]
+    );
   };
 }
