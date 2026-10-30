@@ -184,6 +184,21 @@ class BuildOutboundTests(unittest.TestCase):
         ss2022 = run_parser(f"ss://2022-blake3-aes-128-gcm:{k16}%3A{k16}@example.com:8388")
         self.assertEqual(ss2022["password"], f"{k16}:{k16}")
 
+    def test_vless_encryption_is_xrays_and_checked(self):
+        public = base64.urlsafe_b64encode(b"p" * 32).decode().rstrip("=")
+        url = f"vless://11111111-2222-3333-4444-555555555555@example.com:80?encryption=mlkem768x25519plus.random.1rtt.{public}"
+        # Needs no TLS: the handshake is VLESS's own.
+        self.assertEqual(run_xray_parser(url)["settings"]["encryption"], f"mlkem768x25519plus.random.1rtt.{public}")
+        with self.assertRaisesRegex(ValueError, "XRay's alone"):
+            build_outbound(url, "t", backend="sing-box")
+        for bad in ("mlkem768x25519plus.native.2rtt." + public, "mlkem768x25519plus.native.0rtt.c2hvcnQta2V5LXRoYXQtaXMtbG9uZw",
+                    "aes.native.0rtt." + public):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "invalid VLESS encryption"):
+                build_outbound(url.split("?")[0] + "?encryption=" + bad, "t", backend="xray")
+        # Padding settings between the mode and the key are short parts.
+        padded = f"mlkem768x25519plus.native.0rtt.100-111-1111.75-0-111.{public}"
+        self.assertEqual(run_xray_parser(url.split("?")[0] + "?encryption=" + padded)["settings"]["encryption"], padded)
+
     def test_hysteria2_port_hopping_takes_lone_ports(self):
         # sing-box refuses a bare "443"; it is the one-port range.
         ob = run_parser("hy2://pw@example.com:443?mport=443, 20000-30000")

@@ -726,6 +726,22 @@ class Manager:
 
     # --- export and import ------------------------------------------------------------
 
+    # Keys proxy-suite generates for a listener and keeps in its state directory, by file name.
+    GENERATED_KEYS = ("vless-encryption-key.x25519", "vless-encryption-key.mlkem768", "shadowsocks-server-key")
+
+    def _key_path(self, tag: str, name: str) -> str | None:
+        """Where a listener's generated key is kept: as the spec says for a declared one,
+        under the runtime state directory for any other."""
+        for listener in self.spec.get("listeners") or []:
+            if listener["tag"] != tag:
+                continue
+            if name == "shadowsocks-server-key":
+                return listener.get("serverPasswordStateFile")
+            base = listener.get("encryptionStateFile")
+            return f"{base}.{name.rsplit('.', 1)[1]}" if base else None
+        state_dir = (self.spec.get("runtime") or {}).get("salamanderStateDir")
+        return os.path.join(state_dir, tag, name) if state_dir else None
+
     def _awg_listeners(self) -> dict[str, dict]:
         return {listener["tag"]: listener for listener in self.spec.get("listeners") or []
                 if listener.get("type") == "amneziawg" and (listener.get("amneziaWg") or {}).get("stateFile")}
@@ -734,7 +750,8 @@ class Manager:
         """Everything that makes this server's users who they are, beyond the Nix config:
         the runtime users and listeners (their secrets and REALITY keys), the policies and
         what they are measured against, the AmneziaWG keys and addresses, the Salamander
-        passwords proxy-suite generated, and the traffic counted. Secrets the config names
+        passwords, VLESS Encryption and shadowtls keys proxy-suite generated, and the traffic
+        counted. Secrets the config names
         by file (sops and the like) are not in it."""
         with self.lock:
             bundle: dict = {"format": BUNDLE_FORMAT, "version": BUNDLE_VERSION, "exportedAt": int(self.clock())}
@@ -761,6 +778,18 @@ class Manager:
                     if os.path.isfile(path):
                         with open(path, encoding="utf-8") as handle:
                             bundle["salamander"][tag] = handle.read().strip()
+            # VLESS Encryption keys and shadowtls server keys proxy-suite generated: without
+            # them every link to those listeners changes.
+            bundle["keys"] = {}
+            tags = [listener["tag"] for listener in self.spec.get("listeners") or []]
+            if self.spool:
+                tags += [tag for tag in self.runtime_state()["listeners"] if tag not in tags]
+            for tag in tags:
+                for name in self.GENERATED_KEYS:
+                    path = self._key_path(tag, name)
+                    if path and os.path.isfile(path):
+                        with open(path, encoding="utf-8") as handle:
+                            bundle["keys"].setdefault(tag, {})[name] = handle.read().strip()
             # The subscription key proxy-suite generated: without it every URL changes on the
             # server this goes to. One the config names by file stays with the config.
             bundle["subscriptionKey"] = None
@@ -814,7 +843,7 @@ class Manager:
             raise ApiError(400, "not a proxy-suite inbounds export")
         if bundle.get("version") != BUNDLE_VERSION:
             raise ApiError(400, f"export version {bundle.get('version')} is not {BUNDLE_VERSION}")
-        for section in ("runtime", "policies", "state", "amneziaWg", "salamander", "stats"):
+        for section in ("runtime", "policies", "state", "amneziaWg", "salamander", "keys", "stats"):
             if bundle.get(section) is not None and not isinstance(bundle[section], dict):
                 raise ApiError(400, f"{section} must be an object")
         runtime = bundle.get("runtime") or {}
@@ -843,6 +872,16 @@ class Manager:
                 raise ApiError(400, f"salamander: '{tag}' is not a listener tag")
             if not isinstance(password, str) or not re.fullmatch(r"[!-~]{1,256}", password):
                 raise ApiError(400, f"salamander {tag}: not a password")
+        for tag, keys in (bundle.get("keys") or {}).items():
+            if not declared_paths.get(tag) and not rt.NAME.fullmatch(tag):
+                raise ApiError(400, f"keys: '{tag}' is not a listener tag")
+            if not isinstance(keys, dict):
+                raise ApiError(400, f"keys {tag}: must be an object")
+            for name, key in keys.items():
+                if name not in self.GENERATED_KEYS:
+                    raise ApiError(400, f"keys {tag}: '{name}' is no key proxy-suite generates")
+                if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_+/=-]{1,256}", key):
+                    raise ApiError(400, f"keys {tag}: {name} is not a key")
         key = bundle.get("subscriptionKey")
         if key is not None and not (isinstance(key, str) and re.fullmatch(r"[!-~]{16,512}", key)):
             raise ApiError(400, "subscriptionKey: not a key")
@@ -866,7 +905,7 @@ class Manager:
         win. AmneziaWG listeners take the bundle's server key only with replace or when they
         have none yet: their clients' configs name it."""
         self._check_bundle(bundle)
-        report: dict = {"users": [], "listeners": [], "policies": [], "amneziaWg": [], "salamander": [], "skipped": []}
+        report: dict = {"users": [], "listeners": [], "policies": [], "amneziaWg": [], "salamander": [], "keys": [], "skipped": []}
         with self.lock:
             incoming = bundle.get("runtime") or {"users": {}, "listeners": {}}
             if (incoming.get("users") or incoming.get("listeners")) and not self.spool:
@@ -953,6 +992,16 @@ class Manager:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(password + "\n")
                 report["salamander"].append(tag)
+            for tag, keys in sorted((bundle.get("keys") or {}).items()):
+                for name, key in sorted(keys.items()):
+                    path = self._key_path(tag, name)
+                    if not path or (os.path.exists(path) and not replace):
+                        continue
+                    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+                    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(key + "\n")
+                    report["keys"].append(f"{tag}/{name}")
             self._import_subscription_key(bundle.get("subscriptionKey"), replace, report)
             incoming_stats = bundle.get("stats")
             if isinstance(incoming_stats, dict):

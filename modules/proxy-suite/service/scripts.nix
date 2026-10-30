@@ -101,7 +101,7 @@ let
       mkSubscriptionFetchBlock
       runtimeSubscriptionsFetchBlock
       ;
-    inherit (outboundScripts) mkOutboundScript;
+    inherit (outboundScripts) mkOutboundScript shadowTlsHopsBlock;
     inherit hybridRuntimeHelpersBlock backendJqFilterFile;
   };
 

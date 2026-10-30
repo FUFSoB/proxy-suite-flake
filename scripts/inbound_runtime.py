@@ -48,6 +48,9 @@ RESERVED_TAGS = ("api-in",)
 UUID_TYPES = ("vless", "vmess")
 PASSWORD_TYPES = ("trojan", "hysteria2", "shadowsocks", "socks", "http")
 TYPES = UUID_TYPES + PASSWORD_TYPES
+# Declared listeners sing-box serves, which runtime users may join but runtime listeners
+# cannot be: the password each takes, and a uuid too for tuic.
+SING_BOX_TYPES = ("anytls", "naive", "tuic", "shadowtls")
 TRANSPORTS = ("raw", "ws", "grpc", "httpupgrade", "xhttp")
 XHTTP_MODES = ("auto", "packet-up", "stream-up", "stream-one")
 ALPNS = ("h3", "h2", "http/1.1")
@@ -343,6 +346,13 @@ LISTENER_SCHEMA = {
         "xver": _one_of(0, 1, 2),
     },
     "fallbacks": "fallbacks",
+    "encryption": {
+        "enable": _is_bool,
+        "authentication": _one_of("x25519", "mlkem768"),
+        "mode": _one_of("native", "xorpub", "random"),
+        # XRay's own `x25519` or `mlkem768` checks it, when the links are made.
+        "privateKey": _nullable(lambda value: isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{43}|[A-Za-z0-9_-]{86}", value))),
+    },
     "hysteria": {
         "masquerade": _nullable(_nonspace),
         "rewriteHost": _is_bool,
@@ -566,7 +576,9 @@ def _user_problem(user: dict, listener_type: str) -> str | None:
     """Why a user cannot be on a listener of this type, or None."""
     if listener_type in UUID_TYPES and user.get("uuid") is None and user.get("uuidFile") is None:
         return f"user '{user['name']}' has no uuid, which {listener_type} needs"
-    if listener_type in PASSWORD_TYPES and user.get("password") is None and user.get("passwordFile") is None:
+    if listener_type == "tuic" and user.get("uuid") is None and user.get("uuidFile") is None:
+        return f"user '{user['name']}' has no uuid, which tuic needs"
+    if (listener_type in PASSWORD_TYPES or listener_type in SING_BOX_TYPES) and user.get("password") is None and user.get("passwordFile") is None:
         return f"user '{user['name']}' has no password, which {listener_type} needs"
     return None
 
@@ -616,7 +628,8 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool, shared: 
     # A declared user's credentials (set in Nix) never cross the network in the clear; on
     # loopback the listener is a fallback's target, behind its front's TLS.
     loopback = _is_ip(listener["listen"]) and ipaddress.ip_address(listener["listen"]).is_loopback
-    if kind in ("vless", "socks", "http") and not tls["enable"] and not reality["enable"] and not loopback:
+    encrypted = kind == "vless" and (listener.get("encryption") or {}).get("enable", False)
+    if kind in ("vless", "socks", "http") and not tls["enable"] and not reality["enable"] and not loopback and not encrypted:
         for user in users:
             need(bool(user.get("runtime")),
                  f"declared user '{user['name']}' would send its credentials in the clear: give the listener tls or reality")
@@ -706,6 +719,8 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool, shared: 
          "acceptProxyProtocol is for TCP listeners")
     need(not listener["fallbacks"] or (kind in ("vless", "trojan") and transport["type"] == "raw"),
          'fallbacks run only on a vless or trojan listener with transport.type = "raw"')
+    need(not (listener.get("encryption") or {}).get("enable") or (kind == "vless" and not listener["fallbacks"]),
+         "encryption is for vless listeners without fallbacks")
     for fallback in listener["fallbacks"]:
         has_dest = fallback.get("dest") is not None
         has_listener = fallback.get("listener") is not None
@@ -759,7 +774,10 @@ def _render_listener(tag: str, entry: dict, runtime: dict) -> dict:
     filled["xrayJson"] = None
     filled["jsonFile"] = None
     filled["front"] = None
-    filled["salamanderStateFile"] = os.path.join(runtime.get("salamanderStateDir") or "/var/lib/proxy-suite/inbounds", tag, "salamander-password")
+    state_dir = os.path.join(runtime.get("salamanderStateDir") or "/var/lib/proxy-suite/inbounds", tag)
+    filled["salamanderStateFile"] = os.path.join(state_dir, "salamander-password")
+    filled.setdefault("encryption", {})["privateKeyFile"] = None
+    filled["encryptionStateFile"] = os.path.join(state_dir, "vless-encryption-key")
     filled["users"] = []
     return filled
 
@@ -846,7 +864,7 @@ def number_users(spec: dict, names: list[str], state_users: dict, warnings: list
 # Listener types whose XRay inbound runs with no client at all, so a user switched off by
 # the manager leaves it in place, ready to take them back without a restart. A Shadowsocks
 # listener has a client list only with more than one user (render_xray_inbound).
-EMPTY_CLIENTS_TYPES = ("vless", "vmess", "trojan", "hysteria2")
+EMPTY_CLIENTS_TYPES = ("vless", "vmess", "trojan", "hysteria2", *SING_BOX_TYPES)
 
 
 def _runs_without_clients(listener: dict) -> bool:
@@ -1361,6 +1379,8 @@ def listener_from_flags(kind: str, args: argparse.Namespace) -> dict:
         hysteria["salamander"] = {"enable": True}
     if hysteria:
         entry["hysteria"] = hysteria
+    if args.encryption:
+        entry["encryption"] = {"enable": True}
     if args.user:
         entry["users"] = list(dict.fromkeys(args.user))
     return entry
@@ -1520,6 +1540,7 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--keep-host", action="store_true")
     add.add_argument("--x-forwarded", action="store_true")
     add.add_argument("--salamander", action="store_true")
+    add.add_argument("--encryption", action="store_true")
     add.add_argument("--user", action="append", default=[])
 
     for verb in ("rm", "show"):

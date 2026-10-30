@@ -1706,7 +1706,10 @@ class ZapretAutoTest(EnvTest):
         """A member's rewrite makes the list theirs: group-writable where the directory is, for nfqws2."""
         path = self.write("verdicts.tsv", "works\ta.example\ttcp\n")
         os.chmod(path, 0o644)
-        os.chmod(self.dir, 0o2775)
+        try:
+            os.chmod(self.dir, 0o2775)
+        except PermissionError:
+            self.skipTest("setgid bits refused here (the Nix build sandbox)")
         ctl._replace_lines(path, lambda _: True)
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o664)
         os.chmod(self.dir, 0o755)

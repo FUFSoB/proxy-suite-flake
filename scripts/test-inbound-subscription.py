@@ -268,5 +268,20 @@ console.log(m.length);
             self.assertTrue({21, 177} <= sizes and len(sizes) >= 8, sizes)
 
 
+
+class SingBoxProtocols(unittest.TestCase):
+    def test_clash_takes_anytls_and_tuic(self):
+        anytls = sub.clash_proxy("a", {"type": "anytls", "server": "h", "server_port": 443, "password": "pw",
+                                       "tls": {"enabled": True, "server_name": "h", "utls": {"enabled": True, "fingerprint": "chrome"}}})
+        self.assertEqual(anytls, {"name": "a", "server": "h", "port": 443, "type": "anytls", "password": "pw", "udp": True,
+                                  "sni": "h", "client-fingerprint": "chrome"})
+        tuic = sub.clash_proxy("t", {"type": "tuic", "server": "h", "server_port": 443, "uuid": UUID, "password": "pw",
+                                     "congestion_control": "bbr", "udp_relay_mode": "native",
+                                     "tls": {"enabled": True, "server_name": "h", "alpn": ["h3"]}})
+        self.assertEqual((tuic["type"], tuic["uuid"], tuic["congestion-controller"], tuic["alpn"]), ("tuic", UUID, "bbr", ["h3"]))
+        self.assertNotIn("tls", tuic)
+        # A detour mihomo has no plugin for is left out rather than dialed wrong.
+        self.assertIsNone(sub.clash_proxy("x", {"type": "vless", "server": "h", "server_port": 1, "detour": "y"}))
+
 if __name__ == "__main__":
     unittest.main()

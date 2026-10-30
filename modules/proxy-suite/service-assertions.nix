@@ -83,7 +83,7 @@ let
     ++ lib.optional derived.torOutboundEnabled derived.torCfg.socksPort
     ++ map (j: j.port) derived.whitelistBypassJoiners
     ++ lib.optionals derived.proxyInboundsEnabled (
-      map (listener: listener.internalPort) derived.proxyInboundsAwg
+      map (listener: listener.internalPort) (derived.proxyInboundsAwg ++ derived.proxyInboundsSingBox)
     )
     ++ awgRuntimeTunnelPorts;
   # The loopback listeners of AmneziaWG outbounds added at runtime, one per slot.
@@ -560,29 +560,54 @@ let
   ];
 
   outboundAssertions =
-    lib.concatMap (ob: [
-      (exactlyOneOf proxyEnabled [
-        ob.urlFile
-        ob.url
-        ob.singBoxJson
-        ob.xrayJson
-      ] "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, or xrayJson")
-      (mkAssertion (
-        !singBoxEnabled || hybridEnabled || ob.xrayJson == null
-      ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
-      (mkAssertion (
-        !xrayEnabled || hybridEnabled || ob.singBoxJson == null
-      ) "proxy-suite: outbound '${ob.tag}': singBoxJson requires proxy.backend = sing-box or hybrid")
-      (mkAssertion (
-        !(ob.backend == "xray") || xrayEnabled
-      ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
-      (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
-        "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
-      )
-      (mkAssertion (
-        ob.detour != ob.tag
-      ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
-    ]) proxyCfg.outbounds
+    lib.concatMap (
+      ob:
+      [
+        (exactlyOneOf proxyEnabled [
+          ob.urlFile
+          ob.url
+          ob.singBoxJson
+          ob.xrayJson
+        ] "proxy-suite: outbound '${ob.tag}': set exactly one of urlFile, url, singBoxJson, or xrayJson")
+        (mkAssertion (
+          !singBoxEnabled || hybridEnabled || ob.xrayJson == null
+        ) "proxy-suite: outbound '${ob.tag}': xrayJson requires proxy.backend = xray or hybrid")
+        (mkAssertion (
+          !xrayEnabled || hybridEnabled || ob.singBoxJson == null
+        ) "proxy-suite: outbound '${ob.tag}': singBoxJson requires proxy.backend = sing-box or hybrid")
+        (mkAssertion (
+          !(ob.backend == "xray") || xrayEnabled
+        ) "proxy-suite: outbound '${ob.tag}': backend = \"xray\" requires proxy.backend = xray or hybrid")
+        (mkAssertion (!(ob.backend == "sing-box") || singBoxEnabled)
+          "proxy-suite: outbound '${ob.tag}': backend = \"sing-box\" requires proxy.backend = sing-box or hybrid"
+        )
+        (mkAssertion (
+          ob.detour != ob.tag
+        ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
+      ]
+      # Its hop is sing-box's, dialed to the outbound's own server, and owns the dialing.
+      ++ lib.optionals (ob.shadowTls != null) [
+        (mkAssertion
+          (
+            !proxyEnabled
+            || (singBoxEnabled && ob.backend != "xray" && ob.xrayJson == null && ob.detour == null)
+          )
+          "proxy-suite: outbound '${ob.tag}': shadowTls needs sing-box (proxy.backend = sing-box or hybrid, not backend = \"xray\" or xrayJson), and no detour"
+        )
+        (mkAssertion
+          (
+            !proxyEnabled
+            || (
+              if ob.shadowTls.version == 1 then
+                ob.shadowTls.password == null && ob.shadowTls.passwordFile == null
+              else
+                (ob.shadowTls.password == null) != (ob.shadowTls.passwordFile == null)
+            )
+          )
+          "proxy-suite: outbound '${ob.tag}': shadowTls needs exactly one of password or passwordFile (none for version 1)"
+        )
+      ]
+    ) proxyCfg.outbounds
     ++ map (
       e:
       mkAssertion (
@@ -749,13 +774,13 @@ let
       (
         !proxyInboundsEnabled
         || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
-          map (listener: listener.internalPort) derived.proxyInboundsAwg
+          map (listener: listener.internalPort) (derived.proxyInboundsAwg ++ derived.proxyInboundsSingBox)
           ++ awgRuntimeTunnelPorts
           ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
           ++ lib.optionals hybridEnabled (builtins.attrValues derived.constants.xraySidecarPorts)
         )
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, the runtime AmneziaWG outbounds' 18800-18831, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, the runtime AmneziaWG outbounds' 18800-18831, the sing-box listeners' loopback inbounds from 18850, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -789,8 +814,21 @@ let
         "shadowsocks"
         "socks"
         "http"
+        "anytls"
+        "naive"
+        "tuic"
+        "shadowtls"
       ];
-      tlsTerminated = l.tls.enable || l.type == "trojan" || l.type == "hysteria2";
+      singBox = builtins.elem l.type derived.singBoxInboundTypes;
+      tlsTerminated =
+        l.tls.enable
+        || builtins.elem l.type [
+          "trojan"
+          "hysteria2"
+          "anytls"
+          "naive"
+          "tuic"
+        ];
       multiUserShadowsocks = l.type == "shadowsocks" && builtins.length l.users > 1;
       eachUser =
         condition: fields: message:
@@ -815,7 +853,7 @@ let
       (uniqueValues (proxyInboundsEnabled && l.type != null) (builtins.filter (n: n != "") (
         map (user: user.name) l.users
       )) "${prefix}: users must each have a distinct name")
-      (eachUser (proxyInboundsEnabled && needsUuid) [
+      (eachUser (proxyInboundsEnabled && (needsUuid || l.type == "tuic")) [
         "uuid"
         "uuidFile"
       ] "${prefix}: ${toString l.type} users each need exactly one of uuid or uuidFile")
@@ -895,9 +933,10 @@ let
           || l.tls.alpn == null
           || !builtins.elem "h3" l.tls.alpn
           || l.type == "hysteria2"
+          || l.type == "tuic"
           || (l.transport.type == "xhttp" && l.tls.enable && !l.reality.enable)
         )
-        "${prefix}: tls.alpn \"h3\" is served only by hysteria2, and by the xhttp transport with tls.enable (not REALITY)"
+        "${prefix}: tls.alpn \"h3\" is served only by hysteria2, tuic, and the xhttp transport with tls.enable (not REALITY)"
       )
       # hysteria2 is its own QUIC transport, under a certificate of its own.
       (mkAssertion
@@ -978,9 +1017,9 @@ let
         (
           !proxyInboundsEnabled
           || !l.acceptProxyProtocol
-          || (l.type != null && l.type != "amneziawg" && !derived.proxyInboundIsUdpOnly l)
+          || (l.type != null && l.type != "amneziawg" && !singBox && !derived.proxyInboundIsUdpOnly l)
         )
-        "${prefix}: acceptProxyProtocol is for TCP listeners with a type (not hysteria2, amneziawg, h3-only xhttp, xrayJson or jsonFile)"
+        "${prefix}: acceptProxyProtocol is for TCP listeners XRay serves with a type (not hysteria2, amneziawg, anytls, naive, tuic, shadowtls, h3-only xhttp, xrayJson or jsonFile)"
       )
       (mkAssertion (
         !proxyInboundsEnabled
@@ -993,6 +1032,48 @@ let
           && l.transport.type == "raw"
         )
       ) "${prefix}: fallbacks run only on a vless or trojan listener with transport.type = \"raw\"")
+      # VLESS's own handshake comes ahead of anything a fallback could match on.
+      (mkAssertion (
+        !proxyInboundsEnabled || !l.encryption.enable || (l.type == "vless" && l.fallbacks == [ ])
+      ) "${prefix}: encryption is for vless listeners without fallbacks")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.encryption.privateKey == null || l.encryption.privateKeyFile == null
+      ) "${prefix}: set at most one of encryption.privateKey and encryption.privateKeyFile")
+      # sing-box serves these on the listener's port and hands them to XRay on loopback.
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || !singBox
+        || (
+          !l.reality.enable
+          && l.transport.type == "raw"
+          && l.flow == null
+          && l.fallbacks == [ ]
+          && l.shareVariants == [ ]
+        )
+      ) "${prefix}: ${toString l.type} takes no reality, transport, flow, fallbacks or shareVariants")
+      (mkAssertion (
+        !proxyInboundsEnabled || !singBox || builtins.match "[0-9a-fA-F:.]+" l.address != null
+      ) "${prefix}: sing-box listens on an IP address only, not '${l.address}'")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.type != "shadowtls" || !l.tls.enable
+      ) "${prefix}: shadowtls borrows shadowTls.handshake's TLS and takes no tls of its own")
+      (mkAssertion (
+        !proxyInboundsEnabled || l.type != "shadowtls" || lib.hasPrefix "2022-blake3-aes-" l.method
+      ) "${prefix}: shadowtls carries Shadowsocks 2022: method must be a 2022-blake3-aes-* one")
+      (mkAssertion (
+        !proxyInboundsEnabled
+        || l.type != "shadowtls"
+        || l.serverPassword == null
+        || l.serverPasswordFile == null
+      ) "${prefix}: set at most one of serverPassword and serverPasswordFile")
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || !singBox
+          || builtins.length derived.proxyInboundsSingBox <= derived.singBoxInboundSlots
+        )
+        "${prefix}: at most ${toString derived.singBoxInboundSlots} anytls, naive, tuic and shadowtls listeners"
+      )
     ]
     ++ map (
       fb:

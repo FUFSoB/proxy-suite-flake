@@ -468,11 +468,28 @@ let
     }
   ) (builtins.filter (ib: ib.listener.type == "amneziawg") proxyInbounds);
 
+  # Listeners sing-box serves: each hands its users on to a loopback VLESS inbound of XRay's
+  # (the listener's tag), one port per listener past the whitelist-bypass joiners' (18750 up).
+  singBoxInboundTypes = [
+    "anytls"
+    "naive"
+    "tuic"
+    "shadowtls"
+  ];
+  singBoxInboundBasePort = 18850;
+  singBoxInboundSlots = 50;
+  proxyInboundsSingBox = lib.imap0 (index: ib: {
+    inherit (ib) tag;
+    inherit (ib.listener) type port;
+    internalPort = singBoxInboundBasePort + index;
+  }) (builtins.filter (ib: builtins.elem ib.listener.type singBoxInboundTypes) proxyInbounds);
+
   proxyInboundUdpTypes = [
     "amneziawg"
     "hysteria2"
     "shadowsocks"
     "socks"
+    "tuic"
   ];
   proxyInboundPorts = lib.unique (map (ib: ib.listener.port) proxyInbounds);
   # Loopback listeners are fronted locally; their ports stay closed.
@@ -491,11 +508,15 @@ let
   proxyInboundIsUdpOnly =
     l:
     l.type == "hysteria2"
+    || l.type == "tuic"
     || l.type != null && l.transport.type == "xhttp" && l.tls.enable && l.tls.alpn == [ "h3" ];
-  # What an onion service can carry: TCP to a listener with a known protocol.
+  # What an onion service can carry: TCP to a listener XRay serves, with a known protocol.
   proxyInboundOnionCapable =
     ib:
-    ib.listener.type != null && ib.listener.type != "amneziawg" && !proxyInboundIsUdpOnly ib.listener;
+    ib.listener.type != null
+    && ib.listener.type != "amneziawg"
+    && !builtins.elem ib.listener.type singBoxInboundTypes
+    && !proxyInboundIsUdpOnly ib.listener;
   torOnionEnabled = torCfg.enable && torCfg.onionService.enable && proxyInboundsEnabled;
   torOnionInbounds =
     if !torOnionEnabled then
@@ -1353,6 +1374,9 @@ in
     proxyInboundRuntimeSinglePorts
     proxyInboundRuntimePortRanges
     proxyInboundsAwg
+    proxyInboundsSingBox
+    singBoxInboundTypes
+    singBoxInboundSlots
     proxyInboundIsUdpOnly
     proxyInboundsRouteOnion
     proxyInboundsNeedLocalProxy

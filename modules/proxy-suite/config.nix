@@ -138,6 +138,8 @@ let
     };
     serverAddress = derived.proxyInboundsCfg.serverAddress;
     shareLinks = derived.proxyInboundsCfg.shareLinks;
+    # For VLESS Encryption's keys: generated with it, and the clients' derived.
+    xray = "${derived.proxyInboundsCfg.package}/bin/xray";
     # The config's key (a path), or where the generated one is kept (null: the renderer makes
     # it on first start), or neither (false).
     subscriptionKeyFile =
@@ -175,12 +177,18 @@ let
           tls
           reality
           hysteria
+          encryption
+          shadowTls
+          tuic
           xrayJson
           jsonFile
           ;
         listen = ib.listener.address;
         # Where a Salamander password given neither inline nor as a file is kept.
         salamanderStateFile = "${cfg.host.stateDir}/inbounds/${ib.tag}/salamander-password";
+        # Likewise a VLESS Encryption key, and a shadowtls listener's Shadowsocks server key.
+        encryptionStateFile = "${cfg.host.stateDir}/inbounds/${ib.tag}/vless-encryption-key";
+        serverPasswordStateFile = "${cfg.host.stateDir}/inbounds/${ib.tag}/shadowsocks-server-key";
         fallbacks = map renderFallback ib.listener.fallbacks;
         # The listener in front, whose port and TLS or REALITY the share links carry.
         front =
@@ -201,6 +209,14 @@ let
                 reality
                 ;
             };
+      }
+      # Served by sing-box, which hands each user to XRay on this loopback port.
+      // lib.optionalAttrs (builtins.elem ib.listener.type derived.singBoxInboundTypes) {
+        singBox = {
+          inherit (lib.findFirst (listener: listener.tag == ib.tag) null derived.proxyInboundsSingBox)
+            internalPort
+            ;
+        };
       }
       # Only on AmneziaWG listeners: the defaults of the others need not type-check.
       // lib.optionalAttrs (ib.listener.type == "amneziawg") {

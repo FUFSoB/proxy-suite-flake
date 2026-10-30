@@ -27,6 +27,22 @@ services.proxy-suite = {
 You only need one outbound or subscription. With neither, the proxy waits until you add one
 with `proxy-ctl proxy outbounds add`.
 
+A Shadowsocks server behind ShadowTLS (a proxy-suite "shadowtls" listener, or any ShadowTLS
+v3 server) has no link of its own: give the Shadowsocks link and the ShadowTLS part beside it.
+
+```nix
+services.proxy-suite.proxy.outbounds = [
+  {
+    tag = "shadowtls";
+    urlFile = "/run/secrets/ss-url"; # ss://2022-blake3-aes-128-gcm:<server key>:<user key>@vpn.example.com:8445
+    shadowTls = {
+      serverName = "www.microsoft.com";
+      passwordFile = "/run/secrets/shadowtls-password";
+    };
+  }
+];
+```
+
 ## Use it
 
 Point apps at `127.0.0.1:1080`. The port speaks both SOCKS5 and HTTP. Many apps follow the

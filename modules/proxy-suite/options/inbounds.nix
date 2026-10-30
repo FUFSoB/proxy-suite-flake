@@ -28,6 +28,16 @@ in
       description = "XRay package that runs the inbounds, whichever client backend is used.";
     };
 
+    singBoxPackage = mkOption {
+      type = types.package;
+      default = config.services.proxy-suite.proxy.singBox.package;
+      defaultText = literalExpression "config.services.proxy-suite.proxy.singBox.package";
+      description = ''
+        sing-box package that serves the "anytls", "naive", "tuic" and "shadowtls" listeners
+        (1.12 or later), whichever client backend is used.
+      '';
+    };
+
     serverAddress = mkOption {
       type = types.nullOr (types.strMatching "[^[:space:]]+");
       default = null;

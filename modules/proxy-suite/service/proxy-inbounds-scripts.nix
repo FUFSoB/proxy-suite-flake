@@ -9,6 +9,7 @@ let
     proxyCfg
     proxyInboundsCfg
     proxyInboundsAwg
+    proxyInboundsSingBox
     awgBin
     proxyInboundsNeedLocalProxy
     torOnionEnabled
@@ -45,6 +46,7 @@ let
   subscriptionsFile = "${runtimeDir}/subscriptions.json";
   subsCfg = proxyInboundsCfg.subscriptions;
   xray = "${proxyInboundsCfg.package}/bin/xray";
+  singBoxUnit = "proxy-suite-inbounds-sing-box";
 
   # inbounds.routing.serverSource: the users' own addresses toward this host, on a dummy
   # interface. Reached through lo like any local address; nothing routes out from them.
@@ -274,49 +276,61 @@ let
          else . end' \
       ${proxyInboundsFile} > "$RUNTIME_DIR/config.json.tmp"
 
-    # XRay runs as ${constants.serviceUser}. A certificate or key it cannot read (an ACME
-    # key, say) is copied in, which means a renewal needs a restart; give the user read
-    # access to keep XRay's own reload.
+    # The listeners sing-box serves (proxy-suite-inbounds-sing-box), which waits for this file.
+    ${lib.optionalString (proxyInboundsSingBox != [ ]) ''
+      ${jq} -c '.singBox // {log: {level: "warn"}, inbounds: [], outbounds: []}' \
+        <<< "$RENDERED" > "$RUNTIME_DIR/sing-box.json.tmp"
+    ''}
+
+    # XRay and sing-box run as ${constants.serviceUser}. A certificate or key it cannot read
+    # (an ACME key, say) is copied in, which means a renewal needs a restart; give the user
+    # read access to keep XRay's own reload.
     CERT_DIR="$RUNTIME_DIR/tls"
     rm -rf "$CERT_DIR"
     index=0
-    while IFS= read -r source; do
-      [ -n "$source" ] || continue
-      if ! ${runXray} ${pkgs.coreutils}/bin/test -r "$source"; then
-        [ -d "$CERT_DIR" ] || install -d -m 0750 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$CERT_DIR"
-        index=$((index + 1))
-        copy="$CERT_DIR/$index-$(basename "$source")"
-        install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$source" "$copy"
-        echo "proxy-suite: ${constants.serviceUser} cannot read $source; XRay uses a copy until the next restart" >&2
-        ${jq} --arg from "$source" --arg to "$copy" '
-          (.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile)
-            | select(. == $from)) = $to
-        ' "$RUNTIME_DIR/config.json.tmp" > "$RUNTIME_DIR/config.json.next"
-        mv "$RUNTIME_DIR/config.json.next" "$RUNTIME_DIR/config.json.tmp"
-      fi
-    done < <(${jq} -r '[.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile) | strings]
-      | unique[]' "$RUNTIME_DIR/config.json.tmp")
+    # $1 the config, $2 a jq path to its certificate and key files.
+    copy_unreadable_certificates() {
+      local source copy
+      while IFS= read -r source; do
+        [ -n "$source" ] || continue
+        if ! ${runXray} ${pkgs.coreutils}/bin/test -r "$source"; then
+          [ -d "$CERT_DIR" ] || install -d -m 0750 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$CERT_DIR"
+          index=$((index + 1))
+          copy="$CERT_DIR/$index-$(basename "$source")"
+          install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$source" "$copy"
+          echo "proxy-suite: ${constants.serviceUser} cannot read $source; the inbounds use a copy until the next restart" >&2
+          ${jq} --arg from "$source" --arg to "$copy" "($2 | select(. == \$from)) = \$to" "$1" > "$1.next"
+          mv "$1.next" "$1"
+        fi
+      done < <(${jq} -r "[$2 | strings] | unique[]" "$1")
+    }
+    copy_unreadable_certificates "$RUNTIME_DIR/config.json.tmp" \
+      '.inbounds[].streamSettings.tlsSettings.certificates[]? | (.certificateFile, .keyFile)'
+    ${lib.optionalString (proxyInboundsSingBox != [ ]) ''
+      copy_unreadable_certificates "$RUNTIME_DIR/sing-box.json.tmp" '.inbounds[].tls? | (.certificate_path, .key_path)'
+    ''}
 
-    # Read by XRay as ${constants.serviceUser}, and by the userControl group: the daemon
-    # as owner then, since a file has one group.
-    ${
-      if userControlAllows "secrets" then
-        ''
-          ${pkgs.coreutils}/bin/chown ${constants.serviceUser}:${lib.escapeShellArg userControlCfg.group} "$RUNTIME_DIR/config.json.tmp"
-          chmod 440 "$RUNTIME_DIR/config.json.tmp"
-        ''
-      else
-        ''
-          ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/config.json.tmp"''}
-          # Without root the group is the user's own primary one, which may be shared.
-          chmod ${if constants.privileged then "640" else "600"} "$RUNTIME_DIR/config.json.tmp"
-        ''
-    }
-    ${constants.grantFileAcl pkgs ''"$RUNTIME_DIR/config.json.tmp"''
-      (userControlExtraGroupsFor "secrets")
-      "r"
-    }
-    mv "$RUNTIME_DIR/config.json.tmp" "$RUNTIME_DIR/config.json"
+    # Read by XRay and sing-box as ${constants.serviceUser}, and by the userControl group:
+    # the daemon as owner then, since a file has one group.
+    for config in config.json${lib.optionalString (proxyInboundsSingBox != [ ]) " sing-box.json"}; do
+      ${
+        if userControlAllows "secrets" then
+          ''
+            ${pkgs.coreutils}/bin/chown ${constants.serviceUser}:${lib.escapeShellArg userControlCfg.group} "$RUNTIME_DIR/$config.tmp"
+            chmod 440 "$RUNTIME_DIR/$config.tmp"
+          ''
+        else
+          ''
+            ${constants.ifPrivileged ''${pkgs.coreutils}/bin/chgrp ${constants.serviceUser} "$RUNTIME_DIR/$config.tmp"''}
+            # Without root the group is the user's own primary one, which may be shared.
+            chmod ${if constants.privileged then "640" else "600"} "$RUNTIME_DIR/$config.tmp"
+          ''
+      }
+      ${constants.grantFileAcl pkgs ''"$RUNTIME_DIR/$config.tmp"'' (userControlExtraGroupsFor "secrets")
+        "r"
+      }
+      mv "$RUNTIME_DIR/$config.tmp" "$RUNTIME_DIR/$config"
+    done
 
     # The stats API's socket: the daemon's and root's alone. Whoever reaches it can reset the
     # counters, wiping per-user traffic before the collector adds it up; the stats scope
@@ -430,6 +444,9 @@ let
   // lib.optionalAttrs (constants.privileged && proxyInboundsManagerEnabled) {
     nft = "${pkgs.nftables}/bin/nft";
     nftTable = constants.inboundLimitsTable;
+  }
+  // lib.optionalAttrs (proxyInboundsSingBox != [ ]) {
+    singBoxUnit = "${singBoxUnit}.service";
   }
   // lib.optionalAttrs (proxyInboundsAwg != [ ]) {
     awg = awgBin;

@@ -62,6 +62,12 @@ Part of the [proxy-suite options reference](./index.md).
         - [geosites](#services-proxy-suite-proxy-outbounds-routing-geosites)
         - [ips](#services-proxy-suite-proxy-outbounds-routing-ips)
         - [ruleSets](#services-proxy-suite-proxy-outbounds-routing-rulesets)
+      - [shadowTls](#services-proxy-suite-proxy-outbounds-shadowtls)
+        - [fingerprint](#services-proxy-suite-proxy-outbounds-shadowtls-fingerprint)
+        - [password](#services-proxy-suite-proxy-outbounds-shadowtls-password)
+        - [passwordFile](#services-proxy-suite-proxy-outbounds-shadowtls-passwordfile)
+        - [serverName](#services-proxy-suite-proxy-outbounds-shadowtls-servername)
+        - [version](#services-proxy-suite-proxy-outbounds-shadowtls-version)
       - [singBoxJson](#services-proxy-suite-proxy-outbounds-singboxjson)
       - [tag](#services-proxy-suite-proxy-outbounds-tag)
       - [url](#services-proxy-suite-proxy-outbounds-url)
@@ -237,7 +243,8 @@ Transparent mode to start at boot, or ` null ` for none\. That mode must also be
 <a id="services-proxy-suite-proxy-backend"></a>
 ## services\.proxy-suite\.proxy\.backend
 
-Proxy engine\. “hybrid” runs sing-box and hands XRay-only outbounds (XHTTP, ECH) to XRay\.
+Proxy engine\. “hybrid” runs sing-box and hands XRay-only outbounds (XHTTP, ECH, VLESS
+Encryption) to XRay\.
 
 **Type:** one of “sing-box”, “xray”, “hybrid”\
 **Default:** `"sing-box"`\
@@ -537,7 +544,7 @@ or ` xrayJson `\. The proxy needs at least one outbound or subscription to start
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.backend
 
 Which engine runs this outbound on the hybrid backend\. “auto” uses sing-box, or XRay for
-XRay-only transports (XHTTP, ECH)\.
+XRay-only transports (XHTTP, ECH, VLESS Encryption)\.
 
 **Type:** one of “auto”, “sing-box”, “xray”\
 **Default:** `"auto"`\
@@ -548,8 +555,7 @@ XRay-only transports (XHTTP, ECH)\.
 
 Tag of an outbound that this outbound connects through (a proxy chain)\. Any outbound works,
 including subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG\. On hybrid, an XRay
-outbound can only chain through another XRay one\. For ShadowTLS, put a ` shadowtls `
-outbound in ` singBoxJson ` and point the shadowsocks outbound’s ` detour ` at it\.
+outbound can only chain through another XRay one\.
 
 **Type:** null or string\
 **Default:** `null`\
@@ -599,6 +605,67 @@ Rule sets from ` proxy.routing.ruleSets ` always sent to this outbound, whatever
 **Type:** list of string\
 **Default:** `[ ]`\
 **Example:** `[ "antifilter" ]`
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls
+
+Dial this outbound (usually Shadowsocks, from ` url `) through ShadowTLS to the same
+server and port, as a proxy-suite “shadowtls” listener and other ShadowTLS servers
+serve it\. Its UDP then goes over the stream (UDP over TCP), which the server must take\.
+sing-box only: not with the XRay backend, nor with ` backend = "xray" ` or ` detour `\.
+
+**Type:** null or (submodule)\
+**Default:** `null`\
+**Example:**
+
+```nix
+{
+  passwordFile = "/run/secrets/shadowtls-password";
+  serverName = "www.microsoft.com";
+}
+```
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls-fingerprint"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls\.fingerprint
+
+Browser whose TLS ClientHello to imitate (uTLS)\. ` null `: Go’s own\.
+
+**Type:** null or string\
+**Default:** `"chrome"`
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls-password"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls\.password
+
+ShadowTLS password (version 2 and 3)\. Ends up in the Nix store; prefer ` passwordFile `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"hunter2"`
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls-passwordfile"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls\.passwordFile
+
+File with the ShadowTLS password\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/shadowtls-password"`
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls-servername"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls\.serverName
+
+SNI: the site whose TLS handshake the server borrows\.
+
+**Type:** string\
+**Example:** `"www.microsoft.com"`
+
+<a id="services-proxy-suite-proxy-outbounds-shadowtls-version"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.shadowTls\.version
+
+ShadowTLS protocol version, as the server runs it\.
+
+**Type:** one of 1, 2, 3\
+**Default:** `3`
 
 <a id="services-proxy-suite-proxy-outbounds-singboxjson"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.singBoxJson
@@ -1054,8 +1121,7 @@ checked\. For subscriptions added at runtime, see
 
 Tag of an outbound that every entry of this subscription connects through (a proxy chain)\. Any outbound works,
 including subscription entries, ` warp `, ` ssh-proxy ` and AmneziaWG\. On hybrid, an XRay
-outbound can only chain through another XRay one\. For ShadowTLS, put a ` shadowtls `
-outbound in ` singBoxJson ` and point the shadowsocks outbound’s ` detour ` at it\.
+outbound can only chain through another XRay one\.
 
 **Type:** null or string\
 **Default:** `null`\

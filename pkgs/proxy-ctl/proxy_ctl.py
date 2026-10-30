@@ -35,6 +35,7 @@ ALL_SERVICES = [
     "proxy-suite-tun",
     "proxy-suite-killswitch",
     "proxy-suite-inbounds",
+    "proxy-suite-inbounds-sing-box",
     "proxy-suite-ssh-proxy",
     "proxy-suite-warp",
     "proxy-suite-warp-tunnel",
@@ -264,6 +265,7 @@ INBOUND_ADD_FLAGS = {
     "--keep-host": "hysteria2: pass --masquerade the name asked for (this host's own web server)",
     "--x-forwarded": "hysteria2: tell --masquerade the client's address (this host's own web server)",
     "--salamander": "hysteria2: Salamander obfuscation",
+    "--encryption": "vless: VLESS Encryption, no TLS needed (XRay clients only)",
     "--user": "a user it accepts",
 }
 
@@ -5961,7 +5963,13 @@ def _inbound_link_for(tag, user="", *_, field="link", variant=""):
         sys.exit(1)
     entry = matches[0]
     if field == "link":
+        if not entry.get("link"):
+            # shadowtls: no link format of its own, only the subscriptions' configs.
+            die(f"No share link for {tag}: its clients take the sing-box or Clash subscription, or --json.")
         return _s(entry.get("link"))
+    if field == "outbound" and entry.get("outbound") is not None and entry.get("hops"):
+        # The outbound and the hops it goes through (shadowtls): sing-box takes them all.
+        return [entry["outbound"], *entry["hops"]]
     if entry.get(field) is not None:
         return entry[field]
     if field == "config":
@@ -6550,7 +6558,7 @@ def _inbound_import(*args):
     except (OSError, ValueError) as e:
         die(f"Cannot read {rest[0]}: {e}")
     report = _manager("POST", "/import", {"bundle": bundle, "replace": "--replace" in args})
-    for key in ("users", "listeners", "policies", "amneziaWg", "salamander"):
+    for key in ("users", "listeners", "policies", "amneziaWg", "salamander", "keys"):
         if report.get(key):
             print(f"{key}: {', '.join(report[key])}")
     if report.get("subscriptionKey"):

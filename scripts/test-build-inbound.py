@@ -3,12 +3,45 @@
 import base64
 import json
 import os
+import sys
 import tempfile
 import unittest
 import urllib.parse
 
-from proxy_inbound import build_inbounds, build_share_link, client_outbound, render_xray_inbound, subscription_token
+import inbound_subscription
+from proxy_inbound import (
+    _derive_vless_client_key,
+    build_inbounds,
+    build_share_link,
+    client_outbound,
+    render_xray_inbound,
+    subscription_token,
+)
 from proxy_parsing import build_outbound
+
+# Stands in for `xray x25519` and `xray mlkem768`: fixed keys, and a "public" one derived
+# from the private one as a 32-byte digest, which is what the client parser checks.
+FAKE_XRAY = """import base64, hashlib, os, sys
+def key(seed, size=32):
+    return base64.urlsafe_b64encode(hashlib.sha256(seed.encode()).digest()[:size]).decode().rstrip("=")
+args = sys.argv[1:]
+with open(os.path.join(os.path.dirname(sys.argv[0]), "calls"), "a") as log:
+    log.write(" ".join(args[:2]) + "\\n")
+if args == ["x25519"]:
+    print("PrivateKey: " + key("generated")); print("Password (PublicKey): " + key(key("generated"))); print("Hash32: x")
+elif args[:2] == ["x25519", "-i"]:
+    print("PrivateKey: " + args[2]); print("Password (PublicKey): " + key(args[2])); print("Hash32: x")
+else:
+    sys.exit(1)
+"""
+
+
+def fake_xray(directory: str) -> str:
+    path = os.path.join(directory, "xray")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(f"#!{sys.executable}\n{FAKE_XRAY}")
+    os.chmod(path, 0o755)
+    return path
 
 
 def listener(**overrides):
@@ -264,7 +297,7 @@ class RenderInboundTests(unittest.TestCase):
 
     def test_unsupported_type_fails(self):
         with self.assertRaisesRegex(ValueError, "unsupported type"):
-            render_xray_inbound(listener(type="tuic"))
+            render_xray_inbound(listener(type="wireguard"))
 
 
 class ShareLinkTests(unittest.TestCase):
@@ -967,6 +1000,161 @@ class BuildInboundsTests(unittest.TestCase):
         self.assertEqual(body, [e["link"] for e in result["links"]])
         plain = build_inbounds({**spec, "listeners": [dict(l, shareVariants=[]) for l in spec["listeners"]]}, "vpn.example.com")
         self.assertEqual(result["subscriptions"][0]["token"], plain["subscriptions"][0]["token"])
+
+
+class VlessEncryptionTests(unittest.TestCase):
+    def test_key_generated_once_and_in_the_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = listener(
+                tag="enc",
+                xray=fake_xray(tmp),
+                encryption={"enable": True, "authentication": "x25519", "mode": "xorpub", "privateKey": None, "privateKeyFile": None},
+                encryptionStateFile=os.path.join(tmp, "state", "vless-encryption-key"),
+            )
+            decryption = render_xray_inbound(spec)["settings"]["decryption"]
+            self.assertRegex(decryption, r"^mlkem768x25519plus\.xorpub\.600s\.[A-Za-z0-9_-]{43}$")
+            # Kept: the next start renders the same key.
+            self.assertEqual(render_xray_inbound(spec)["settings"]["decryption"], decryption)
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "state", "vless-encryption-key.x25519")))
+            link = build_share_link(spec, "vpn.example.com")
+            encryption = link_params(link)["encryption"]
+            self.assertRegex(encryption, r"^mlkem768x25519plus\.xorpub\.0rtt\.[A-Za-z0-9_-]{43}$")
+            self.assertNotEqual(encryption.rsplit(".", 1)[1], decryption.rsplit(".", 1)[1])
+            # The clients' half came with the key: never derived with the key on a command line.
+            with open(os.path.join(tmp, "calls"), encoding="utf-8") as handle:
+                self.assertEqual(handle.read().split("\n")[:-1], ["x25519"])
+            # No TLS needed: XRay dials it as it is; sing-box cannot.
+            self.assertEqual(link_params(link)["security"], "none")
+            outbound = client_outbound(link, "enc")
+            self.assertEqual(outbound["protocol"], "vless")
+            self.assertEqual(outbound["settings"]["encryption"], encryption)
+            with self.assertRaisesRegex(ValueError, "XRay's alone"):
+                build_outbound(link, "enc", backend="sing-box")
+
+    def test_given_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private = "uFStM_0LKZjQECFmgDDInScNCEN7EgwOd6CY1i_BJVE"
+            spec = listener(
+                xray=fake_xray(tmp),
+                encryption={"enable": True, "authentication": "x25519", "mode": "native", "privateKey": private, "privateKeyFile": None},
+                encryptionStateFile=os.path.join(tmp, "unused"),
+            )
+            self.assertEqual(render_xray_inbound(spec)["settings"]["decryption"], f"mlkem768x25519plus.native.600s.{private}")
+            self.assertFalse(os.path.exists(os.path.join(tmp, "unused.x25519")))
+            # Derived once, then read back from beside the state, in this process or the next.
+            _derive_vless_client_key.cache_clear()
+            first = link_params(build_share_link(spec, "vpn.example.com"))["encryption"]
+            _derive_vless_client_key.cache_clear()
+            self.assertEqual(link_params(build_share_link(spec, "vpn.example.com"))["encryption"], first)
+            with open(os.path.join(tmp, "calls"), encoding="utf-8") as handle:
+                self.assertEqual(handle.read().split("\n")[:-1], ["x25519 -i"])
+            # A key changed is derived anew.
+            spec["encryption"]["privateKey"] = "A" * 43
+            self.assertNotEqual(link_params(build_share_link(spec, "vpn.example.com"))["encryption"], first)
+
+
+def sing_box_listener(kind, **overrides):
+    users = [
+        {"name": "alice", "uuid": "11111111-2222-3333-4444-555555555555", "uuidFile": None, "password": "pw-a", "passwordFile": None},
+        {"name": "bob", "uuid": "66666666-2222-3333-4444-555555555555", "uuidFile": None, "password": "pw-b", "passwordFile": None},
+    ]
+    spec = {
+        "tag": kind,
+        "type": kind,
+        "port": 8443,
+        "users": users,
+        "tls": {"enable": False, "certificateFile": "/c.pem", "keyFile": "/k.pem", "serverName": "vpn.example.com"},
+        "singBox": {"internalPort": 18850},
+        "shadowTls": {"handshake": "www.microsoft.com:443", "serverName": None},
+        "tuic": {"congestionControl": "bbr"},
+    }
+    spec.update(overrides)
+    return listener(**spec)
+
+
+class SingBoxListenerTests(unittest.TestCase):
+    def test_users_reach_xray_by_name(self):
+        spec = sing_box_listener("anytls")
+        spec["users"][1]["active"] = False
+        spec["users"][0]["level"] = 3
+        result = build_inbounds({"listeners": [spec]}, "vpn.example.com")
+        inbound = result["inbounds"][0]
+        # XRay's side: loopback VLESS under the listener's tag, a client per user let in.
+        self.assertEqual((inbound["listen"], inbound["port"], inbound["protocol"]), ("127.0.0.1", 18850, "vless"))
+        self.assertEqual([(c["email"], c.get("level")) for c in inbound["settings"]["clients"]], [("alice", 3)])
+        config = result["singBox"]
+        served = config["inbounds"][0]
+        self.assertEqual((served["type"], served["listen_port"]), ("anytls", 8443))
+        self.assertEqual(served["users"], [{"name": "alice", "password": "pw-a"}])
+        self.assertEqual(served["tls"]["certificate_path"], "/c.pem")
+        hop = config["outbounds"][0]
+        self.assertEqual((hop["server"], hop["server_port"], hop["uuid"]), ("127.0.0.1", 18850, inbound["settings"]["clients"][0]["id"]))
+        self.assertEqual(config["route"]["rules"], [
+            {"inbound": ["anytls"], "auth_user": ["alice"], "outbound": hop["tag"]},
+            {"inbound": ["anytls"], "action": "reject"},
+        ])
+        # A user switched off keeps their link and subscription.
+        self.assertEqual([e["user"] for e in result["links"]], ["alice", "bob"])
+
+    def test_internal_id_follows_the_secret(self):
+        first = render_xray_inbound(sing_box_listener("anytls"))["settings"]["clients"][0]["id"]
+        spec = sing_box_listener("anytls")
+        spec["users"][0]["password"] = "rotated"
+        self.assertNotEqual(render_xray_inbound(spec)["settings"]["clients"][0]["id"], first)
+
+    def test_links_round_trip(self):
+        cases = {
+            "anytls": ("anytls", {"password": "pw-a"}),
+            "tuic": ("tuic", {"uuid": "11111111-2222-3333-4444-555555555555", "password": "pw-a", "congestion_control": "bbr"}),
+            "naive": ("naive", {"username": "alice", "password": "pw-a"}),
+        }
+        for kind, (outbound_type, fields) in cases.items():
+            link = build_share_link(sing_box_listener(kind), "vpn.example.com")
+            outbound = client_outbound(link, kind)
+            self.assertEqual(outbound["type"], outbound_type, link)
+            self.assertEqual((outbound["server"], outbound["server_port"]), ("vpn.example.com", 8443))
+            for key, value in fields.items():
+                self.assertEqual(outbound[key], value, (kind, key))
+            self.assertEqual(outbound["tls"]["server_name"], "vpn.example.com")
+        self.assertEqual(client_outbound(build_share_link(sing_box_listener("tuic"), "vpn.example.com"), "t")["tls"]["alpn"], ["h3"])
+
+    def test_tuic_takes_both_secrets(self):
+        served = build_inbounds({"listeners": [sing_box_listener("tuic")]}, "vpn.example.com")["singBox"]["inbounds"][0]
+        self.assertEqual(served["users"][0], {"name": "alice", "uuid": "11111111-2222-3333-4444-555555555555", "password": "pw-a"})
+        self.assertEqual(served["tls"]["alpn"], ["h3"])
+
+    def test_shadowtls_has_configs_but_no_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = sing_box_listener("shadowtls", serverPassword=None, serverPasswordFile=None,
+                                     serverPasswordStateFile=os.path.join(tmp, "key"))
+            result = build_inbounds({"listeners": [spec]}, "vpn.example.com")
+            with open(os.path.join(tmp, "key"), encoding="utf-8") as handle:
+                server_key = handle.read().strip()
+        served, inner = result["singBox"]["inbounds"]
+        self.assertEqual((served["type"], served["version"], served["detour"]), ("shadowtls", 3, inner["tag"]))
+        self.assertEqual(served["handshake"], {"server": "www.microsoft.com", "server_port": 443})
+        self.assertEqual((inner["type"], inner["listen"], inner["password"]), ("shadowsocks", "127.0.0.1", server_key))
+        self.assertEqual(len(base64.b64decode(server_key)), 16)
+        self.assertEqual(result["singBox"]["route"]["rules"][0]["inbound"], [inner["tag"]])
+        # No link, nothing in the base64 subscription, but a subscription all the same.
+        entry = result["links"][0]
+        self.assertIsNone(entry["link"])
+        self.assertEqual(base64.b64decode(result["subscriptions"][0]["body"]), b"")
+        user_key = inner["users"][0]["password"]
+        self.assertEqual(entry["outbound"]["password"], f"{server_key}:{user_key}")
+        self.assertEqual(entry["hops"][0]["password"], "pw-a")
+        self.assertEqual(entry["hops"][0]["tls"]["server_name"], "www.microsoft.com")
+
+        items = inbound_subscription.entries(result, "alice")
+        outbounds = inbound_subscription.sing_box_config(items)["outbounds"]
+        by_tag = {o["tag"]: o for o in outbounds}
+        self.assertEqual(by_tag["shadowtls"]["detour"], "shadowtls-shadowtls")
+        self.assertEqual(by_tag["shadowtls-shadowtls"]["type"], "shadowtls")
+        auto = next(o for o in outbounds if o["tag"] == "auto")
+        self.assertEqual(auto["outbounds"], ["shadowtls"])
+        proxy = inbound_subscription.clash_config(items)["proxies"][0]
+        self.assertEqual((proxy["type"], proxy["plugin"]), ("ss", "shadow-tls"))
+        self.assertEqual(proxy["plugin-opts"], {"host": "www.microsoft.com", "password": "pw-a", "version": 3})
 
 
 if __name__ == "__main__":

@@ -557,7 +557,145 @@ let
     "b"
   ];
 
+  # Listeners sing-box serves, beside one with VLESS Encryption.
+  acmeTls = {
+    certificateFile = "/run/acme/fullchain.pem";
+    keyFile = "/run/acme/key.pem";
+  };
+  singBoxFixture = mkInbounds {
+    users.both = {
+      uuidFile = "/run/secrets/both-uuid";
+      passwordFile = "/run/secrets/both-password";
+    };
+    listeners = {
+      any-in = {
+        type = "anytls";
+        port = 8445;
+        users = [ "a" ];
+        tls = acmeTls;
+      };
+      tuic-in = {
+        type = "tuic";
+        port = 8446;
+        users = [ "both" ];
+        tls = acmeTls // {
+          alpn = [ "h3" ];
+        };
+      };
+      naive-in = {
+        type = "naive";
+        port = 8447;
+        users = [ "b" ];
+        tls = acmeTls;
+      };
+      stls-in = {
+        type = "shadowtls";
+        port = 8448;
+        users = [
+          "a"
+          "b"
+        ];
+        shadowTls.handshake = "www.example.com:443";
+      };
+      enc-in = {
+        type = "vless";
+        port = 8080;
+        users = [ "user" ];
+        encryption.enable = true;
+      };
+    };
+  };
+  singBoxSpec = mkInboundsSpec singBoxFixture;
+  singBoxListener = tag: lib.head (builtins.filter (l: l.tag == tag) singBoxSpec.listeners);
+  singBoxUnit = singBoxFixture.config.systemd.services."proxy-suite-inbounds-sing-box";
+
   failing = [
+    (mkRejectsListener {
+      type = "anytls";
+      port = 8445;
+      users = [ "a" ];
+      tls = acmeTls;
+      reality = realityListener.reality;
+    } "anytls takes no reality, transport, flow, fallbacks or shareVariants")
+    (mkRejectsListener {
+      type = "naive";
+      port = 8447;
+      users = [ "a" ];
+    } "needs both tls.certificateFile and tls.keyFile")
+    (mkRejectsListener {
+      type = "tuic";
+      port = 8446;
+      users = [ "a" ];
+      tls = acmeTls;
+    } "tuic users each need exactly one of uuid or uuidFile")
+    (mkRejectsListener {
+      type = "shadowtls";
+      port = 8448;
+      users = [ "a" ];
+      tls = acmeTls // {
+        enable = true;
+      };
+    } "shadowtls borrows shadowTls.handshake's TLS")
+    (mkRejectsListener {
+      type = "shadowtls";
+      port = 8448;
+      users = [ "a" ];
+      method = "aes-128-gcm";
+    } "shadowtls carries Shadowsocks 2022")
+    (mkRejectsListener {
+      type = "anytls";
+      port = 8445;
+      address = "localhost";
+      users = [ "a" ];
+      tls = acmeTls;
+    } "sing-box listens on an IP address only")
+    # sing-box dropped PROXY protocol inbounds in 1.6: it would refuse to start.
+    (mkRejectsListener {
+      type = "anytls";
+      port = 8445;
+      users = [ "a" ];
+      tls = acmeTls;
+      acceptProxyProtocol = true;
+    } "acceptProxyProtocol is for TCP listeners XRay serves")
+    (mkRejectsListener (
+      realityListener
+      // {
+        encryption.enable = true;
+        fallbacks = [ { dest = 8080; } ];
+      }
+    ) "encryption is for vless listeners without fallbacks")
+    (mkRejects (
+      baseProxy
+      // {
+        proxy = baseProxy.proxy // {
+          backend = "xray";
+          outbounds = [
+            {
+              tag = "st";
+              url = "ss://2022-blake3-aes-128-gcm:a2V5@example.com:443";
+              shadowTls = {
+                serverName = "www.microsoft.com";
+                password = "pw";
+              };
+            }
+          ];
+        };
+      }
+    ) "shadowTls needs sing-box")
+    (mkRejects (
+      baseProxy
+      // {
+        proxy = baseProxy.proxy // {
+          outbounds = [
+            {
+              tag = "st";
+              url = "ss://2022-blake3-aes-128-gcm:a2V5@example.com:443";
+              shadowTls.serverName = "www.microsoft.com";
+            }
+          ];
+        };
+      }
+    ) "shadowTls needs exactly one of password or passwordFile")
     (mkRejectsListener (
       realityListener
       // {
@@ -1626,6 +1764,50 @@ let
       true
     )
     (ok (failedMessages managerFixture == [ ]))
+
+    # sing-box listeners: their own ports, a loopback inbound each in XRay, a unit of their own.
+    (ok (failedMessages singBoxFixture == [ ]))
+    (ok (
+      map (tag: (singBoxListener tag).singBox.internalPort) [
+        "any-in"
+        "naive-in"
+        "stls-in"
+        "tuic-in"
+      ] == [
+        18850
+        18851
+        18852
+        18853
+      ]
+    ))
+    (ok (
+      (singBoxListener "stls-in").serverPasswordStateFile
+      == "/var/lib/proxy-suite/inbounds/stls-in/shadowsocks-server-key"
+    ))
+    (ok ((singBoxListener "enc-in").encryption.enable && lib.hasSuffix "/bin/xray" singBoxSpec.xray))
+    (
+      let
+        fw = singBoxFixture.config.networking.firewall;
+      in
+      assert builtins.all (port: builtins.elem port fw.allowedTCPPorts) [
+        8445
+        8447
+        8448
+        8080
+      ];
+      assert !builtins.elem 8446 fw.allowedTCPPorts;
+      assert builtins.elem 8446 fw.allowedUDPPorts;
+      true
+    )
+    (
+      assert builtins.elem "proxy-suite-inbounds.service" singBoxUnit.partOf;
+      assert builtins.elem "proxy-suite-inbounds.service" singBoxUnit.after;
+      assert builtins.elem "proxy-suite-inbounds-sing-box.service"
+        singBoxFixture.config.systemd.services.proxy-suite-inbounds.wants;
+      assert lib.hasInfix "sing-box.json" (readInboundsStart singBoxFixture);
+      assert !(managerFixture.config.systemd.services ? "proxy-suite-inbounds-sing-box");
+      true
+    )
     (ok (hasFailed policyWithoutManagerFixture "policy needs inbounds.manager.enable"))
     (ok (
       hasFailed speedWithoutLimitsFixture "policy.speedLimit needs inbounds.manager.speedLimits.enable"

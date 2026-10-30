@@ -3,25 +3,33 @@
 
 The input spec is backend-neutral: it mirrors the
 services.proxy-suite.inbounds option tree, with secrets given as file
-paths that are read here rather than at Nix evaluation time. Only XRay is
-rendered today; a render_sing_box_inbound would sit beside render_xray_inbound
-without changing the spec or the link generator.
+paths that are read here rather than at Nix evaluation time. XRay serves every
+listener; the anytls, naive, tuic and shadowtls ones sing-box takes on their port
+and hands on to a loopback VLESS inbound of XRay's under the listener's tag, one
+client per user, so XRay routes, counts and limits them like the rest.
 """
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
+import subprocess
 import urllib.parse
+import uuid
 
 import inbound_runtime
 from awg_inbound import client_entries
 from proxy_parsing import build_outbound
 
 UUID_TYPES = ("vless", "vmess")
-PASSWORD_TYPES = ("trojan", "hysteria2", "shadowsocks", "socks", "http")
+PASSWORD_TYPES = ("trojan", "hysteria2", "shadowsocks", "socks", "http", "anytls", "naive", "tuic", "shadowtls")
+SING_BOX_TYPES = ("anytls", "naive", "tuic", "shadowtls")
+# How long the server keeps a VLESS Encryption session's ticket for a 0-RTT reconnect.
+VLESS_ENCRYPTION_TICKET = "600s"
 
 TRANSPORT_SETTINGS_KEY = {
     "ws": "wsSettings",
@@ -91,6 +99,104 @@ def _kept_secret(path: str, generate) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(generated + "\n")
     return generated
+
+
+def _xray_keys(xray: str, *args: str) -> dict[str, str]:
+    """What `xray <args>` prints as "Label: value" lines, by label in lower-case letters
+    alone ("Password (PublicKey)": "passwordpublickey"). Its errors never quote the command,
+    which may hold a private key."""
+    try:
+        out = subprocess.run([xray, *args], capture_output=True, text=True, check=True, timeout=30).stdout
+    except OSError as exc:
+        raise ValueError(f"cannot run {xray}: {exc.strerror}") from None
+    except subprocess.SubprocessError:
+        raise ValueError(f"`xray {args[0]}` failed") from None
+    keys = {}
+    for line in out.splitlines():
+        label, _, value = line.partition(":")
+        keys[re.sub(r"[^a-z]", "", label.lower())] = value.strip()
+    return keys
+
+
+def _client_half(keys: dict[str, str], authentication: str) -> str | None:
+    if authentication == "mlkem768":
+        return keys.get("client")
+    return next((v for k, v in keys.items() if "publickey" in k or k == "password"), None)
+
+
+def _generate_vless_key(xray: str, authentication: str) -> tuple[str, str]:
+    """A new VLESS Encryption key: (an X25519 private key or an ML-KEM-768 seed, the clients'
+    half), both as XRay prints them."""
+    keys = _xray_keys(xray, authentication)
+    private = keys.get("seed" if authentication == "mlkem768" else "privatekey")
+    client = _client_half(keys, authentication)
+    if not private or not client:
+        raise ValueError(f"cannot read the key `{xray}` generated for VLESS Encryption")
+    return private, client
+
+
+@functools.lru_cache(maxsize=None)
+def _derive_vless_client_key(xray: str, authentication: str, private: str) -> str:
+    # `-i` takes the key on its command line, where other local users can see it: only for
+    # a key with no client half kept yet (_vless_client_key).
+    client = _client_half(_xray_keys(xray, authentication, "-i", private), authentication)
+    if not client:
+        raise ValueError(f"not a VLESS Encryption {authentication} private key")
+    return client
+
+
+def _vless_client_key(xray: str, authentication: str, private: str, kept: str, known: str | None = None) -> str:
+    """The clients' half of a VLESS Encryption key (the X25519 public key, or the ML-KEM-768
+    encapsulation key): kept in a file beside the state, under the private key's hash, or
+    derived by XRay once (known: the half it printed when it generated the key)."""
+    digest = hashlib.sha256(private.encode("utf-8")).hexdigest()
+    try:
+        with open(kept, encoding="utf-8") as handle:
+            lines = handle.read().split()
+        if len(lines) == 2 and hmac.compare_digest(lines[0], digest):
+            return lines[1]
+    except FileNotFoundError:
+        pass
+    client = known or _derive_vless_client_key(xray, authentication, private)
+    try:
+        os.makedirs(os.path.dirname(kept), mode=0o700, exist_ok=True)
+        fd = os.open(kept, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"{digest}\n{client}\n")
+    except OSError:
+        # Only the cost of deriving it again next time.
+        pass
+    return client
+
+
+def _vless_encryption(listener: dict) -> tuple[str, str] | None:
+    """(decryption, encryption): the server's and the clients' VLESS Encryption strings of a
+    vless listener, or None without it. A key given neither inline nor as a file is
+    generated on first start and kept, one per kind, so links stay the same."""
+    encryption = listener.get("encryption") or {}
+    if not encryption.get("enable"):
+        return None
+    tag = listener["tag"]
+    xray = listener.get("xray") or "xray"
+    authentication = encryption.get("authentication") or "x25519"
+    mode = encryption.get("mode") or "native"
+    state = f"{listener['encryptionStateFile']}.{authentication}"
+    generated: dict[str, str] = {}
+
+    def generate() -> str:
+        private, generated["client"] = _generate_vless_key(xray, authentication)
+        return private
+
+    if encryption.get("privateKey") is not None or encryption.get("privateKeyFile") is not None:
+        private = _resolve(encryption.get("privateKey"), encryption.get("privateKeyFile"), "encryption private key", tag)
+    else:
+        private = _kept_secret(state, generate)
+    try:
+        public = _vless_client_key(xray, authentication, private, f"{state}.client", generated.get("client"))
+    except ValueError as exc:
+        raise ValueError(f"listener '{tag}': {exc}") from None
+    prefix = f"mlkem768x25519plus.{mode}"
+    return f"{prefix}.{VLESS_ENCRYPTION_TICKET}.{private}", f"{prefix}.0rtt.{public}"
 
 
 def _b64(value: str) -> str:
@@ -226,10 +332,13 @@ def render_xray_inbound(listener: dict) -> dict:
     tag = listener["tag"]
     listener_type = listener["type"]
 
+    if listener_type in SING_BOX_TYPES:
+        return _internal_inbound(listener)
     if listener_type in UUID_TYPES:
         settings: dict = {"clients": _clients(listener, tag)}
         if listener_type == "vless":
-            settings["decryption"] = "none"
+            encryption = _vless_encryption(listener)
+            settings["decryption"] = encryption[0] if encryption else "none"
     elif listener_type == "trojan":
         settings = {"clients": _clients(listener, tag)}
     elif listener_type == "hysteria2":
@@ -461,14 +570,264 @@ def build_share_link(
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return f"hysteria2://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
 
+    if listener_type in SING_BOX_TYPES:
+        return _sing_box_link(listener, user, user_name, secret, server_address, endpoint_address, endpoint, fragment)
+
     params = _link_transport_params(listener)
     params.update(_link_security_params(front, server_address, listener.get("shareFingerprint")))
     if listener_type == "vless" and listener.get("flow"):
         params["flow"] = listener["flow"]
+    if listener_type == "vless" and (encryption := _vless_encryption(listener)):
+        params["encryption"] = encryption[1]
     _apply_variant(params, variant, listener_type)
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     # A trojan password may hold @, #, ? or %; a vless uuid comes through unchanged.
     return f"{listener_type}://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
+
+
+# --- sing-box listeners ---------------------------------------------------------------
+
+
+def _sing_box_users(listener: dict) -> list[tuple[str, dict]]:
+    """(name, user) of the users sing-box takes on a listener: those the manager has not
+    switched off. XRay drops the others too, but sing-box should not let them in at all."""
+    return [
+        (user.get("name") or f"{listener['tag']}-{index}", user)
+        for index, user in enumerate(listener["users"])
+        if user.get("active") is not False
+    ]
+
+
+def _internal_id(listener: dict, name: str, user: dict) -> str:
+    """A user's id on the listener's loopback VLESS inbound: from their secrets, so sing-box's
+    config and XRay's agree without keeping it anywhere, and it changes when they do."""
+    material = ["proxy-suite-sing-box", listener["tag"], name, _user_secret(user, listener["type"], listener["tag"])]
+    if listener["type"] == "tuic":
+        material.append(_resolve(user.get("uuid"), user.get("uuidFile"), "uuid", listener["tag"]))
+    digest = hashlib.sha256("\n".join(material).encode("utf-8")).digest()
+    return str(uuid.UUID(bytes=digest[:16], version=4))
+
+
+def _internal_inbound(listener: dict) -> dict:
+    """XRay's side of a sing-box listener: a loopback VLESS inbound under the listener's tag,
+    a client per user with their name and level, which the rest of XRay's config (routing,
+    stats, speed limits, the API) takes as any listener's."""
+    clients = []
+    for name, user in _sing_box_users(listener):
+        client = {"id": _internal_id(listener, name, user), "email": name}
+        if user.get("level"):
+            client["level"] = user["level"]
+        clients.append(client)
+    return {
+        "tag": listener["tag"],
+        "listen": "127.0.0.1",
+        "port": listener["singBox"]["internalPort"],
+        "protocol": "vless",
+        "settings": {"clients": clients, "decryption": "none"},
+        "streamSettings": {"network": "raw", "security": "none"},
+        "sniffing": {
+            "enabled": True,
+            "destOverride": ["http", "tls", "quic"],
+            "routeOnly": True,
+        },
+    }
+
+
+def _shadow_tls_key(listener: dict) -> str:
+    """The Shadowsocks 2022 server key inside a shadowtls listener: given, or generated on
+    first start and kept."""
+    tag = listener["tag"]
+    method = listener["method"]
+    size = inbound_runtime.SS2022_KEY_BYTES[method]
+    if listener.get("serverPassword") is not None or listener.get("serverPasswordFile") is not None:
+        key = _server_secret(listener, tag)
+    else:
+        key = _kept_secret(
+            listener["serverPasswordStateFile"], lambda: base64.b64encode(secrets.token_bytes(size)).decode("ascii")
+        )
+    if not inbound_runtime._ss2022_key_ok(key, method):
+        raise ValueError(f"listener '{tag}': the server key is not base64 of {size} bytes, as {method} needs")
+    return key
+
+
+def _handshake(listener: dict) -> tuple[str, int]:
+    host, _, port = listener["shadowTls"]["handshake"].rpartition(":")
+    return host.strip("[]"), int(port)
+
+
+def _sing_box_tls(tls: dict, default_alpn: list[str] | None = None) -> dict:
+    settings: dict = {"enabled": True, "certificate_path": tls["certificateFile"], "key_path": tls["keyFile"]}
+    if tls.get("serverName"):
+        settings["server_name"] = tls["serverName"]
+    alpn = tls.get("alpn") or default_alpn
+    if alpn:
+        settings["alpn"] = alpn
+    return settings
+
+
+def render_sing_box_listener(listener: dict) -> dict:
+    """The sing-box config's part for one listener: its inbounds, an outbound per user to
+    XRay's loopback inbound, and the rules between them. Empty with no user let in."""
+    tag = listener["tag"]
+    kind = listener["type"]
+    users = _sing_box_users(listener)
+    if not users:
+        return {"inbounds": [], "outbounds": [], "rules": []}
+    # No acceptProxyProtocol: sing-box dropped PROXY protocol inbounds in 1.6 (refused in Nix).
+    inbound: dict = {"type": kind, "tag": tag, "listen": listener["listen"], "listen_port": listener["port"]}
+    secret = {name: _user_secret(user, kind, tag) for name, user in users}
+    inbounds = [inbound]
+    # The inbound the users authenticate on, which the rules match.
+    routed = tag
+    if kind == "anytls":
+        inbound["users"] = [{"name": name, "password": secret[name]} for name, _ in users]
+        inbound["tls"] = _sing_box_tls(listener["tls"])
+    elif kind == "naive":
+        inbound["users"] = [{"username": name, "password": secret[name]} for name, _ in users]
+        inbound["network"] = "tcp"
+        inbound["tls"] = _sing_box_tls(listener["tls"])
+    elif kind == "tuic":
+        inbound["users"] = [
+            {"name": name, "uuid": _resolve(user.get("uuid"), user.get("uuidFile"), "uuid", tag), "password": secret[name]}
+            for name, user in users
+        ]
+        inbound["congestion_control"] = (listener.get("tuic") or {}).get("congestionControl") or "bbr"
+        inbound["tls"] = _sing_box_tls(listener["tls"], ["h3"])
+    elif kind == "shadowtls":
+        # ShadowTLS v3 vouches for the user and hands the stream to a Shadowsocks 2022
+        # inbound on loopback, whose per-user keys say who it is.
+        host, port = _handshake(listener)
+        routed = f"{tag}/shadowsocks"
+        inbound.update(
+            {
+                "version": 3,
+                "users": [{"name": name, "password": secret[name]} for name, _ in users],
+                "handshake": {"server": host, "server_port": port},
+                "strict_mode": True,
+                "detour": routed,
+            }
+        )
+        method = listener["method"]
+        inbounds.append(
+            {
+                "type": "shadowsocks",
+                "tag": routed,
+                "listen": "127.0.0.1",
+                "network": "tcp",
+                "method": method,
+                "password": _shadow_tls_key(listener),
+                "users": [{"name": name, "password": inbound_runtime._ss_key(method, secret[name])} for name, _ in users],
+            }
+        )
+    else:
+        raise ValueError(f"listener '{tag}': sing-box does not serve '{kind}'")
+    outbounds = []
+    rules = []
+    for name, user in users:
+        hop = f"{tag}/{name}"
+        outbounds.append(
+            {
+                "type": "vless",
+                "tag": hop,
+                "server": "127.0.0.1",
+                "server_port": listener["singBox"]["internalPort"],
+                "uuid": _internal_id(listener, name, user),
+                "packet_encoding": "xudp",
+            }
+        )
+        rules.append({"inbound": [routed], "auth_user": [name], "outbound": hop})
+    return {"inbounds": inbounds, "outbounds": outbounds, "rules": rules}
+
+
+def sing_box_config(parts: list[dict]) -> dict | None:
+    """The whole sing-box config of the listeners it serves, or None without any. Anything
+    the rules do not hand to XRay is refused (a rule, not the default outbound, which is
+    the first user's)."""
+    if not parts:
+        return None
+    inbounds = [inbound for part in parts for inbound in part["inbounds"]]
+    rules = [rule for part in parts for rule in part["rules"]]
+    if inbounds:
+        rules.append({"inbound": [inbound["tag"] for inbound in inbounds], "action": "reject"})
+    return {
+        "log": {"level": "warn"},
+        "inbounds": inbounds,
+        "outbounds": [outbound for part in parts for outbound in part["outbounds"]],
+        "route": {"rules": rules},
+    }
+
+
+def _sing_box_link(
+    listener: dict, user: dict, user_name: str, secret: str, server_address: str, endpoint_address: str, endpoint: str,
+    fragment: str,
+) -> str:
+    tag = listener["tag"]
+    kind = listener["type"]
+    tls = listener["tls"]
+    sni = tls.get("serverName") or server_address
+    if kind == "anytls":
+        params = {"sni": sni}
+        if listener.get("shareFingerprint"):
+            params["fp"] = listener["shareFingerprint"]
+        if tls.get("alpn"):
+            params["alpn"] = ",".join(tls["alpn"])
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        return f"anytls://{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
+    if kind == "naive":
+        # The user's name is their login: a naive client sends both.
+        credentials = urllib.parse.quote(user_name, safe="") + ":" + urllib.parse.quote(secret, safe="")
+        query = "" if sni == endpoint_address else "?" + urllib.parse.urlencode({"sni": sni}, quote_via=urllib.parse.quote)
+        return f"naive+https://{credentials}@{endpoint}{query}#{fragment}"
+    if kind == "tuic":
+        params = {
+            "sni": sni,
+            "alpn": ",".join(tls.get("alpn") or ["h3"]),
+            "congestion_control": (listener.get("tuic") or {}).get("congestionControl") or "bbr",
+            "udp_relay_mode": "native",
+        }
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        user_id = _resolve(user.get("uuid"), user.get("uuidFile"), "uuid", tag)
+        return f"tuic://{user_id}:{urllib.parse.quote(secret, safe='')}@{endpoint}?{query}#{fragment}"
+    raise ValueError(f"listener '{tag}': {kind} has no share link")
+
+
+def shadow_tls_client(listener: dict, server_address: str, user_index: int) -> dict:
+    """What a sing-box client dials for a shadowtls listener, which has no share link: its
+    Shadowsocks 2022 outbound, and in "hops" the ShadowTLS one it goes through (tagged
+    "shadowtls", which the subscription renames along with the outbound)."""
+    users = listener["users"]
+    user = users[user_index]
+    secret = _user_secret(user, "shadowtls", listener["tag"])
+    address = listener.get("shareAddress") or server_address
+    port = _share_port(listener)
+    method = listener["method"]
+    host, _ = _handshake(listener)
+    tls: dict = {"enabled": True, "server_name": listener["shadowTls"].get("serverName") or host}
+    if listener.get("shareFingerprint"):
+        tls["utls"] = {"enabled": True, "fingerprint": listener["shareFingerprint"]}
+    return {
+        "outbound": {
+            "type": "shadowsocks",
+            "tag": listener["tag"],
+            "server": address,
+            "server_port": port,
+            "method": method,
+            "password": f"{_shadow_tls_key(listener)}:{inbound_runtime._ss_key(method, secret)}",
+            "udp_over_tcp": {"enabled": True, "version": 2},
+            "detour": "shadowtls",
+        },
+        "hops": [
+            {
+                "type": "shadowtls",
+                "tag": "shadowtls",
+                "server": address,
+                "server_port": port,
+                "version": 3,
+                "password": secret,
+                "tls": tls,
+            }
+        ],
+    }
 
 
 def render_amneziawg_inbound(listener: dict) -> dict:
@@ -525,6 +884,18 @@ def build_listener(
         return {"tag": tag, "inbound": {**raw, "tag": tag, "port": port}, "links": []}
 
     inbound = render_xray_inbound(listener)
+    if listener["type"] == "shadowtls":
+        return {
+            "tag": tag,
+            "type": "shadowtls",
+            "port": _share_port(listener),
+            "inbound": inbound,
+            "singBox": render_sing_box_listener(listener),
+            "links": [],
+            "clients": [shadow_tls_client(listener, server_address, index) for index in range(len(listener["users"]))]
+            if share_links
+            else [],
+        }
     links = (
         [build_share_link(listener, server_address, index) for index in range(len(listener["users"]))]
         if share_links
@@ -552,7 +923,7 @@ def build_listener(
         if share_links
         else []
     )
-    return {
+    rendered = {
         "tag": tag,
         "type": listener["type"],
         "port": _share_port(listener.get("front") or listener),
@@ -561,6 +932,9 @@ def build_listener(
         "variantLinks": variant_links,
         "onionLinks": onion_links,
     }
+    if listener["type"] in SING_BOX_TYPES:
+        rendered["singBox"] = render_sing_box_listener(listener)
+    return rendered
 
 
 def client_outbound(link: str, tag: str) -> dict | None:
@@ -612,13 +986,37 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
     v2rayNG, Hiddify and NekoBox import. A listener's share variants follow its own
     link, each with "variant": its name. Listeners in spec["onionListeners"] get a
     second link per user to onion_address, with "variant": "onion", in both.
+    "singBox" is the config of the listeners sing-box serves, or None.
     """
     inbounds = []
     links = []
+    sing_box_parts = []
     by_user: dict[str, dict] = {}
     for listener in spec["listeners"]:
         onion = onion_address if listener["tag"] in spec.get("onionListeners", []) else ""
+        # The XRay that derives VLESS Encryption's keys.
+        listener = {**listener, "xray": spec.get("xray") or "xray"}
         rendered = build_listener(listener, server_address, spec.get("shareLinks", True), onion)
+        if "singBox" in rendered:
+            sing_box_parts.append(rendered["singBox"])
+        # A shadowtls listener's clients have no link, only the outbounds the sing-box and
+        # Clash subscriptions carry; its users still own a subscription.
+        for index, client in enumerate(rendered.get("clients") or []):
+            user = listener["users"][index]
+            name = user.get("name") or f"{rendered['tag']}-{index}"
+            links.append(
+                {
+                    "tag": rendered["tag"],
+                    "user": name,
+                    "type": rendered["type"],
+                    "port": rendered["port"],
+                    "link": None,
+                    "outbound": client["outbound"],
+                    "hops": client["hops"],
+                }
+            )
+            entry = by_user.setdefault(name, {"links": [], "secrets": []})
+            entry["secrets"].append(_user_secret(user, listener["type"], rendered["tag"]))
         sniffing = rendered["inbound"].get("sniffing")
         raw = listener.get("xrayJson") is not None or listener.get("jsonFile") is not None
         if isinstance(sniffing, dict) and not raw and spec.get("sniffDomainsExcluded"):
@@ -672,4 +1070,4 @@ def build_inbounds(spec: dict, server_address: str, onion_address: str = "") -> 
         }
         for name, entry in by_user.items()
     ]
-    return {"inbounds": inbounds, "links": links, "subscriptions": subscriptions}
+    return {"inbounds": inbounds, "links": links, "subscriptions": subscriptions, "singBox": sing_box_config(sing_box_parts)}

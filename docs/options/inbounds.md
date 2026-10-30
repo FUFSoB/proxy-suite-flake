@@ -51,6 +51,12 @@ Part of the [proxy-suite options reference](./index.md).
         - [privateKeyFile](#services-proxy-suite-inbounds-listeners-name-amneziawg-privatekeyfile)
         - [subnet](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet)
         - [subnet6](#services-proxy-suite-inbounds-listeners-name-amneziawg-subnet6)
+      - encryption
+        - [enable](#services-proxy-suite-inbounds-listeners-name-encryption-enable)
+        - [authentication](#services-proxy-suite-inbounds-listeners-name-encryption-authentication)
+        - [mode](#services-proxy-suite-inbounds-listeners-name-encryption-mode)
+        - [privateKey](#services-proxy-suite-inbounds-listeners-name-encryption-privatekey)
+        - [privateKeyFile](#services-proxy-suite-inbounds-listeners-name-encryption-privatekeyfile)
       - [fallbacks](#services-proxy-suite-inbounds-listeners-name-fallbacks)
         - item
           - [alpn](#services-proxy-suite-inbounds-listeners-name-fallbacks-alpn)
@@ -84,6 +90,9 @@ Part of the [proxy-suite options reference](./index.md).
         - [xver](#services-proxy-suite-inbounds-listeners-name-reality-xver)
       - [serverPassword](#services-proxy-suite-inbounds-listeners-name-serverpassword)
       - [serverPasswordFile](#services-proxy-suite-inbounds-listeners-name-serverpasswordfile)
+      - shadowTls
+        - [handshake](#services-proxy-suite-inbounds-listeners-name-shadowtls-handshake)
+        - [serverName](#services-proxy-suite-inbounds-listeners-name-shadowtls-servername)
       - [shareAddress](#services-proxy-suite-inbounds-listeners-name-shareaddress)
       - [shareFingerprint](#services-proxy-suite-inbounds-listeners-name-sharefingerprint)
       - [sharePort](#services-proxy-suite-inbounds-listeners-name-shareport)
@@ -109,6 +118,8 @@ Part of the [proxy-suite options reference](./index.md).
         - [serviceName](#services-proxy-suite-inbounds-listeners-name-transport-servicename)
         - [trustedXForwardedFor](#services-proxy-suite-inbounds-listeners-name-transport-trustedxforwardedfor)
         - [type](#services-proxy-suite-inbounds-listeners-name-transport-type)
+      - tuic
+        - [congestionControl](#services-proxy-suite-inbounds-listeners-name-tuic-congestioncontrol)
       - [type](#services-proxy-suite-inbounds-listeners-name-type)
       - [users](#services-proxy-suite-inbounds-listeners-name-users)
       - [via](#services-proxy-suite-inbounds-listeners-name-via)
@@ -173,6 +184,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [serverAliases](#services-proxy-suite-inbounds-serveraliases)
   - [serverPorts](#services-proxy-suite-inbounds-serverports)
   - [shareLinks](#services-proxy-suite-inbounds-sharelinks)
+  - [singBoxPackage](#services-proxy-suite-inbounds-singboxpackage)
   - subscriptions
     - [enable](#services-proxy-suite-inbounds-subscriptions-enable)
     - [baseUrl](#services-proxy-suite-inbounds-subscriptions-baseurl)
@@ -266,7 +278,8 @@ Server listeners, by tag\.
 Read the client address from a PROXY protocol header (v1 or v2) that opens every
 connection, as sent by a TCP front such as nginx’s ` stream ` with ` proxy_protocol on `\.
 Without it such a listener records every client as the front’s address, which
-` proxy-ctl inbounds online ` never counts\. TCP listeners only\.
+` proxy-ctl inbounds online ` never counts\. TCP listeners XRay serves only (not the
+sing-box ones: anytls, naive, shadowtls)\.
 
 Every connection must carry the header, so only set it on a listener nothing but
 the front can reach, such as one on loopback\.
@@ -588,6 +601,57 @@ forwarding, which stops this host from configuring itself from router advertisem
 **Default:** `null`\
 **Example:** `"fd66:66::/64"`
 
+<a id="services-proxy-suite-inbounds-listeners-name-encryption-enable"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.encryption\.enable
+
+VLESS Encryption: VLESS’s own post-quantum handshake (ML-KEM-768 with X25519),
+so the listener needs no TLS or REALITY to keep what it carries private, behind
+a CDN or on a plain port alike\. vless listeners without fallbacks\. Only
+XRay-based clients (v2rayN, v2rayNG, Happ, XRay 25\.8 and later) dial it; sing-box
+ones cannot, and the sing-box and Clash subscriptions leave it out\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-inbounds-listeners-name-encryption-authentication"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.encryption\.authentication
+
+The key clients check the server by\. The key exchange is post-quantum either
+way\. “mlkem768” makes the check post-quantum too, at the price of a 1\.6 KB key
+in every link, too long for most QR codes\.
+
+**Type:** one of “x25519”, “mlkem768”\
+**Default:** `"x25519"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-encryption-mode"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.encryption\.mode
+
+How the handshake looks on the wire: “native” as it is, “xorpub” with its
+public keys masked, “random” with all of it looking random\.
+
+**Type:** one of “native”, “xorpub”, “random”\
+**Default:** `"native"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-encryption-privatekey"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.encryption\.privateKey
+
+X25519 private key (` xray x25519 `) or ML-KEM-768 seed (` xray mlkem768 `), as ` authentication ` says\. Ends up in the Nix store; prefer ` privateKeyFile `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"uFStM_0LKZ..."`
+
+<a id="services-proxy-suite-inbounds-listeners-name-encryption-privatekeyfile"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.encryption\.privateKeyFile
+
+File with the private key\. With neither this nor ` privateKey `, one is generated on
+first start and kept in the state directory\. Clients’ key comes from it: XRay
+prints it with a generated key, and derives it from a given one once (` xray x25519 -i `, the key briefly on its command line), kept beside the state from then on\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/proxy-inbound-vless-key"`
+
 <a id="services-proxy-suite-inbounds-listeners-name-fallbacks"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.fallbacks
 
@@ -886,6 +950,24 @@ File with the server key\.
 **Default:** `null`\
 **Example:** `"/run/secrets/proxy-inbound-ss-server-key"`
 
+<a id="services-proxy-suite-inbounds-listeners-name-shadowtls-handshake"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shadowTls\.handshake
+
+The real TLS 1\.3 site, host:port, whose handshake a “shadowtls” listener borrows:
+anything that is not a client is relayed there, and sees that site\.
+
+**Type:** string matching the pattern \[^\[:space:]]+:\[0-9]+\
+**Default:** `"www.microsoft.com:443"`
+
+<a id="services-proxy-suite-inbounds-listeners-name-shadowtls-servername"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shadowTls\.serverName
+
+SNI clients send, a name ` handshake ` answers to\. ` null `: its host\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"www.microsoft.com"`
+
 <a id="services-proxy-suite-inbounds-listeners-name-shareaddress"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareAddress
 
@@ -900,8 +982,8 @@ they then send as SNI\. Links of listeners behind its fallbacks use it too\.
 <a id="services-proxy-suite-inbounds-listeners-name-sharefingerprint"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.shareFingerprint
 
-Browser whose TLS ClientHello clients imitate (` fp ` in vless and trojan share links,
-with tls or reality)\. A network that blocks one browser’s handshakes to a server can
+Browser whose TLS ClientHello clients imitate (` fp ` in vless, trojan and anytls
+share links, with tls or reality)\. A network that blocks one browser’s handshakes to a server can
 let another’s through\. ` null ` leaves it out, and the client picks: XRay-based clients
 (v2rayNG, v2rayN) imitate Chrome then, sing-box-based ones send Go’s own handshake\.
 
@@ -1022,7 +1104,7 @@ TLS settings\.
 <a id="services-proxy-suite-inbounds-listeners-name-tls-enable"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tls\.enable
 
-Terminate TLS (always on for trojan)\. Cannot be used with ` reality `\.
+Terminate TLS (always on for trojan, hysteria2, anytls, naive and tuic)\. Cannot be used with ` reality `\.
 
 **Type:** boolean\
 **Default:** `false`
@@ -1132,6 +1214,14 @@ Stream transport\. “raw” is plain TCP, the usual pick for REALITY\.
 **Default:** `"raw"`\
 **Example:** `"ws"`
 
+<a id="services-proxy-suite-inbounds-listeners-name-tuic-congestioncontrol"></a>
+## services\.proxy-suite\.inbounds\.listeners\.\<name>\.tuic\.congestionControl
+
+Congestion control of a “tuic” listener, put in its share links too\.
+
+**Type:** one of “bbr”, “cubic”, “new_reno”\
+**Default:** `"bbr"`
+
 <a id="services-proxy-suite-inbounds-listeners-name-type"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.type
 
@@ -1140,8 +1230,17 @@ Protocol\. Set exactly one of ` type `, ` xrayJson ` or ` jsonFile `\.
  - “amneziawg”: an AmneziaWG server on a UDP port (see ` amneziaWg `)\. Its traffic exits
    like any other listener’s\.
  - “hysteria2”: QUIC on a UDP port\. Needs ` tls ` and passwords; no transport, reality or flow\.
+ - “anytls”, “naive”, “tuic”, “shadowtls”: served by sing-box
+   (` inbounds.singBoxPackage `), which hands each user on to XRay, so their traffic
+   exits, counts and is limited like any other listener’s\. XRay sees them on
+   loopback, though: ` policy.ipLimit ` does not count their addresses, and
+   ` proxy-ctl inbounds online ` does not list them\. “anytls” and “naive” (HTTP/2) are
+   TCP, “tuic” QUIC on UDP; all three need ` tls ` and passwords (“tuic” a uuid as
+   well)\. “shadowtls” (v3) borrows ` shadowTls.handshake `’s TLS handshake and carries
+   Shadowsocks 2022 inside; it has no share link, only the sing-box and Clash
+   subscriptions\.
 
-**Type:** null or one of “vless”, “vmess”, “trojan”, “hysteria2”, “shadowsocks”, “socks”, “http”, “amneziawg”\
+**Type:** null or one of “vless”, “vmess”, “trojan”, “hysteria2”, “shadowsocks”, “socks”, “http”, “amneziawg”, “anytls”, “naive”, “tuic”, “shadowtls”\
 **Default:** `null`\
 **Example:** `"vless"`
 
@@ -1673,6 +1772,15 @@ Generate client share links for ` proxy-ctl inbounds link `\. Readable by root, 
 
 **Type:** boolean\
 **Default:** `true`
+
+<a id="services-proxy-suite-inbounds-singboxpackage"></a>
+## services\.proxy-suite\.inbounds\.singBoxPackage
+
+sing-box package that serves the “anytls”, “naive”, “tuic” and “shadowtls” listeners
+(1\.12 or later), whichever client backend is used\.
+
+**Type:** package\
+**Default:** `config.services.proxy-suite.proxy.singBox.package`
 
 <a id="services-proxy-suite-inbounds-subscriptions-enable"></a>
 ## services\.proxy-suite\.inbounds\.subscriptions\.enable

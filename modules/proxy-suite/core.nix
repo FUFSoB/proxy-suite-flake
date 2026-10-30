@@ -220,6 +220,17 @@ in
           }
         ))
 
+        (lib.mkIf (derived.proxyInboundsEnabled && derived.proxyInboundsSingBox != [ ]) (
+          import ./sing-box-inbounds.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
         (lib.mkIf cfg.amneziaWg.enable (
           import ./amnezia-wg.nix {
             inherit

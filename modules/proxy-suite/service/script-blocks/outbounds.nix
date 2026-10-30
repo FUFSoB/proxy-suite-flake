@@ -382,6 +382,56 @@ let
       }
     '';
 
+  # Outbounds dialed through ShadowTLS (an outbound's `shadowTls`): each gets a hop of its
+  # own to the same server and port, kept aside until selection, groups and exits are made
+  # from the rest, so that nothing picks a hop (shadowTlsHopsBlock adds them last).
+  shadowTlsOutbounds = builtins.filter (ob: ob.shadowTls != null) proxyCfg.outbounds;
+  shadowTlsHelperBlock = lib.optionalString (shadowTlsOutbounds != [ ]) ''
+    SHADOW_TLS_HOPS_JSON='[]'
+    # $1 the outbound's tag, $2 its shadowTls settings (JSON), $3 a file with the password.
+    _proxy_suite_shadow_tls() {
+      local hop="proxy-suite-shadowtls-$1"
+      SHADOW_TLS_HOPS_JSON=$(${jq} -ce --arg t "$1" --arg hop "$hop" --argjson s "$2" \
+        --rawfile pw "$3" --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") '
+        [$obs[0][] | select(.tag == $t)][0] as $ob
+        | select($ob != null)
+        | . + [{type: "shadowtls", tag: $hop, server: $ob.server, server_port: $ob.server_port,
+                version: $s.version,
+                tls: ({enabled: true, server_name: $s.serverName}
+                      + if $s.fingerprint then {utls: {enabled: true, fingerprint: $s.fingerprint}} else {} end)}
+               + if $s.version > 1 then {password: ($pw | rtrimstr("\n"))} else {} end
+               + if $ob.routing_mark then {routing_mark: $ob.routing_mark} else {} end]
+      ' <<< "$SHADOW_TLS_HOPS_JSON") || {
+        echo "proxy-suite: outbound '$1' cannot go through ShadowTLS" >&2
+        return 1
+      }
+      # Its UDP rides the stream: ShadowTLS carries TCP alone.
+      OUTBOUNDS_JSON=$(${jq} -c --arg t "$1" --arg hop "$hop" '
+        map(if .tag == $t then
+              .detour = $hop
+              | if .type == "shadowsocks" then .udp_over_tcp //= {enabled: true, version: 2} else . end
+            else . end)' <<< "$OUTBOUNDS_JSON")
+    }
+  '';
+  shadowTlsHopsBlock = lib.optionalString (shadowTlsOutbounds != [ ]) ''
+    # ShadowTLS hops, after everything that picks among the outbounds.
+    OUTBOUNDS_JSON=$(${jq} -c --slurpfile h <(printf '%s' "$SHADOW_TLS_HOPS_JSON") '. + $h[0]' <<< "$OUTBOUNDS_JSON")
+  '';
+  mkShadowTlsBlock =
+    ob: tag:
+    let
+      st = ob.shadowTls;
+      passwordSource =
+        if st.passwordFile != null then
+          st.passwordFile
+        else
+          pkgs.writeText "proxy-suite-core" (if st.password == null then "" else st.password);
+      settings = builtins.toJSON { inherit (st) version serverName fingerprint; };
+    in
+    lib.optionalString (st != null) ''
+      _proxy_suite_shadow_tls ${lib.escapeShellArg tag} ${lib.escapeShellArg settings} ${lib.escapeShellArg passwordSource} || exit 1
+    '';
+
   mkOutboundBlock =
     ob: routingMark: tag:
     if (if pureXrayEnabled then ob.xrayJson else ob.singBoxJson) != null then
@@ -394,6 +444,7 @@ let
         OB_JSON=$(cat "${jsonFile}")
         OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$OB_JSON") '. + $ob' <<< "$OUTBOUNDS_JSON")
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
+        ${mkShadowTlsBlock ob tag}
       ''
     else
       let
@@ -402,6 +453,7 @@ let
       ''
         # outbound: ${oneLine tag}
         _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static || exit 1
+        ${mkShadowTlsBlock ob tag}
       '';
 
   singBoxRawOutboundJson =
@@ -436,14 +488,18 @@ let
         OB_JSON=$(cat "${jsonFile}")
         _proxy_suite_add_sing_box_ob "$OB_JSON"
         _proxy_suite_record_tag_source ${lib.escapeShellArg tag} static
+        ${mkShadowTlsBlock ob tag}
       ''
     else
       let
         urlSource = if ob.urlFile != null then ob.urlFile else pkgs.writeText "proxy-suite-core" ob.url;
+        # ShadowTLS is sing-box's alone.
+        pref = if ob.shadowTls != null then "sing-box" else ob.backend;
       in
       ''
-        # outbound: ${oneLine tag} (hybrid ${ob.backend})
-        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static ${ob.backend} || exit 1
+        # outbound: ${oneLine tag} (hybrid ${pref})
+        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static ${pref} || exit 1
+        ${mkShadowTlsBlock ob tag}
       '';
 
   mkSshProxyOutboundBlock =
@@ -1040,6 +1096,7 @@ let
       '';
     in
     mkUrlOutboundHelpersBlock routingMark
+    + shadowTlsHelperBlock
     + mkSubscriptionLoadHelperBlock routingMark
     + outboundBlocks
     + subscriptionBlocks
@@ -1061,7 +1118,7 @@ let
     + exitTagsBlock;
 in
 {
-  inherit mkOutboundScript rawOutboundJson;
+  inherit mkOutboundScript rawOutboundJson shadowTlsHopsBlock;
   # For the checks: groups, and which outbounds a pin and selection may take.
   selectionBlocks = tagsBlock + groupsBlock + pinBlock + selectableBlock + inventoryBlock;
   # And what the runtime spool is read into.

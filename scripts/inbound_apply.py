@@ -11,7 +11,9 @@ what, in its runtime directory. This renders the spec again the same way and com
 - their serverSource outbounds and addresses: added and removed (ado, rmo, ip addr);
 - the share links and subscriptions: written again by the module's own writer;
 - AmneziaWG listeners whose peers changed: their interfaces synced (awg syncconf), which
-  leaves the other peers' sessions alone.
+  leaves the other peers' sessions alone;
+- the listeners sing-box serves, whose users changed: its config written again and
+  reloaded, which drops their connections (theirs only: XRay's are left alone).
 
 Anything else (a listener added, removed or changed, a Shadowsocks listener going between
 one user and many, socks or http accounts) needs the restart it always needed, and so does
@@ -280,6 +282,49 @@ def sync_config(runtime_dir: str, steps: dict, new: dict) -> None:
         json.dump(config, handle)
 
 
+def _certificate_paths(config: dict | None) -> list[tuple[str, str, str]]:
+    paths = []
+    for inbound in (config or {}).get("inbounds") or []:
+        tls = inbound.get("tls") or {}
+        for key in ("certificate_path", "key_path"):
+            if isinstance(tls.get(key), str):
+                paths.append((inbound.get("tag", ""), key, tls[key]))
+    return paths
+
+
+def sync_sing_box(tools: Tools, runtime_dir: str, old: dict | None, new: dict | None) -> list[str]:
+    """sing-box's config written again and the server reloaded, when its part changed. A
+    certificate the start script swapped for a copy keeps its copy (proxy-inbounds-scripts.nix)."""
+    if old == new:
+        return []
+    unit = tools.config.get("singBoxUnit")
+    # From or to none at all: the start script writes it then, with any certificate copies.
+    if not unit or new is None or old is None:
+        return restart(tools, [tools.config["unit"]], "sing-box's listeners changed")
+    path = os.path.join(runtime_dir, "sing-box.json")
+    current = load_json(path)
+    swapped = {}
+    for (tag, key, rendered), (_, _, running) in zip(_certificate_paths(old), _certificate_paths(current), strict=False):
+        swapped[(tag, key, rendered)] = running
+    config = copy.deepcopy(new)
+    for inbound in config.get("inbounds") or []:
+        tls = inbound.get("tls") or {}
+        for key in ("certificate_path", "key_path"):
+            running = swapped.get((inbound.get("tag", ""), key, tls.get(key)))
+            if running:
+                tls[key] = running
+    if not tools.dry_run:
+        # In place, so its owner, mode and ACLs stay.
+        fd = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(config, handle)
+    try:
+        tools.run([tools.config["systemctl"], "try-reload-or-restart", unit], f"reloading {unit}")
+    except ApplyError as exc:
+        return restart(tools, [tools.config["unit"]], str(exc))
+    return ["sing-box listeners"]
+
+
 def write_outputs(tools: Tools, rendered_path: str) -> None:
     script = tools.config.get("outputsScript")
     if script:
@@ -332,12 +377,19 @@ def apply_xray(tools: Tools, spec: dict) -> list[str]:
     steps = plan(old, new)
     if steps["restart"]:
         return restart(tools, [unit], "; ".join(steps["restart"]))
-    if is_noop(steps):
+    sing_box_changed = old.get("singBox") != new.get("singBox")
+    if is_noop(steps) and not sing_box_changed:
         return []
     try:
         done = run_steps(tools, steps, new, template)
     except ApplyError as exc:
         return restart(tools, [unit], f"the API failed: {exc}")
+    # After XRay has its new clients: sing-box hands users to them straight away.
+    if sing_box_changed:
+        try:
+            done += sync_sing_box(tools, runtime_dir, old.get("singBox"), new.get("singBox"))
+        except OSError as exc:
+            return done + restart(tools, [unit], f"cannot write sing-box's config: {exc}")
     path = save_rendering(runtime_dir, new)
     try:
         sync_config(runtime_dir, steps, new)

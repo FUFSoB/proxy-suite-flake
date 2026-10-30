@@ -313,7 +313,8 @@ proxy-ctl inbounds import users.json          # on the new one, with the same li
 
 The export holds the runtime users and listeners (their UUIDs, passwords and REALITY keys),
 the policies and what they are measured against, the AmneziaWG listeners' keys and
-addresses, the Salamander passwords proxy-suite generated, and the traffic counted. Secrets
+addresses, the Salamander passwords, VLESS Encryption keys and shadowtls server keys
+proxy-suite generated, and the traffic counted. Secrets
 the config names by file (sops and the like) are not in it. Runtime users and listeners
 already on the new server are refused and policies already there kept, unless `--replace`;
 an AmneziaWG listener that has a key already keeps it unless `--replace`, which its existing

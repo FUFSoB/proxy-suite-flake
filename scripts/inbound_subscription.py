@@ -69,13 +69,28 @@ def entries(rendered: dict, user: str) -> list[dict]:
 
 
 def sing_box_outbounds(items: list[dict]) -> list[dict]:
-    """Outbounds sing-box dials, named for the config: XRay-only ones are left out."""
+    """Outbounds sing-box dials, named for the config: XRay-only ones are left out. One that
+    goes through hops of its own (shadowtls) brings them, named after it."""
     outbounds = []
     for item in items:
         outbound = item.get("outbound")
         if isinstance(outbound, dict) and "type" in outbound:
-            outbounds.append({**outbound, "tag": item["name"]})
+            hops = {hop["tag"]: f"{item['name']}-{hop['tag']}" for hop in item.get("hops") or []}
+            outbound = {**outbound, "tag": item["name"]}
+            if outbound.get("detour") in hops:
+                outbound["detour"] = hops[outbound["detour"]]
+            outbounds.append(outbound)
     return outbounds
+
+
+def sing_box_hops(items: list[dict]) -> list[dict]:
+    """The hops sing_box_outbounds' outbounds go through, which no group may pick."""
+    return [
+        {**hop, "tag": f"{item['name']}-{hop['tag']}"}
+        for item in items
+        if isinstance(item.get("outbound"), dict) and "type" in item["outbound"]
+        for hop in item.get("hops") or []
+    ]
 
 
 def sing_box_config(items: list[dict]) -> dict:
@@ -107,7 +122,7 @@ def sing_box_config(items: list[dict]) -> dict:
                 "strict_route": True,
             }
         ],
-        "outbounds": [*groups, *outbounds, {"type": "direct", "tag": "direct"}],
+        "outbounds": [*groups, *outbounds, *sing_box_hops(items), {"type": "direct", "tag": "direct"}],
         "route": {
             "rules": [
                 {"action": "sniff"},
@@ -169,11 +184,33 @@ def _clash_transport(proxy: dict, transport: dict | None) -> bool:
     return True
 
 
-def clash_proxy(name: str, outbound: dict) -> dict | None:
-    """A mihomo proxy from a sing-box outbound; None for what it cannot dial the same way."""
+def clash_proxy(name: str, outbound: dict, hops: list[dict] | None = None) -> dict | None:
+    """A mihomo proxy from a sing-box outbound; None for what it cannot dial the same way.
+    A Shadowsocks one through a ShadowTLS hop is mihomo's shadow-tls plugin."""
     kind = outbound.get("type")
     proxy: dict = {"name": name, "server": outbound.get("server"), "port": outbound.get("server_port")}
     tls = outbound.get("tls") or {}
+    hop = next((h for h in hops or [] if h.get("tag") == outbound.get("detour")), None)
+    if outbound.get("detour") is not None:
+        if kind != "shadowsocks" or hop is None or hop.get("type") != "shadowtls":
+            return None
+        hop_tls = hop.get("tls") or {}
+        proxy.update(
+            type="ss", cipher=outbound.get("method"), password=outbound.get("password"), udp=True,
+            plugin="shadow-tls",
+        )
+        proxy["plugin-opts"] = {
+            "host": hop_tls.get("server_name", ""),
+            "password": hop.get("password", ""),
+            "version": hop.get("version", 3),
+        }
+        fingerprint = (hop_tls.get("utls") or {}).get("fingerprint")
+        if fingerprint:
+            proxy["client-fingerprint"] = fingerprint
+        if (outbound.get("udp_over_tcp") or {}).get("enabled"):
+            proxy["udp-over-tcp"] = True
+            proxy["udp-over-tcp-version"] = outbound["udp_over_tcp"].get("version", 2)
+        return proxy
     if kind in ("vless", "vmess"):
         proxy.update(type=kind, uuid=outbound.get("uuid"), udp=True)
         if kind == "vless":
@@ -205,6 +242,20 @@ def clash_proxy(name: str, outbound: dict) -> dict | None:
         if outbound.get("server_ports"):
             proxy["ports"] = ",".join(p.replace(":", "-") for p in outbound["server_ports"])
         return proxy
+    elif kind == "anytls":
+        proxy.update(type="anytls", password=outbound.get("password"), udp=True)
+        _clash_tls(proxy, tls, "sni")
+        proxy.pop("tls", None)
+        return proxy
+    elif kind == "tuic":
+        proxy.update(
+            type="tuic", uuid=outbound.get("uuid"), password=outbound.get("password"),
+            **{"congestion-controller": outbound.get("congestion_control") or "bbr",
+               "udp-relay-mode": outbound.get("udp_relay_mode") or "native"},
+        )
+        _clash_tls(proxy, tls, "sni")
+        proxy.pop("tls", None)
+        return proxy
     elif kind in ("socks", "http"):
         proxy["type"] = "socks5" if kind == "socks" else "http"
         for key in ("username", "password"):
@@ -226,7 +277,7 @@ def clash_config(items: list[dict]) -> dict:
     for item in items:
         outbound = item.get("outbound")
         if isinstance(outbound, dict) and "type" in outbound:
-            proxy = clash_proxy(item["name"], outbound)
+            proxy = clash_proxy(item["name"], outbound, item.get("hops"))
             if proxy is not None:
                 proxies.append(proxy)
     names = [p["name"] for p in proxies]
@@ -489,10 +540,12 @@ def html_page(row: dict, items: list[dict], sub_url: str, title: str, settings: 
             apps += f'<details><summary>{esc(t["more"])}</summary>{"".join(buttons[label] for label in others)}</details>'
     else:
         apps = "".join(buttons.values())
+    # Not those without a link (shadowtls), which only the configs carry.
     links = "".join(
         f'<div class="row"><span>{esc(item["name"])}</span>'
         f'<button data-copy="{esc(item["link"])}" data-done="{esc(t["copied"])}">{esc(t["copy"])}</button></div>'
         for item in items
+        if item.get("link")
     )
     # Whose it is, unless the title (profileTitle's {user}) says so already.
     user = ""

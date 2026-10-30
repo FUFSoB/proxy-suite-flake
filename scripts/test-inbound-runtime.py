@@ -259,6 +259,24 @@ class RuntimeTest(unittest.TestCase):
         rt.cmd_users_add(self.spec, self.spool, "alice", None, [])
         self.add_listener("plain", type="vless", port=20001, users=["alice"])
         self.add_listener("behind", type="vless", port=20002, address="127.0.0.1", users=["bob"])
+        # VLESS Encryption keeps it private without TLS, but leaves no room for fallbacks.
+        self.add_listener("encrypted", type="vless", port=20003, users=["bob"], encryption={"enable": True})
+        with self.assertRaisesRegex(rt.RuntimeError_, "encryption is for vless listeners without fallbacks"):
+            self.add_listener("encrypted-tr", type="trojan", port=20004, users=["alice"], tls={"enable": True, "certificate": "main"},
+                              encryption={"enable": True})
+        with self.assertRaisesRegex(rt.RuntimeError_, "privateKey"):
+            self.add_listener("bad-key", type="vless", port=20005, users=["alice"], encryption={"enable": True, "privateKey": "short"})
+
+    def test_runtime_users_join_sing_box_listeners(self):
+        tuic = declared_listener("tuic-in", [BOB], type="tuic", port=8444)
+        self.spec["listeners"].append(tuic)
+        rt.cmd_users_add(self.spec, self.spool, "alice", None, ["tuic-in"])
+        merged, _, warnings = rt.merge(self.spec)
+        listener = next(l for l in merged["listeners"] if l["tag"] == "tuic-in")
+        # bob has no password, which tuic needs besides the uuid; alice, drawn here, has both.
+        self.assertEqual([u["name"] for u in listener["users"]], ["bob", "alice"])
+        self.assertEqual(rt._user_problem(BOB, "tuic"), "user 'bob' has no password, which tuic needs")
+        self.assertEqual(rt._user_problem(rt._runtime_user("alice", self.state()["users"]["alice"]), "tuic"), None)
 
     def test_share_links_point_only_at_this_server(self):
         # Declared users can be bound here: a link elsewhere would hand their uuid to whoever
@@ -279,7 +297,7 @@ class RuntimeTest(unittest.TestCase):
             port=20001, listen=None, via=None, share_port=None, share_address=None, fingerprint="firefox", order=None, method=None,
             flow="vision", transport=None, path=None, host=None, mode=None, service_name=None, tls=None, alpn=None,
             sni=None, reality="www.example.com,example.com", reality_dest=None, short_id=None, masquerade=None,
-            keep_host=False, x_forwarded=False, salamander=False, user=["bob"],
+            keep_host=False, x_forwarded=False, salamander=False, encryption=False, user=["bob"],
         )
         entry = rt.listener_from_flags("vless", args)
         self.assertEqual(entry["reality"]["dest"], "www.example.com:443")

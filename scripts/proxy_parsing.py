@@ -120,7 +120,7 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
             "address": ob["server"],
             "port": ob["server_port"],
             "id": ob["uuid"],
-            "encryption": "none",
+            "encryption": ob.get("encryption", "none"),
         }
         if ob.get("flow"):
             settings["flow"] = ob["flow"]

@@ -33,6 +33,7 @@ let
     hybridRuntimeHelpersBlock
     subscriptionCacheHelpersBlock
     mkOutboundScript
+    shadowTlsHopsBlock
     tproxyFile
     tunFile
     perAppTunFile
@@ -422,6 +423,8 @@ let
             ;;
         esac
       ''}
+
+      ${shadowTlsHopsBlock}
 
       # Every address this host has now, for the inbounds' guard (backend-filter-private-guard):
       # dialed from here, a client would reach any port of them past the firewall.

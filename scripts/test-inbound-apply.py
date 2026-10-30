@@ -133,6 +133,40 @@ class SyncConfig(unittest.TestCase):
             self.assertEqual([o["tag"] for o in synced["outbounds"]], ["direct", "direct-self4-2"])
 
 
+class SingBox(unittest.TestCase):
+    def config(self, cert, users):
+        return {"inbounds": [{"type": "anytls", "tag": "any", "users": users,
+                              "tls": {"enabled": True, "certificate_path": cert, "key_path": "/k"}}],
+                "outbounds": [], "route": {"rules": []}}
+
+    def test_written_in_place_with_its_copies_and_reloaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "sing-box.json")
+            old = self.config("/acme/cert.pem", [{"name": "a"}])
+            # The start script swapped the certificate for a copy sing-box can read.
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(self.config(f"{directory}/tls/1-cert.pem", [{"name": "a"}]), handle)
+            inode = os.stat(path).st_ino
+            tools = ap.Tools({"systemctl": "true", "singBoxUnit": "proxy-suite-inbounds-sing-box.service",
+                              "unit": "proxy-suite-inbounds.service"})
+            done = ap.sync_sing_box(tools, directory, old, self.config("/acme/cert.pem", [{"name": "a"}, {"name": "b"}]))
+            self.assertEqual(done, ["sing-box listeners"])
+            self.assertIn("true try-reload-or-restart proxy-suite-inbounds-sing-box.service", tools.log)
+            with open(path, encoding="utf-8") as handle:
+                written = json.load(handle)
+            self.assertEqual(os.stat(path).st_ino, inode)
+            self.assertEqual(written["inbounds"][0]["users"], [{"name": "a"}, {"name": "b"}])
+            self.assertEqual(written["inbounds"][0]["tls"]["certificate_path"], f"{directory}/tls/1-cert.pem")
+            self.assertEqual(written["inbounds"][0]["tls"]["key_path"], "/k")
+            # Nothing changed, nothing done.
+            self.assertEqual(ap.sync_sing_box(tools, directory, old, old), [])
+            # From none (no user let in at start): the start script, with its copies, again.
+            tools = ap.Tools({"systemctl": "systemctl", "singBoxUnit": "x.service", "unit": "proxy-suite-inbounds.service"},
+                             dry_run=True)
+            self.assertEqual(ap.sync_sing_box(tools, directory, None, old),
+                             ["restarted proxy-suite-inbounds.service: sing-box's listeners changed"])
+
+
 class Stopped(unittest.TestCase):
     def test_stopped_inbounds_are_left_to_try_restart(self):
         config = {"runtimeDir": "/nonexistent/proxy-suite-inbounds", "unit": "proxy-suite-inbounds.service",

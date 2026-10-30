@@ -17,14 +17,14 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - Kill switch: nothing leaks while a global tunnel restarts or after it fails
 - Per-app routing: `proxy-ctl apps run <profile> -- <cmd>`, or packages wrapped to always use the proxy
 - Outbounds from links, raw JSON or subscriptions, picked by hand or by latency
-- vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC, AnyTLS and NaïveProxy on sing-box; XHTTP and ECH on XRay
+- vless (REALITY, TLS), vmess, trojan, shadowsocks, hysteria2, socks, http; TUIC, AnyTLS, NaïveProxy and ShadowTLS on sing-box; XHTTP, ECH and VLESS Encryption on XRay
 - Proxy chains: any outbound can connect through another
 - autoProxy: finds an exit that reaches each blocked site and routes it there
 - zapret DPI bypass, including zapret2, which learns blocked sites on its own
 - AmneziaWG 1.x–3.x from `.conf`, `vpn://` or Nix
 - Cloudflare WARP, Tor (with bridges and an onion service), an SSH tunnel and a Telegram proxy
 - Tunnels through video-call servers, to get past mobile internet whitelists
-- Server inbounds (XRay protocols, hysteria2, AmneziaWG) with share links, QR codes, subscriptions in each client's format (links, Clash, sing-box, a web page) and traffic stats; users with expiry, traffic, device and speed limits
+- Server inbounds (XRay protocols with VLESS Encryption, hysteria2, AnyTLS, NaïveProxy, TUIC, ShadowTLS, AmneziaWG) with share links, QR codes, subscriptions in each client's format (links, Clash, sing-box, a web page) and traffic stats; users with expiry, traffic, device and speed limits
 - A desktop GUI with a tray icon, the `proxy-ctl` CLI and the `proxy-tui` terminal UI
 
 ## Setup

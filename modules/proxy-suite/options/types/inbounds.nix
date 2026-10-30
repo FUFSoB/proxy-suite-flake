@@ -272,7 +272,7 @@ let
       enable = mkOption {
         type = types.bool;
         default = false;
-        description = "Terminate TLS (always on for trojan). Cannot be used with `reality`.";
+        description = "Terminate TLS (always on for trojan, hysteria2, anytls, naive and tuic). Cannot be used with `reality`.";
       };
       certificateFile = nullStr "File with the PEM certificate chain." "/var/lib/acme/example.com/fullchain.pem";
       keyFile = nullStr "File with the PEM private key." "/var/lib/acme/example.com/key.pem";
@@ -494,6 +494,10 @@ let
               "socks"
               "http"
               "amneziawg"
+              "anytls"
+              "naive"
+              "tuic"
+              "shadowtls"
             ]
           );
           default = null;
@@ -502,6 +506,15 @@ let
             - "amneziawg": an AmneziaWG server on a UDP port (see `amneziaWg`). Its traffic exits
               like any other listener's.
             - "hysteria2": QUIC on a UDP port. Needs `tls` and passwords; no transport, reality or flow.
+            - "anytls", "naive", "tuic", "shadowtls": served by sing-box
+              (`inbounds.singBoxPackage`), which hands each user on to XRay, so their traffic
+              exits, counts and is limited like any other listener's. XRay sees them on
+              loopback, though: `policy.ipLimit` does not count their addresses, and
+              `proxy-ctl inbounds online` does not list them. "anytls" and "naive" (HTTP/2) are
+              TCP, "tuic" QUIC on UDP; all three need `tls` and passwords ("tuic" a uuid as
+              well). "shadowtls" (v3) borrows `shadowTls.handshake`'s TLS handshake and carries
+              Shadowsocks 2022 inside; it has no share link, only the sing-box and Clash
+              subscriptions.
           '';
           example = "vless";
         };
@@ -539,7 +552,8 @@ let
             Read the client address from a PROXY protocol header (v1 or v2) that opens every
             connection, as sent by a TCP front such as nginx's `stream` with `proxy_protocol on`.
             Without it such a listener records every client as the front's address, which
-            `proxy-ctl inbounds online` never counts. TCP listeners only.
+            `proxy-ctl inbounds online` never counts. TCP listeners XRay serves only (not the
+            sing-box ones: anytls, naive, shadowtls).
 
             Every connection must carry the header, so only set it on a listener nothing but
             the front can reach, such as one on loopback.
@@ -550,8 +564,8 @@ let
           type = types.nullOr fingerprintType;
           default = "chrome";
           description = ''
-            Browser whose TLS ClientHello clients imitate (`fp` in vless and trojan share links,
-            with tls or reality). A network that blocks one browser's handshakes to a server can
+            Browser whose TLS ClientHello clients imitate (`fp` in vless, trojan and anytls
+            share links, with tls or reality). A network that blocks one browser's handshakes to a server can
             let another's through. `null` leaves it out, and the client picks: XRay-based clients
             (v2rayNG, v2rayN) imitate Chrome then, sing-box-based ones send Go's own handshake.
           '';
@@ -609,6 +623,73 @@ let
           default = null;
           description = "VLESS flow. Raw transport only.";
           example = "xtls-rprx-vision";
+        };
+
+        encryption = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              VLESS Encryption: VLESS's own post-quantum handshake (ML-KEM-768 with X25519),
+              so the listener needs no TLS or REALITY to keep what it carries private, behind
+              a CDN or on a plain port alike. vless listeners without fallbacks. Only
+              XRay-based clients (v2rayN, v2rayNG, Happ, XRay 25.8 and later) dial it; sing-box
+              ones cannot, and the sing-box and Clash subscriptions leave it out.
+            '';
+          };
+          authentication = mkOption {
+            type = types.enum [
+              "x25519"
+              "mlkem768"
+            ];
+            default = "x25519";
+            description = ''
+              The key clients check the server by. The key exchange is post-quantum either
+              way. "mlkem768" makes the check post-quantum too, at the price of a 1.6 KB key
+              in every link, too long for most QR codes.
+            '';
+          };
+          mode = mkOption {
+            type = types.enum [
+              "native"
+              "xorpub"
+              "random"
+            ];
+            default = "native";
+            description = ''
+              How the handshake looks on the wire: "native" as it is, "xorpub" with its
+              public keys masked, "random" with all of it looking random.
+            '';
+          };
+          privateKey = nullStr "X25519 private key (`xray x25519`) or ML-KEM-768 seed (`xray mlkem768`), as `authentication` says. Ends up in the Nix store; prefer `privateKeyFile`." "uFStM_0LKZ...";
+          privateKeyFile = nullStr ''
+            File with the private key. With neither this nor `privateKey`, one is generated on
+            first start and kept in the state directory. Clients' key comes from it: XRay
+            prints it with a generated key, and derives it from a given one once (`xray x25519
+            -i`, the key briefly on its command line), kept beside the state from then on.
+          '' "/run/secrets/proxy-inbound-vless-key";
+        };
+
+        shadowTls = {
+          handshake = mkOption {
+            type = types.strMatching "[^[:space:]]+:[0-9]+";
+            default = "www.microsoft.com:443";
+            description = ''
+              The real TLS 1.3 site, host:port, whose handshake a "shadowtls" listener borrows:
+              anything that is not a client is relayed there, and sees that site.
+            '';
+          };
+          serverName = nullStr "SNI clients send, a name `handshake` answers to. `null`: its host." "www.microsoft.com";
+        };
+
+        tuic.congestionControl = mkOption {
+          type = types.enum [
+            "bbr"
+            "cubic"
+            "new_reno"
+          ];
+          default = "bbr";
+          description = "Congestion control of a \"tuic\" listener, put in its share links too.";
         };
 
         method = mkOption {

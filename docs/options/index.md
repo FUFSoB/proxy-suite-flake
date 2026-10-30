@@ -162,6 +162,7 @@ services.proxy-suite = {
     serverAliases = [ ];
     serverPorts = [ ];
     shareLinks = true;
+    singBoxPackage = config.services.proxy-suite.proxy.singBox.package;
     subscriptions = {
       baseUrl = null;
       enable = false;

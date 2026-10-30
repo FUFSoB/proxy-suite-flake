@@ -19,8 +19,7 @@ let
       description = ''
         Tag of an outbound that ${what} connects through (a proxy chain). Any outbound works,
         including subscription entries, `warp`, `ssh-proxy` and AmneziaWG. On hybrid, an XRay
-        outbound can only chain through another XRay one. For ShadowTLS, put a `shadowtls`
-        outbound in `singBoxJson` and point the shadowsocks outbound's `detour` at it.
+        outbound can only chain through another XRay one.
       '';
       example = "ru-vps";
     };
@@ -88,6 +87,47 @@ let
             settings.address = "example.com";
           };
 
+      shadowTls = mkOption {
+        type = types.nullOr (
+          types.submodule {
+            options = {
+              version = mkOption {
+                type = types.enum [
+                  1
+                  2
+                  3
+                ];
+                default = 3;
+                description = "ShadowTLS protocol version, as the server runs it.";
+              };
+              serverName = mkOption {
+                type = types.str;
+                description = "SNI: the site whose TLS handshake the server borrows.";
+                example = "www.microsoft.com";
+              };
+              password = nullStr "ShadowTLS password (version 2 and 3). Ends up in the Nix store; prefer `passwordFile`." "hunter2";
+              passwordFile = nullStr "File with the ShadowTLS password." "/run/secrets/shadowtls-password";
+              fingerprint = mkOption {
+                type = types.nullOr types.str;
+                default = "chrome";
+                description = "Browser whose TLS ClientHello to imitate (uTLS). `null`: Go's own.";
+              };
+            };
+          }
+        );
+        default = null;
+        description = ''
+          Dial this outbound (usually Shadowsocks, from `url`) through ShadowTLS to the same
+          server and port, as a proxy-suite "shadowtls" listener and other ShadowTLS servers
+          serve it. Its UDP then goes over the stream (UDP over TCP), which the server must take.
+          sing-box only: not with the XRay backend, nor with `backend = "xray"` or `detour`.
+        '';
+        example = {
+          serverName = "www.microsoft.com";
+          passwordFile = "/run/secrets/shadowtls-password";
+        };
+      };
+
       backend = mkOption {
         type = types.enum [
           "auto"
@@ -97,7 +137,7 @@ let
         default = "auto";
         description = ''
           Which engine runs this outbound on the hybrid backend. "auto" uses sing-box, or XRay for
-          XRay-only transports (XHTTP, ECH).
+          XRay-only transports (XHTTP, ECH, VLESS Encryption).
         '';
         example = "xray";
       };

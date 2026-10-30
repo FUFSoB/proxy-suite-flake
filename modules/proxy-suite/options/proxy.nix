@@ -27,7 +27,8 @@ in
       ];
       default = "sing-box";
       description = ''
-        Proxy engine. "hybrid" runs sing-box and hands XRay-only outbounds (XHTTP, ECH) to XRay.
+        Proxy engine. "hybrid" runs sing-box and hands XRay-only outbounds (XHTTP, ECH, VLESS
+        Encryption) to XRay.
       '';
       example = "hybrid";
     };

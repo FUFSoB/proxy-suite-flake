@@ -535,6 +535,24 @@ class ManagerTest(unittest.TestCase):
         with open(salamander_file, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "secret-password\n")
 
+    def test_generated_keys_travel_with_the_bundle(self):
+        listener = self.spec["listeners"][0]
+        tag = listener["tag"]
+        listener["encryptionStateFile"] = os.path.join(self.tmp.name, "declared", "vless-encryption-key")
+        os.makedirs(os.path.join(self.tmp.name, "declared"))
+        with open(listener["encryptionStateFile"] + ".x25519", "w", encoding="utf-8") as handle:
+            handle.write("uFStM_0LKZjQECFmgDDInScNCEN7EgwOd6CY1i_BJVE\n")
+        bundle = self.manager.export()
+        self.assertEqual(bundle["keys"], {tag: {"vless-encryption-key.x25519": "uFStM_0LKZjQECFmgDDInScNCEN7EgwOd6CY1i_BJVE"}})
+        os.unlink(listener["encryptionStateFile"] + ".x25519")
+        report = self.manager.import_bundle(bundle)
+        self.assertEqual(report["keys"], [f"{tag}/vless-encryption-key.x25519"])
+        with open(listener["encryptionStateFile"] + ".x25519", encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), "uFStM_0LKZjQECFmgDDInScNCEN7EgwOd6CY1i_BJVE")
+        for keys in ({tag: {"../escape": "k"}}, {tag: {"shadowsocks-server-key": "two\nlines"}}, {"../x": {}}):
+            with self.subTest(keys=keys), self.assertRaises(im.ApiError):
+                self.manager.import_bundle({**bundle, "keys": keys})
+
     def test_import_refuses_a_runtime_user_named_as_a_declared_one(self):
         bundle = self.manager.export()
         declared = sorted(self.spec["users"])[0]

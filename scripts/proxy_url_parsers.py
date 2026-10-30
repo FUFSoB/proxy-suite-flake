@@ -76,6 +76,11 @@ REALITY_SHORT_ID_RE = re.compile(r"(?:[0-9a-fA-F]{2}){0,8}")
 # A path Go's url.Parse takes: no control characters, and % only as an escape. XRay ignores
 # the parse error on spiderX and dies on the nil URL, taking every outbound with it.
 REALITY_SPIDER_X_RE = re.compile(r"/(?:[^\x00-\x1f\x7f%]|%[0-9A-Fa-f]{2})*")
+# VLESS Encryption's client string, as XRay checks it (infra/conf/vless.go): a mode, 0-RTT or
+# 1-RTT, then padding settings (short parts) and keys, base64url of an X25519 public key or
+# an ML-KEM-768 encapsulation key.
+VLESS_ENCRYPTION_MODES = {"native", "xorpub", "random"}
+VLESS_ENCRYPTION_KEY_BYTES = {32, 1184}
 # hysteria2's pinSHA256: the certificate's SHA-256, hex, colons optional.
 CERT_SHA256_RE = re.compile(r"[0-9A-Fa-f]{64}|[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31}")
 
@@ -408,9 +413,29 @@ def _xray_wants_transport_security(host: str) -> bool:
     return not any(address in net for net in _XRAY_PRIVATE_NETWORKS if net.version == address.version)
 
 
+def _vless_encryption(value: str) -> str:
+    parts = value.split(".")
+    ok = len(parts) >= 4 and parts[0] == "mlkem768x25519plus" and parts[1] in VLESS_ENCRYPTION_MODES
+    ok = ok and parts[2] in ("0rtt", "1rtt")
+    for part in parts[3:] if ok else []:
+        if len(part) < 20:
+            continue
+        try:
+            size = len(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+        except (binascii.Error, ValueError):
+            size = 0
+        ok = ok and size in VLESS_ENCRYPTION_KEY_BYTES and not part.endswith("=")
+    if not ok:
+        raise ValueError("invalid VLESS encryption: XRay would refuse to start")
+    return value
+
+
 def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
     security = _param(params, "security", "none")
+    encryption = urllib.parse.unquote(params.get("encryption", "")) or "none"
+    if encryption != "none" and backend != "xray":
+        raise ValueError("VLESS Encryption is XRay's alone: sing-box cannot dial it")
 
     if "ech" in params and backend != "xray":
         raise ValueError(
@@ -459,8 +484,10 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
         if backend == "xray" and "ech" in params:
             ob["tls"]["ech_config_list"] = urllib.parse.unquote(params["ech"])
 
-    if backend == "xray" and "tls" not in ob and _xray_wants_transport_security(host):
-        raise ValueError("XRay refuses VLESS without TLS or REALITY to a public server")
+    if encryption != "none":
+        ob["encryption"] = _vless_encryption(encryption)
+    elif backend == "xray" and "tls" not in ob and _xray_wants_transport_security(host):
+        raise ValueError("XRay refuses VLESS without TLS, REALITY or encryption to a public server")
 
     tr = _mk_transport(
         normalized_transport,
