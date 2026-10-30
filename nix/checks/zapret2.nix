@@ -237,19 +237,8 @@ in
         grep -qx 'NFQWS2_PORTS_TCP=80,443,1984,2053,2083,2087,2096,5222,8443' "${globalRuntime}/config"
         grep -qx 'NFQWS2_PORTS_UDP=443,590-600,1400,3478-3481,5349,19294-19344,49152-65535' "${globalRuntime}/config"
         grep -qF -- '/files/lua/z2k-state-persist.lua' "${globalRuntime}/config"
-        # Counted failures are stamped before the state layer reads them, so a
-        # success on a busy host cannot undo every rotation.
-        grep -qE -- 'fail-stamp\.lua --lua-init=@[^ ]+/z2k-state-persist\.lua' "${globalRuntime}/config"
-        STAMP=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-fail-stamp\.lua' "${globalRuntime}/config") lua -e '
-          function automate_failure_counter(hrec, crec) if crec then crec.failure = true end return "orig" end
-          function clock_getfloattime() return 42.5 end
-          dofile(os.getenv("STAMP"))
-          local hrec, crec = {}, {}
-          assert(automate_failure_counter(hrec, crec, 2, 60) == "orig" and hrec.z2k_last_fail_ts == 42.5)
-          hrec.z2k_last_fail_ts = 1
-          automate_failure_counter(hrec, crec, 2, 60)
-          assert(hrec.z2k_last_fail_ts == 1, "a duplicate failure is not counted, so not stamped")
-        '
+        # The state layer keys hosts as circular does, so it loads after the hostkey.
+        grep -qE -- 'public-suffix-hostkey\.lua --lua-init=@[^ ]+/z2k-state-persist\.lua' "${globalRuntime}/config"
         # Every new host or switch reaches state.tsv, or a restart loses it; a z2k bump
         # that drops the setter must fail the start, not quietly lose switches again.
         grep -qE -- 'z2k-state-persist\.lua --lua-init=@[^ ]+-persist-every\.lua --lua-init=@[^ ]+-detect\.lua --lua-init=@[^ ]+-strategy-log\.lua' "${z2kRuntime}/config"
@@ -333,7 +322,7 @@ in
         if grep -qF -- 'ps_watch' "${tunedRuntime}/config"; then exit 1; fi
         if grep -qF -- '<STALLWATCH>' "${tunedRuntime}/config"; then exit 1; fi
         # Counted failures and switches, named by circular key and host; the switch
-        # is the one that stuck, after the state layer's revert.
+        # is the one that stuck, past a strategy held final.
         LOG=$(grep -oE '/nix/store/[^ ]+-strategy-log\.lua' "${z2kRuntime}/config") lua -e '
           function automate_failure_counter(hrec, crec, fails)
             if crec.failure then return false end
@@ -343,12 +332,12 @@ in
             hrec.failure_counter = nil
             return true
           end
-          local revert = false
+          local final = false
           function circular()
             local hrec = autostate.rkn_tcp["example.com"]
             local before = hrec.nstrategy
             if automate_failure_counter(hrec, {}, 2) then hrec.nstrategy = hrec.nstrategy % hrec.ctstrategy + 1 end
-            if revert then hrec.nstrategy = before end
+            if final then hrec.nstrategy = before end
             return "verdict"
           end
           autostate = { rkn_tcp = { ["example.com"] = { nstrategy = 1, ctstrategy = 50 } } }
@@ -356,7 +345,7 @@ in
           assert(circular() == "verdict")
           circular()
           automate_failure_counter(autostate.rkn_tcp["example.com"], { failure = true }, 2)
-          revert = true
+          final = true
           circular()
           circular()
         ' 2>strategy.log
@@ -364,7 +353,7 @@ in
         zapret2: rkn_tcp example.com: failure 1/2 on strategy 1/50
         zapret2: rkn_tcp example.com: switched from strategy 1 to 2/50
         zapret2: rkn_tcp example.com: failure 1/2 on strategy 2/50
-        zapret2: rkn_tcp example.com: failed enough to switch, but stays on strategy 2/50: it worked moments ago, or that strategy is final
+        zapret2: rkn_tcp example.com: failed enough to switch, but stays on strategy 2/50: that strategy is final
         EOF
         # Off, the log is gone; debug hands nfqws2 its own.
         if grep -qF -- 'strategy-log.lua' "${z2kTunedRuntime}/config"; then exit 1; fi
@@ -388,14 +377,16 @@ in
         grep -qx 'NFQWS2_UDP_PKT_IN=8' "${z2kRuntime}/config"
         # Its Discord profile filters up to 50100, one port past its queue: the queue takes it.
         grep -qx 'NFQWS2_PORTS_UDP=443,1400,3478-3481,5349,19294-19344,50000-50100' "${z2kRuntime}/config"
-        grep -qF -- 'key=rkn_tcp:nld=2:failure_detector=z2k_fail_tls_alert:retrans=3:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset' "${z2kRuntime}/config"
+        grep -qF -- 'key=rkn_tcp:nld=2:hostkey=z2k_service_hostkey:failure_detector=z2k_fail_tls_alert:discord_tls_timeout=1:discord_tls_in_limit=10:discord_tls_out_limit=20:retrans=3:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset' "${z2kRuntime}/config"
         grep -qF -- 'failure_detector=z2k_fail_quic_silence' "${z2kRuntime}/config"
         grep -qF -- ':fool=z2k_dynamic_ttl' "${z2kRuntime}/config"
         # A --hostlist-auto profile wins every named flow, so the one that learns is
         # last and has no strategies; rkn_tcp reads what it learned and leaves
         # YouTube's hosts to yt_tcp/gv_tcp.
-        grep -qF -- '/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO> --hostlist-exclude=' "${z2kRuntime}/config"
-        grep -qE -- '<HOSTLIST_NOAUTO> --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --filter-tcp=' "${z2kRuntime}/config"
+        grep -qE -- '/extra_strats/TCP/RKN/List.txt <HOSTLIST_NOAUTO> --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --hostlist=[^ ]+/extra_strats/TCP_Discord.txt --filter-tcp=' "${z2kRuntime}/config"
+        # Every profile over its blocked sites takes the learned ones: TLS, QUIC and HTTP.
+        test "$(grep -oF -- '/extra_strats/TCP/RKN/List.txt <HOSTLIST_NOAUTO>' "${z2kRuntime}/config" | wc -l)" = 3
+        test "$(grep -oF -- '<HOSTLIST_NOAUTO>' "${z2kRuntime}/config" | wc -l)" = 3
         # nfqws2's own learner, without extendedDetection.
         test "$(grep -oF -- '<HOSTLIST>' "${z2kTunedRuntime}/config" | wc -l)" = 1
         grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443,8444 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST> --new --filter-tcp=\* " "${z2kTunedRuntime}/config"
@@ -409,44 +400,32 @@ in
 
         # proxy-ctl names state.tsv's rows by this map: keyed circulars by key, the
         # others by instance, a template's strategies under the profile importing it.
-        jq -e '.rkn_tcp["1"] | map(split(":")[0]) == ["tls_client_hello_clone", "fake", "multisplit"]' "${z2kRuntime}/strategies.json"
-        jq -e '.cf_extra == .rkn_tcp' "${z2kRuntime}/strategies.json"
+        jq -e '.rkn_tcp["1"] | map(split(":")[0]) == ["hostfakesplit"]' "${z2kRuntime}/strategies.json"
         jq -e '.http_rkn["1"] == ["http_methodeol:payload=http_req:dir=out"]' "${z2kRuntime}/strategies.json"
-        jq -e 'has("yt_tcp") and has("gv_tcp") and has("yt_quic")' "${z2kRuntime}/strategies.json"
-        # QUIC to the sites rkn_tcp handles gets YouTube's QUIC strategies, after yt_quic,
-        # and the silence detector that sees dead QUIC flows counts its failures.
-        jq -e '.rkn_quic == .yt_quic' "${z2kRuntime}/strategies.json"
-        grep -qE -- "key=yt_quic:[^']* --new [^']*/extra_strats/TCP/RKN/List.txt --hostlist=[^ ]+/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO> --filter-udp=443 --filter-l7=quic [^']*key=rkn_quic:" "${z2kRuntime}/config"
-        QS=$(grep -oE '/nix/store/[^ ]+-z2k-quic-silence\.lua' "${z2kRuntime}/config")
-        grep -qF 'rkn_quic = true' "$QS"
-        # Its first flight is no success, nor an answer to the silence detector: rotation moves.
-        grep -qE -- "key=rkn_quic:" "${z2kRuntime}/config"
-        grep -oE -- "--lua-desync=circular:[^ ]*key=rkn_quic:[^ ]*" "${z2kRuntime}/config" | grep -qF ':udp_in=4:'
-        grep -oE -- "--lua-desync=circular:[^ ]*key=yt_quic:[^ ]*" "${z2kRuntime}/config" | grep -qF ':udp_in=1:'
-        QS="$QS" lua -e '
+        jq -e 'keys == ["discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${z2kRuntime}/strategies.json"
+        # One QUIC pool, YouTube's and the blocked sites'. Its detector is written for
+        # z2k's zapret2 fork and takes the standard one on ours, where the server's
+        # first flight is no success: rotation moves.
+        grep -qE -- "/extra_strats/UDP/YT/List.txt --hostlist=[^ ]+/extra_strats/TCP/RKN/List.txt <HOSTLIST_NOAUTO> --hostlist=[^ ]+/extra_strats/TCP_Discord.txt --filter-udp=443 --filter-l7=quic [^']*key=quic:" "${z2kRuntime}/config"
+        grep -oE -- "--lua-desync=circular:[^ ]*key=quic:[^ ]*" "${z2kRuntime}/config" | grep -qF ':udp_in=4:'
+        QS=$(grep -oE '/nix/store/[^ ]+/files/lua/z2k-quic-silence\.lua' "${z2kRuntime}/config") lua -e '
           function standard_failure_detector() return "standard" end
-          function pos_get(desync) return desync.n end
           dofile(os.getenv("QS"))
-          local function reply(key, udp_in, n)
-            local crec = {}
-            z2k_fail_quic_silence({ dis = { udp = true }, outgoing = false, n = n, arg = { key = key, udp_in = udp_in } }, crec)
-            return crec.z2k_quic_answered == true
-          end
-          assert(not reply("rkn_quic", "4", 2) and reply("rkn_quic", "4", 5))
-          assert(not reply("yt_quic", "1", 1) and reply("yt_quic", "1", 2))
-          assert(z2k_fail_quic_silence({ dis = { udp = true }, arg = { key = "rkn_tcp" } }, {}) == "standard")
+          assert(circular_report_failure == nil)
+          assert(z2k_fail_quic_silence({ dis = { udp = true }, outgoing = true, arg = { key = "quic" } }, {}) == "standard")
         '
         jq -e 'keys == ["circular_1_1", "circular_3_1"]' "${globalRuntime}/strategies.json"
         if grep -qF 'strategy=' "${z2kRuntime}/strategies.json"; then exit 1; fi
 
-        # z2k's Lua in its own order: ranges (repeats=6-10) resolve before its strategies fire.
-        grep -qE -- 'z2k-fooling-ext\.lua --lua-init=@[^ ]+/z2k-range-rand\.lua --lua-init=@[^ ]+/z2k-modern-core\.lua' "${z2kRuntime}/config"
+        # z2k's Lua in its own order: ranges (repeats=6-10) resolve before its strategies
+        # fire, the winws tricks they use before the ranges wrap them.
+        grep -qE -- 'z2k-fooling-ext\.lua --lua-init=@[^ ]+/z2k-nfqws1-compat\.lua --lua-init=@[^ ]+/z2k-range-rand\.lua --lua-init=@[^ ]+/z2k-modern-core\.lua' "${z2kRuntime}/config"
 
         # --- 16 KB cutoff ---------------------------------------------------
         # The whitelisted-name step runs ahead of rotation, in z2k only: ahead of the
         # nfqws2-keenetic strategies it broke hosts they reach on their own.
         grep -qF -- '/files/lua/z2k-tcp16.lua' "${z2kRuntime}/config"
-        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
+        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000:tcp_md5 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
         if grep -qF -- 'z2k_sni_pick' "${globalRuntime}/config"; then exit 1; fi
         if grep -qF -- 'z2k-tcp16.lua' "${globalRuntime}/config"; then exit 1; fi
         # zapret2 leaves the probe's own connections alone, in every chain.
@@ -505,7 +484,7 @@ in
           printf 'works\tlearned.example\ttcp\trkn_tcp\t1\nworks\texcluded.example\ttcp\trkn_tcp\t1\n'
           printf 'works\t203.0.113.7\ttcp\trkn_tcp\t1\n'
           printf 'stalls\tunseen.example\tcutoff\t\t1\nworks\tunseen.example\ttcp\trkn_tcp\t2\n'
-          printf 'unfixable\tchat.example\ttcp\trkn_tcp\t2\nunfixable\tdiscord.com\tudp\trkn_quic\t2\n'
+          printf 'unfixable\tchat.example\ttcp\trkn_tcp\t2\nunfixable\tdiscord.com\tudp\tquic\t2\n'
           printf 'works\tdiscord.com\ttcp\trkn_tcp\t2\n'
           printf 'blocked\t149.154.167.99\tip\tx\t3\nblocked\t198.51.100.1\tip\tx\t3\nreachable\t198.51.100.1\tip\t\t4\n'
           printf 'unfixable\tretried.example\ttcp\t\t5\nretry\tretried.example\ttcp\tproxy-ctl\t6\n'

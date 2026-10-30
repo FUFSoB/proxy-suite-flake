@@ -3,8 +3,6 @@ mkdir -p "$root/lists" "$root/lua" conf
 cp -r @z2k@/files/lists/extra_strats "$root/"
 chmod -R u+w "$root"
 cp "$root/extra_strats/TCP/RKN/Discord.txt" "$root/extra_strats/TCP_Discord.txt"
-cp @z2k@/files/lists/cf_extra_check_ips.txt "$root/lists/"
-: >"$root/lists/discovered-domains.txt"
 # Its cutoff name step is emitted only on lines its probe flagged; ours is
 # a no-op until the cutoff probe writes maps, so emit it unconditionally.
 mkdir -p "$root/state"
@@ -32,13 +30,19 @@ export ZAPRET2_DIR="$root" CONFIG_DIR="$PWD/conf" LISTS_DIR="$root/lists"
 sed -n '/^NFQWS2_OPT="/,/^"$/p' generated | sed '1s/^NFQWS2_OPT="//; $d' | tr '\n' ' ' >raw
 grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no profiles" >&2; exit 1; }
 
-# Its learned-host list becomes ours, its whitelist gains our excludes, and
-# the circular args it pins to the zapret2 docs are dropped so autoHostlist
-# fills them in. A profile with --hostlist-auto wins every flow with a known
-# name (nfq2/desync.c), so learning goes in a last profile of its own with no
-# strategies, as z2k's own autohostlist does: on rkn_tcp it would take
-# YouTube from yt_tcp/gv_tcp below it. rkn_tcp then leaves their hosts to
-# them even once learned or added by hand.
+# The learned and hand-added sites join every profile over its blocked-sites list
+# (rkn_tcp, quic, http_rkn), its whitelist gains our excludes, and the circular args
+# it pins to the zapret2 docs are dropped so autoHostlist fills them in. A profile
+# with --hostlist-auto wins every flow with a known name (nfq2/desync.c), so learning
+# goes in a last profile of its own with no strategies, as z2k's own autohostlist
+# did: on rkn_tcp it would take YouTube from yt_tcp/gv_tcp below it. rkn_tcp then
+# leaves their hosts to them even once learned or added by hand.
+#
+# QUIC: z2k's pool is one profile for YouTube's and the blocked sites' QUIC alike. Its
+# detector needs z2k's own zapret2 fork (circular_report_failure) and takes nfqws2's
+# standard one on ours, where udp_in=1 counts the server's first flight, which DPI
+# lets through before it drops the flow (two packets from Cloudflare), as a success
+# that undoes every failure counted. udp_in=4: a real handshake brings back more.
 #
 # With $learnArgs (autoHostlist.extendedDetection), detect.lua's ps_learn learns
 # instead, in the same last place. It cannot ride along on the autohostlist profile:
@@ -47,7 +51,7 @@ grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no prof
 #
 # $stallWatch (detect.lua's ps_watch) goes first among the instances of the profile
 # that takes the learned sites, ahead of its in-profile filters, which it resets after.
-awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
+awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
     -v wl="--hostlist-exclude=$root/lists/whitelist.txt" \
     -v yt="--hostlist-exclude=$root/extra_strats/TCP/YT/List.txt --hostlist-exclude=$root/extra_strats/TCP/YT_GV/List.txt" \
     -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" \
@@ -65,8 +69,8 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
         if (watch != "" && seen && prof == learner && !watched++) pre = watch " "
         filtered[prof] = 1
       }
-      if (t == disc) {
-        t = "<HOSTLIST_NOAUTO>" hsuf
+      if (t == rkn) {
+        t = t " <HOSTLIST_NOAUTO>" hsuf
         if (!seen++) {
           t = t " " yt
           learner = prof
@@ -79,12 +83,15 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
         t = "--lua-desync=circular"
         for (j = 1; j <= n; j++)
           if (p[j] !~ /^(retrans|maxseq|inseq)=/ && p[j] != "reset") t = t ":" p[j]
+        if (seen && prof == learner && t !~ /:key=rkn_tcp(:|$)/) { print "z2k general TLS profile is not rkn_tcp" > "/dev/stderr"; exit 1 }
+        if (t ~ /:key=quic(:|$)/ && !quic++ && !sub(/:udp_in=1:/, ":udp_in=4:", t)) { print "z2k QUIC udp_in=1 not found" > "/dev/stderr"; exit 1 }
       }
       printf "%s%s%s", (i > 1 ? " " : ""), pre, t
     }
   }
   END {
     if (!seen || !(learner in ports)) { print "z2k general TLS profile not found" > "/dev/stderr"; exit 1 }
+    if (quic != 1) { print "z2k QUIC profile not found" > "/dev/stderr"; exit 1 }
     if (watch != "" && !watched) { print "z2k general TLS profile has no instances" > "/dev/stderr"; exit 1 }
     if (learn == "")
       printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
@@ -94,32 +101,6 @@ awk -v disc="--hostlist=$root/lists/discovered-domains.txt" \
       printf " --new --filter-tcp=%s --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:%s", ports[learner], learn
     }
   }' raw >body
-
-# QUIC to blocked sites: z2k rotates QUIC strategies over YouTube's list alone, and DPI
-# drops QUIC to the rest by name (every Discord host), so a browser stalls on each
-# HTTP/3 attempt before it falls back to TCP. rkn_quic is its YouTube QUIC profile over
-# the sites rkn_tcp handles, right after it: YouTube's hosts still meet yt_quic first.
-# Its udp_in is 4: there DPI lets the server's first flight (two packets from Cloudflare)
-# through before it drops the flow, which at udp_in=1 counted as a success and undid
-# every failure counted; a real handshake brings back more.
-awk -v yt="--hostlist=$root/extra_strats/UDP/YT/List.txt" \
-    -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt --hostlist=$root/extra_strats/TCP_Discord.txt <HOSTLIST_NOAUTO>$hostlistSuffix" '
-  {
-    n = split($0, p, / --new /)
-    for (i = 1; i <= n; i++) {
-      printf "%s%s", (i > 1 ? " --new " : ""), p[i]
-      if (p[i] ~ /key=yt_quic:/ && (k = index(p[i], yt))) {
-        q = substr(p[i], 1, k - 1) rkn substr(p[i], k + length(yt))
-        gsub(/key=yt_quic:/, "key=rkn_quic:", q)
-        if (!sub(/:udp_in=1:/, ":udp_in=4:", q)) { print "z2k YouTube QUIC udp_in=1 not found" > "/dev/stderr"; exit 1 }
-        printf " --new %s", q
-        found++
-      }
-    }
-  }
-  END { if (found != 1) { print "z2k YouTube QUIC profile not found" > "/dev/stderr"; exit 1 } }
-' body >body.quic
-mv body.quic body
 
 awk -v z=@z2k@ '
   match($0, /^([A-Z0-9_]+_BLOB)="\$ZAPRET_BASE\/([^"]+)"/, m) { file[m[1]] = m[2] }

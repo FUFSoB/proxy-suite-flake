@@ -20,7 +20,12 @@ function dis_reverse() end
 local resets = 0
 function rawsend_dissect() resets = resets + 1 end
 function is_retransmission(desync) return desync.retrans end
-function standard_failure_detector() return "standard" end
+-- The arg the standard detector was last handed: z2k's hands it a copy without reset.
+local standard_arg
+function standard_failure_detector(desync)
+  standard_arg = desync.arg
+  return "standard"
+end
 function standard_hostkey(desync) return desync.track.hostname:gsub("^www%.", "") end
 function automate_failure_check(_, _, crec)
   crec.nocheck = true
@@ -49,7 +54,15 @@ function automate_failure_counter(hrec, crec, fails)
 end
 local hrec = { nstrategy = 1, ctstrategy = 50 }
 function automate_host_record() return hrec end
-function z2k_fail_tls_alert() return "z2k" end
+function z2k_fail_tls_alert(desync, crec)
+  if not desync.native then return "z2k" end
+  local copy, a = {}, {}
+  for k, v in pairs(desync) do copy[k] = v end
+  for k, v in pairs(desync.arg) do a[k] = v end
+  a.reset, a.no_http_redirect = nil, true
+  copy.arg = a
+  return standard_failure_detector(copy, crec)
+end
 
 -- detect.lua's public suffixes, loaded before it as nfqws2 does.
 dofile(os.getenv("PSL"))
@@ -190,6 +203,16 @@ tls(true, "", cancelled, TH_RST)
 fire("psnr_")
 assert(#counted == 3, "answered, judged or cancelled flows are no failure")
 assert(standard_failure_detector({ arg = {}, dis = { tcp = {} } }, {}) == "standard", "nfqws2's detector is wrapped too")
+-- z2k's detector drops reset on what it hands the standard one: it is put back, and
+-- stays off where the circular has none.
+local function native(reset)
+  standard_arg = nil
+  z2k_fail_tls_alert({ native = true, track = {}, arg = { reset = reset }, dis = { flow = "n", tcp = { th_flags = 0 } } }, { ps_armed = true })
+  return standard_arg
+end
+assert(native(true).reset == true, "reset reaches the standard detector through z2k's")
+assert(native(nil).reset == nil, "no reset where the circular has none")
+assert(standard_failure_detector({ arg = { no_http_redirect = true }, dis = { tcp = {} } }, {}) == "standard" and standard_arg.reset == nil, "no reset outside z2k's detector")
 
 local function verdicts()
   local t = {}
@@ -213,7 +236,7 @@ assert(verdicts()["notion.so tcp"] == "works" and wrec.ps_cycle == 0, "works rec
 
 -- unfixable: a whole cycle of strategies without one success stops the rotation.
 local qrec = { nstrategy = 2, ctstrategy = 2 }
-autostate = { rkn_quic = { ["discord.com"] = qrec } }
+autostate = { quic = { ["discord.com"] = qrec } }
 automate_failure_counter(qrec, {}, 1)
 assert(not qrec.final)
 automate_failure_counter(qrec, {}, 1)

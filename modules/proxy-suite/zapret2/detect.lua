@@ -161,7 +161,7 @@ function ps_noreply_timer(_, data)
   if crec.ps_answered or crec.ps_closed or crec.nocheck or crec.failure then return end
   crec.nocheck = true
   if not automate_failure_counter(hrec, crec, tonumber(data.fails) or 3, tonumber(data.maxtime) or 60) then return end
-  -- circular's own formula, as z2k's QUIC silence timer does it outside circular.
+  -- circular's own formula, outside circular.
   if not hrec.ctstrategy or hrec.ctstrategy < 1 or (hrec.final and hrec.final == hrec.nstrategy) then return end
   hrec.nstrategy = ((hrec.nstrategy or 1) % hrec.ctstrategy) + 1
 end
@@ -196,6 +196,27 @@ end
 if type(z2k_fail_tls_alert) == "function" then z2k_fail_tls_alert = noreply(z2k_fail_tls_alert) end
 if type(standard_failure_detector) == "function" then standard_failure_detector = noreply(standard_failure_detector) end
 
+-- z2k's TLS detector hands transport failures to the standard one on a copy without
+-- reset: z2k's zapret2 fork sends that RST itself, once circular takes the failure,
+-- ours only from inside the standard detector. Put back, autoHostlist.retransReset
+-- holds on z2k's profiles too, as it did before.
+if type(z2k_fail_tls_alert) == "function" and type(standard_failure_detector) == "function" then
+  local alert, standard, reset = z2k_fail_tls_alert, standard_failure_detector, nil
+  function z2k_fail_tls_alert(desync, crec)
+    local outer = reset
+    reset = desync.arg and desync.arg.reset
+    local ok, failed, outcome = pcall(alert, desync, crec)
+    reset = outer
+    if not ok then error(failed, 0) end
+    return failed, outcome
+  end
+  function standard_failure_detector(desync, crec)
+    local arg = desync.arg
+    if reset and arg and arg.reset == nil and arg.no_http_redirect then arg.reset = reset end
+    return standard(desync, crec)
+  end
+end
+
 -- --- learning ----------------------------------------------------------------------------
 
 local failures, tracked = {}, 0 -- host -> failure times within the window
@@ -205,8 +226,9 @@ local function lines(path)
   local out = {}
   local f = path and io.open(path, "r")
   if not f then return out end
-  for line in f:lines() do
-    line = line:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+  -- A loop variable is read-only in Lua 5.5 (the checks' interpreter): copy it.
+  for raw in f:lines() do
+    local line = raw:gsub("^%s+", ""):gsub("%s+$", ""):lower()
     if line ~= "" and line:sub(1, 1) ~= "#" then out[#out + 1] = line:gsub("^%^", "") end
   end
   f:close()

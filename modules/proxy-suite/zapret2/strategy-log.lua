@@ -1,10 +1,10 @@
 -- One journal line per counted failure and per strategy switch. nfqws2 logs them
 -- only with --debug, among every packet's lines. Loaded after z2k-state-persist.lua,
--- so the switch it reports is the one that stuck, after its sticky-success revert.
+-- so the switch it reports is the one that stuck, past a strategy pinned in proxy-ctl.
 
 local count, rotate = automate_failure_counter, circular
--- host record -> its strategy when the failure count was reached: circular, or
--- z2k's QUIC silence timer, switches it right after.
+-- host record -> its strategy when the failure count was reached: circular, or a
+-- detector's timer (detect.lua's), switches it right after.
 local pending = setmetatable({}, { __mode = "k" })
 
 -- "<circular key> <host>": the record knows neither, autostate maps them to it.
@@ -43,7 +43,7 @@ local function report()
     if (hrec.nstrategy or 1) ~= before then
       log(hrec, "switched from strategy " .. tostring(before) .. " to " .. of(hrec))
     else
-      log(hrec, "failed enough to switch, but stays on strategy " .. of(hrec) .. ": it worked moments ago, or that strategy is final")
+      log(hrec, "failed enough to switch, but stays on strategy " .. of(hrec) .. ": that strategy is final")
     end
   end
 end
@@ -51,7 +51,7 @@ end
 if type(rotate) == "function" then
   function circular(ctx, desync)
     local verdict = rotate(ctx, desync)
-    -- Also what the QUIC timer switched since the last packet.
+    -- Also what a timer switched since the last packet.
     if next(pending) then report() end
     return verdict
   end
