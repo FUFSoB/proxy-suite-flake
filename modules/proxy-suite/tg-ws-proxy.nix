@@ -45,7 +45,9 @@ let
       lib.optionalString (t.log.file != null) (mkRawValueArg "--log-backups" t.log.keep)
     }${mkRawValueArg "--buf-kb" t.bufferKiB}${mkRawValueArg "--pool-size" t.poolSize}${mkRepeatedValueArgs "--cfproxy-domain" t.cloudflare.domains}${mkRepeatedValueArgs "--cfproxy-worker-domain" t.cloudflare.workerDomains}${
       mkFlagArg (!t.cloudflare.fallback) "--no-cfproxy"
-    }${
+    }${mkFlagArg (!t.cloudflare.http2) "--no-h2"}${
+      mkFlagArg (!t.cloudflare.tls) "--no-secure"
+    }${mkFlagArg t.forceTestDc "--force-test-dc"}${
       mkOptionalValueArg (t.fakeTlsDomain != null) "--fake-tls-domain" t.fakeTlsDomain
     }${mkFlagArg t.proxyProtocol "--proxy-protocol"}
     exec ${tgPkg}/bin/tg-ws-proxy "''${args[@]}"

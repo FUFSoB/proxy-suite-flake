@@ -48,7 +48,7 @@ in
     fakeTlsDomain = mkOption {
       type = types.nullOr (types.strMatching ".+");
       default = null;
-      description = "Domain to disguise traffic as, with Fake TLS (ee-secret links).";
+      description = "Domain to disguise traffic as, with Fake TLS (ee-secret links). Probed at startup to mimic its TLS record sizes; must not resolve to this relay.";
       example = "www.example.com";
     };
 
@@ -61,6 +61,24 @@ in
         default = true;
         description = "Fall back to Cloudflare when a direct WebSocket fails.";
       };
+
+      http2 = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Multiplex media over HTTP/2 through `domains`. Only with `fallback` and `tls`, and without `forceTestDc`.";
+      };
+
+      tls = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Reach `domains` and `workerDomains` over TLS on port 443. `false`: plain HTTP on port 80.";
+      };
+    };
+
+    forceTestDc = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Send all traffic to Telegram's test DCs. Telegram Desktop needs none of this; for clients that present test DCs as 1-3.";
     };
 
     poolSize = mkOption {

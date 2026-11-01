@@ -43,6 +43,9 @@ let
         ];
         cloudflare.workerDomains = [ "worker.example.com" ];
         cloudflare.fallback = false;
+        cloudflare.http2 = false;
+        cloudflare.tls = false;
+        forceTestDc = true;
         fakeTlsDomain = "mask.example.com";
         proxyProtocol = true;
       };

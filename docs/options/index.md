@@ -366,11 +366,14 @@ services.proxy-suite = {
     cloudflare = {
       domains = [ ];
       fallback = true;
+      http2 = true;
+      tls = true;
       workerDomains = [ ];
     };
     dcIps = { };
     enable = false;
     fakeTlsDomain = null;
+    forceTestDc = false;
     fwmark = 4;
     listener = {
       address = "127.0.0.1";

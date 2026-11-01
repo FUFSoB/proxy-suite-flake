@@ -13,9 +13,12 @@ Part of the [proxy-suite options reference](./index.md).
   - cloudflare
     - [domains](#services-proxy-suite-tgwsproxy-cloudflare-domains)
     - [fallback](#services-proxy-suite-tgwsproxy-cloudflare-fallback)
+    - [http2](#services-proxy-suite-tgwsproxy-cloudflare-http2)
+    - [tls](#services-proxy-suite-tgwsproxy-cloudflare-tls)
     - [workerDomains](#services-proxy-suite-tgwsproxy-cloudflare-workerdomains)
   - [dcIps](#services-proxy-suite-tgwsproxy-dcips)
   - [fakeTlsDomain](#services-proxy-suite-tgwsproxy-faketlsdomain)
+  - [forceTestDc](#services-proxy-suite-tgwsproxy-forcetestdc)
   - [fwmark](#services-proxy-suite-tgwsproxy-fwmark)
   - listener
     - [address](#services-proxy-suite-tgwsproxy-listener-address)
@@ -70,6 +73,22 @@ Fall back to Cloudflare when a direct WebSocket fails\.
 **Type:** boolean\
 **Default:** `true`
 
+<a id="services-proxy-suite-tgwsproxy-cloudflare-http2"></a>
+## services\.proxy-suite\.tgWsProxy\.cloudflare\.http2
+
+Multiplex media over HTTP/2 through ` domains `\. Only with ` fallback ` and ` tls `, and without ` forceTestDc `\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-tgwsproxy-cloudflare-tls"></a>
+## services\.proxy-suite\.tgWsProxy\.cloudflare\.tls
+
+Reach ` domains ` and ` workerDomains ` over TLS on port 443\. ` false `: plain HTTP on port 80\.
+
+**Type:** boolean\
+**Default:** `true`
+
 <a id="services-proxy-suite-tgwsproxy-cloudflare-workerdomains"></a>
 ## services\.proxy-suite\.tgWsProxy\.cloudflare\.workerDomains
 
@@ -91,11 +110,19 @@ Relay IP for each Telegram DC ID\.
 <a id="services-proxy-suite-tgwsproxy-faketlsdomain"></a>
 ## services\.proxy-suite\.tgWsProxy\.fakeTlsDomain
 
-Domain to disguise traffic as, with Fake TLS (ee-secret links)\.
+Domain to disguise traffic as, with Fake TLS (ee-secret links)\. Probed at startup to mimic its TLS record sizes; must not resolve to this relay\.
 
 **Type:** null or string matching the pattern \.+\
 **Default:** `null`\
 **Example:** `"www.example.com"`
+
+<a id="services-proxy-suite-tgwsproxy-forcetestdc"></a>
+## services\.proxy-suite\.tgWsProxy\.forceTestDc
+
+Send all traffic to Telegram’s test DCs\. Telegram Desktop needs none of this; for clients that present test DCs as 1-3\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-tgwsproxy-fwmark"></a>
 ## services\.proxy-suite\.tgWsProxy\.fwmark

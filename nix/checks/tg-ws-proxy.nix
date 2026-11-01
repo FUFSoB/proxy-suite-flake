@@ -61,6 +61,9 @@ in
       assert pkgs.lib.hasInfix "--cfproxy-domain=edge.example.net" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--cfproxy-worker-domain=worker.example.com" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--no-cfproxy" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--no-h2" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--no-secure" tgAllOptionsStartScript;
+      assert pkgs.lib.hasInfix "--force-test-dc" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--fake-tls-domain=mask.example.com" tgAllOptionsStartScript;
       assert pkgs.lib.hasInfix "--proxy-protocol" tgAllOptionsStartScript;
       true
