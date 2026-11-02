@@ -8,7 +8,7 @@
 
 let
   inherit (pkgs) lib;
-  version = "26.10.21";
+  version = "26.10.31";
   base =
     if lib.versionAtLeast pkgs.xray.version version then
       pkgs.xray
@@ -23,9 +23,9 @@ let
               owner = "XTLS";
               repo = "Xray-core";
               rev = "v${finalAttrs.version}";
-              hash = "sha256-1FwcB/qZaH7W9b+GSe+CG/s+uStaDjz792OxDc3uAyg=";
+              hash = "sha256-wTKW8XUP/HXWI7e4jbBw3aGSPpPX7KjkxFwLMb9vxSA=";
             };
-            vendorHash = "sha256-o4mKfCGgI4r5ZatnA4AsK4zR0/qOl2qpqCmoJmE2jBQ=";
+            vendorHash = "sha256-JLzEYsnhiATt1JpXD0SgFOhhHUFS34JIdBJXg4eAcL0=";
           }
         );
 in

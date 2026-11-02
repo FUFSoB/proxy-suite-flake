@@ -5,13 +5,13 @@
 
 pkgs.buildGo126Module (finalAttrs: {
   pname = "whitelist-bypass";
-  version = "0.4.4";
+  version = "0.5.0";
 
   src = pkgs.fetchFromGitHub {
     owner = "kulikov0";
     repo = "whitelist-bypass";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-dYSadPA3X/f61XjpU+DTiLTPkKb3RC18/Z3x/YAOcC0=";
+    hash = "sha256-xUYIDxILyO/+2Qjj59ZE1BzKqlRTxM68vijsl3ll3Lw=";
   };
   vendorHash = "sha256-zKQzcfYdjKfpsyVgTTRdT0AFGqZQMtStpdVyCrojltE=";
 
