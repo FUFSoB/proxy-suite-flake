@@ -38,11 +38,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1792773339,
-        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
+        "lastModified": 1793540411,
+        "narHash": "sha256-fiPJ88izTVucjeo2EQ3jk4aWmLg03I1D4vxnX2QjEgE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "rev": "0bb2eedc20e4739f29e8045034f2828ad7054f8f",
         "type": "github"
       },
       "original": {
@@ -64,11 +64,11 @@
     "z2k": {
       "flake": false,
       "locked": {
-        "lastModified": 1792995712,
-        "narHash": "sha256-U9e48Au1HnlMsu56KEAXs5VNFOBfg38E28RGVio+/tk=",
+        "lastModified": 1793461253,
+        "narHash": "sha256-vq1+yLonGpuUbMLwGjwYAfU6UOHoN0QYk8rQtImMB8k=",
         "owner": "necronicle",
         "repo": "z2k",
-        "rev": "9fafc758d48e52a845efd48c839d1051e5c60b78",
+        "rev": "89117b13a0b4f8fe5f7ae9d0bec79949590bd0b2",
         "type": "github"
       },
       "original": {
@@ -86,11 +86,11 @@
         "zapret-flowseal": "zapret-flowseal"
       },
       "locked": {
-        "lastModified": 1792766281,
-        "narHash": "sha256-BINuXtsjaDVOTwq6Fks+2H1lRYFRCq+U/tE01skhNp0=",
+        "lastModified": 1793040103,
+        "narHash": "sha256-fWBRT6fA/X9hHP1ZXq7uqk37qMoReWvvDetbVtzni9Y=",
         "owner": "kartavkun",
         "repo": "zapret-discord-youtube",
-        "rev": "d67ca34f067fadcb80e9d716ab506ee92d4fba5a",
+        "rev": "9e61435c2c6242542e5c66a7ca39908560eabc54",
         "type": "github"
       },
       "original": {
