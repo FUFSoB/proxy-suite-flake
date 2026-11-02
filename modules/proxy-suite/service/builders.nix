@@ -134,11 +134,20 @@ rec {
     }:
     # Requires=: holds the shared backend up (StopWhenUnneeded=) and restarts this with it,
     # its crash included. Restarted by a switch, not stopped and started: a stop drops the hold.
-    lib.recursiveUpdate (mkOneshotService {
-      inherit description execStart execStop;
-      requires = [ "${backendService}.service" ];
-      after = [ "${backendService}.service" ];
-    }) { serviceConfig."X-StopIfChanged" = false; };
+    # PartOf= the user's manager (%i is the uid): the cgroup match is of the slice as it was
+    # when the rule went in, so a new manager's apps get the rules again by a new start. A
+    # slice made anew under the same manager gets them by proxy-ctl's reload ahead of each
+    # app (reload-or-restart; units.nix makes the start its ExecReload).
+    lib.recursiveUpdate
+      (mkOneshotService {
+        inherit description execStart execStop;
+        requires = [ "${backendService}.service" ];
+        after = [ "${backendService}.service" ];
+      })
+      {
+        partOf = [ "user@%i.service" ];
+        serviceConfig."X-StopIfChanged" = false;
+      };
 
   mkAnchorService =
     sliceName: description:
@@ -318,11 +327,15 @@ rec {
     # Without proxy.ipv6, marked IPv6 would leave directly: unreachable instead, so apps fall
     # back to IPv4. Not where the kernel has no IPv6 at all. On-link IPv6 still goes by main
     # (suppress_prefixlength 0: any route but its default); added last, it is looked at first.
+    # Lookups excepted, added after it: an on-link resolver would answer outside the proxy,
+    # so the resolver moves on to an IPv4 one.
     + lib.optionalString (!ipv6) ''
       if [ -e /proc/net/if_inet6 ]; then
         ${ip} -6 route replace unreachable default table ${toString table}
         ${ip} -6 rule add fwmark ${toString fwmark} table ${toString table}
         ${ip} -6 rule add fwmark ${toString fwmark} table main suppress_prefixlength 0
+        ${ip} -6 rule add fwmark ${toString fwmark} ipproto udp dport 53 table ${toString table}
+        ${ip} -6 rule add fwmark ${toString fwmark} ipproto tcp dport 53 table ${toString table}
       fi
     '';
 

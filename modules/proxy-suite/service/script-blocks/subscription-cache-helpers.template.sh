@@ -60,14 +60,55 @@ _proxy_suite_cache_tmp() {
   printf '%s' "$tmp"
 }
 
+# What a cache is fetched with, for <tag>.fingerprint: $1 the file holding the URL, then the
+# fetcher's flags (allowInsecure's and the like). Hashed: the URL itself can be a secret.
+_proxy_suite_subscription_fingerprint() {
+  local url sum
+  url=$(_proxy_suite_read_source "$1") || return 1
+  shift
+  sum=$({ printf '%s' "$url"; printf '\n%s' "$@"; } | @coreutils@/bin/sha256sum) || return 1
+  printf '%s\n' "${sum%% *}"
+}
+
+# $1 tag, $2 fingerprint. Replaced whole: another start script may be reading it.
+_proxy_suite_write_subscription_fingerprint() {
+  local stamp="$SUB_CACHE_DIR/$1.fingerprint" tmp
+  tmp=$(_proxy_suite_cache_tmp "$stamp") || return 1
+  if printf '%s\n' "$2" > "$tmp" && mv "$tmp" "$stamp"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# $1 tag, $2 file holding the subscription URL, then the fetcher's flags. A cache fetched with
+# another URL or other flags is some other subscription's, or one fetched as this one no
+# longer may be: dropped, so the start fetches it as a new one. One from before fingerprints
+# has none and is taken as it is.
+_proxy_suite_drop_stale_subscription_cache() {
+  local tag="$1" cache="$SUB_CACHE_DIR/$1.json" stamp="$SUB_CACHE_DIR/$1.fingerprint" sum
+  [ -f "$cache" ] || return 0
+  sum=$(_proxy_suite_subscription_fingerprint "${@:2}") || return 0
+  if [ ! -f "$stamp" ]; then
+    _proxy_suite_write_subscription_fingerprint "$tag" "$sum" || true
+    return 0
+  fi
+  [ "$(< "$stamp")" = "$sum" ] && return 0
+  rm -f "$cache" "$SUB_CACHE_DIR/$tag.links" "$stamp"
+  echo "proxy-suite: subscription '$tag' has a new URL or fetch settings; dropped its cache" >&2
+}
+
 # $1 tag, $2 file holding the subscription URL, then the fetcher's flags. Writes the cache
-# atomically, and <tag>.links for proxy-ctl to share. Through the tunnel; directly past the
-# kill switch only with no cache, which has no proxy to fetch through.
+# atomically, <tag>.links for proxy-ctl to share and <tag>.fingerprint. Through the tunnel;
+# directly past the kill switch only with no cache, which has no proxy to fetch through.
 _proxy_suite_fetch_subscription() {
-  local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" links="$SUB_CACHE_DIR/$1.links" cache_tmp links_tmp
+  local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" links="$SUB_CACHE_DIR/$1.links" cache_tmp links_tmp sum
   # What a fetch killed midway (a stop's timeout) left behind.
-  @findutils@/bin/find "$SUB_CACHE_DIR" -maxdepth 1 -type f \( -name "$tag.json.??????" -o -name "$tag.links.??????" \) \
+  @findutils@/bin/find "$SUB_CACHE_DIR" -maxdepth 1 -type f \
+    \( -name "$tag.json.??????" -o -name "$tag.links.??????" -o -name "$tag.fingerprint.??????" \) \
     -mmin +10 -delete 2>/dev/null || true
+  # Before the fetch: a URL changed while it runs is then a stale cache at the next start.
+  sum=$(_proxy_suite_subscription_fingerprint "$src" "${@:3}") || sum=
   cache_tmp=$(_proxy_suite_cache_tmp "$cache") || return 1
   links_tmp=$(_proxy_suite_cache_tmp "$links") || { rm -f "$cache_tmp"; return 1; }
   if _proxy_suite_run_fetcher tunnel "$tag" "$src" "$cache_tmp" "$links_tmp" "${@:3}" ||
@@ -76,6 +117,10 @@ _proxy_suite_fetch_subscription() {
       _proxy_suite_run_fetcher direct "$tag" "$src" "$cache_tmp" "$links_tmp" "${@:3}"; }; then
     if _proxy_suite_commit_subscription_cache "$cache_tmp" "$cache" "$tag"; then
       mv "$links_tmp" "$links"
+      # Also when the cache came out the same: the settings are what changed.
+      if [ -z "$sum" ] || ! _proxy_suite_write_subscription_fingerprint "$tag" "$sum"; then
+        rm -f "$SUB_CACHE_DIR/$tag.fingerprint"
+      fi
       return 0
     fi
     rm -f "$links_tmp"

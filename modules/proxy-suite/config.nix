@@ -123,6 +123,8 @@ let
           stateFile = "${derived.constants.inboundsManagerDir}/state.json";
           statsFile = derived.constants.inboundStatsFile;
           speedLimits = derived.proxyInboundsSpeedLimits;
+          # The levels XRay has a policy for (config-templates/proxy-inbounds.nix): 1..slots.
+          inherit (derived.proxyInboundsManagerCfg.speedLimits) slots;
         }
       else
         null;

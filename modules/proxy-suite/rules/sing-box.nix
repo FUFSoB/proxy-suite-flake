@@ -89,12 +89,20 @@ let
     outbound = onionOutbound;
   }
   # A client asking for 127.0.0.1:<hop> (mixed-in's local users) would have the daemon dial
-  # the loopback hops the nft guard keeps from them.
-  ++ lib.optional (hopPorts != [ ]) {
-    ip_cidr = proxyInboundsLoopback;
-    port = hopPorts;
-    action = "reject";
-  };
+  # the loopback hops the nft guard keeps from them; or for a name resolving there (lvh.me),
+  # sent direct. So a name on a hop's port is looked up first: it fails if that fails, and a
+  # proxy gets the address instead.
+  ++ lib.optionals (hopPorts != [ ]) [
+    {
+      port = hopPorts;
+      action = "resolve";
+    }
+    {
+      ip_cidr = proxyInboundsLoopback;
+      port = hopPorts;
+      action = "reject";
+    }
+  ];
 
   customRouteRules = map (rule: {
     category = customRuleCategory rule.outbound;

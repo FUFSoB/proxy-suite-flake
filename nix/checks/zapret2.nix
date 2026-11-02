@@ -2,6 +2,7 @@
   pkgs,
   evalProxySuite,
   baseModule,
+  mkRouting,
   mkRoutingRules,
   hasDirectDomain,
   mkProxyCtlDerived,
@@ -17,11 +18,14 @@ let
     zapretDiscordYoutubeGlobal
     zapret2Global
     zapret2PerApp
+    zapret2PerAppZ2k
     zapret2Tuned
     zapret2NoAuto
     zapret2Z2k
     zapret2Z2kTuned
     zapret2NoFallback
+    zapret2Xray
+    zapret2OwnProfiles
     ;
 
   envValue =
@@ -43,6 +47,7 @@ let
   globalRuntime = runtimeDir zapret2Global globalService;
   perAppGlobalRuntime = runtimeDir zapret2PerApp globalService;
   perAppRuntime = runtimeDir zapret2PerApp perAppService;
+  perAppZ2kRuntime = runtimeDir zapret2PerAppZ2k perAppService;
   tunedRuntime = runtimeDir zapret2Tuned globalService;
   noAutoRuntime = runtimeDir zapret2NoAuto globalService;
   z2kRuntime = runtimeDir zapret2Z2k globalService;
@@ -113,6 +118,21 @@ in
       true
     )
 
+    # The per-app instance takes every site its apps name: what fails among them says
+    # nothing of what the rest of the system should proxy, so it writes no verdicts.
+    (
+      let
+        verdictsIn =
+          fixture: service:
+          builtins.any (lib.hasPrefix "PROXY_SUITE_ZAPRET2_VERDICTS=")
+            fixture.config.systemd.services.${service}.serviceConfig.Environment;
+      in
+      assert verdictsIn zapret2PerApp globalService;
+      assert !(verdictsIn zapret2PerApp perAppService);
+      assert !(verdictsIn zapret2PerAppZ2k perAppService);
+      true
+    )
+
     # nfqws2 is the unit's supervised main process: if it dies, systemd sees it and
     # restarts it, instead of a oneshot staying active while the queue bypasses it.
     (
@@ -132,6 +152,23 @@ in
         lib.hasPrefix "-+" gc.ExecStartPost
         && lib.hasSuffix "-proxy-suite-zapret2-liberal" gc.ExecStartPost;
       assert lib.hasSuffix "-proxy-suite-zapret2-liberal" (lib.last gc.ExecStopPost);
+      true
+    )
+
+    # A firewall reload (a switch's) that flushed the ruleset took the instances' tables:
+    # their reload follows the firewall's and rebuilds a table only once it is gone (a
+    # rebuild re-queues the traffic), the per-app mark table first; then the HUP.
+    (
+      let
+        gu = zapret2PerApp.config.systemd.services.${globalService};
+        pu = zapret2PerApp.config.systemd.services.${perAppService};
+      in
+      assert builtins.elem "nftables.service" gu.after && builtins.elem "nftables.service" pu.after;
+      assert gu.unitConfig.ReloadPropagatedFrom == [ "nftables.service" ];
+      assert pu.unitConfig.ReloadPropagatedFrom == [ "nftables.service" ];
+      assert builtins.length gu.serviceConfig.ExecReload == 2;
+      assert builtins.length pu.serviceConfig.ExecReload == 3;
+      assert lib.hasSuffix "-HUP $MAINPID" (lib.last pu.serviceConfig.ExecReload);
       true
     )
 
@@ -157,6 +194,32 @@ in
       assert hasDirectDomain rules "pinned.example";
       assert !(hasDirectDomain rules "excluded.example");
       assert !(hasDirectDomain (mkRoutingRules zapretDiscordYoutubeGlobal) "pinned.example");
+      # zapret-discord-youtube's lists are its own. zapret2's source's sites (YouTube...)
+      # reach sing-box in the runtime rule-set, after what zapret2 cannot fix: a static
+      # direct rule would come first and keep them off the proxy.
+      assert hasDirectDomain (mkRoutingRules zapretDiscordYoutubeGlobal) "googlevideo.com";
+      assert !(hasDirectDomain rules "googlevideo.com");
+      # XRay and the inbounds have no runtime rule-sets: there they are static.
+      assert builtins.elem "googlevideo.com" (mkRouting zapret2Xray).direct.domains;
+      assert builtins.elem "googlevideo.com" (mkRouting zapret2Global).zapretDirectRules.domains;
+      assert builtins.elem "discord.com" (mkRouting zapret2Global).zapretDirectRules.domains;
+      true
+    )
+
+    # Which sites: the source's own lists, z2k's without its full RKN list; none for your
+    # own profiles, which use none of them.
+    (
+      let
+        # The inbounds take them as they are; the sync script bakes in the same list.
+        sites = fixture: (mkRouting fixture).zapretDirectRules.domains;
+        z2kSites = sites zapret2Z2k;
+      in
+      assert builtins.elem "googlevideo.com" (sites zapret2Global);
+      assert builtins.elem "discord.com" (sites zapret2Global);
+      assert builtins.elem "googlevideo.com" z2kSites;
+      assert builtins.elem "discord.com" z2kSites;
+      assert builtins.length z2kSites < 1000;
+      assert !(builtins.elem "googlevideo.com" (sites zapret2OwnProfiles));
       true
     )
 
@@ -303,9 +366,12 @@ in
         # proxy routes by: works, unfixable, blocked by address.
         mkdir -p detect
         touch detect/verdicts.tsv
-        PSL=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-public-suffix-hostkey\.lua' "${z2kRuntime}/config") \
-          DETECT=$(grep -oE '/nix/store/[^ ]+-detect\.lua' "${z2kRuntime}/config") WORK="$PWD/detect" \
+        psl=$(grep -oE '/nix/store/[^ ]+-proxy-suite-zapret2-public-suffix-hostkey\.lua' "${z2kRuntime}/config")
+        detect=$(grep -oE '/nix/store/[^ ]+-detect\.lua' "${z2kRuntime}/config")
+        PSL=$psl DETECT=$detect WORK="$PWD/detect" \
           PROXY_SUITE_ZAPRET2_VERDICTS="$PWD/detect/verdicts.tsv" lua ${./zapret2/detect-test.lua}
+        # As the per-app instance runs it: no verdicts file.
+        PSL=$psl DETECT=$detect WORK="$PWD/detect" lua ${./zapret2/detect-test.lua}
         # nfqws2 finds the verdicts file by its environment; the last profile watches
         # connections for addresses blocked outright.
         grep -qF '"PROXY_SUITE_ZAPRET2_VERDICTS=/var/lib/proxy-suite/zapret2/verdicts.tsv"' \
@@ -394,7 +460,7 @@ in
         # detect.lua's in its place by default: same ports, the same auto list and excludes,
         # and the server's packets past the 16 KB cutoff.
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 0
-        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=/var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt:exclude=[^ ]+/lists/whitelist.txt,/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt:fails=3:time=300:inseq=4096:retrans=3:win=32:log --new --filter-tcp=\* " "${z2kRuntime}/config"
+        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=/var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt:exclude=[^ ]+/lists/whitelist.txt,/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt:fails=3:time=300:inseq=4096:retrans=3:win=32:reset:log --new --filter-tcp=\* " "${z2kRuntime}/config"
         grep -qx 'NFQWS2_TCP_PKT_IN=32' "${z2kRuntime}/config"
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
 
@@ -470,6 +536,11 @@ in
         grep -qF 'tag: "zapret-hosts"' ${socksStart zapret2Global}
         grep -qF 'all-proxy | all-bypass) ;;' ${socksStart zapret2Global}
         if grep -qF 'zapret-hosts' ${socksStart zapretDiscordYoutubeGlobal}; then exit 1; fi
+        # zapret2 queues IPv4 alone by default: its hosts are looked up for IPv4, and a flow
+        # already on IPv6 takes the proxy, ahead of their direct rule.
+        grep -qF 'action: "resolve", strategy: "ipv4_only"' ${socksStart zapret2Global}
+        test "$(grep -n 'ip_version: 6, outbound: "proxy"' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \
+          "$(grep -n 'rule_set: \["zapret-hosts"\], outbound: "direct"' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)"
         # What zapret2 cannot fix goes to the proxy, ahead of what it does.
         grep -qF 'tag: "zapret-unfixable"' ${socksStart zapret2Global}
         test "$(grep -n 'zapret-unfixable' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \
@@ -495,7 +566,21 @@ in
           'www.example.com IN CNAME edge.cdn.example.net.' 'edge.cdn.example.net IN A 149.154.167.99' \
           'Other.Example IN A 149.154.167.99' 'gone.example IN A 198.51.100.1' >dns-cache
         ${directSync} direct-lists out dns-cache
-        test "$(cat out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["203.0.113.7/32"]}]}'
+        # The source's sites (YouTube, Discord...) come along from the start; own() leaves
+        # them out to compare the rest.
+        sites=$(sed -n 's/^sites=//p' ${directSync})
+        own() {
+          jq -c --rawfile s "$sites" '($s | split("\n") | map(select(. != ""))) as $s
+            | .rules |= map(if .domain_suffix then .domain_suffix -= $s else . end
+              | select((.domain_suffix // [0]) | length > 0))' "$1"
+        }
+        jq -e '.rules[0].domain_suffix | index("googlevideo.com") and index("discord.com")' out/direct.json >/dev/null
+        test "$(own out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["203.0.113.7/32"]}]}'
+        # Excluded at runtime, a source's site is left to the proxy too.
+        mkdir -p site-excluded site-excluded-out
+        printf 'googlevideo.com\n' >site-excluded/zapret-hosts-user-exclude.txt
+        ${directSync} site-excluded site-excluded-out
+        jq -e '.rules[0].domain_suffix | index("googlevideo.com") == null and index("discord.com") != null' site-excluded-out/direct.json >/dev/null
         # A site's TCP, or only its QUIC; addresses blocked outright.
         test "$(cat out/proxy.json)" = '{"version":1,"rules":[{"domain_suffix":["chat.example"]},{"network":["udp"],"port":[443],"domain_suffix":["discord.com"]},{"ip_cidr":["149.154.167.99/32"]}]}'
         # A blocked address by the names asked for, a CNAME followed back; looked up once.
@@ -509,9 +594,9 @@ in
         # Learning off: nfqws2 ignores what was learned, so the proxy does too.
         mkdir no-auto-out
         ${noAutoDirectSync} direct-lists no-auto-out dns-cache
-        test "$(cat no-auto-out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["pinned.example"]}]}'
+        test "$(own no-auto-out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["pinned.example"]}]}'
         ${directSync} empty-lists empty-out
-        test "$(cat empty-out/direct.json)" = '{"version":1,"rules":[]}'
+        test "$(own empty-out/direct.json)" = '{"version":1,"rules":[]}'
         test "$(cat empty-out/proxy.json)" = '{"version":1,"rules":[]}'
 
         # --- per-app instance -------------------------------------------------
@@ -522,16 +607,66 @@ in
         grep -qx 'DESYNC_MARK=0x8000000' "${perAppRuntime}/config"
         grep -qx 'DESYNC_MARK_POSTNAT=0x4000000' "${perAppRuntime}/config"
         grep -qx 'ZAPRET_NFT_TABLE=proxy_suite_per_app_zapret' "${perAppRuntime}/config"
+        # A reload rebuilds an instance's firewall only once a flush took its table, which it
+        # reads from the config, and the per-app mark table only once that went too.
+        fw_reload=${
+          builtins.head zapret2Global.config.systemd.services.${globalService}.serviceConfig.ExecReload
+        }
+        grep -qF 'list table inet "$table" >/dev/null 2>&1; then' "$fw_reload"
+        grep -qF '/init.d/sysv/zapret2 restart_fw' "$fw_reload"
+        test "$(sed -n 's/^ZAPRET_NFT_TABLE=//p' "${perAppRuntime}/config")" = proxy_suite_per_app_zapret
+        test "$(sed -n 's/^ZAPRET_NFT_TABLE=//p' "${globalRuntime}/config")" = zapret2
+        mark_reload=${
+          builtins.head zapret2PerApp.config.systemd.services.${perAppService}.serviceConfig.ExecReload
+        }
+        grep -qF 'list table inet proxy_suite_per_app_zapret_mark >/dev/null 2>&1; then' "$mark_reload"
+
+        # Every site the apps name, less the excludes (the source's, the user's and
+        # excludeDomains): no list of sites to take, not the source's, the pinned or the
+        # learned ones, and nothing learned or watched for the proxy.
+        for config in ${perAppRuntime}/config ${perAppZ2kRuntime}/config; do
+          if grep -qE -- '--hostlist-domains=|/user\.list|/RKN/List\.txt|TCP_Discord\.txt|/UDP/YT/List\.txt' "$config"; then exit 1; fi
+          if grep -qE -- 'ps_learn|ps_watch|ps_syn' "$config"; then exit 1; fi
+          grep -qx 'NFQWS2_TCP_PKT_IN=15' "$config"
+        done
+        # nfqws2-keenetic: its MODE_ALL, every list an exclude.
+        if grep -qF -- '--hostlist=' "${perAppRuntime}/config"; then exit 1; fi
+        for marker in '<HOSTLIST_NOAUTO>' '<HOSTLIST>'; do
+          grep -qE -- "$marker --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --hostlist-exclude=[^ ]+/etc/nfqws2/lists/exclude.list( |')" "${perAppRuntime}/config"
+        done
+        # z2k: rkn_tcp keeps YouTube's lists as excludes, for yt_tcp/gv_tcp below it, which
+        # keep them as their own; QUIC and HTTP keep none.
+        test "$(grep -oE -- '--hostlist=[^ ]+' "${perAppZ2kRuntime}/config" | sed 's|.*/extra_strats/||')" = "$(printf 'TCP/YT/List.txt\nTCP/YT_GV/List.txt')"
+        grep -qE -- "/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --filter-tcp=[^ ]+ --filter-l7=tls --(in-range|out-range|payload|lua-desync)=" "${perAppZ2kRuntime}/config"
+        grep -qF -- '/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --filter-udp=443 --filter-l7=quic ' "${perAppZ2kRuntime}/config"
+        grep -qE -- " --new --filter-tcp=80 --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --(in-range|out-range|payload|lua-desync)=" "${perAppZ2kRuntime}/config"
+        if grep -qF -- '<HOSTLIST' "${perAppZ2kRuntime}/config"; then exit 1; fi
+        jq -e 'keys == ["discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${perAppZ2kRuntime}/strategies.json"
+        # The global instance keeps them all.
+        grep -qE -- '<HOSTLIST_NOAUTO> --hostlist-domains=pinned.example --hostlist-exclude-domains=excluded.example --hostlist=[^ ]+/etc/nfqws2/lists/user.list --hostlist-exclude=[^ ]+/etc/nfqws2/lists/exclude.list' "${perAppGlobalRuntime}/config"
+        grep -qF -- '--lua-desync=ps_learn:' "${perAppGlobalRuntime}/config"
+        grep -qF -- '--lua-desync=ps_watch:' "${perAppGlobalRuntime}/config"
+        grep -qF -- '--lua-desync=ps_syn:' "${perAppGlobalRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${perAppGlobalRuntime}/config"
 
         # The global instance must keep its hands off per-app traffic.
         hook="${perAppGlobalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh"
         test "$(grep -c 'mark and 0x10000000 != 0 return' "$hook")" = 4
         grep -q 'nft insert rule inet $ZAPRET_NFT_TABLE prenat mark and 0x10000000 != 0 return' "$hook"
 
+        # cidrExemption: a NATed VM's connections, matched by conntrack's original
+        # direction, from the subnet and to it, in each of the four chains.
+        hook="${tunedRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh"
+        for match in 'ip saddr 192.168.123.0/24' 'ip daddr 192.168.123.0/24' 'ip6 saddr fd00:123::/64' 'ip6 daddr fd00:123::/64'; do
+          test "$(grep -c "nft insert rule inet \$ZAPRET_NFT_TABLE [a-z]* ct original $match return comment" "$hook")" = 4
+        done
+        # And no other: four chains, two subnets, two sides.
+        test "$(grep -cF 'CIDR exemption' "$hook")" = 16
+
         # --- store paths ------------------------------------------------------
         # Every path a config names is a build input. One that lost its string context
         # is missing from the closure, and from this sandbox under lazy trees.
-        for config in ${globalRuntime}/config ${perAppRuntime}/config ${z2kRuntime}/config; do
+        for config in ${globalRuntime}/config ${perAppRuntime}/config ${z2kRuntime}/config ${perAppZ2kRuntime}/config; do
           for path in $(grep -oE '/nix/store/[a-z0-9]{32}-[^ :"/]+' "$config" | sort -u); do
             test -e "$path" || { echo "$config names $path, which is not in the sandbox" >&2; exit 1; }
           done
@@ -582,6 +717,13 @@ in
         head -n1 daemon.args | grep -qx -- '--user=root'
         # dry_run moved the state files into the sandbox, detect.lua's arguments with them.
         tail -n +6 daemon.args | sed "s|/var/lib/proxy-suite/zapret2/|$HOSTLIST_BASE/|g" | diff - global.args
+
+        # Exclude-only profiles: nfqws2 takes them, and the markers expand to nothing.
+        dry_run ${perAppRuntime} per-app.args >/dev/null
+        test "$(grep -c -- '^--hostlist=' per-app.args)" = 0
+        test "$(grep -cx -- "--hostlist-exclude=$HOSTLIST_BASE/zapret-hosts-user-exclude.txt" per-app.args)" = 2
+        dry_run ${perAppZ2kRuntime} per-app-z2k.args >/dev/null
+        test "$(grep -c -- '^--hostlist=' per-app-z2k.args)" = 2
 
         dry_run ${z2kRuntime} z2k.args
         # The learner is the last profile: nothing after it, and nfqws2's own autohostlist off.

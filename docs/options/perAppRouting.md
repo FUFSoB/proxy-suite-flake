@@ -268,7 +268,10 @@ and again for per-app TUN; at most 16\. Apps via the same outbound share one\. A
 <a id="services-proxy-suite-perapprouting-zapret-enable"></a>
 ## services\.proxy-suite\.perAppRouting\.zapret\.enable
 
-Whether to enable per-app zapret, a separate zapret for wrapped apps only\.
+A separate zapret for wrapped apps only (` proxy-ctl apps run zapret `)\. With zapret2 it
+takes every site they name, less the excludes (the strategy source’s own,
+` zapret2.excludeDomains `, ` proxy-ctl zapret auto exclude `); it learns nothing and
+sends nothing to the proxy\.
 
 **Type:** boolean\
 **Default:** `false`

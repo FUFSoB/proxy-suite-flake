@@ -20,6 +20,14 @@ let
       }
     ];
   mkZapret2 = mkZapret2With { };
+  perApp.perAppRouting = {
+    enable = true;
+    zapret.enable = true;
+  };
+  siteFilters = {
+    domains = [ "pinned.example" ];
+    excludeDomains = [ "excluded.example" ];
+  };
 in
 {
   zapretDiscordYoutubeGlobal = evalProxySuite [
@@ -29,24 +37,28 @@ in
 
   zapret2Global = mkZapret2 { enable = true; };
 
-  zapret2PerApp = evalProxySuite [
-    baseModule
-    {
-      services.proxy-suite = {
-        perAppRouting = {
-          enable = true;
-          zapret.enable = true;
-        };
-        zapret = {
-          engine = "zapret2";
-          enable = true;
-        };
-      };
-    }
-  ];
+  # The site filters: the per-app instance keeps the excludes alone.
+  zapret2PerApp = mkZapret2With perApp {
+    enable = true;
+    zapret2 = siteFilters;
+  };
+
+  zapret2PerAppZ2k = mkZapret2With perApp {
+    enable = true;
+    zapret2 = siteFilters // {
+      strategySource = "z2k";
+    };
+  };
 
   zapret2Tuned = mkZapret2With { debug.zapret2.autoHostlist = true; } {
     enable = true;
+    cidrExemption = {
+      enable = true;
+      cidrs = [
+        "192.168.123.0/24"
+        "fd00:123::/64"
+      ];
+    };
     zapret2 = {
       domains = [ "pinned.example" ];
       excludeDomains = [ "excluded.example" ];
@@ -91,5 +103,26 @@ in
   zapret2NoFallback = mkZapret2 {
     enable = true;
     zapret2.cutoff.proxyFallback = false;
+  };
+
+  zapret2Xray = evalProxySuite [
+    baseModule
+    (
+      { lib, ... }:
+      {
+        services.proxy-suite = {
+          proxy.backend = lib.mkForce "xray";
+          zapret = {
+            engine = "zapret2";
+            enable = true;
+          };
+        };
+      }
+    )
+  ];
+
+  zapret2OwnProfiles = mkZapret2 {
+    enable = true;
+    zapret2.profiles = [ "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --lua-desync=multisplit" ];
   };
 }

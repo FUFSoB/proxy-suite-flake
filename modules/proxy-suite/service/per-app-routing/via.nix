@@ -316,6 +316,9 @@ let
         ${userRules.mkHoldBodies {
           marks = [
             "$mark"
+            # The interface's FwMark (mkHoldBodies). An app that puts it on a socket itself
+            # leaves past the hold: SO_MARK takes CAP_NET_ADMIN, or CAP_NET_RAW from Linux 5.17,
+            # in the host's user namespace (a setcap binary; a user namespace's do not count).
             (toString cfg.proxy.tproxy.proxyMark)
           ];
           allow = [
@@ -484,13 +487,18 @@ let
             ''
           else
             ''
-              # No IPv6 in the TUN: unreachable, so the app falls back to IPv4.
-              ${ip} -6 route replace unreachable default table "$table"
+              # No IPv6 in the TUN: unreachable, so the app falls back to IPv4. Not where the
+              # kernel has no IPv6 at all.
+              if [ -e /proc/net/if_inet6 ]; then
+                ${ip} -6 route replace unreachable default table "$table"
+              fi
             ''
         }
         for family in -4 -6; do
           while ${ip} "$family" rule del pref ${toString constants.perAppPinRulePriority} fwmark "$mark" 2>/dev/null; do :; done
-          ${ip} "$family" rule add pref ${toString constants.perAppPinRulePriority} fwmark "$mark" table "$table"
+          # IPv6 may be off.
+          ${ip} "$family" rule add pref ${toString constants.perAppPinRulePriority} fwmark "$mark" table "$table" \
+            || [[ $family == -6 ]]
         done
       '';
       routingDown = ''
@@ -628,7 +636,8 @@ let
         ${r.routingDown}
         ${pkgs.coreutils}/bin/rm -f "${pinDir}/${route}-$slot"
       }
-      trap release ERR
+      # release turns errexit off for good: the trap has to end the start itself.
+      trap 'release; exit 1' ERR
       files=(${lib.concatMapStringsSep " " toString r.nftFiles})
       ${nft} delete table inet "$nft_table" 2>/dev/null || true
       # The route first, then the marking: a packet marked before its route is in would

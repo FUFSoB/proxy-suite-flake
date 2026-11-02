@@ -3,9 +3,11 @@
 import contextlib
 import datetime
 import fcntl
+import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -497,12 +499,21 @@ class GroupWatchTest(EnvTest):
     def test_hint_files(self):
         health = self.path("proxy-suite-outbound-groups/health")
         os.makedirs(health)
+        open(os.path.join(health, "old"), "w").close()
+        self.watch.hints()  # run()'s first look: what is there already is no news
         self.assertEqual(self.watch.hints(), [])
+        # A watchdog's first miss makes the file: news at once, not at the next test.
         open(os.path.join(health, "warp-1"), "w").close()
-        self.assertEqual(self.watch.hints(), [])  # first sight: there already
+        self.assertEqual(self.watch.hints(), ["warp-1"])
+        self.assertEqual(self.watch.hints(), [])
         os.utime(os.path.join(health, "warp-1"), (5, 5))
         self.assertEqual(self.watch.hints(), ["warp-1"])
         self.assertEqual(self.watch.hints(), [])
+        # Gone and made again is news again.
+        os.unlink(os.path.join(health, "warp-1"))
+        self.assertEqual(self.watch.hints(), [])
+        open(os.path.join(health, "warp-1"), "w").close()
+        self.assertEqual(self.watch.hints(), ["warp-1"])
 
     def test_group_files_and_priority(self):
         os.environ["RUNTIME_OUTBOUNDS_DIR"] = self.path("obd")
@@ -799,6 +810,43 @@ class ServiceManagerTest(EnvTest):
         seen = self.calls()
         ctl._start_pin_unit("my-vps")
         self.assertEqual(seen, [["systemctl", "start", "proxy-suite-outbound-pin@my\\x2dvps.service"]])
+
+    def test_pin_unit_names_fit(self):
+        """systemd takes 255 characters for a unit name, and a Cyrillic letter escapes to 8: a
+        longer name goes as its start, "~" and 12 hex digits of its SHA-256, group and member apart."""
+        seen = self.calls()
+
+        def instance(name):
+            """What the pin script gets as %I."""
+            seen.clear()
+            ctl._start_pin_unit(name)
+            unit = seen[0][2]
+            self.assertLessEqual(len(unit), 255)
+            self.assertTrue(unit.startswith("proxy-suite-outbound-pin@") and unit.endswith(".service"), unit)
+            raw = unit[len("proxy-suite-outbound-pin@") : -len(".service")].replace("-", "/").encode()
+            return re.sub(rb"\\x([0-9a-f]{2})", lambda m: bytes([int(m.group(1), 16)]), raw).decode()
+
+        def shortened(name, got):
+            head, _, digest = got.rpartition("~")
+            self.assertEqual(digest, hashlib.sha256(name.encode()).hexdigest()[:12])
+            self.assertTrue(head and name.startswith(head), got)
+
+        tag = "provider-🇩🇪 Германия, Франкфурт-на-Майне (резервный сервер)"
+        self.assertGreater(len(ctl.unit_escape(tag)), 255)
+        got = instance(tag)
+        shortened(tag, got)
+        self.assertEqual(instance(tag), got)  # the same every time: the script finds it again
+        self.assertEqual(instance("Германия"), "Германия")  # what fits goes as it is
+        # In a group: the "/" stays for the script to split on, a short group as it is.
+        group, _, member = instance(f"warp/{tag}").partition("/")
+        self.assertEqual(group, "warp")
+        shortened(tag, member)
+        group, _, member = instance(f"{tag}/{tag} 2").partition("/")
+        shortened(tag, group)
+        shortened(f"{tag} 2", member)
+        group, _, member = instance(f"{tag}/").partition("/")  # unpin --in
+        shortened(tag, group)
+        self.assertEqual(member, "")
 
     def test_logs(self):
         ran = []
@@ -1168,6 +1216,7 @@ class RuntimeSpoolTest(EnvTest):
         os.makedirs(self.path("outbounds.d"))
         os.makedirs(self.path("subscriptions.d"))
         self.declared, self.pinned, self.started = ["primary", "vless-example"], "", []
+        self.running = True
         self.backend_start()
         self.patch("systemctl", self.systemctl)
 
@@ -1183,6 +1232,9 @@ class RuntimeSpoolTest(EnvTest):
             self.write(f"subscriptions/{tag}.json", {"outbounds": []})
 
     def systemctl(self, *args, **kw):
+        # A question, not something done: the proxy runs unless a test stops it.
+        if args[:2] == ("is-active", "--quiet"):
+            return (0 if self.running and args[2] == "proxy-suite-socks" else 3), ""
         self.started.append(args[1] if args[:1] == ("start",) else args)
         if args[1:] == ("proxy-suite-outbound-reload.service",) and os.path.exists(self.path(f"outbounds.d/{self.pinned}.disabled")):
             self.pinned = ""
@@ -1206,6 +1258,12 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         self.assertEqual(tag("subscription", "https://panel.work.test/s#" + "x" * 40), "x" * 32)
         self.write("outbounds.d/DE-1.url", "vless://u@de1.example.net:443\n")
         self.assertEqual(tag("outbound", "vless://u@x:1#DE-1"), "DE-1-2")
+        # Groups share the outbounds' names: one added since the backend started, and its own.
+        self.write("outbounds.d/DE-1-2.group", "{}")
+        self.assertEqual(tag("outbound", "vless://u@x:1#DE-1"), "DE-1-3")
+        self.write("outbounds.json", {"tags": self.declared, "groups": {"pool": {}}})
+        self.assertEqual(tag("outbound", "vless://u@x:1#pool"), "pool-2")
+        self.assertIn("Tag: pool-2", ok(ctl.cmd_outbounds, "add", "vless://u@x.test:443#pool"))
 
     def test_add_forms(self):
         # A URL alone: the tag comes from it.
@@ -1262,6 +1320,16 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         self.assertIn("Added subscription: work (2 proxies)", ok(ctl.cmd_subscription, "add", "work", "https://sub.work.test/s"))
         self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  work +unknown +2 +runtime$")
         self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  provider +\(no cache\) +- +static$")
+
+    def test_add_while_the_proxy_is_stopped(self):
+        """The reload restarts only a running proxy, and a stopped one writes no inventory:
+        saved for when it starts, not failed."""
+        self.running = False
+        self.backend_start = lambda: None
+        out = ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
+        self.assertIn("Saved outbound: de. The proxy is not running", out)
+        self.assertTrue(os.path.exists(self.path("outbounds.d/de.url")))
+        self.assertIn("Saved subscription: work.", ok(ctl.cmd_subscription, "add", "work", "https://sub.work.test/s"))
 
     def test_add_from_stdin(self):
         # "-": the link on stdin, so its credentials stay out of argv (ps, pkexec's log).
@@ -1392,6 +1460,13 @@ class RuntimeEntryTest(RuntimeSpoolTest):
                 status, _, err = run(ctl.cmd_outbounds, *args)
                 self.assertNotEqual(status, 0)
                 self.assertIn(message, err)
+        # An AmneziaWG "interface" outbound: copied without its interface, plain direct through the hop.
+        for ob in ({"type": "direct", "bind_interface": "awg-ob0"}, {"protocol": "freedom", "streamSettings": {"sockopt": {"interface": "awg-ob0"}}}):
+            with self.subTest(ob=ob):
+                self.share({"primary": {"outbound": ob}})
+                status, _, err = run(ctl.cmd_outbounds, "chain", "primary", "vless-example")
+                self.assertNotEqual(status, 0)
+                self.assertIn("goes out through an interface of this host", err)
         self.assertEqual(os.listdir(self.path("outbounds.d")), [])
 
     def test_rm_takes_the_marker_along(self):
@@ -1399,6 +1474,28 @@ class RuntimeEntryTest(RuntimeSpoolTest):
         ok(ctl.cmd_outbounds, "disable", "de")
         ok(ctl.cmd_outbounds, "rm", "de")
         self.assertEqual(os.listdir(self.path("outbounds.d")), [".entries.lock"])
+
+    def test_priority_json_is_no_runtime_outbound(self):
+        """priority.json shares the outbound spool: no tag, nothing rm or completion offers."""
+        ok(ctl.cmd_priority, "primary", "5")
+        ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
+        self.assertEqual(ctl._runtime_tags("outbound"), ["de"])
+        self.assertEqual(list(ctl._complete_tree("proxy", "outbounds", "rm")), ["de"])
+        status, _, err = run(ctl.cmd_outbounds, "rm", "priority")
+        self.assertNotEqual(status, 0)
+        self.assertIn("proxy priority", err)
+        self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/priority.json"))), {"primary": 5})
+        # Nor can an add take the name, given or made up.
+        self.assertIn("reserved", run(ctl.cmd_outbounds, "add", "priority", "vless://u@p.test:443")[2])
+        self.assertEqual(ctl._runtime_tag_for("outbound", "vless://u@p.test:443#priority"), "priority-2")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/priority.url")))
+
+    def test_pin_takes_a_group(self):
+        """A group at the top level is pinned like an outbound: offered, and passed on as it is."""
+        self.write("outbounds.json", {"tags": self.declared, "top": ["pool"], "groups": {"pool": {"members": self.declared}}, "disabled": []})
+        self.assertIn("pool", ctl._complete_tree("proxy", "pin"))
+        self.assertIn("Pinned: pool", ok(ctl.cmd_pin, "pool"))
+        self.assertEqual(self.started, ["proxy-suite-outbound-pin@pool.service"])
 
     def test_priority_and_group_edits_are_locked(self):
         """Read to write under .<name>.lock: the GUI and a terminal at once would drop one's change."""
@@ -1498,7 +1595,7 @@ class AmneziaWgRuntimeTest(RuntimeSpoolTest):
             AWG_TUNNEL_BASE_PORT="18800",
             AWG_TUNNEL_SLOTS="2",
         )
-        self.active = set()
+        self.active = {"proxy-suite-socks"}
         self.patch("svc_active", lambda unit: unit in self.active)
         self.patch("svc_state", lambda unit: "active" if unit in self.active else "inactive")
         self.patch("svc_exists", lambda unit: True)
@@ -1682,6 +1779,22 @@ class ZapretAutoTest(EnvTest):
         ok(ctl.cmd_zapret_auto, "retry", "149.154.167.99")
         self.assertNotIn("149.154.167.99", [name for name, _ in ctl._zapret_proxied()])
         self.assertTrue(ctl.read_text(verdicts).endswith("\n"))
+        # The restart is the "services" scope's: refused (a member with "zapret" alone), the
+        # retry still stands, and says what it waits for.
+        calls, restart_status = [], [0]
+        self.patch("svc_active", lambda unit: unit == "proxy-suite-zapret")
+        self.patch("systemctl", lambda *args, **kw: calls.append(args) or (restart_status[0], ""))
+        restart_status[0] = 1
+        status, out, err = run(ctl.cmd_zapret_auto, "retry", "198.51.100.4")
+        self.assertEqual(status, 1)
+        self.assertEqual(calls, [("--no-ask-password", "restart", "proxy-suite-zapret.service")])
+        self.assertIn("zapret2 tries 198.51.100.4 again", out)
+        self.assertIn("proxy-ctl zapret restart", err)
+        self.assertNotIn("198.51.100.4", [name for name, _ in ctl._zapret_proxied()])
+        restart_status[0] = 0
+        status, out, err = run(ctl.cmd_zapret_auto, "retry", "discord.com")
+        self.assertEqual((status, err), (0, ""))
+        self.assertIn("zapret2 tries discord.com again", out)
         self.assertIn("sends nothing", run(ctl.cmd_zapret_auto, "retry", "nothing.example")[2])
         # forget drops its verdicts with it: zapret2 judges it afresh.
         ok(ctl.cmd_zapret_auto, "forget", "chat.example")
@@ -1752,6 +1865,21 @@ class ZapretAutoTest(EnvTest):
         ctl._zapret_strategy_drop("a.example")
         self.assertEqual(ctl.read_text(state), "rkn_tcp\tb.example\t2\t1\tauto\t\n")
         self.assertFalse(os.path.exists(lock))
+
+    def test_strategy_drop_takes_the_address_family_rows_too(self):
+        """A host in state.tsv may carry |4 or |6: forget and exclude drop those rows as well."""
+        os.environ.update(ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.dir)
+        state = self.write(
+            "circular/state.tsv",
+            "# key\thost\n"
+            "rkn_tcp\ta.example|4\t3\t1\tauto\t\n"
+            "rkn_tcp\ta.example|6\t2\t1\tauto\t\n"
+            "rkn_quic\ta.example\t1\t1\tauto\t\n"
+            "rkn_tcp\tb.example|4\t2\t1\tauto\t\n"
+            "rkn_tcp\tba.example|6\t2\t1\tauto\t\n",
+        )
+        ctl._zapret_strategy_drop("www.a.example")
+        self.assertEqual(ctl.read_text(state), "# key\thost\nrkn_tcp\tb.example|4\t2\t1\tauto\t\nrkn_tcp\tba.example|6\t2\t1\tauto\t\n")
 
 
 class InboundsTest(EnvTest):
@@ -1946,7 +2074,9 @@ class AppsRunTest(EnvTest):
             self.assertIn(f"--unit={base}-{route}-{os.getpid()}", scope)
             self.assertIn(f"--slice={base}", scope)
             self.assertEqual(scope[-2:], ("curl", "x"))
-            self.assertIn(("start", f"{base}-user@{os.getuid()}.service"), self.calls)
+            # Reloaded if up already: its rules may match a slice made anew since.
+            self.assertIn(("reload-or-restart", f"{base}-user@{os.getuid()}.service"), self.calls)
+            self.assertNotIn(("start", f"{base}-user@{os.getuid()}.service"), self.calls)
             # Nothing else runs in the slice, so this user's marking goes afterwards.
             self.assertIn(("stop", f"{base}-user@{os.getuid()}.service"), self.calls)
             self.assertIn(("--user", "stop", f"{base}-anchor.service"), self.calls)
@@ -1983,9 +2113,13 @@ class AppsRunTest(EnvTest):
             self.assertIn(f"--slice={base}", scope)
             self.assertEqual(scope[-2:], ("curl", "x"))
             self.assertIn(("--user", "start", f"proxy-suite-per-app-via-anchor@{key}.service"), self.calls)
-            # The via unit first: the marking goes in its table.
-            starts = [c[1] for c in self.calls if c[0] == "start"]
-            self.assertEqual(starts, [f"proxy-suite-per-app-via@{key}.service", f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
+            # The via unit first: the marking goes in its table. The via unit is every user's,
+            # only started; this user's marking is reloaded if up already.
+            units = [c[:2] for c in self.calls if c[0] in ("start", "reload-or-restart")]
+            self.assertEqual(
+                units,
+                [("start", f"proxy-suite-per-app-via@{key}.service"), ("reload-or-restart", f"proxy-suite-per-app-via-user@{uid}-{key}.service")],
+            )
             # Only this user's marking stops; the last one's takes the via unit down itself.
             stops = [c[1] for c in self.calls if c[0] == "stop"]
             self.assertEqual(stops, [f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
@@ -2018,7 +2152,7 @@ class AppsRunTest(EnvTest):
                 self.assertIn(f"--slice=proxy-suite-per-app-via-{key}", scope)
                 self.assertIn(f"--unit=proxy-suite-per-app-via-{key}-{label}-{os.getpid()}", scope)
                 self.assertIn(("start", f"proxy-suite-per-app-via-{route}@{hexed}.service"), self.calls)
-                self.assertIn(("start", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
+                self.assertIn(("reload-or-restart", f"proxy-suite-per-app-via-user@{uid}-{key}.service"), self.calls)
                 # The pin, and the per-app TUN backend it holds, go by themselves.
                 self.assertEqual([c[1] for c in self.calls if c[0] == "stop"], [f"proxy-suite-per-app-via-user@{uid}-{key}.service"])
         self.assertIn("Unknown outbound: fr", run(ctl.cmd_apps, "run", "--via", "fr", "--", "curl")[2])
@@ -2493,6 +2627,19 @@ class ShareTest(EnvTest):
         self.assertNotEqual(run(ctl.cmd_outbounds, "link", "vps", "--bogus")[0], 0)
         self.assertEqual(ok(ctl.cmd_subscription, "link", "community"), "https://sub.test/t\n")
 
+    def test_interface_outbound_is_not_shared(self):
+        """An AmneziaWG "interface" outbound without its interface is plain direct: refused,
+        as `--config` leaves it out."""
+        for ob in ({"type": "direct", "tag": "awg", "bind_interface": "awg-ob0"},
+                   {"protocol": "freedom", "tag": "awg", "streamSettings": {"sockopt": {"interface": "awg-ob0"}}}):
+            self.write("outbound-share.json", {"outbounds": {"awg": {"url": None, "outbound": ob}}})
+            for flags in (["--json"], ["--qr"], []):
+                with self.subTest(ob=ob, flags=flags):
+                    status, out, err = run(ctl.cmd_outbounds, "link", "awg", *flags)
+                    self.assertNotEqual(status, 0)
+                    self.assertEqual(out, "")
+                    self.assertIn("goes out through an interface of this host", err)
+
     def test_config(self):
         status, out, err = run(ctl.cmd_proxy, "config")
         self.assertEqual(status, 0, err)
@@ -2500,6 +2647,11 @@ class ShareTest(EnvTest):
         self.assertIn("left out warp", err)
         self.assertIn('"tag": "warp"', ok(ctl.cmd_proxy, "config", "--raw"))
         self.assertNotEqual(run(ctl.cmd_outbounds, "link", "nope", "--config")[0], 0)
+        # Nothing left to export: why each one stayed behind comes first.
+        status, out, err = run(ctl.cmd_outbounds, "link", "warp", "--config")
+        self.assertEqual((status, out), (1, ""))
+        self.assertEqual(err.splitlines(), ["warning: left out warp: this host reaches it through a local hop",
+                                            "Cannot export: no outbound here can be used from another device"])
 
     def test_inbound_json(self):
         self.assertEqual(json.loads(ok(ctl.cmd_inbounds, "link", "in", "--json")), {"type": "vless"})
@@ -2728,6 +2880,32 @@ class WhereTest(EnvTest):
             "inbound-zapret-direct-domain (full:youtube.com, listeners relay, ports 443)",
         )
 
+    def test_xray_host(self):
+        """On an XRay host the proxy's config is XRay's own: walked like the inbounds', not
+        taken for one that cannot be read."""
+        os.environ.update(OUTBOUND_INVENTORY_FILE=self.path("socks/outbounds.json"), ROUTE_MODE_STATE_FILE=self.path("no-mode"))
+        os.environ.pop("GEODATA_GEOSITE_DIR", None)
+        self.write("socks/config.json", {"routing": {"rules": [
+            {"type": "field", "inboundTag": ["tproxy-in"], "port": 53, "outboundTag": "dns-out", "ruleTag": "dns-hijack"},
+            {"type": "field", "domain": ["domain:bank.example"], "outboundTag": "direct", "ruleTag": "custom-direct-domain"},
+            {"type": "field", "domain": ["geosite:netflix"], "outboundTag": "direct", "ruleTag": "custom-direct-geosite"},
+            {"type": "field", "network": "tcp,udp", "balancerTag": "proxy", "ruleTag": "final-default"},
+        ]}})
+        self.patch("svc_exists", lambda unit: unit == "proxy-suite-socks")
+        self.patch("_status_outbound", lambda: "vps")
+        self.patch("_where_live", lambda domain: {})
+        out = ok(ctl.cmd_where, "www.bank.example")
+        self.assertIn("xray           direct - custom-direct-domain (domain:bank.example)", out)
+        self.assertTrue(out.endswith("  -> direct\n"), out)
+        # The final rule, through the balancer; a geosite rule above it may have taken the name.
+        out = ok(ctl.cmd_where, "example.org")
+        self.assertIn("xray           proxy -> vps - no rule matches, the final outbound; geosite:netflix not checked here", out)
+        self.assertTrue(out.endswith("  -> vps\n"), out)
+        self.assertNotIn("not readable", out)
+        # sing-box at hand, but no list of that name to stand in: as unchecked.
+        os.environ.update(GEODATA_GEOSITE_DIR=self.dir, SING_BOX=sys.executable)
+        self.assertIn("geosite:netflix not checked here", ok(ctl.cmd_where, "example.org"))
+
 
 class ConnectionLogTest(unittest.TestCase):
     """`debug conns`: opens, stalls and closes read off successive /connections looks."""
@@ -2869,10 +3047,16 @@ class RoutingRulesTest(EnvTest):
         self.assertEqual(m("10.1.2.3"), ("ips", "10.1.2.3/32"))
         self.assertEqual(m("10.1.2.3/8"), ("ips", "10.0.0.0/8"))
         self.assertEqual(m("2001:db8::1"), ("ips", "2001:db8::1/128"))
+        # A URL by its host: an address is one, an IPv6 one out of its brackets.
+        self.assertEqual(m("https://10.1.2.3/x"), ("ips", "10.1.2.3/32"))
+        self.assertEqual(m("https://u@[2001:DB8::1]:8443/x"), ("ips", "2001:db8::1/128"))
+        self.assertEqual(m("https://bank.example?x=1"), ("domains", "bank.example"))
         self.assertEqual(m("geosite:netflix"), ("geosites", "netflix"))
         self.assertEqual(m("geoip:ru"), ("geoips", "ru"))  # no geoip dir here: not checked
         self.assertEqual(m("ruleset:blocked"), ("ruleSets", "blocked"))
-        for bad in ("geosite:nope", "geosite:../x", "ruleset:other", "a b", "$(id)", "x/y"):
+        # A zone is this host's interface: routing-render.jq would leave the address out.
+        for bad in ("geosite:nope", "geosite:../x", "ruleset:other", "a b", "$(id)", "x/y",
+                    "fe80::1%eth0", "fe80::1%eth0/64", "https://[fe80::1%25eth0]/", "https://[::1/"):
             with self.subTest(bad=bad):
                 self.assertEqual(run(ctl._rule_match, bad)[0], 1)
 
@@ -2917,6 +3101,39 @@ class RoutingRulesTest(EnvTest):
         self.assertEqual(run(ctl.cmd_rules, "rm", "nope")[0], 1)
         ok(ctl.cmd_rules, "rm", "direct")
         self.assertEqual(self.rules(), {})
+
+    def test_rules_past_what_root_reads_are_not_saved(self):
+        """Root reads RULES_MAX_BYTES of the spool and none of a longer one: the edit that would
+        pass it is refused, and the rules stay as they were."""
+        ok(ctl.cmd_rules, "add", "direct", "a.example")
+        before = ctl.read_text(self.path("routing.d/rules.json"))
+        self.patch("RULES_MAX_BYTES", len(before.encode()) + 10)
+        status, _, err = run(ctl.cmd_rules, "add", "direct", "a-longer-name.example")
+        self.assertEqual(status, 1)
+        self.assertIn("Not saved", err)
+        self.assertEqual(ctl.read_text(self.path("routing.d/rules.json")), before)
+        self.assertEqual(self.applied, 1)
+        # Smaller is fine.
+        ok(ctl.cmd_rules, "matches", "direct", "rm", "a.example")
+
+    def test_rm_takes_out_what_went_away(self):
+        """A geosite or rule set gone from the host is refused to add, but can be taken out, or
+        kept by an edit of the rest."""
+        ok(ctl.cmd_rules, "add", "direct", "a.example", "geosite:netflix", "ruleset:blocked")
+        os.unlink(self.path("geo/geosite-netflix.srs"))
+        self.write("rulesets.json", [])
+        self.assertEqual(run(ctl.cmd_rules, "matches", "direct", "add", "geosite:netflix")[0], 1)
+        # set: what the rule holds may stay; what it brings in must be here.
+        for new in ("ruleset:other", "geosite:gone"):
+            with self.subTest(new=new):
+                self.assertEqual(run(ctl.cmd_rules, "matches", "direct", "set", "a.example", "geosite:netflix", new)[0], 1)
+        ok(ctl.cmd_rules, "matches", "direct", "set", "a.example", "b.example", "geosite:netflix", "ruleset:blocked")
+        self.assertEqual(self.rules()["direct"]["domains"], ["a.example", "b.example"])
+        self.assertEqual(ok(ctl.cmd_rules, "matches", "direct", "rm", "geosite:netflix", "ruleset:blocked"), "direct: removed geosite:netflix, ruleset:blocked\n")
+        rule = self.rules()["direct"]
+        self.assertEqual((rule["domains"], rule["geosites"], rule["ruleSets"]), (["a.example", "b.example"], [], []))
+        # The name is still checked for what it is.
+        self.assertEqual(run(ctl.cmd_rules, "matches", "direct", "rm", "geosite:../x")[0], 1)
 
     def test_up_and_down_step_past_the_configuration(self):
         ok(ctl.cmd_rules, "add", "direct", "a.example")

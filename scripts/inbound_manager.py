@@ -264,9 +264,15 @@ class Manager:
         if fields.get("speedLimit") and not (self.netfilter.enabled and self.config.get("speedLimits")):
             raise ApiError(409, "speed limits need inbounds.manager.speedLimits and nftables")
 
+    def _has_slot(self, state: dict, name: str) -> bool:
+        # One past speedLimits.slots, lowered since it was given, is a level XRay has no
+        # policy for (config-templates/proxy-inbounds.nix): no stats, so no traffic limit.
+        return 0 < state["slots"].get(name, 0) <= int(self.config.get("slots", 512))
+
     def _allocate_slot(self, state: dict, name: str) -> None:
-        if name in state["slots"]:
+        if self._has_slot(state, name):
             return
+        state["slots"].pop(name, None)
         taken = set(state["slots"].values())
         for slot in range(1, int(self.config.get("slots", 512)) + 1):
             if slot not in taken:
@@ -295,7 +301,7 @@ class Manager:
             # The slot first: with none free, nothing is saved.
             if effective.get("speedLimit"):
                 state = self.state()
-                if name not in state["slots"]:
+                if not self._has_slot(state, name):
                     self._allocate_slot(state, name)
                     self.save_state(state)
             if entry:
@@ -466,8 +472,10 @@ class Manager:
         who was switched off or back on by it."""
         with self.lock:
             before = self.applied
-            done = inbound_apply.apply(self.config["apply"], self.spec)
+            # One time for what is rendered and what is kept as applied: a status that
+            # changes in between (an expiry) is then applied on the next tick.
             now = self.clock()
+            done = inbound_apply.apply(self.config["apply"], self.spec, now=now)
             self.applied = self.view(now)
             for line in done:
                 _log(f"applied: {line}")
@@ -518,7 +526,9 @@ class Manager:
                     user_state["notified"] = {k: v for k, v in (user_state.get("notified") or {}).items()
                                               if not k.startswith("traffic")}
                     changed = True
-                if effective.get("speedLimit") and name not in state["slots"]:
+                if effective.get("speedLimit") and not self._has_slot(state, name):
+                    # With none free, level 0: no speed limit, but the stats a traffic limit needs.
+                    changed |= state["slots"].pop(name, None) is not None
                     try:
                         self._allocate_slot(state, name)
                         changed = True
@@ -616,7 +626,10 @@ class Manager:
                       if listener.get("acceptProxyProtocol") or _loopback(listener.get("listen", ""))}
         ports: dict[str, list[int]] = {}
         for inbound in self.rendered().get("inbounds") or []:
-            if inbound.get("tag") in unbannable or _loopback(str(inbound.get("listen", ""))):
+            # As rendered, which runtime listeners are too.
+            sockopt = (inbound.get("streamSettings") or {}).get("sockopt") or {}
+            if (inbound.get("tag") in unbannable or sockopt.get("acceptProxyProtocol")
+                    or _loopback(str(inbound.get("listen", "")))):
                 continue
             for client in (inbound.get("settings") or {}).get("clients") or []:
                 ports.setdefault(client.get("email"), []).append(int(inbound["port"]))
@@ -715,12 +728,12 @@ class Manager:
             raise ApiError(500, str(exc)) from None
 
     def unban(self, ip: str) -> dict:
+        # As ban() stores it: XRay's online list writes IPv6 in brackets.
+        address = inbound_netfilter.plain_address(ip)
+        if address is None:
+            raise ApiError(400, f"'{ip}' is not an address")
         try:
-            ipaddress.ip_address(ip)
-        except ValueError:
-            raise ApiError(400, f"'{ip}' is not an address") from None
-        try:
-            return {"ip": ip, "lifted": self.netfilter.unban(ip)}
+            return {"ip": address, "lifted": self.netfilter.unban(address)}
         except RuntimeError as exc:
             raise ApiError(500, str(exc)) from None
 
@@ -914,10 +927,17 @@ class Manager:
                 lock = self._spool_locked()
                 try:
                     current = rt.load_spool(self.spool)[0]
-                    # As `users add` refuses them: a runtime user may not take a declared one's name.
-                    declared = [f"user {n}" for n in incoming.get("users") or {} if n in (self.spec.get("users") or {})]
+                    # As `users add` refuses them: a runtime user may not take a declared one's name,
+                    # nor one XRay takes for another, which ignores case (rt.name_clash).
+                    declared = [f"user {n}" for n in incoming.get("users") or {}
+                                if rt.name_clash(n, self.spec.get("users") or {}) is not None]
                     if declared:
                         raise ApiError(409, "declared in the configuration here: " + ", ".join(declared))
+                    names = list(incoming.get("users") or {})
+                    cased = [f"user {n}" for i, n in enumerate(names)
+                             if rt.name_clash(n, [m for m in current["users"] if m != n] + names[:i]) is not None]
+                    if cased:
+                        raise ApiError(409, "another user differs only in case, which XRay ignores: " + ", ".join(cased))
                     conflicts = [f"user {n}" for n in incoming.get("users") or {} if n in current["users"]]
                     conflicts += [f"listener {t}" for t in incoming.get("listeners") or {} if t in current["listeners"]]
                     if conflicts and not replace:
@@ -938,7 +958,7 @@ class Manager:
             stored = self.stored_policies()
             for name, entry in sorted((bundle.get("policies") or {}).items()):
                 try:
-                    policy.check_stored(entry)
+                    entry = policy.check_stored(entry)
                 except policy.PolicyError as exc:
                     report["skipped"].append(f"policy {name}: {exc}")
                     continue
@@ -955,7 +975,7 @@ class Manager:
                     state["users"][name] = entry
             declared_policies = policy.declared_policies(self.spec)
             for name in (bundle.get("state") or {}).get("slots") or {}:
-                if name not in state["slots"] and policy.effective(declared_policies.get(name), stored.get(name)).get("speedLimit"):
+                if not self._has_slot(state, name) and policy.effective(declared_policies.get(name), stored.get(name)).get("speedLimit"):
                     self._allocate_slot(state, name)
             # The subscription URLs moved on there stay moved on here.
             for name, salt in ((bundle.get("state") or {}).get("subscriptions") or {}).items():

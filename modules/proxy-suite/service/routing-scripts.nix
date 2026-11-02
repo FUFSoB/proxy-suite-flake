@@ -182,7 +182,7 @@ in
         ${ip} "$family" rule add pref ${toString xrayTunPerAppTunRulePriority} fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable}
       done
     ''}
-    for service_user in ${lib.escapeShellArgs constants.ownTrafficUsers}; do
+    for service_user in ${lib.escapeShellArgs constants.bypassUsers}; do
       service_uid=$(${pkgs.coreutils}/bin/id -u "$service_user")
       for family in "''${families[@]}"; do
         ${ip} "$family" rule add pref ${toString xrayTunServiceUserRulePriority} uidrange "$service_uid-$service_uid" lookup main

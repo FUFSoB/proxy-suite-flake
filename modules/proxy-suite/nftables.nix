@@ -12,12 +12,14 @@ let
     awgGlobalProfiles
     awgGlobalAvailable
     awgRuntimeGlobal
+    awgInterfaceOutbounds
+    awgRuntimeIfaceOutbounds
+    perAppViaProfiles
     perAppViaMarks
     perAppPinTproxy
     perAppPinTun
     perAppPinSlots
     ;
-  inherit (constants) serviceUser;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
   perAppTun = cfg.perAppRouting.tun;
@@ -111,18 +113,28 @@ let
     ${lib.optionalString proxyCfg.ipv6 "${prefix}meta nfproto ipv6 meta l4proto { tcp, udp }${mark} tproxy ip6 to [::1]:${toString port}"}
   '';
   mkTproxyLines = mkTproxyLinesTo globalTproxy.port;
-  # The families a TProxy mark carries into the proxy.
-  tproxyMarkedFamilies = lib.optionalString (!proxyCfg.ipv6) "meta nfproto ipv4 ";
+  # The families a TProxy mark carries into the proxy, and without IPv6 its lookups.
+  tproxyMarkedFamilies =
+    if proxyCfg.ipv6 then
+      [ "" ]
+    else
+      [
+        "meta nfproto ipv4 "
+        "meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 "
+      ];
 
   # A marked packet leaving by another interface: its ip rule is gone (`ip rule flush`, a
   # VPN tool) and the main table sends it out the uplink, past the kill switch, which lets
-  # marked packets by. `match`: TProxy without proxy.ipv6 sends on-link IPv6 out marked.
-  mkMisroutedGuard = mark: interfaces: match: ''
+  # marked packets by. `matches`, one rule each: TProxy without proxy.ipv6 sends on-link
+  # IPv6 out marked, lookups excepted (mkTproxyRoutingUp).
+  mkMisroutedGuard = mark: interfaces: matches: ''
     chain misrouted {
         type filter hook postrouting priority filter; policy accept;
-        ${match}meta mark ${toString mark} oifname != { ${
-          lib.concatMapStringsSep ", " (i: ''"${i}"'') interfaces
-        } } drop
+        ${lib.concatMapStrings (match: ''
+          ${match}meta mark ${toString mark} oifname != { ${
+            lib.concatMapStringsSep ", " (i: ''"${i}"'') interfaces
+          } } drop
+        '') matches}
     }
   '';
 
@@ -151,7 +163,7 @@ let
                   # Replies to connections from outside, and proxy-suite's own daemons (the
                   # inbound XRay dials unmarked, lacking CAP_NET_ADMIN), leave as they are.
                   ct direction reply return
-                  meta skuid ${constants.ownTrafficUsersNft} return
+                  meta skuid ${constants.bypassUsersNft} return
     ${tgWsProxyBypassMarkLine}${perAppViaMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
     ${tproxyIPv6RefuseLine ""}
               }
@@ -259,7 +271,6 @@ let
 
   # Everything proxy-suite sends itself, or has already taken into the proxy, gets past; the
   # rest is what TUN, TProxy or a global AmneziaWG profile would have taken, had it been up.
-  sshProxyUser = cfg.sshProxy.serviceUser;
   killSwitchMarks = [
     globalTproxy.fwmark
     globalTproxy.proxyMark
@@ -322,6 +333,13 @@ let
   killSwitchTunnelInterfaces =
     lib.optional globalTunEnabled proxyCfg.tun.interface
     ++ lib.optionals awgGlobalAvailable awgGlobalInterfaces;
+  # The AmneziaWG interfaces of outbounds, and of the profiles apps run through: what leaves by
+  # one is in its tunnel, which none of the global modes would take it out of. The handshake
+  # and egress probes their units send through them as root among it.
+  awgOutboundInterfaces =
+    map (ob: ob.interface) awgInterfaceOutbounds
+    ++ lib.optional awgRuntimeIfaceOutbounds "${constants.awgRuntimeIfacePrefix}*"
+    ++ lib.optional perAppViaProfiles "${constants.awgAppIfacePrefix}*";
   killSwitchAllowLines = ''
     ip daddr $RESERVED_IP accept
     ip6 daddr $RESERVED_IP6 accept
@@ -341,7 +359,10 @@ let
         chain output {
             type filter hook output priority filter; policy accept;
             oifname "lo" accept
-            meta skuid ${constants.ownTrafficUsersNft} accept
+            meta skuid ${constants.bypassUsersNft} accept
+    ${lib.concatMapStrings (i: ''
+      oifname "${i}" accept
+    '') awgOutboundInterfaces}
     ${lib.optionalString globalTunEnabled ''
       oifname "${proxyCfg.tun.interface}" accept
       # sing-box's auto_redirect hands DNS to the TUN by rewriting it to the TUN's peer,
@@ -353,9 +374,6 @@ let
       oifname { ${lib.concatMapStringsSep ", " (i: ''"${i}"'') awgGlobalInterfaces} } accept
       meta skgid "${constants.awgGlobalGroup}" accept
     ''}
-    ${lib.optionalString (
-      cfg.sshProxy.enable && sshProxyUser != null && sshProxyUser != serviceUser
-    ) ''meta skuid "${sshProxyUser}" accept''}
     ${killSwitchMarkLines}
             # A lookup the proxy did not take would name every site to the LAN resolver.
             meta l4proto { tcp, udp } th dport 53 reject with icmpx admin-prohibited
@@ -441,10 +459,13 @@ let
                     goto app_mark
                 }
       ${mkDnsRedirect { inherit mark dnsPort; }}
-      ${mkMisroutedGuard mark [
-        "lo"
-        perAppTun.interface
-      ] ""}
+      ${mkMisroutedGuard mark
+        [
+          "lo"
+          perAppTun.interface
+        ]
+        [ "" ]
+      }
       ${lib.optionalString (snat != null) ''
         chain postrouting {
             type nat hook postrouting priority srcnat; policy accept;

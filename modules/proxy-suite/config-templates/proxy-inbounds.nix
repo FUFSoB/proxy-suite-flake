@@ -52,7 +52,8 @@ let
       ++ hostRules
       ++ [ { action = "allow"; } ];
   # XRay's own queries to the resolvers below are routed too, through "direct" when that is
-  # the via: one on this host stays reachable on its own port.
+  # the via: one on this host stays reachable on its own port, unless blockPrivate refuses it
+  # first (inbound-block-private, the block above). Lookups then rest on a public dns.remote.
   isIpUpstream = upstream: builtins.match "[0-9.]+|[0-9a-fA-F:]+" upstream.address != null;
   resolverRules = lib.unique (
     map

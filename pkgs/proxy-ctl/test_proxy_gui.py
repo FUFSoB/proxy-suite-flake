@@ -56,6 +56,18 @@ class GuiTest(unittest.TestCase):
         menu.update(tree)
         self.assertEqual(menu.numbers["proxy"], proxy_id)
 
+    def test_tray_says_when_nothing_shows_it(self):
+        """No watcher at the start: GIO says so at once, and the app must hear it, or one
+        started --hidden (GNOME without AppIndicator) never shows a window."""
+        seen = []
+        connection = mock.Mock(spec=["register_object", "unregister_object", "call"])
+        with mock.patch.object(sni.Gio, "bus_own_name_on_connection"), mock.patch.object(sni.Gio, "bus_watch_name_on_connection"):
+            item = sni.StatusNotifierItem(connection, gui.APP_ID, gui.TITLE, "", None, None, on_available=seen.append)
+        item._watcher_vanished(connection, sni.WATCHER)
+        item._watcher_vanished(connection, sni.WATCHER)
+        self.assertEqual(seen, [False])
+        self.assertFalse(item.available)
+
     def test_accelerators(self):
         self.assertEqual(gui.accelerator("space"), "space")
         self.assertEqual(gui.accelerator("R"), "<Shift>r")
@@ -172,6 +184,26 @@ class GuiTest(unittest.TestCase):
         self.assertEqual((argv, stdin), (["proxy", "subs", "add", "-"], "https://evil.test/s"))
         then()
         self.assertEqual(ran, [(["proxy", "subs", "add", "-"], "https://evil.test/s")])
+
+    def test_paste_key_leaves_text_fields_theirs(self):
+        """Ctrl+V reaches the window only after the focused widget: an application accelerator runs
+        before a text field's own paste and takes it. A text field or a dialog lets the key on."""
+        controller = gui.Window.paste_key(types.SimpleNamespace(paste=lambda: False))
+        self.assertEqual(controller.get_propagation_phase(), Gtk.PropagationPhase.BUBBLE)
+        self.assertEqual(controller.get_n_items(), 1)
+        shortcut = controller.get_item(0)
+        self.assertEqual(shortcut.get_trigger().to_string(), "<Control>v")
+        self.assertIsInstance(shortcut.get_action(), Gtk.CallbackAction)  # its False lets the key on
+        read = []
+        for focus, dialog in ((mock.Mock(spec=Gtk.Text), None), (None, object())):
+            win = types.SimpleNamespace(
+                get_focus=lambda focus=focus: focus,
+                get_visible_dialog=lambda dialog=dialog: dialog,
+                page=lambda: read.append("page"),
+                get_clipboard=lambda: read.append("clipboard"),
+            )
+            self.assertFalse(gui.Window.paste(win))
+        self.assertEqual(read, [])
 
     def test_selector_runs_only_a_new_choice(self):
         """The Routing page's mode drop-down: picking runs proxy-ctl; filling it from a read does not."""

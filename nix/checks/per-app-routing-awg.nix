@@ -175,6 +175,9 @@ in
       # Not on its own restart, nor through a switch's stop and start.
       assert hasInfix ''$3 == "restart"'' viaRetire;
       assert !services."proxy-suite-per-app-via-user@".serviceConfig.X-RestartIfChanged;
+      # proxy-ctl reloads it ahead of each app: the start again, for a slice made anew since.
+      assert user.ExecStart == "${perAppRouting.viaUserStart} %i";
+      assert user.ExecReload == user.ExecStart;
       assert hasInfix lock viaUserStart && hasInfix lock viaRetire;
       assert hasInfix ''show --property=ActiveState --value "$via_unit") != active'' viaUserStart;
       assert hasInfix ''via_unit="proxy-suite-per-app-via@$key.service"'' viaRetire;

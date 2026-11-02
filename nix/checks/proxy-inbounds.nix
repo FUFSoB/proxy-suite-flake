@@ -767,6 +767,9 @@ let
     (mkRejectsListener (
       realityListener // { port = 18533; }
     ) "collides with a port proxy-suite uses internally")
+    (mkRejectsListener (
+      realityListener // { port = 18537; }
+    ) "collides with a port proxy-suite uses internally (18537)")
     # An order is an address: two users cannot share one.
     (mkRejects (
       baseProxy
@@ -1720,6 +1723,7 @@ let
           stateFile = "/var/lib/proxy-suite/inbounds-manager/state.json";
           statsFile = "/var/lib/proxy-suite/inbound-stats.json";
           speedLimits = true;
+          slots = 3;
         };
       assert runtimeSpec.manager == null;
       # A level per speed slot, and the API services that change users and rules in place.

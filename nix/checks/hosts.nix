@@ -159,6 +159,7 @@ let
         enable = true;
         proxy = proxy // {
           tproxy.enable = true;
+          tproxy.lanInterfaces = [ "br0" ];
         };
         gui.enable = true;
         userControl.enable = true;
@@ -246,6 +247,16 @@ in
       # The GUI's pkexec action, where the distribution's polkit (126+) reads it.
       assert smCfg.environment.etc ? "polkit-1/actions/io.github.FUFSoB.ProxySuite.proxy-ctl.policy";
       assert smCfg.environment.etc ? "systemd/user/proxy-suite-gui.service";
+      # networkd, where the distribution runs it, leaves TProxy's ip rules alone.
+      assert lib.hasInfix "ManageForeignRoutingPolicyRules=no"
+        smCfg.environment.etc."systemd/networkd.conf.d/50-proxy-suite.conf".text;
+      # The host's firewall is not ours to open for the gateway clients: said, with the rule.
+      assert lib.any (
+        warning:
+        lib.hasInfix "proxy.tproxy.lanInterfaces" warning
+        && lib.hasInfix ''iifname "br0" meta mark'' warning
+        && lib.hasInfix "socket transparent 1 accept" warning
+      ) smCfg.warnings;
       assert forced smCfg.systemd.services;
       true
     )

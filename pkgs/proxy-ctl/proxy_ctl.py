@@ -9,6 +9,7 @@ import datetime
 import errno
 import fcntl
 import getpass
+import hashlib
 import http.client
 import importlib
 import ipaddress
@@ -2148,8 +2149,13 @@ def _outbound_link(*args):
         _config_export(only=tag)
         return
     entry = _outbound_share_entry(tag)
+    ob = entry.get("outbound") or {}
+    # Its JSON without the interface (an AmneziaWG "interface" outbound) is plain direct, as
+    # proxy_export leaves it out of `--config`.
+    if _proxy_export().interface_bound(ob) and (flag == "--json" or not entry.get("url")):
+        die(f"Cannot share {tag}: it goes out through an interface of this host, and anywhere else would be plain direct.")
     if flag == "--json":
-        print(_json_text(_proxy_export().portable_outbound(entry.get("outbound") or {})))
+        print(_json_text(_proxy_export().portable_outbound(ob)))
     elif not entry.get("url"):
         die(f"{tag} has no URL (it was not given as one) - use --json.")
     else:
@@ -2190,6 +2196,9 @@ def _config_export(*args, only=None):
     try:
         cfg, warnings = proxy_export.portable(cfg, only)
     except ValueError as e:
+        # Why each outbound stayed behind, when that left none.
+        for warning in getattr(e, "warnings", []):
+            print(f"warning: {warning}", file=sys.stderr)
         die(f"Cannot export: {e}")
     print(_json_text(cfg))
     sys.stdout.flush()
@@ -2244,8 +2253,40 @@ def unit_escape(text):
     return "".join(out)
 
 
+PIN_UNIT = "proxy-suite-outbound-pin@"
+# systemd's limit on a unit's name, ".service" included.
+UNIT_NAME_MAX = 255
+PIN_HASH_LEN = 12
+
+
+def _pin_name_short(name, limit):
+    """name, or when its escape is longer than limit, as much of its start as fits, "~" and
+    the first PIN_HASH_LEN hex digits of its SHA-256: the pin script finds the name by those."""
+    if len(unit_escape(name)) <= limit:
+        return name
+    tail = "~" + hashlib.sha256(name.encode()).hexdigest()[:PIN_HASH_LEN]
+    head = name
+    while head and len(unit_escape(head + tail)) > limit:
+        head = head[:-1]
+    return head + tail
+
+
+def _pin_instance(instance):
+    """The pin unit's instance for a tag, group/member or group/, short enough for a unit
+    name: escaped, a Cyrillic letter is 8 characters. Group and member are shortened apart,
+    so the "/" between them stays."""
+    room = UNIT_NAME_MAX - len(PIN_UNIT) - len(".service")
+    if len(unit_escape(instance)) <= room:
+        return instance
+    if "/" not in instance:
+        return _pin_name_short(instance, room)
+    group, member = instance.split("/", 1)
+    group = _pin_name_short(group, max((room - 1) // 2, room - 1 - len(unit_escape(member))))
+    return f"{group}/{_pin_name_short(member, room - 1 - len(unit_escape(group)))}"
+
+
 def _start_pin_unit(instance):
-    unit = "proxy-suite-outbound-pin@" + unit_escape(instance)
+    unit = PIN_UNIT + unit_escape(_pin_instance(instance))
     if systemctl("start", f"{unit}.service")[0]:
         die(f"Failed - see: proxy-ctl logs {unit}")
 
@@ -2428,7 +2469,9 @@ class GroupWatch:
         return working[0] if working[0] != now else None
 
     def hints(self):
-        """Tags whose hint file changed since the last look."""
+        """Tags whose hint file appeared or changed since the last look. A watchdog's first
+        miss makes the file: that is news too, or the group would wait for its next test.
+        run() takes a first look before its loop, so what was there already is not."""
         directory = os.path.join(_groups_dir(), "health")
         fresh = []
         try:
@@ -2441,7 +2484,7 @@ class GroupWatch:
                 mtime = os.lstat(os.path.join(directory, name)).st_mtime
             except OSError:
                 continue
-            if self.seen_hints.get(name) != mtime and name in self.seen_hints:
+            if self.seen_hints.get(name) != mtime:
                 fresh.append(name)
             seen[name] = mtime
         # Only what is there now: names removed since are forgotten, not kept for good.
@@ -2818,7 +2861,8 @@ def _runtime_tags(kind):
     except OSError:
         return []
     exts = (".url", ".json", ".awg") if kind == "outbound" else (".url",)
-    return sorted(os.path.splitext(n)[0] for n in names if n.endswith(exts))
+    # priority.json shares the outbound spool: the priority overrides, not an outbound.
+    return sorted(os.path.splitext(n)[0] for n in names if n.endswith(exts) and not (kind == "outbound" and n == "priority.json"))
 
 
 def _runtime_path(kind, tag):
@@ -2973,8 +3017,11 @@ def _unique_runtime_tag(kind, name, fallback):
     """`name` as a tag nothing else has taken: -2, -3... after it."""
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")[:RUNTIME_TAG_MAX].strip("-._") or fallback
     taken = {*RUNTIME_RESERVED_TAGS, *_runtime_tags(kind), *(_outbound_tags() if kind == "outbound" else _sub_tags())}
+    # A group's name is taken too (_check_runtime_tag), the backend's or one just added.
+    if kind == "outbound":
+        taken |= set(_outbound_groups())
     tag, n = base, 1
-    while tag in taken:
+    while tag in taken or (kind == "outbound" and os.path.exists(_group_file(tag))):
         n += 1
         suffix = f"-{n}"
         tag = base[: RUNTIME_TAG_MAX - len(suffix)] + suffix
@@ -2995,8 +3042,9 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
     if tag:
         _check_runtime_tag(kind, tag)
     # The start script checks the chain again, and leaves the outbound out if it breaks later.
-    if detour and (detour == tag or detour not in _outbound_tags()):
-        die(f"Cannot chain through '{detour}': not an outbound. See: proxy-ctl proxy outbounds")
+    # A group as the hop dials through whichever member it picks (outbound-detours.jq).
+    if detour and (detour == tag or detour not in _outbound_tags() + list(_outbound_groups())):
+        die(f"Cannot chain through '{detour}': not an outbound or group. See: proxy-ctl proxy outbounds")
     # "-": the link on stdin, out of argv, so out of ps, sudo's and pkexec's logs while it waits to come up.
     if url == "-":
         url = sys.stdin.read()
@@ -3060,14 +3108,17 @@ def cmd_outbound_chain(tag="", hop="", new_tag="", *_):
     tags = _outbound_tags()
     if tag not in tags:
         die(f"Unknown outbound: {tag}")
-    if hop not in tags:
-        die(f"Cannot chain through '{hop}': not an outbound. See: proxy-ctl proxy outbounds")
+    if hop not in tags + list(_outbound_groups()):
+        die(f"Cannot chain through '{hop}': not an outbound or group. See: proxy-ctl proxy outbounds")
     if tag == hop:
         die(f"'{tag}' cannot chain through itself; name another outbound as the hop.")
     entry = _outbound_share_entry(tag)
     source = _s(entry.get("url") or "")
     if not source and _awg_tunnel_hop(entry.get("outbound") or {}):
         die(f"'{tag}' is an AmneziaWG outbound: its tunnel dials the peer itself and cannot go through another outbound.")
+    # Copied without its interface, it would be plain direct through the hop.
+    if not source and _proxy_export().interface_bound(entry.get("outbound") or {}):
+        die(f"'{tag}' goes out through an interface of this host, which a copy through another outbound cannot.")
     if not source:
         ob = entry.get("outbound") or {}
         if not ob:
@@ -3087,6 +3138,8 @@ def _runtime_entry_rm(kind, tag="", *_):
     if not tag:
         usage(f"proxy {_runtime_noun(kind)} rm <tag>")
     _check_tag_shape(kind, tag)
+    if kind == "outbound" and tag == "priority":
+        die("'priority' is no outbound: priority.json holds the priority overrides. See: proxy-ctl proxy priority <tag> --clear")
     with _runtime_lock(kind):
         path = _runtime_path(kind, tag)
         if not os.path.exists(path):
@@ -3185,6 +3238,10 @@ def _runtime_entry_verify(kind, tag):
     The reload's restart returns once the start script is forked, before it writes the
     inventory again, so this gives it a moment.
     """
+    # The reload restarts only a running proxy: a stopped one reads the entry when it starts.
+    if not svc_active("proxy-suite-socks"):
+        print(f"Saved {kind}: {tag}. The proxy is not running; it reads the entry when it starts (proxy-ctl proxy on).")
+        return
     deadline = time.monotonic() + 15
     while True:
         if kind == "outbound":
@@ -3353,7 +3410,7 @@ RULE_MATCH_SPELLING = {"domains": "", "ips": "", "geosites": "geosite:", "geoips
 RULE_DOMAIN = re.compile(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*")
 RULE_GEO = re.compile(r"[A-Za-z0-9!@._-]{1,64}")
 RULE_TARGETS = ("proxy", "direct", "block")
-# As much as routing-render.jq reads of the spool.
+# As much as proxy-suite-routing-apply reads of the spool (routing-runtime.nix, dd bs=4M).
 RULES_MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -3428,6 +3485,9 @@ def _runtime_rules(writing=False):
 def _rules_save(rules):
     path = _rules_path()
     text = json.dumps({"rules": _rules_sorted(rules)}, indent=2, ensure_ascii=False) + "\n"
+    # Past what root reads of the spool, it would read none of it: every runtime rule would go.
+    if len(text.encode("utf-8")) > RULES_MAX_BYTES:
+        die(f"Not saved: the runtime rules would pass {RULES_MAX_BYTES // (1024 * 1024)} MiB, all root reads of them. Take some matches out first.")
     try:
         _spool_write(path, text)
     except OSError:
@@ -3521,31 +3581,42 @@ def _rule_name_ok(name):
     return bool(RUNTIME_TAG.fullmatch(name)) and len(name) <= 64
 
 
-def _rule_match(word):
-    """(kind, value) of one match as typed: a domain (or a URL), an address or a CIDR,
-    geosite:NAME, geoip:NAME or ruleset:NAME."""
+def _rule_match(word, known=True):
+    """(kind, value) of one match as typed: a domain, an address or a CIDR (or a URL, by its
+    host), geosite:NAME, geoip:NAME or ruleset:NAME. known: the geosite, geoip or rule set must be
+    on this host; not to take one out, which may be what went away."""
     for prefix, kind in RULE_MATCH_PREFIXES.items():
         if word.lower().startswith(prefix):
             name = word[len(prefix) :]
             if kind == "ruleSets":
                 declared = [_s(rs.get("name")) for rs in read_json_or(env("RULE_SETS_FILE"), []) if isinstance(rs, dict)]
-                if name not in declared:
+                if known and name not in declared:
                     die(f"No rule set named '{name}' in routing.ruleSets" + (f" (there are: {', '.join(declared)})." if declared else "."))
                 return kind, name
             if not RULE_GEO.fullmatch(name) or name.startswith("."):
                 die(f"Not a {prefix[:-1]} name: {name}")
             directory = env("GEODATA_GEOSITE_DIR" if kind == "geosites" else "GEODATA_GEOIP_DIR")
-            if directory and os.path.isdir(directory) and not os.path.exists(os.path.join(directory, f"{prefix[:-1]}-{name}.srs")):
+            if known and directory and os.path.isdir(directory) and not os.path.exists(os.path.join(directory, f"{prefix[:-1]}-{name}.srs")):
                 die(f"No {prefix[:-1]} named '{name}' in this host's geodata.")
             return kind, name
-    try:
-        return "ips", str(ipaddress.ip_network(word, strict=False))
-    except ValueError:
-        pass
-    host = word.split("://", 1)[1].split("/", 1)[0].rsplit("@", 1)[-1] if "://" in word else word
-    host = host.lower().lstrip(".")
+    host = word
     if "://" in word:
-        host = re.sub(r":\d+$", "", host)
+        # The host alone: no user@ or :port, and an IPv6 address out of its brackets.
+        try:
+            host = urllib.parse.urlsplit(word).hostname or ""
+        except ValueError:
+            host = ""
+    try:
+        network = ipaddress.ip_network(host, strict=False)
+    except ValueError:
+        network = None
+    if network is not None:
+        # A zone (fe80::1%eth0) is this host's interface: neither backend takes one, and
+        # routing-render.jq leaves the address out.
+        if "%" in host:
+            die(f"An address with a zone cannot be matched; leave out the %...: {word}")
+        return "ips", str(network)
+    host = host.lower().lstrip(".")
     if RULE_DOMAIN.fullmatch(host) and len(host) <= 253:
         return "domains", host
     die(f"Not a domain, an address, or geosite:, geoip: or ruleset: something: {word}")
@@ -3743,11 +3814,16 @@ def _rule_add_matches(rule, matches):
 
 
 def _rules_matches(name, op, *words):
-    matches = [_rule_match(w) for w in words]
+    matches = [_rule_match(w, known=op == "add") for w in words]
 
     def change(rules):
         rule = _rule_find(rules, name)
         if op == "set":
+            # Only what the rule does not hold yet must be on this host: one it keeps may have
+            # gone away since, and the edit is no less wanted.
+            for word, (kind, value) in zip(words, matches, strict=True):
+                if value not in rule[kind]:
+                    _rule_match(word)
             # One write for an edit that adds some and takes others out: what the front ends send.
             before = _rule_matches(rule)
             for kind in RULE_MATCH_KINDS:
@@ -3980,7 +4056,10 @@ def _probe_verdict_text(verdict, exit_tag):
     return {
         "ok": "reachable directly - nothing to do",
         "destination": f"destination-side block - route via {exit_tag or 'proxy'}",
-        "censor": "censor-side block - zapret2 territory, do not proxy",
+        # Without zapret2 nothing else gets past DPI: autoProxy routes these too.
+        "censor": "censor-side block - zapret2 territory, do not proxy"
+        if env("ZAPRET_AUTO_ENABLED") == "1"
+        else f"censor-side block (DPI) - route via {exit_tag or 'proxy'}",
         "both-fail": "fails through every egress - not an egress problem",
         "unreachable": "no egress reaches it at all",
     }.get(verdict, "inconclusive")
@@ -4148,7 +4227,7 @@ def cmd_proxy_probe(*args):
             print(f"  verdict    {via} answers it worse than direct does")
         return
     print(f"  verdict    {_probe_verdict_text(w['verdict'], w['exit'])}")
-    if w["verdict"] == "destination":
+    if w["verdict"] == "destination" or (w["verdict"] == "censor" and env("ZAPRET_AUTO_ENABLED") != "1"):
         print(f'             pin: proxy.routing.rules = [ {{ outbound = "{w["exit"]}"; domains = [ "{domain}" ]; }} ]')
     elif w["verdict"] == "censor":
         print(f"             try: proxy-ctl zapret auto add {domain}")
@@ -4538,7 +4617,8 @@ def _zapret_strategy_drop(domain):
 
     def keep(line):
         fields = line.split("\t")
-        key = fields[1] if len(fields) > 1 else ""
+        # The host may carry a |4 or |6 address family, as in _zapret_strategy_rows.
+        key = fields[1].split("|", 1)[0] if len(fields) > 1 else ""
         return line.startswith("#") or (key != domain and not domain.endswith(f".{key}"))
 
     with _z2k_state_lock(path):
@@ -4734,10 +4814,16 @@ def _zapret_retry(name):
         die(f"zapret2 sends nothing for {name} through the proxy: proxy-ctl zapret auto lists what it does.")
     now = int(time.time())
     _replace_lines(path, lambda _: True, [f"retry\t{name}\t{proto}\tproxy-ctl\t{now}" for proto in retried])
-    # nfqws2 keeps a site's rotation stopped, and its verdicts, until it restarts.
-    if svc_active("proxy-suite-zapret"):
-        cmd_zapret("restart")
+    # nfqws2 keeps a site's rotation stopped until it restarts. The restart is the "services"
+    # scope's, which a member with "zapret" alone lacks: the retry stands without it.
+    status = systemctl("--no-ask-password", "restart", "proxy-suite-zapret.service")[0] if svc_active("proxy-suite-zapret") else 0
     print(f"zapret2 tries {name} again; the proxy carries it no longer.")
+    if status:
+        print(
+            'warning: proxy-suite-zapret did not restart, so the retry takes full effect only once it does: proxy-ctl zapret restart (the "services" scope, or sudo).',
+            file=sys.stderr,
+        )
+        sys.exit(status)
 
 
 def _truncate(path):
@@ -4929,8 +5015,9 @@ def _where_sing_box(config, domain):
     route = config.get("route") or {}
     rule_sets = {r.get("tag"): r for r in route.get("rule_set") or [] if isinstance(r, dict)}
     for rule in route.get("rules") or []:
-        # Inbound-bound rules belong to probes and test listeners; the rest are actions.
-        if not isinstance(rule, dict) or "inbound" in rule or "outbound" not in rule:
+        # Inbound-bound rules belong to probes and test listeners; the rest are actions. An
+        # ip_version rule takes only flows already on an address, never a name asked for.
+        if not isinstance(rule, dict) or "inbound" in rule or "outbound" not in rule or "ip_version" in rule:
             continue
         hit = next((f"domain {d}" for d in rule.get("domain") or [] if d == domain), "")
         hit = hit or next((f"domain_suffix {s}" for s in rule.get("domain_suffix") or [] if _where_suffix(domain, s)), "")
@@ -4951,21 +5038,34 @@ def _where_sing_box(config, domain):
 
 def _where_inbounds(config, domain, geosite_dir):
     """(outboundTag, why) of the first XRay inbound routing rule matching domain by name."""
+    return _where_xray(config, domain, geosite_dir, "inbound-final", "the default egress")
+
+
+def _where_xray(config, domain, geosite_dir, final, final_why):
+    """(outboundTag, why) of the first XRay routing rule matching domain by name, up to the
+    rule tagged `final`; a balancer goes by its tag. ("", "") when none is."""
+    # XRay's geosite data is not readable from here; sing-box's lists of the same name stand in.
+    checkable = bool(geosite_dir and shutil.which(env("SING_BOX", "sing-box")))
+    unchecked = []
     for rule in (config.get("routing") or {}).get("rules") or []:
         if not isinstance(rule, dict):
             continue
-        if rule.get("ruleTag") == "inbound-final":
-            return _s(rule.get("outboundTag")), "no rule matches, the default egress"
+        target = _s(rule.get("outboundTag") or rule.get("balancerTag"))
+        # A geosite rule above this one may have taken the name first.
+        hedge = f"; {', '.join(unchecked)} not checked here" if unchecked else ""
+        if rule.get("ruleTag") == final:
+            return target, f"no rule matches, {final_why}{hedge}"
         for entry in rule.get("domain") or []:
             kind, _, value = entry.partition(":") if ":" in entry else ("keyword", "", entry)
+            stand_in = os.path.join(geosite_dir, f"geosite-{value}.srs")
+            if kind == "geosite" and not (checkable and readable(stand_in)) and entry not in unchecked:
+                unchecked.append(entry)
             matched = (
                 (kind == "domain" and _where_suffix(domain, value))
                 or (kind == "full" and domain == value)
                 or (kind == "keyword" and value in domain)
                 or (kind == "regexp" and re.search(value, domain))
-                # XRay's geosite data is not readable from here; sing-box's lists of the same name stand in.
-                or (kind == "geosite" and geosite_dir
-                    and _where_rule_set_match({"path": os.path.join(geosite_dir, f"geosite-{value}.srs"), "format": "binary"}, domain))
+                or (kind == "geosite" and checkable and _where_rule_set_match({"path": stand_in, "format": "binary"}, domain))
             )
             if matched:
                 # A rule held to some listeners or ports says so: the rest go on down the list.
@@ -4973,7 +5073,7 @@ def _where_inbounds(config, domain, geosite_dir):
                     [f", listeners {','.join(map(_s, rule['inboundTag']))}" if rule.get("inboundTag") else ""]
                     + [f", ports {_s(rule['port'])}" if rule.get("port") else ""]
                 )
-                return _s(rule.get("outboundTag")), f"{_s(rule.get('ruleTag'))} ({entry}{scope})"
+                return target, f"{_s(rule.get('ruleTag'))} ({entry}{scope}){hedge}"
     return "", ""
 
 
@@ -4996,7 +5096,8 @@ def cmd_where(domain="", *_):
     verdict = ""
     _where_row("domain", domain)
 
-    local = ""
+    # unseen: no proxy config was read here (none running, or not ours to read).
+    local, unseen = "", True
     if svc_exists("proxy-suite-socks"):
         _where_row("route mode", _route_mode_label(_route_mode_current()))
         outbound = _status_outbound()
@@ -5012,6 +5113,8 @@ def cmd_where(domain="", *_):
                 config = read_json(config_path)
             except (OSError, ValueError):
                 config = None
+            if isinstance(config, dict) and ("route" in config or "routing" in config):
+                unseen = False
             if isinstance(config, dict) and "route" in config:
                 exit_tag, why = _where_sing_box(config, domain)
                 local = outbound if exit_tag == "proxy" and outbound else exit_tag
@@ -5022,6 +5125,14 @@ def cmd_where(domain="", *_):
                      if isinstance(r, dict) and "/geosite-" in _s(r.get("path", ""))),
                     "",
                 )
+            elif isinstance(config, dict) and "routing" in config:
+                # An XRay host: the config is XRay's own.
+                geosite_dir = env("GEODATA_GEOSITE_DIR")
+                exit_tag, why = _where_xray(config, domain, geosite_dir, "final-default", "the final outbound")
+                if exit_tag:
+                    local = outbound if exit_tag == "proxy" and outbound else exit_tag
+                    shown = f"proxy -> {outbound}" if local != exit_tag else exit_tag
+                    _where_row("xray", f"{shown} - {why}")
 
         live = _where_live(domain)
         if live:
@@ -5083,7 +5194,7 @@ def cmd_where(domain="", *_):
         print(f"  -> {verdict}")
         return
     print(f"  -> {verdict or 'nothing runtime matches it; the configured routing decides'}")
-    print("  The sing-box config is not readable here. Test what reaches it:")
+    print(f"  {'The proxy config is not readable here. ' if unseen else ''}Test what reaches it:")
     print(f"    proxy-ctl proxy auto probe {domain}")
 
 
@@ -5719,7 +5830,9 @@ def _wrap_slice(slice_base, profile, cmd, units=None, before=()):
             status = status or systemctl("start", unit)[0]
         # A slice route's marking brings its backend up (Requires=): started alone first,
         # the backend would go again at once, needed by nothing (StopWhenUnneeded=).
-        status = status or systemctl("start", user_svc)[0]
+        # Reloaded if up already (ExecReload is its start): its rules match the slice as it
+        # was then, and one made anew since, under the same manager, would go unmarked.
+        status = status or systemctl("reload-or-restart", user_svc)[0]
         if not status:
             status = _run_foreground(
                 [

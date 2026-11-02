@@ -94,6 +94,17 @@ let
     };
   };
 
+  # Registered with wgcf: the profile appears some time after boot.
+  amneziaWgRegistered = mkProxySuite {
+    enable = true;
+    amneziaWg.enable = true;
+    warp = {
+      enable = true;
+      asAmneziaWg = true;
+      autostart = true;
+    };
+  };
+
   amneziaWgEndpoint = mkProxySuite {
     enable = true;
     amneziaWg.enable = true;
@@ -349,7 +360,9 @@ in
     (
       assert
         auto.config.systemd.services."proxy-suite-warp".serviceConfig.User == "proxy-suite-daemon"
-        && hasInfix "register || register || generate || proxied generate" generatorRegister;
+        && hasInfix "register || register || generate || proxied generate" generatorRegister
+        # The proxy looks the generator's name up, not the local resolver.
+        && hasInfix ''HTTPS_PROXY="socks5h://'' generatorRegister;
       true
     )
     # sing-box runs as the service user with only net_admin, under a watchdog that can tell a
@@ -383,6 +396,13 @@ in
         &&
           builtins.elem "multi-user.target"
             amneziaWgAutostart.config.systemd.services."proxy-suite-awg-warp".wantedBy;
+      true
+    )
+    # One started at boot ahead of its registration tries again until the profile is there.
+    (
+      assert
+        amneziaWgRegistered.config.systemd.services."proxy-suite-awg-warp".serviceConfig.Restart
+        == "on-failure";
       true
     )
     # endpoint replaces the profile's Endpoint at conversion; the sing-box tunnel gets it quoted.

@@ -30,7 +30,9 @@ in
       description = ''
         Your own nfqws2 profiles, instead of those from `strategySource`. The first match wins.
         `<HOSTLIST>` expands to the site list arguments, `<HOSTLIST_NOAUTO>` to the same without
-        learning. `--qnum`, `--fwmark` and `--lua-init` are added for you. ${fromSource "profiles"}
+        learning; in per-app zapret (`perAppRouting.zapret`), both to the excludes alone, so a
+        profile filtered by a marker alone takes every site a connection names there.
+        `--qnum`, `--fwmark` and `--lua-init` are added for you. ${fromSource "profiles"}
       '';
       example = [
         "--filter-tcp=443 --filter-l7=tls <HOSTLIST> --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
@@ -128,7 +130,10 @@ in
     ipv6 = mkOption {
       type = types.bool;
       default = false;
-      description = "Handle IPv6 too.";
+      description = ''
+        Handle IPv6 too. Without it, on sing-box the sites `zapret.directSync` sends direct are
+        looked up for IPv4 alone, and a connection already on IPv6 to one of them takes the proxy.
+      '';
     };
 
     autoHostlist = {

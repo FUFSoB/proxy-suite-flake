@@ -82,6 +82,27 @@ let
     set -euo pipefail
     tag="''${1:-}"
 
+    # proxy-ctl shortens a name whose escaped unit instance would pass systemd's 255
+    # characters (a Cyrillic letter escapes to 8; proxy_ctl._pin_instance) to its start,
+    # "~" and the first 12 hex digits of its SHA-256. $1 the name as it came, the rest jq
+    # arguments listing the names it may stand for: prints the one it stands for, or $1.
+    _proxy_suite_pin_name() {
+      local name="$1" head sum candidate
+      shift
+      if [[ $name =~ ^(.*)~([0-9a-f]{12})$ ]] && [ -r "${outboundInventoryFile}" ]; then
+        head="''${BASH_REMATCH[1]}" sum="''${BASH_REMATCH[2]}"
+        while IFS= read -r candidate; do
+          [ "$candidate" != "$name" ] || break
+          [[ $candidate == "$head"* ]] || continue
+          if [ "$(printf '%s' "$candidate" | ${pkgs.coreutils}/bin/sha256sum | ${pkgs.coreutils}/bin/cut -c1-12)" = "$sum" ]; then
+            name="$candidate"
+            break
+          fi
+        done < <(${jq} -r "$@" "${outboundInventoryFile}" 2>/dev/null || true)
+      fi
+      printf '%s' "$name"
+    }
+
     # group/member pins inside a group, group/ unpins it (`proxy-ctl proxy pin --in`).
     case "$tag" in
       */*)
@@ -93,6 +114,8 @@ let
             exit 1
             ;;
         esac
+        group=$(_proxy_suite_pin_name "$group" '.groups // {} | keys[]')
+        [ -z "$member" ] || member=$(_proxy_suite_pin_name "$member" --arg g "$group" '.groups[$g].members // [] | .[]')
         if [ -r "${outboundInventoryFile}" ] \
           && ! ${jq} -e --arg g "$group" '.groups // {} | has($g)' "${outboundInventoryFile}" >/dev/null; then
           echo "proxy-suite: unknown group '$group'" >&2
@@ -102,16 +125,18 @@ let
         if [ -z "$member" ]; then
           rm -f "${groupPinsDir}/$group"
           # A failover group is picked again by the watcher, a selector stays where it is; a
-          # urltest group only becomes one again with a restart.
+          # urltest group only becomes one again with a restart, the TUN backends' with it.
           if [ "$STRATEGY" = urltest ]; then
             ${restartActiveConfigConsumersBlock}
-          elif [ -f "${outboundInventoryFile}" ]; then
-            INVENTORY_TMP=$(mktemp "${outboundInventoryFile}.XXXXXX")
-            ${jq} --arg g "$group" '.groups[$g].pinned = ""' "${outboundInventoryFile}" > "$INVENTORY_TMP"
-            chmod 644 "$INVENTORY_TMP"
-            mv -f "$INVENTORY_TMP" "${outboundInventoryFile}"
+          else
+            if [ -f "${outboundInventoryFile}" ]; then
+              INVENTORY_TMP=$(mktemp "${outboundInventoryFile}.XXXXXX")
+              ${jq} --arg g "$group" '.groups[$g].pinned = ""' "${outboundInventoryFile}" > "$INVENTORY_TMP"
+              chmod 644 "$INVENTORY_TMP"
+              mv -f "$INVENTORY_TMP" "${outboundInventoryFile}"
+            fi
+            ${restartActiveBlock tunConsumers}
           fi
-          ${restartActiveBlock tunConsumers}
           exit 0
         fi
         if [ -r "${outboundInventoryFile}" ] \
@@ -149,11 +174,12 @@ let
     if [ -z "$tag" ]; then
       rm -f "${pinnedOutboundFile}"
     else
+      tag=$(_proxy_suite_pin_name "$tag" '(.tags // [])[], (.groups // {} | keys[])')
       # The inventory only exists once the proxy has run. Without it there is
       # nothing to check against, so accept the tag and let the start script warn
-      # if it turns out to name nothing.
+      # if it turns out to name nothing. A group is pinned like any outbound.
       if [ -r "${outboundInventoryFile}" ] \
-        && ! ${jq} -e --arg t "$tag" '.tags | index($t) != null' "${outboundInventoryFile}" >/dev/null; then
+        && ! ${jq} -e --arg t "$tag" '.tags + (.groups // {} | keys) | index($t) != null' "${outboundInventoryFile}" >/dev/null; then
         echo "proxy-suite: unknown outbound '$tag'" >&2
         exit 1
       fi
@@ -218,7 +244,7 @@ let
       TAG="''${TAG%.json}"
       case "$KEEP" in
         *"|$TAG|"*) ;;
-        *) rm -f "$CACHE" "''${CACHE%.json}.links" ;;
+        *) rm -f "$CACHE" "''${CACHE%.json}.links" "''${CACHE%.json}.fingerprint" ;;
       esac
     done
 

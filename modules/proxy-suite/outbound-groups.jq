@@ -1,6 +1,7 @@
 # Outbound groups, resolved at start: subscription entries and runtime outbounds only exist then.
 #
-# Input: {tags: [outbound tags, in build order], sources: {tag: source label}}.
+# Input: {tags: [outbound tags, in build order], sources: {tag: source label}, detours: {tag: the
+# outbound or group it chains through}}.
 # Args: $groups {name: {outbounds, subscriptions, match, strategy, failback, interval}},
 # $priority {tag: n}, $disabled [tags], $pins {group: member}, $url, $interval, $tolerance,
 # $watched: whether proxy-suite-outbound-groups drives this instance's failover groups through
@@ -12,10 +13,11 @@
 # Errors mean the config cannot be built (a group inside itself); warnings are dropped members
 # and pins.
 
-def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\*"; ".*") | gsub("\\?"; ".")) + "$";
+def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\*"; ".*") | gsub("\\?"; ".")) + "\\z";
 
 (.tags) as $tags
 | (.sources // {}) as $sources
+| (.detours // {}) as $hops
 | ($groups | keys_unsorted) as $names
 | ($tags | to_entries | map({key: .value, value: .key}) | from_entries) as $position
 
@@ -35,7 +37,28 @@ def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\
     | .members[$g] = ([$explicit[] | select(. as $t | $missing | index([$t]) | not)] + $rest)
     | .warnings += [$missing[] | "group '\($g)': member '\(.)' is not available; leaving it out"]
   )) as $resolved
-| $resolved.members as $members
+
+# A group a chain goes through (a detour names it, or the hop's own detour, on down) cannot pick
+# a member that dials back through it - itself, a group it holds, or what one of those chains
+# through: sing-box refuses that loop, so the member is left out of the group. A loop of
+# groups alone is left to $loops.
+| def closure(f): {seen: (map({key: ., value: true}) | from_entries), next: .}
+    | until(.next == []; .seen as $s
+        | ([.next[] | f[]] | unique | map(select($s[.] | not))) as $n
+        | .seen += ($n | map({key: ., value: true}) | from_entries) | .next = $n)
+    | .seen;
+  ([$hops[]] | unique | map({key: ., value: ([.] | closure([$hops[.] // empty] + ($resolved.members[.] // [])))})
+   | from_entries) as $beyond
+| ([$hops[] | limit($hops | length + 1; recurse($hops[.] // empty)) | select(. as $t | $names | index([$t]))]
+   | unique) as $chained
+| (reduce $names[] as $g ({members: {}, warnings: []};
+    [$resolved.members[$g][] | select(($chained | index([$g]))
+       and ([[.] | closure($resolved.members[.] // []) | keys[] | $hops[.] // empty]
+            | any(.[]; $beyond[.][$g] == true)))] as $out
+    | .members[$g] = ($resolved.members[$g] - $out)
+    | .warnings += [$out[] | "group '\($g)': member '\(.)' chains through it; leaving it out"]
+  )) as $unchained
+| $unchained.members as $members
 
 # A group inside itself, however deep, has no member to end on.
 | def reach($g; $seen):
@@ -71,19 +94,20 @@ def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\
     | .warnings += (if $usable == [] then ["group '\($g)' has no available member; it blocks until one is"] else [] end)
     | (if $all == [] then ["block"] else $all end) as $all
     | (if $usable == [] then ["block"] else $usable end) as $usable
+    # What the selector holds: its default among them, block when every member is disabled.
+    | ($all + ($usable - $all)) as $picks
+    | ($cfg.interval // (if $cfg.strategy == "urltest" then $interval else "30s" end)) as $every
     # listed: the members the group names itself, which the front ends edit; members adds those
     # its subscriptions and patterns pull in.
-    | .groups[$g] = {strategy: $cfg.strategy, failback: ($cfg.failback != false),
-                     interval: ($cfg.interval // (if $cfg.strategy == "urltest" then $interval else "30s" end)),
+    | .groups[$g] = {strategy: $cfg.strategy, failback: ($cfg.failback != false), interval: $every,
                      members: $all, listed: [($cfg.outbounds // [])[] | select(. != $g)],
                      pinned: $pinned, runtime: ($cfg.runtime // false)}
     | .outbounds += [
         if ($cfg.strategy == "urltest" or ($cfg.strategy == "failover" and ($watched | not))) and $pinned == "" then
-          {type: "urltest", tag: $g, outbounds: $usable, url: $url,
-           interval: ($cfg.interval // $interval), tolerance: $tolerance}
+          {type: "urltest", tag: $g, outbounds: $usable, url: $url, interval: $every, tolerance: $tolerance}
         else
           # A pin holds any strategy, as the top-level pin does: a selector the Clash API switches.
-          {type: "selector", tag: $g, outbounds: $all,
+          {type: "selector", tag: $g, outbounds: $picks,
            default: (if $pinned != "" then $pinned else $usable[0] end)}
           + (if $cfg.strategy == "failover" then {interrupt_exist_connections: true} else {} end)
         end]
@@ -93,7 +117,7 @@ def glob_regex: "^" + (gsub("(?<c>[.+^$()\\[\\]{}|\\\\])"; "\\\(.c)") | gsub("\\
    # Inner groups first: sing-box wants an outbound defined before a group names it.
    outbounds: ($built.outbounds | sort_by(.tag as $t | [$names[] | select(reach(.; [.]) | index([$t]))] | -length)),
    top: $top,
-   warnings: ($resolved.warnings + $built.warnings),
+   warnings: ($resolved.warnings + $unchained.warnings + $built.warnings),
    # The start script drops a runtime group in a loop and tries again; a declared one is fatal.
    loops: $loops,
    errors: [$loops[] | "group '\(.)' contains itself"]}

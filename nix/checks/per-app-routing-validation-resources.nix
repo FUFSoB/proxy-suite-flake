@@ -67,6 +67,30 @@
         };
       }
     ])
+    # proxyMark marks the proxy's sockets without global TProxy too.
+    (rejects "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark" [
+      {
+        services.proxy-suite = {
+          proxy.tproxy.proxyMark = 7;
+          perAppRouting = {
+            enable = true;
+            tun = {
+              enable = true;
+              fwmark = 7;
+            };
+          };
+        };
+      }
+    ])
+    (rejects "proxy.tproxy.fwmark and proxy.tproxy.proxyMark must differ" [
+      {
+        services.proxy-suite.proxy.tproxy = {
+          enable = true;
+          fwmark = 5;
+          proxyMark = 5;
+        };
+      }
+    ])
     (rejects "perAppRouting.tproxy.fwmark must differ from proxy.tproxy.proxyMark" [
       {
         services.proxy-suite = {

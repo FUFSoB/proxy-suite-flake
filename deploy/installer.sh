@@ -72,12 +72,14 @@ ask_all() {
   setup_network || exit 1
 
   step "Public address"
+  # Through $NET_IFACE, the one link the installed system sets up: another one's DHCP
+  # route would answer for it here.
   if [[ $NET_DHCP == false ]]; then
     local_ip=${NET_V4%/*}
   else
-    local_ip=$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
+    local_ip=$(ip -4 route get 1.1.1.1 oif "$NET_IFACE" | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
   fi
-  seen_ip=$(curl -4 -s --max-time 10 https://api.ipify.org || true)
+  seen_ip=$(curl -4 -s --interface "$NET_IFACE" --max-time 10 https://api.ipify.org || true)
   default_ip=$local_ip
   if [[ -n $seen_ip && $seen_ip != "$local_ip" ]] && is_ipv4 "$seen_ip"; then
     say "This server's address is $local_ip, but the internet sees it as $seen_ip (NAT)."
@@ -169,7 +171,7 @@ ask_all() {
       reject "Not a domain name." REALITY_SNI
       continue
     fi
-    if curl -s -o /dev/null --max-time 10 --tlsv1.3 --http2 "https://$REALITY_SNI/"; then
+    if curl -s -o /dev/null --interface "$NET_IFACE" --max-time 10 --tlsv1.3 --http2 "https://$REALITY_SNI/"; then
       break
     fi
     warn "$REALITY_SNI did not answer over TLS 1.3 from here; REALITY needs TLS 1.3 and HTTP/2."
@@ -184,8 +186,9 @@ ask_all() {
   # The medium this installer runs from, which some VPS panels attach as a writable disk
   # rather than a CD: erasing it would kill the install halfway.
   local live_majmin live_disk=""
-  if live_majmin=$(findmnt -no MAJ:MIN /iso 2>/dev/null) && [[ -e /dev/block/$live_majmin ]]; then
-    live_disk=$(lsblk -ndpo PKNAME "/dev/block/$live_majmin" 2>/dev/null || true)
+  # -r: unpadded, or the name below would carry the column's spaces and match nothing.
+  if live_majmin=$(findmnt -frno MAJ:MIN /iso 2>/dev/null) && [[ -e /dev/block/$live_majmin ]]; then
+    live_disk=$(lsblk -rndpo PKNAME "/dev/block/$live_majmin" 2>/dev/null || true)
     [[ -n $live_disk ]] || live_disk=$(readlink -f "/dev/block/$live_majmin")
   fi
   mapfile -t disks < <(lsblk -dnpo NAME,TYPE,RO | awk -v live="$live_disk" '$2 == "disk" && $3 == 0 && $1 != live && $1 !~ /\/(zram|loop|sr|fd)[0-9]/ { print $1 }')
@@ -285,12 +288,13 @@ ws_path="/$(openssl rand -hex 6)"
 step "Writing /etc/nixos"
 etc_nixos="$MNT/etc/nixos"
 
-# Root's alone: it names the REALITY shortId and the WS path, which a local user could
-# otherwise read and probe with.
-install -m 0600 /dev/null "$etc_nixos/host.nix"
+# Readable by every local user once applied (nixos-rebuild copies the flake into
+# /nix/store), so it names no secret: the keys are files under $SECRETS_DIR.
 cat >"$etc_nixos/host.nix" <<HOST
 # Written by proxy-suite-install on $(date -u +%Y-%m-%d). Edit it, then apply with:
 #   sudo nixos-rebuild switch --flake /etc/nixos
+# Every local user can read it (it is copied into /nix/store): keep secrets out of it, in
+# files under $SECRETS_DIR.
 # Options: deploy/server-module.nix in the proxy-suite-flake repository.
 {
   networking.hostName = $(nix_str "$HOST_NAME");

@@ -21,6 +21,9 @@
       assert
         !(pkgs.lib.hasInfix ''select(.protocol == "socks" and .tag == "mixed-in") | .settings.users'' xrayBackendJqFilter);
       assert pkgs.lib.hasInfix "xray_preserved_rules" xrayBackendJqFilter;
+      # A route mode keeps mixed-in's onion rule ahead of the guard whose lookup it spares.
+      assert pkgs.lib.hasInfix ''. == "inbounds-tor-onion" or . == "inbounds-private-guard"''
+        xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "dns-upstream-direct" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "dns-upstream-remote" xrayBackendJqFilter;
       assert pkgs.lib.hasInfix "xray_pin_server_names" xrayBackendJqFilter;

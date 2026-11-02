@@ -53,12 +53,11 @@ let
             concatStringsSep "\n" (filter (l: !(hasPrefix "#" (trim l))) (splitString "\n" (quoted name)))
           )
         );
-      lists = "--hostlist=${src}/etc/nfqws2/lists/user.list --hostlist-exclude=${src}/etc/nfqws2/lists/exclude.list";
+      excludes = "--hostlist-exclude=${src}/etc/nfqws2/lists/exclude.list";
+      lists = "--hostlist=${src}/etc/nfqws2/lists/user.list ${excludes}";
       circular = "--lua-desync=circular:fails=2:time=300:retrans=3:nld=2";
       tcpPayload = "--payload=tls_client_hello,mtproto_initial";
       udpPayload = "--payload=wireguard_initiation,wireguard_response,wireguard_cookie,stun,discord_ip_discovery,mtproto_initial,unknown";
-    in
-    {
       # Its init script's order. QUIC reads the learned list but never adds to it:
       # browsers retry over TCP. The UDP profile carries no SNI, so no lists.
       #
@@ -68,7 +67,7 @@ let
       # of the udp_out it waits for: UDP never rotated. circular gets them now, as in
       # zapret2's manual, and the strategies after it keep their own filters. The NFQUEUE
       # window still bounds what reaches Lua.
-      profiles = [
+      profilesWith = lists: [
         (patch "NFQWS_ARGS_UDP" "--out-range=<n2 ${udpPayload} ${circular}"
           "--out-range=a --in-range=a ${udpPayload} ${circular} --out-range=<n2 --in-range=x"
           (args "NFQWS_ARGS_UDP")
@@ -86,6 +85,11 @@ let
             (args "NFQWS_ARGS")
         } <HOSTLIST> ${lists}"
       ];
+    in
+    {
+      profiles = profilesWith lists;
+      # Its MODE_ALL, for the per-app instance (runtime.nix): every site but its excludes.
+      everySiteProfiles = profilesWith excludes;
       blobArgs = map (replaceStrings [ "@/opt/etc/nfqws2/" ] [ "@${src}/etc/nfqws2/" ]) (
         filter (hasPrefix "--blob=") (words (quoted "NFQWS_BASE_ARGS"))
       );
@@ -93,6 +97,9 @@ let
       daemonArgs = [ ];
       # Never learned by detect.lua, as its own autohostlist never learned them.
       learnExclude = [ "${src}/etc/nfqws2/lists/exclude.list" ];
+      # The sites its profiles take from the start (`lists` above), for directSync.
+      siteLists = [ "${src}/etc/nfqws2/lists/user.list" ];
+      siteExcludes = [ "${src}/etc/nfqws2/lists/exclude.list" ];
       ports = {
         tcp = bare "TCP_PORTS";
         udp = replaceStrings [ ":" ] [ "-" ] (bare "UDP_PORTS");
@@ -130,6 +137,17 @@ let
       daemonArgs = [ "--ipcache-hostname=1" ];
       # Its whitelist, which z2k-profiles.template.sh adds in front.
       learnExclude = [ ];
+      # The sites its category profiles take from the start, for directSync: YouTube's and
+      # Discord's lists. Not its RKN list, ~125k names largely blocked by address: the
+      # proxy carries those, and the ones zapret2 fixes come in as it learns them.
+      siteLists = map (list: "${src}/files/lists/extra_strats/${list}") [
+        "TCP/YT/List.txt"
+        "TCP/YT_GV/List.txt"
+        "UDP/YT/List.txt"
+        "TCP/RKN/Discord.txt"
+      ];
+      # Its whitelist is generated (z2k-profiles.template.sh); it holds none of these.
+      siteExcludes = [ ];
       ports = {
         tcp = ports "NFQWS2_PORTS_TCP";
         udp = ports "NFQWS2_PORTS_UDP";
@@ -145,30 +163,35 @@ let
       # z2k's own installer and config generator, run offline against a staged copy
       # of its tree, so every pass it applies (pool layout, in-range windows,
       # detectors, fake TTL) comes out exactly as on a router. Its tree is staged
-      # under $out because the generated options point into it.
+      # under $out because the generated options point into it. everySite: the per-app
+      # instance's set, its profiles over the blocked-sites list taking every site.
       mkProfiles =
         {
           hostlistSuffix,
           excludeSuffix,
           learnArgs ? "",
           stallWatch ? "",
+          everySite ? false,
         }:
-        pkgs.runCommand "proxy-suite-zapret2-z2k-profiles" {
-          nativeBuildInputs = with pkgs; [
-            bash
-            coreutils
-            findutils
-            gawk
-            gnugrep
-            gnused
-          ];
-          inherit
-            hostlistSuffix
-            excludeSuffix
-            learnArgs
-            stallWatch
-            ;
-        } (fillTemplate ./z2k-profiles.template.sh { z2k = src; });
+        pkgs.runCommand "proxy-suite-zapret2-z2k-profiles" (
+          {
+            nativeBuildInputs = with pkgs; [
+              bash
+              coreutils
+              findutils
+              gawk
+              gnugrep
+              gnused
+            ];
+            inherit
+              hostlistSuffix
+              excludeSuffix
+              learnArgs
+              stallWatch
+              ;
+          }
+          // lib.optionalAttrs everySite { everySite = "1"; }
+        ) (fillTemplate ./z2k-profiles.template.sh { z2k = src; });
     };
 in
 {

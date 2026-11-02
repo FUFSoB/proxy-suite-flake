@@ -78,11 +78,20 @@ let
       marks = [ mark ];
       allow = reserved4 ++ reserved6 ++ perAppRoutingTproxy.localSubnets;
     };
+  # The handles of one comment's rules in a chain, if the table is there, one per line.
+  ruleHandles = table: chain: comment: ''
+    $(${nft} -a list chain ${table} ${chain} 2>/dev/null \
+      | ${grepBin} -F "comment \"${comment}\"" \
+      | ${awk} '$(NF - 1) == "handle" && $NF ~ /^[0-9]+$/ { print $NF }' || true)'';
+  # Prints nft's commands deleting them, for a transaction that puts their successors in.
+  deleteRulesByComment = table: chain: comment: ''
+    for handle in ${ruleHandles table chain comment}; do
+      printf '%s\n' "delete rule ${table} ${chain} handle $handle"
+    done
+  '';
   # Deletes the rules of one comment from a chain, if the table is there.
   dropRulesByComment = table: chain: comment: ''
-    handles=$(${nft} -a list chain ${table} ${chain} 2>/dev/null \
-      | ${grepBin} -F "comment \"${comment}\"" \
-      | ${awk} '{ print $NF }' || true)
+    handles=${ruleHandles table chain comment}
     if [ -n "$handles" ]; then
       while IFS= read -r handle; do
         [ -n "$handle" ] || continue
@@ -135,12 +144,13 @@ let
       cgroup_path=''${cgroup_dir#/sys/fs/cgroup/}
       cgroup_level=$(printf '%s' "$cgroup_path" | ${awk} -F/ '{ print NF }')
       ${lib.optionalString (hold != null) ''
-        # The hold first: from here on, nothing of the app leaves unmarked.
+        # The hold first: from here on, nothing of the app leaves unmarked. One kept from
+        # before (a restart's) goes in the transaction its successor comes in by.
         hold_comment="$rule_comment_prefix-hold"
-        ${dropRulesByComment "inet ${holdTable}" "output" "$hold_comment"}
         {
           printf '%s\n' "add table inet ${holdTable}" \
             "add chain inet ${holdTable} output { type filter hook output priority filter; policy accept; }"
+          ${deleteRulesByComment "inet ${holdTable}" "output" "$hold_comment"}
           # In a subshell: `hold` may be a case statement over several lines.
           (
             ${hold}
@@ -151,19 +161,12 @@ let
         } | ${nft} -f -
       ''}
 
-      handles=$(${nft} -a list chain ${nftFamily} ${nftTable} ${nftChain} 2>/dev/null \
-        | ${grepBin} -F "comment \"$rule_comment_prefix-mark\"" \
-        | ${awk} '{ print $NF }' || true)
-      if [ -n "$handles" ]; then
-        while IFS= read -r handle; do
-          [ -n "$handle" ] || continue
-          ${nft} delete rule ${nftFamily} ${nftTable} ${nftChain} handle "$handle" || true
-        done <<< "$handles"
-      fi
-
-      printf '%s\n' \
-        "add rule ${nftFamily} ${nftTable} ${nftChain} socket cgroupv2 level $cgroup_level \"$cgroup_path\" ${markRule} comment \"$mark_comment\"" \
-        | ${nft} -f -
+      # The old marking out as the new goes in, in one transaction.
+      {
+        ${deleteRulesByComment "${nftFamily} ${nftTable}" nftChain "$mark_comment"}
+        printf '%s\n' \
+          "add rule ${nftFamily} ${nftTable} ${nftChain} socket cgroupv2 level $cgroup_level \"$cgroup_path\" ${markRule} comment \"$mark_comment\""
+      } | ${nft} -f -
     '';
 
   mkUserRuleStop =

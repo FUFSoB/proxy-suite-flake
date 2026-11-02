@@ -204,6 +204,8 @@
             proxySuiteModule
             proxySuiteModules
             zapret
+            nfqws2-keenetic
+            z2k
             ;
           serverModule = self.nixosModules.server;
           generatedOptionsDoc = mkOptionsDoc system;

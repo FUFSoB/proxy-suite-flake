@@ -79,6 +79,14 @@ let
     zapret-discord-youtube.excludeIps = [ "1.1.1.0/24" ];
     zapret-discord-youtube.ips = [ "1.1.1.0/24" ];
   });
+
+  zapretVmExemptServices =
+    (evalZapret {
+      cidrExemption = {
+        enable = true;
+        cidrs = [ "192.168.123.0/24" ];
+      };
+    }).config.systemd.services;
 in
 {
   inherit
@@ -99,5 +107,6 @@ in
     zapretIpExtrasRules
     zapretExcludesRules
     zapretIpExcludesRules
+    zapretVmExemptServices
     ;
 }

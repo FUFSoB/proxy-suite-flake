@@ -8,6 +8,8 @@
   pkgs,
   serviceUser,
   ifPrivileged,
+  # autoProxy.exclude: names never routed, even under a learned site.
+  exclude ? [ ],
 }:
 
 let
@@ -21,5 +23,6 @@ pkgs.writeShellScript "proxy-suite-autoproxy" (
     ];
     inherit serviceUser;
     groupArg = ifPrivileged "-g ${serviceUser} ";
+    excludeJson = pkgs.lib.escapeShellArg (builtins.toJSON exclude);
   }
 )

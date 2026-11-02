@@ -94,10 +94,13 @@ Subnets zapret skips\.
 <a id="services-proxy-suite-zapret-directsync-enable"></a>
 ## services\.proxy-suite\.zapret\.directSync\.enable
 
-Send zapret’s domains direct in the proxy routing, so zapret handles them\. With zapret2,
-also the sites pinned at runtime, and the ones it learns once a strategy is seen getting
-through for them, after your own rules and autoProxy’s\. The all-proxy and all-bypass
-route modes leave them out, like every direct list\.
+Send the engine’s own sites direct in the proxy routing, so zapret handles them:
+zapret-discord-youtube’s lists; or zapret2’s ` domains `, the site lists of its
+` strategySource ` (YouTube, Discord…), the sites pinned at runtime, and the ones it
+learns once a strategy is seen getting through for them, after your own rules and
+autoProxy’s, and on sing-box after what zapret2 finds it cannot fix
+(` zapret2.proxyFallback `)\. The all-proxy and all-bypass route modes leave them out,
+like every direct list\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -105,7 +108,7 @@ route modes leave them out, like every direct list\.
 <a id="services-proxy-suite-zapret-directsync-upstreamips"></a>
 ## services\.proxy-suite\.zapret\.directSync\.upstreamIps
 
-Also send zapret’s upstream IP lists direct\.
+Also send zapret-discord-youtube’s upstream IP lists direct\.
 
 **Type:** boolean\
 **Default:** `false`
@@ -453,7 +456,8 @@ Domains never touched or learned\. At runtime: ` proxy-ctl zapret auto exclude `
 <a id="services-proxy-suite-zapret-zapret2-ipv6"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ipv6
 
-Handle IPv6 too\.
+Handle IPv6 too\. Without it, on sing-box the sites ` zapret.directSync ` sends direct are
+looked up for IPv4 alone, and a connection already on IPv6 to one of them takes the proxy\.
 
 **Type:** boolean\
 **Default:** `false`
@@ -503,7 +507,9 @@ UDP ports zapret2 handles\. The ports the profiles filter on and ` extraUdp ` ar
 
 Your own nfqws2 profiles, instead of those from ` strategySource `\. The first match wins\.
 ` <HOSTLIST> ` expands to the site list arguments, ` <HOSTLIST_NOAUTO> ` to the same without
-learning\. ` --qnum `, ` --fwmark ` and ` --lua-init ` are added for you\. ` null `: use the profiles from ` strategySource `\.
+learning; in per-app zapret (` perAppRouting.zapret `), both to the excludes alone, so a
+profile filtered by a marker alone takes every site a connection names there\.
+` --qnum `, ` --fwmark ` and ` --lua-init ` are added for you\. ` null `: use the profiles from ` strategySource `\.
 
 **Type:** null or (list of string)\
 **Default:** `null`\

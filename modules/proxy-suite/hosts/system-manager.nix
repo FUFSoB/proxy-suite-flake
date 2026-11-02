@@ -82,6 +82,20 @@ in
         # their own nftables tables, and the distribution's loose reverse-path filter already
         # lets AmneziaWG replies in.
         (firewallPortForward internal)
+        # Gateway clients' diverted packets reach input with their original destination, where
+        # the host's firewall, if it filters, drops them.
+        (lib.optionalAttrs (options ? warnings) {
+          warnings =
+            let
+              rules = cfg.internal.firewall.extraInputRules;
+            in
+            lib.optional (rules != "") (
+              "proxy-suite: system-manager leaves the host firewall alone; if it filters input, let in"
+              + " what the devices on proxy.tproxy.lanInterfaces send through the proxy (nftables: "
+              + lib.concatStringsSep "; " (lib.splitString "\n" (lib.removeSuffix "\n" rules))
+              + ")"
+            );
+        })
         {
           assertions = [
             {
@@ -102,6 +116,16 @@ in
             (lib.mapAttrs' (
               name: path: lib.nameValuePair "polkit-1/actions/${name}" { source = path; }
             ) cfg.internal.polkit.actions)
+            # As on NixOS: networkd, where it runs, drops foreign ip rules (TProxy's, TUN's) and
+            # unreachable routes (AmneziaWG's IPv6 refusal) whenever it reconfigures a link. It
+            # reads this only when it starts.
+            {
+              "systemd/networkd.conf.d/50-proxy-suite.conf".text = ''
+                [Network]
+                ManageForeignRoutingPolicyRules=no
+                ManageForeignRoutes=no
+              '';
+            }
           ];
 
         }

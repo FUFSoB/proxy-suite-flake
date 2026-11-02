@@ -68,13 +68,24 @@ end
 dofile(os.getenv("PSL"))
 dofile(os.getenv("DETECT"))
 
+-- The per-app instance has no verdicts file: no proxy takes a site over, so a whole cycle
+-- of failed strategies leaves its rotation going.
+if not verdict_file then
+  local prec = { nstrategy = 2, ctstrategy = 2 }
+  autostate = { quic = { ["discord.com"] = prec } }
+  for _ = 1, 4 do automate_failure_counter(prec, {}, 1) end
+  assert(not prec.final, "no verdicts file: rotation goes on")
+  return
+end
+
 local auto = work .. "/auto.txt"
 local excl = work .. "/exclude.txt"
 local f = io.open(excl, "w")
 f:write("bank.example\n")
 f:close()
 io.open(auto, "w"):close()
-local arg = { auto = auto, exclude = excl, fails = "3", time = "300", inseq = "4096", win = "32", exclude_domains = "skip.example" }
+-- reset: a bare argument (autoHostlist.retransReset); only its presence counts.
+local arg = { auto = auto, exclude = excl, fails = "3", time = "300", inseq = "4096", win = "32", exclude_domains = "skip.example", reset = "" }
 
 local flows = 0
 local function flow(host)
@@ -228,6 +239,14 @@ local t = flow("slow.example")
 hello(t)
 for _ = 1, 3 do ps_learn(nil, { track = t, outgoing = true, arg = arg, retrans = true, pos = {}, dis = { flow = t.flow, tcp = { th_flags = 16 }, payload = "hello" } }) end
 assert(resets == 1 and t.lua_state.ps_learn.counted, "reset after three retransmissions")
+-- Without autoHostlist.retransReset it counts all the same, and the client gets no reset.
+local noreset = {}
+for k, v in pairs(arg) do noreset[k] = v end
+noreset.reset = nil
+local t2 = flow("slower.example")
+hello(t2)
+for _ = 1, 3 do ps_learn(nil, { track = t2, outgoing = true, arg = noreset, retrans = true, pos = {}, dis = { flow = t2.flow, tcp = { th_flags = 16 }, payload = "hello" } }) end
+assert(resets == 1 and t2.lua_state.ps_learn.counted, "no reset without retransReset")
 
 -- works: a connection that got through, by the site key, with its protocol.
 local wrec = { ps_cycle = 4 }
@@ -241,6 +260,16 @@ automate_failure_counter(qrec, {}, 1)
 assert(not qrec.final)
 automate_failure_counter(qrec, {}, 1)
 assert(qrec.final == 2 and verdicts()["discord.com udp"] == "unfixable", "unfixable after a full cycle, QUIC only")
+-- A circular without key= (keenetic's UDP one, named by its instance) on flows without a
+-- name (keyed by address): unfixable for the transport it judged, not for all of it.
+local urec, trec = { nstrategy = 2, ctstrategy = 2 }, { nstrategy = 1, ctstrategy = 3 }
+autostate.circular_1_1 = { ["203.0.113.5"] = urec }
+autostate.circular_3_1 = { ["203.0.113.5"] = trec }
+automate_failure_check({ arg = {}, track = {}, dis = { udp = {} } }, urec, { nocheck = true })
+automate_failure_check({ arg = {}, track = {}, dis = { tcp = {} } }, trec, { nocheck = true })
+for _ = 1, 2 do automate_failure_counter(urec, {}, 1) end
+automate_failure_counter(trec, {}, 1)
+assert(verdicts()["203.0.113.5 udp"] == "unfixable" and not verdicts()["203.0.113.5 tcp"], "unfixable for its UDP only")
 
 -- Addresses: unanswered connections make one blocked, an answer clears it; local ones never.
 local function syn(ip, answered)
@@ -296,4 +325,35 @@ for _ = 1, 3 do
   fire("psln_")
 end
 assert(learned()["wild.example"] and not learned()["r65.wild.example"], "a flooding site learned whole")
+
+-- proxy-ctl's forget: a learned name taken off the list is learned again, from failures
+-- counted afresh.
+do
+  local kept = {}
+  for line in io.lines(auto) do
+    if line ~= "reset.example" then kept[#kept + 1] = line .. "\n" end
+  end
+  local w = io.open(auto, "w")
+  w:write(table.concat(kept))
+  w:close()
+end
+for i = 1, 3 do
+  local r = flow("reset.example")
+  hello(r)
+  ps_learn(nil, packet(r, false, { flags = TH_RST, s = 1 }))
+  assert((learned()["reset.example"] == true) == (i == 3), "forgotten, learned again after three new failures")
+end
+
+-- proxy-ctl's clear: the verdicts emptied are no longer taken as given here, and what was
+-- counted towards them goes with them.
+for _ = 1, 3 do syn("149.154.167.99") end
+assert(verdicts()["149.154.167.99 ip"] == "blocked")
+io.open(verdict_file, "w"):close()
+syn("149.154.167.99")
+assert(qrec.ps_cycle == 0, "a whole cycle again before it is unfixable")
+assert(urec.ps_cycle == 0 and trec.ps_cycle == 1, "by the transport its verdict was for")
+syn("149.154.167.99")
+assert(not verdicts()["149.154.167.99 ip"], "judged afresh after the clear")
+syn("149.154.167.99")
+assert(verdicts()["149.154.167.99 ip"] == "blocked", "blocked again, though blocked before the clear")
 print("detect.lua ok")

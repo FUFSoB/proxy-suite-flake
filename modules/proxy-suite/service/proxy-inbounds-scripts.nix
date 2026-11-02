@@ -371,8 +371,9 @@ let
     ${
       if proxyInboundsAwg != [ ] then
         ''
+          # Unread, null: the next reading counts from the last one, where [] would count from zero.
           awg=$(PYTHONPATH="${parserScriptsPythonPath}" ${python3} ${parserScriptsPythonPath}/awg_inbound.py peers \
-            --spec ${proxyInboundsSpecFile} --awg ${awgBin}) || awg='[]'
+            --spec ${proxyInboundsSpecFile} --awg ${awgBin}) || awg=null
         ''
       else
         "awg='[]'"

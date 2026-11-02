@@ -334,15 +334,17 @@ apply_network() {
   return 1
 }
 
-# Each step names what failed, so a wrong gateway is told apart from a wrong DNS.
+# Each step names what failed, so a wrong gateway is told apart from a wrong DNS. Through
+# $NET_IFACE alone: another link's DHCP route would pass for it, and the installed system
+# sets up only this one. (The DNS lookup cannot be bound to it.)
 test_network() {
   local gw
   gw=$(ip -4 route show default dev "$NET_IFACE" | awk '{ print $3; exit }')
   say "Testing the network..."
-  if [[ -n $gw ]] && ! ping -c 2 -W 2 "$gw" >/dev/null 2>&1; then
+  if [[ -n $gw ]] && ! ping -I "$NET_IFACE" -c 2 -W 2 "$gw" >/dev/null 2>&1; then
     warn "  gateway $gw does not answer ping (some providers block it; continuing)"
   fi
-  if ! ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1 && ! curl -s -o /dev/null --max-time 8 http://1.1.1.1; then
+  if ! ping -I "$NET_IFACE" -c 2 -W 3 1.1.1.1 >/dev/null 2>&1 && ! curl -s -o /dev/null --interface "$NET_IFACE" --max-time 8 http://1.1.1.1; then
     warn "  cannot reach the internet (1.1.1.1): check the address, netmask and gateway"
     return 1
   fi
@@ -350,7 +352,7 @@ test_network() {
     warn "  internet works but DNS does not: check the DNS servers"
     return 1
   fi
-  if ! curl -s -o /dev/null --max-time 15 https://cache.nixos.org/nix-cache-info; then
+  if ! curl -s -o /dev/null --interface "$NET_IFACE" --max-time 15 https://cache.nixos.org/nix-cache-info; then
     warn "  cannot fetch https://cache.nixos.org"
     return 1
   fi

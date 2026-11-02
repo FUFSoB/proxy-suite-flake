@@ -24,13 +24,16 @@ paths() {
   done
 }
 
-# The spool as a member might leave it: a name twice, a path for a name, junk in the lists.
+# The spool as a member might leave it: a name twice, a path for a name, junk in the lists, and
+# a trailing newline, which jq's $ lets past (each would fail the backend's start).
 cat > spool.json <<'JSON'
 {"rules": [
-  {"name": "bank", "target": "direct", "priority": 50, "domains": [".Bank.Example", "bad domain"],
-   "ips": ["192.0.2.1", "nope"], "geosites": ["category-gov-ru", "../x"]},
+  {"name": "bank", "target": "direct", "priority": 50, "domains": [".Bank.Example", "bad domain", "nl.example\n"],
+   "ips": ["192.0.2.1", "nope", "192.0.2.2\n", "2001:db8::1\n", "192.0.2.0/24\n"],
+   "geosites": ["category-gov-ru", "../x", "category-gov-ru\n"], "geoips": ["ru\n"], "ruleSets": ["rs\n"]},
   {"name": "bank", "target": "proxy"},
   {"name": "../evil", "target": "proxy"},
+  {"name": "evil\n", "target": "proxy", "domains": ["evil.example"]},
   {"name": "ads", "target": "block", "priority": 10, "domains": ["ads2.example"]},
   {"name": "work", "target": "primary", "priority": 450, "domains": ["work.example"],
    "ips": ["198.51.100.0/24", "999.1.1.1", "198.51.100.1/33", "010.0.0.1", "1::2::3"]},
@@ -51,7 +54,7 @@ cp routing/rules.json rendered.json
 jq -e '
   map(.name) == ["ads", "bank", "gone", "nogeo", "off", "empty", "work"]
   and (.[] | select(.name == "bank") | .domains == ["bank.example"] and .ips == ["192.0.2.1/32"]
-       and .geosites == ["category-gov-ru"] and .target == "direct")
+       and .geosites == ["category-gov-ru"] and .geoips == [] and .ruleSets == [] and .target == "direct")
 ' rendered.json > /dev/null
 # A rule set per rule, domains and addresses for routing, domains alone for lookups; an address
 # the backends would refuse (and with it the whole start) is dropped.

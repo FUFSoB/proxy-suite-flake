@@ -151,6 +151,30 @@ class RuntimeTest(unittest.TestCase):
         rt.cmd_users_order(self.spec, self.spool, "alice", 12)
         self.assertEqual(self.state()["users"]["alice"]["order"], 12)
 
+    def test_names_that_differ_only_in_case_are_one_to_xray(self):
+        # XRay lowercases emails and refuses to start on a repeat: "Bob" next to "bob" would
+        # stop every listener. Names keep the case they were given.
+        with self.assertRaisesRegex(rt.RuntimeError_, "declared user 'bob' to XRay"):
+            rt.cmd_users_add(self.spec, self.spool, "Bob", None, ["vless-in"])
+        rt.cmd_users_add(self.spec, self.spool, "Alice", None, ["vless-in"])
+        with self.assertRaisesRegex(rt.RuntimeError_, "runtime user named 'Alice' already exists"):
+            rt.cmd_users_add(self.spec, self.spool, "alice", None, [])
+        self.assertEqual(list(self.state()["users"]), ["Alice"])
+        # Spool files written before, or by hand: left out at the start, XRay keeps running.
+        self.write("users", "BOB", rt.new_user(20, ["vless-in"]))
+        self.write("users", "alice", rt.new_user(21, ["vless-in"]))
+        merged, result, warnings = rt.merge(self.spec)
+        vless = next(l for l in merged["listeners"] if l["tag"] == "vless-in")
+        self.assertEqual([u["name"] for u in vless["users"]], ["bob", "anon", "Alice"])
+        self.assertEqual(result["users"], ["Alice"])
+        self.assertIn("runtime user 'BOB': declared user 'bob' has this name to XRay, which ignores case", warnings)
+        self.assertIn("runtime user 'alice': runtime user 'Alice' has this name to XRay, which ignores case", warnings)
+        # A declared listener's own users, as the runtime listeners' check sees them.
+        listener = rt._render_listener("x", {"type": "vless", "port": 8443, "listen": "127.0.0.1"}, self.spec["runtime"])
+        listener["users"] = [{"name": "Carol", "runtime": True}, {"name": "carol", "runtime": True}]
+        self.assertIn("users must each have a distinct name, case aside (XRay ignores it)",
+                      rt.listener_problems(listener, self.spec["runtime"], False))
+
     def test_a_number_past_the_ipv6_group_gets_no_address(self):
         # The last group holds four hex digits: 0x10000 would be no address, and the start
         # script would fail on it for every listener.

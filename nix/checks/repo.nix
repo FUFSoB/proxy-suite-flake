@@ -418,6 +418,7 @@ in
               ];
               serviceUser = "proxy-suite-daemon";
               groupArg = "";
+              excludeJson = "'[]'";
             }
           );
           strikeJq = ../../modules/proxy-suite/autoproxy-strike.jq;
@@ -428,6 +429,7 @@ in
           excludeSampleHosts = "";
           slowJudgeJq = ../../modules/proxy-suite/autoproxy-slow-judge.jq;
           probesPerRun = "5";
+          routeCensor = "";
           publicSuffixes =
             pkgs.runCommand "proxy-suite-autoproxy-public-suffixes" { nativeBuildInputs = [ pkgs.python3 ]; }
               "python3 ${../../modules/proxy-suite/zapret2/public-suffixes.py} --private ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat >$out";

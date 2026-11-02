@@ -37,6 +37,10 @@ let
   );
   perAppRoutingZapretService =
     perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret";
+  # The start's mark table script, among the refusal under a global mode and preStart.
+  perAppRoutingZapretMarkUp = builtins.head (
+    builtins.filter (pkgs.lib.hasSuffix "-proxy-suite-zapret") perAppRoutingZapretService.serviceConfig.ExecStartPre
+  );
   perAppRoutingZapretBase = mkZapretBase perAppRoutingZapretFixture;
   perAppRoutingPerAppZapretBase = mkZapretBaseFor perAppRoutingZapretFixture "proxy-suite-per-app-zapret";
 
@@ -118,6 +122,12 @@ let
 
     grep -F 'proxy-suite per-app-zapret bypass' "$custom_script"
     grep -F 'mark and 268435456 != 0 return' "$custom_script"
+
+    # The reload puts the mark table back only once a firewall flush took it: its start
+    # script drops the users' rules in it.
+    mark_reload=${builtins.head perAppRoutingZapretService.serviceConfig.ExecReload}
+    grep -F 'list table inet proxy_suite_per_app_zapret_mark >/dev/null 2>&1; then' "$mark_reload"
+    grep -F '${perAppRoutingZapretMarkUp}' "$mark_reload"
 
     # Execute the installed hooks: TUN exclusions must work with and without
     # per-app zapret, while preserving the global per-app mark exemption.
@@ -208,6 +218,35 @@ in
         perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".requires == [
           "proxy-suite-per-app-zapret.service"
         ];
+      # Its rules go back in after the firewall flushed them (the backend restarted by the
+      # firewall's start, which restarts them too), and once the user's manager (with the slice
+      # its rules match) is a new one, by a new start; proxy-ctl's reload ahead of each app
+      # (reload-or-restart) catches a slice made anew under the same manager.
+      assert
+        perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".serviceConfig
+          ? ExecReload;
+      assert
+        perAppRoutingZapretFixture.config.systemd.services."proxy-suite-per-app-zapret-user@".partOf == [
+          "user@%i.service"
+        ];
+      assert builtins.any
+        (
+          line:
+          pkgs.lib.hasInfix "try-restart --no-block" line
+          && pkgs.lib.hasInfix "proxy-suite-per-app-zapret.service" line
+        )
+        (
+          pkgs.lib.toList perAppRoutingZapretFixture.config.systemd.services.proxy-suite-firewall-reapply.serviceConfig.ExecStart
+        );
+      # A firewall reload (a switch's) that flushed the ruleset took the backend's tables: its
+      # reload follows the firewall's and puts back what is missing (start_fw), above the
+      # global instance's rules (reloaded first), whose per-app bypass would end the chain.
+      assert builtins.elem "nftables.service" perAppRoutingZapretService.after;
+      assert builtins.elem "proxy-suite-zapret.service" perAppRoutingZapretService.after;
+      assert perAppRoutingZapretService.unitConfig.ReloadPropagatedFrom == [ "nftables.service" ];
+      assert pkgs.lib.hasSuffix "/init.d/sysv/zapret start_fw" (
+        pkgs.lib.last perAppRoutingZapretService.serviceConfig.ExecReload
+      );
       true
     )
 

@@ -158,6 +158,29 @@ class BuildOutboundTests(unittest.TestCase):
             ("ss://2022-blake3-aes-128-gcm:pw@example.com:8388", "both", "base64 key"),
             ("ss://2022-blake3-aes-128-gcm:" + base64.b64encode(b"k" * 32).decode() + "@example.com:8388", "both", "base64 key"),
             (f"ss://2022-blake3-chacha20-poly1305:{k16}%3A{k16}@example.com:8388", "both", "single key"),
+            # Each of these used to come out as an outbound that dials in the clear, or that the
+            # server never answers: silently, with the rest of the subscription.
+            ("vless://uuid@example.com:443?security=xtls&sni=a.example.com", "both", "VLESS security"),
+            ("vless://uuid@example.com:443?security=tls1.3&type=ws", "both", "VLESS security"),
+            (vmess_url({"tls": "reality"}), "both", "VMess tls"),
+            (vmess_url({"tls": "xtls"}), "both", "VMess tls"),
+            ("vless://uuid@example.com:443?security=tls&headerType=http", "sing-box", "headerType"),
+            ("trojan://pw@example.com:443?type=tcp&headerType=http", "sing-box", "headerType"),
+            (vmess_url({"type": "http"}), "sing-box", "headerType"),
+            ("vless://uuid@example.com:443?security=tls&headerType=srtp", "both", "headerType"),
+            ("vless://uuid@example.com:443?type=quic&security=tls&headerType=wechat-video", "sing-box", "headerType"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=obfs-local", "xray", "XRay has no SIP003"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=kcptun", "sing-box", "shadowsocks plugin"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=obfs-local%3Bobfs%3Dbogus", "sing-box", "obfs-local obfs"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=obfs-local%3Bobfs%3DHTTP", "sing-box", "obfs-local obfs"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Bmode%3Dgrpc", "sing-box", "v2ray-plugin mode"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Bmode%3Dquic", "sing-box", "needs tls"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Btls%3Bcert%3D%2Fetc%2Fshadow", "sing-box", "certificate"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Btls%3BcertRaw%3Dx", "sing-box", "certificate"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Btls%3Bc%5Cert%3D%2Fx", "sing-box", "escapes"),
+            ("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3B%3Btls", "sing-box", "empty key"),
+            ("socks4://me@proxy.example.com:1080", "xray", "SOCKS5 only"),
+            ("socks4a://proxy.example.com:1080", "xray", "SOCKS5 only"),
         ]
         for url, backends, message in cases:
             for backend in ("sing-box", "xray") if backends == "both" else (backends,):
@@ -365,10 +388,73 @@ class BuildOutboundTests(unittest.TestCase):
         ob = run_parser(f"vmess://{encoded}")
         self.assertEqual((ob["alter_id"], ob["security"]), (0, "auto"))
 
+    def test_security_is_read_whatever_its_case(self):
+        pbk = "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc"
+        tls = "vless://uuid@example.com:443?security=TLS&sni=a.example.com"
+        self.assertTrue(run_parser(tls)["tls"]["enabled"])
+        self.assertEqual(run_xray_parser(tls)["streamSettings"]["security"], "tls")
+        reality = f"vless://uuid@example.com:443?security=Reality&pbk={pbk}"
+        self.assertEqual(run_parser(reality)["tls"]["reality"]["public_key"], pbk)
+        self.assertNotIn("tls", run_parser("vless://uuid@example.com:443?security=NONE"))
+        self.assertTrue(run_parser(vmess_url({"tls": "TLS"}))["tls"]["enabled"])
+        for blank in ("", None, "none"):
+            with self.subTest(tls=blank):
+                self.assertNotIn("tls", run_parser(vmess_url({"tls": blank})))
+
+    def test_tcp_http_header_is_xrays(self):
+        vless = run_xray_parser(
+            "vless://uuid@example.com:443?security=tls&type=tcp&headerType=http"
+            "&host=a.example.com,b.example.com&path=%2Fx,%2Fy"
+        )["streamSettings"]
+        self.assertEqual(vless["network"], "raw")
+        self.assertEqual(
+            vless["rawSettings"]["header"],
+            {"type": "http", "request": {"path": ["/x", "/y"], "headers": {"Host": ["a.example.com", "b.example.com"]}}},
+        )
+        # host and path default as for the other transports: the server, and "/".
+        trojan = run_xray_parser("trojan://pw@example.com:443?headerType=HTTP")["streamSettings"]
+        self.assertEqual(trojan["rawSettings"]["header"]["request"], {"path": ["/"], "headers": {"Host": ["example.com"]}})
+        vmess = run_xray_parser(vmess_url({"type": "http", "host": "h.example.com", "path": "/p"}))["streamSettings"]
+        self.assertEqual(vmess["rawSettings"]["header"]["request"], {"path": ["/p"], "headers": {"Host": ["h.example.com"]}})
+        # "none", or a header on a transport it means nothing to, changes nothing.
+        self.assertNotIn("transport", run_parser("vless://uuid@example.com:443?security=tls&headerType=none"))
+        self.assertEqual(run_parser("vless://uuid@example.com:443?security=tls&type=ws&headerType=http")["transport"]["type"], "ws")
+        self.assertEqual(run_parser(vmess_url({"net": "grpc", "type": "gun", "path": "svc"}))["transport"]["type"], "grpc")
+
+    def test_shadowsocks_plugin_is_sing_boxs(self):
+        url = "ss://aes-128-gcm:pw@example.com:8388/?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dcdn.example.com"
+        ob = run_parser(url)
+        self.assertEqual((ob["plugin"], ob["plugin_opts"]), ("obfs-local", "obfs=http;obfs-host=cdn.example.com"))
+        # obfs-local's former name, and a plugin with no options.
+        alias = run_parser("ss://aes-128-gcm:pw@example.com:8388?plugin=simple-obfs")
+        self.assertEqual(alias["plugin"], "obfs-local")
+        self.assertNotIn("plugin_opts", alias)
+        v2ray = run_parser("ss://aes-128-gcm:pw@example.com:8388?plugin=v2ray-plugin%3Bmode%3Dquic%3Btls%3Bhost%3Da.com")
+        self.assertEqual((v2ray["plugin"], v2ray["plugin_opts"]), ("v2ray-plugin", "mode=quic;tls;host=a.com"))
+        # The legacy form carries it after the base64 too.
+        legacy = base64.urlsafe_b64encode(b"aes-128-gcm:pw@example.com:8388").decode().rstrip("=")
+        self.assertEqual(run_parser(f"ss://{legacy}?plugin=v2ray-plugin%3Btls#Name")["plugin_opts"], "tls")
+        self.assertNotIn("plugin", run_parser("ss://aes-128-gcm:pw@example.com:8388?plugin="))
+
+    def test_shadowsocks_userinfo_with_percent_encoded_base64(self):
+        # Standard base64, padding, + and all, percent-encoded as a URL's userinfo has it.
+        credentials = urllib.parse.quote(base64.b64encode(b"aes-128-gcm:pass>>?").decode(), safe="")
+        self.assertIn("%2B", credentials)
+        ob = run_parser(f"ss://{credentials}@ss.example.com:8388")
+        self.assertEqual((ob["method"], ob["password"]), ("aes-128-gcm", "pass>>?"))
+        legacy = urllib.parse.quote(base64.b64encode(b"chacha20-ietf-poly1305:passw0rd@legacy.example.com:8388").decode())
+        self.assertTrue(legacy.endswith("%3D%3D"))
+        self.assertEqual(run_parser(f"ss://{legacy}#Legacy")["server"], "legacy.example.com")
+
     def test_socks4_keeps_its_bare_userid(self):
         ob = run_parser("socks4://me@10.0.0.1:1080")
         self.assertEqual((ob["version"], ob["username"]), ("4", "me"))
         self.assertNotIn("password", ob)
+
+    def test_socks4a_lets_the_proxy_resolve(self):
+        # On "4" sing-box looks the name up itself, through its own DNS, not the proxy's.
+        self.assertEqual(run_parser("socks4a://me@proxy.example.com:1080")["version"], "4a")
+        self.assertEqual(run_parser("socks5h://proxy.example.com:1080")["version"], "5")
 
     def test_blank_parameters_fall_back_to_the_server(self):
         # Panels emit "&sni=&host=&path=" for everything left unset.
@@ -381,6 +467,26 @@ class BuildOutboundTests(unittest.TestCase):
         )
         self.assertEqual(tuic["tls"]["alpn"], ["h3"])
         self.assertEqual((tuic["congestion_control"], tuic["udp_relay_mode"]), ("bbr", "native"))
+
+    def test_sni_falls_back_to_the_host_parameter_as_vmess_does(self):
+        pbk = "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc"
+        for url in (
+            "vless://uuid@203.0.113.5:443?security=tls&type=ws&host=cdn.example.com",
+            f"vless://uuid@203.0.113.5:443?security=reality&pbk={pbk}&host=cdn.example.com",
+            "trojan://secret@203.0.113.5:443?type=ws&host=cdn.example.com",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(run_parser(url)["tls"]["server_name"], "cdn.example.com")
+                stream = run_xray_parser(url)["streamSettings"]
+                tls = stream.get("tlsSettings") or stream["realitySettings"]
+                self.assertEqual(tls["serverName"], "cdn.example.com")
+                # sni= still wins over host=, and with neither the server is the name.
+                sni = run_parser(url + "&sni=tls.example.com")
+                self.assertEqual(sni["tls"]["server_name"], "tls.example.com")
+                bare = run_parser(url.replace("host=cdn.example.com", "host="))
+                self.assertEqual(bare["tls"]["server_name"], "203.0.113.5")
+        vmess = run_parser(vmess_url({"add": "203.0.113.5", "tls": "tls", "net": "ws", "host": "cdn.example.com"}))
+        self.assertEqual(vmess["tls"]["server_name"], "cdn.example.com")
 
     def test_vmess_alpn_list_and_string_agree(self):
         as_list = run_parser(vmess_url({"tls": "tls", "alpn": ["h2", "http/1.1"]}))

@@ -32,7 +32,8 @@ import sys
 import tempfile
 
 import inbound_runtime
-from proxy_inbound import build_inbounds
+from inbound_netfilter import plain_address
+from proxy_inbound import SS_NOBODY, build_inbounds
 
 # The inbound's user list, by XRay protocol; a Shadowsocks inbound has one only with more
 # than one user. The others (socks, http, a single-user Shadowsocks, AmneziaWG's) change
@@ -41,6 +42,9 @@ USER_LISTS = {"vless": "clients", "vmess": "clients", "trojan": "clients", "hyst
 # Inbounds that speak UDP to their clients: a cut user's sessions there are dropped for a
 # while instead (QUIC has no socket to kill).
 UDP_CUT_SECONDS = 90
+# In rendered.json when writing the links and subscriptions failed: the next apply writes
+# them again, though the rendering saved has them already.
+OUTPUTS_PENDING = "outputsPending"
 
 
 def render(spec: dict, server_address: str, onion_address: str = "", template: dict | None = None,
@@ -60,7 +64,9 @@ def render(spec: dict, server_address: str, onion_address: str = "", template: d
 
 def split_users(inbound: dict) -> tuple[dict, dict[str, dict]]:
     """The inbound without its users, and its users by email. One whose users cannot be
-    told apart from the rest comes whole, with none."""
+    told apart from the rest comes whole, with none. A Shadowsocks listener's stand-in for
+    nobody (render_xray_inbound) is no user: its key is new at every render, and whether
+    XRay has it or none, the listener stays multi-user."""
     key = USER_LISTS.get(inbound.get("protocol", ""))
     settings = inbound.get("settings") or {}
     if key is None or not isinstance(settings.get(key), list):
@@ -69,14 +75,21 @@ def split_users(inbound: dict) -> tuple[dict, dict[str, dict]]:
     users = {client.get("email"): client for client in shape["settings"].pop(key)}
     if None in users or len(users) != len(settings[key]):
         return inbound, {}
+    if inbound.get("protocol") == "shadowsocks":
+        users.pop(SS_NOBODY, None)
     return shape, users
+
+
+def _without_level(client: dict) -> dict:
+    return {key: value for key, value in client.items() if key != "level"}
 
 
 def plan(old: dict, new: dict) -> dict:
     """What it takes to go from the old rendering to the new one: {"restart": [reasons],
-    "users": {tag: {"remove": [emails], "add": [clients]}}, "rules": rules | None,
-    "outbounds": {"remove": [tags], "add": [outbounds]}, "addresses": {"remove", "add"},
-    "outputs": bool}. A non-empty "restart" means the rest does not apply."""
+    "users": {tag: {"remove": [emails], "add": [clients], "relevel": [emails]}},
+    "rules": rules | None, "outbounds": {"remove": [tags], "add": [outbounds]},
+    "addresses": {"remove", "add"}, "outputs": bool}. "relevel": those removed and added
+    again with only their level changed. A non-empty "restart" means the rest does not apply."""
     result: dict = {"restart": [], "users": {}, "rules": None, "outbounds": {"remove": [], "add": []},
                     "addresses": {"remove": [], "add": []}, "outputs": False}
     old_inbounds = {ib.get("tag"): ib for ib in old.get("inbounds") or []}
@@ -97,7 +110,8 @@ def plan(old: dict, new: dict) -> dict:
         remove = sorted(e for e in old_users if e not in new_users or old_users[e] != new_users[e])
         add = [new_users[e] for e in sorted(new_users) if e not in old_users or old_users[e] != new_users[e]]
         if remove or add:
-            result["users"][tag] = {"remove": remove, "add": add}
+            relevel = [e for e in remove if e in new_users and _without_level(old_users[e]) == _without_level(new_users[e])]
+            result["users"][tag] = {"remove": remove, "add": add, "relevel": relevel}
     if result["restart"]:
         return result
     if (old.get("rules") or []) != (new.get("rules") or []):
@@ -114,7 +128,8 @@ def plan(old: dict, new: dict) -> dict:
     old_addresses, new_addresses = addresses(old), addresses(new)
     result["addresses"]["remove"] = sorted(old_addresses - new_addresses)
     result["addresses"]["add"] = sorted(new_addresses - old_addresses)
-    result["outputs"] = (old.get("links"), old.get("subscriptions")) != (new.get("links"), new.get("subscriptions"))
+    result["outputs"] = bool(old.get(OUTPUTS_PENDING)) or (
+        (old.get("links"), old.get("subscriptions")) != (new.get("links"), new.get("subscriptions")))
     return result
 
 
@@ -128,6 +143,38 @@ def udp_inbound(inbound: dict) -> bool:
     stream = inbound.get("streamSettings") or {}
     alpn = ((stream.get("tlsSettings") or {}).get("alpn")) or []
     return inbound.get("protocol") == "hysteria" or (stream.get("network") == "xhttp" and alpn == ["h3"])
+
+
+def _leads_to(dest, inbound: dict) -> bool:
+    """Whether a fallback's dest is this inbound: "host:port" (the module renders the
+    listener's own address), or a bare port, on loopback."""
+    if isinstance(dest, int) and not isinstance(dest, bool):
+        host, port = "", str(dest)
+    elif isinstance(dest, str):
+        host, _, port = dest.rpartition(":")
+    else:
+        return False
+    return port == str(inbound.get("port")) and host.strip("[]") in ("", "localhost", "127.0.0.1", "::1",
+                                                                     inbound.get("listen"))
+
+
+def front_ports(inbounds: list[dict], inbound: dict) -> set[int]:
+    """The ports of the listeners whose fallbacks lead to this one, and to those in turn. A
+    client's socket is there: the one here comes from loopback, the client's address only
+    in its PROXY header."""
+    ports: set[int] = set()
+    seen, todo = {inbound.get("tag")}, [inbound]
+    while todo:
+        target = todo.pop()
+        for front in inbounds:
+            fallbacks = (front.get("settings") or {}).get("fallbacks") or []
+            if front.get("tag") in seen or not any(_leads_to(fb.get("dest"), target) for fb in fallbacks):
+                continue
+            seen.add(front.get("tag"))
+            todo.append(front)
+            if isinstance(front.get("port"), int):
+                ports.add(front["port"])
+    return ports
 
 
 # --- doing it -------------------------------------------------------------------------
@@ -182,6 +229,8 @@ def online_ips(tools: Tools, email: str) -> list[str]:
 def cut(tools: Tools, ips: list[str], tcp_ports: set[int], udp_ports: set[int]) -> None:
     """Close what these addresses hold open on these ports: TCP sockets killed, UDP dropped
     for a while. Other users behind the same address reconnect once."""
+    # XRay gives an IPv6 address in brackets, which neither ss nor nft would take.
+    ips = sorted({address for address in map(plain_address, ips) if address})
     ss = tools.config.get("ss")
     if ss:
         for ip in ips:
@@ -216,9 +265,16 @@ def run_steps(tools: Tools, steps: dict, new: dict, template: dict | None) -> li
         inbound = by_tag[tag]
         if change["remove"]:
             tools.xray_api("rmu", f"-tag={tag}", *change["remove"], what=f"removing users from {tag}")
-            ports = udp_ports if udp_inbound(inbound) else tcp_ports
+            udp = udp_inbound(inbound)
+            # Behind another listener's fallback, theirs closes with the client's connection to
+            # it, the client's other sessions there too.
+            ports = {int(inbound["port"])} | (set() if udp else front_ports(new.get("inbounds") or [], inbound))
             for email in change["remove"]:
-                ports.setdefault(email, set()).add(int(inbound["port"]))
+                # The drop would shut out the user's next session too: one whose level alone
+                # changed keeps their QUIC sessions, at the old level until they end.
+                if udp and email in change.get("relevel", ()):
+                    continue
+                (udp_ports if udp else tcp_ports).setdefault(email, set()).update(ports)
             done.append(f"{tag}: -{','.join(change['remove'])}")
         if change["add"]:
             key = USER_LISTS[inbound["protocol"]]
@@ -228,7 +284,7 @@ def run_steps(tools: Tools, steps: dict, new: dict, template: dict | None) -> li
             done.append(f"{tag}: +{','.join(c['email'] for c in change['add'])}")
     # A user whose secret or level changed was removed and added: their old sessions go too.
     for email, ips in sorted(leaving.items()):
-        if ips:
+        if ips and (tcp_ports.get(email) or udp_ports.get(email)):
             cut(tools, ips, tcp_ports.get(email, set()), udp_ports.get(email, set()))
             done.append(f"cut {email} ({', '.join(ips)})")
     for tag in steps["outbounds"]["remove"]:
@@ -355,7 +411,7 @@ def restart(tools: Tools, units: list[str], reason: str) -> list[str]:
     return [f"restarted {', '.join(units)}: {reason}"]
 
 
-def apply_xray(tools: Tools, spec: dict) -> list[str]:
+def apply_xray(tools: Tools, spec: dict, now: float | None = None) -> list[str]:
     """The XRay side; restarts the inbounds when the API cannot do it."""
     config = tools.config
     runtime_dir = config["runtimeDir"]
@@ -369,7 +425,8 @@ def apply_xray(tools: Tools, spec: dict) -> list[str]:
         server_address = args.get("serverAddress") or spec.get("serverAddress") or ""
         # As the start script checks them, but the ports XRay holds now are its own.
         held = {int(ib["port"]) for ib in old.get("inbounds") or [] if isinstance(ib.get("port"), int)}
-        new, warnings = render(spec, server_address, args.get("onionAddress", ""), template, check_ports=held or True)
+        new, warnings = render(spec, server_address, args.get("onionAddress", ""), template, check_ports=held or True,
+                               now=now)
     except (ValueError, OSError) as exc:
         return restart(tools, [unit], f"cannot render: {exc}")
     for warning in warnings:
@@ -401,6 +458,7 @@ def apply_xray(tools: Tools, spec: dict) -> list[str]:
             done.append("links and subscriptions")
         except ApplyError as exc:
             print(f"proxy-suite: {exc}", file=sys.stderr)
+            save_rendering(runtime_dir, {**new, OUTPUTS_PENDING: True})
     return done
 
 
@@ -434,7 +492,7 @@ def interface_part(text: str) -> str:
     return "\n".join(out)
 
 
-def apply_awg(tools: Tools, spec: dict) -> list[str]:
+def apply_awg(tools: Tools, spec: dict, now: float | None = None) -> list[str]:
     """Write the AmneziaWG listeners' configs again and sync the interfaces whose peers
     changed. A change to an interface itself restarts their unit."""
     config = tools.config
@@ -455,7 +513,7 @@ def apply_awg(tools: Tools, spec: dict) -> list[str]:
                     before[listener["amneziaWg"]["interfaceName"]] = handle.read()
             except OSError:
                 before[listener["amneziaWg"]["interfaceName"]] = None
-    merged, _, _ = inbound_runtime.merge(spec)
+    merged, _, _ = inbound_runtime.merge(spec, now=now)
     if tools.dry_run:
         return []
     prepared = awg_inbound.prepare(merged, awg, awg_dir)
@@ -487,17 +545,18 @@ def apply_awg(tools: Tools, spec: dict) -> list[str]:
 # --- entry ----------------------------------------------------------------------------
 
 
-def apply(config: dict, spec: dict, dry_run: bool = False) -> list[str]:
+def apply(config: dict, spec: dict, dry_run: bool = False, now: float | None = None) -> list[str]:
     """Both sides, under the apply lock. With the inbounds stopped (no runtime directory)
-    there is nothing to change in place: try-restart, which leaves them stopped."""
+    there is nothing to change in place: try-restart, which leaves them stopped. now: the
+    time the users' statuses are taken at (the manager's, which keeps what it applied)."""
     tools = Tools(config, dry_run)
     if not os.path.isdir(config["runtimeDir"]):
-        return apply_awg(tools, spec) + restart(tools, [config["unit"]], "the inbounds are not running")
+        return apply_awg(tools, spec, now) + restart(tools, [config["unit"]], "the inbounds are not running")
     lock_path = os.path.join(config["runtimeDir"], "apply.lock")
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        return apply_awg(tools, spec) + apply_xray(tools, spec)
+        return apply_awg(tools, spec, now) + apply_xray(tools, spec, now)
     finally:
         os.close(fd)
 

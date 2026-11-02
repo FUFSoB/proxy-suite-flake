@@ -79,7 +79,8 @@ def parse_size(value) -> int | None:
     match = _SIZE.fullmatch(value)
     if not match:
         raise PolicyError(f"size {json.dumps(value)}: a number with K, M, G or T")
-    return int(float(match.group(1)) * SIZE_UNITS[match.group(2).upper()])
+    # "0G" is 0 too: no limit, never a limit of nothing.
+    return int(float(match.group(1)) * SIZE_UNITS[match.group(2).upper()]) or None
 
 
 def parse_rate(value) -> int | None:
@@ -97,7 +98,8 @@ def parse_rate(value) -> int | None:
     match = _RATE.fullmatch(value)
     if not match:
         raise PolicyError(f"rate {json.dumps(value)}: bits per second, a number with k, M or G")
-    return int(float(match.group(1)) * RATE_UNITS[match.group(2).upper()])
+    # "0M" is 0 too: no limit.
+    return int(float(match.group(1)) * RATE_UNITS[match.group(2).upper()]) or None
 
 
 def parse_speed(value) -> dict | None:
@@ -133,7 +135,7 @@ def parse_duration(value) -> int | None:
     if text.lower() in ("", "none", "0"):
         return None
     if text.isdigit():
-        return int(text)
+        return int(text) or None
     match = _DURATION.fullmatch(text)
     if not match:
         raise PolicyError(f"duration {json.dumps(value)}: a number with m, h, d or w, such as 30d")
@@ -236,8 +238,25 @@ def normalize(fields: dict, now: float | None = None) -> dict:
     return out
 
 
+def _zero_limits(entry):
+    """A stored entry with a 0 size or rate, which means no limit, as None: what normalize()
+    now makes of "0G" or "20M/0", which it once stored as 0."""
+    if not isinstance(entry, dict):
+        return entry
+    entry = dict(entry)
+    if type(entry.get("trafficLimit")) is int and entry["trafficLimit"] == 0:
+        entry["trafficLimit"] = None
+    speed = entry.get("speedLimit")
+    if isinstance(speed, dict):
+        speed = {k: None if type(v) is int and v == 0 else v for k, v in speed.items()}
+        entry["speedLimit"] = speed if any(v is not None for v in speed.values()) else None
+    return entry
+
+
 def check_stored(entry: dict) -> dict:
-    """A stored policy, already normalized: the same check, which must change nothing."""
+    """A stored policy, already normalized: the same check, which must change nothing but a
+    0 size or rate (no limit) to None. The entry as it is to be used."""
+    entry = _zero_limits(entry)
     normalized = normalize(entry)
     if normalized != entry:
         raise PolicyError("not in its stored form")
@@ -533,6 +552,9 @@ def statuses(spec: dict, runtime_users, now: float | None = None) -> dict[str, d
         view = status(policy, used_bytes(stats, user_state, name), now)
         slot = state["slots"].get(name)
         limited = bool(policy.get("speedLimit")) and manager.get("speedLimits", False)
-        view["level"] = int(slot) if limited and isinstance(slot, int) and slot > 0 else 0
+        # Past speedLimits.slots (lowered since) a level XRay has no policy for, which counts
+        # no stats: none until the manager gives the user another.
+        fits = isinstance(slot, int) and 0 < slot <= manager.get("slots", slot)
+        view["level"] = int(slot) if limited and fits else 0
         result[name] = view
     return result

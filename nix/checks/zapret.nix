@@ -38,6 +38,7 @@ let
     zapretIpExtrasRules
     zapretExcludesRules
     zapretIpExcludesRules
+    zapretVmExemptServices
     ;
 
   zapretHostlistRoutingChecks = import ./zapret-hostlist-routing.nix {
@@ -101,6 +102,23 @@ in
     (
       assert !(hasDirectDomain zapretExcludesRules "discord.com");
       assert !(hasDirectIP zapretIpExcludesRules "1.1.1.0/24");
+      true
+    )
+    # A firewall reload (a switch's) that flushed the ruleset took zapret's rules with it
+    # (iptables-nft's tables): its reload follows the firewall's and adds back what is missing,
+    # leaving the daemons be. The CIDR exemption goes back after it, above its rules.
+    (
+      let
+        zapretUnit = zapretVmExemptServices.proxy-suite-zapret;
+        exempt = zapretVmExemptServices.proxy-suite-zapret-vm-exempt;
+      in
+      assert pkgs.lib.hasSuffix "/init.d/sysv/zapret start_fw" zapretUnit.serviceConfig.ExecReload;
+      assert builtins.elem "nftables.service" zapretUnit.after;
+      assert zapretUnit.unitConfig.ReloadPropagatedFrom == [ "nftables.service" ];
+      assert exempt.serviceConfig.ExecReload == exempt.serviceConfig.ExecStart;
+      assert builtins.elem "proxy-suite-zapret.service" exempt.after;
+      assert builtins.elem "proxy-suite-zapret.service" exempt.unitConfig.ReloadPropagatedFrom;
+      assert builtins.elem "nftables.service" exempt.unitConfig.ReloadPropagatedFrom;
       true
     )
   ]

@@ -137,8 +137,11 @@ let
             } "$ob" "$tag" "$source" || return 1
             OUTBOUNDS_JSON=$(${jq} --slurpfile ob <(printf '%s' "$ob") '. + $ob' <<< "$OUTBOUNDS_JSON")
           '';
-      # Raw JSON gets the tag and the routing mark a Nix-declared one gets (rawOutboundJson).
-      singBoxMark = lib.optionalString (routingMark != null) " | .routing_mark = ${toString routingMark}";
+      # Raw JSON gets the tag and the routing mark a Nix-declared one gets (rawOutboundJson),
+      # but for the types that dial nothing themselves: sing-box refuses the field there.
+      singBoxMark =
+        lib.optionalString (routingMark != null)
+          " | if .type | IN(\"selector\", \"urltest\", \"block\", \"dns\") then . else .routing_mark = ${toString routingMark} end";
       xrayMark = lib.optionalString (
         routingMark != null
       ) " | .streamSettings.sockopt.mark = ${toString routingMark}";
@@ -305,22 +308,22 @@ let
       }
 
       # $1 kind, $2 the outbound: whether its backend takes it, as one it refuses would fail
-      # the whole start. Alone (its references dropped), as the service user, from stdin:
-      # read off fd 0 ("stdin", "stdin:"), as reopening /dev/stdin - root's 0600 pipe - is
-      # denied to the service user.
+      # the whole start. Alone (its references dropped: a hop is chained, and checked, once
+      # every outbound exists), as the service user, from stdin: read off fd 0 ("stdin",
+      # "stdin:"), as reopening /dev/stdin - root's 0600 pipe - is denied to the service user.
       _proxy_suite_check_json_outbound() {
         local kind="$1" ob="$2" as=()
         [ "$(${pkgs.coreutils}/bin/id -u)" = 0 ] && as=(${constants.runAsServiceUser pkgs [ ]})
         case "$kind" in
           ${lib.optionalString (singBoxBin != null) ''
             sing-box)
-              ${jq} -c '{outbounds: [del(.detour, .domain_resolver) | select(.type != "selector" and .type != "urltest")]}' <<< "$ob" \
+              ${jq} -c '{outbounds: [del(.detour, .domain_resolver)]}' <<< "$ob" \
                 | "''${as[@]}" ${singBoxBin} check -c stdin >/dev/null 2>&1
               ;;
           ''}
           ${lib.optionalString (xrayBin != null) ''
             xray)
-              ${jq} -c '{outbounds: [del(.proxySettings) | del(.streamSettings.sockopt.dialerProxy)]}' <<< "$ob" \
+              ${jq} -c '{outbounds: [del(.streamSettings.sockopt.dialerProxy)]}' <<< "$ob" \
                 | "''${as[@]}" ${xrayBin} run -test -format json -c stdin: >/dev/null 2>&1
               ;;
           ''}
@@ -330,7 +333,7 @@ let
 
       # $1 tag, $2 file holding one sing-box or XRay outbound, $3 source label.
       _proxy_suite_add_json_outbound() {
-        local tag="$1" source="$3" ob kind unsafe
+        local tag="$1" source="$3" ob kind unsafe hop=""
         ob=$(${jq} -ce --arg t "$tag" 'select(type == "object") | .tag = $t' <(_proxy_suite_read_source "$2") 2>/dev/null) || return 1
         # The runtime spool is group-writable, and the backend holds CAP_NET_ADMIN and the
         # daemon user's files: a sing-box tor outbound's executable_path is a program it runs
@@ -344,11 +347,30 @@ let
           fi
         fi
         kind=$(${jq} -r 'if has("protocol") then "xray" elif has("type") then "sing-box" else "" end' <<< "$ob")
+        if [ "$source" = runtime ] && [ "$kind" = sing-box ]; then
+          # Its members come and go, and one gone fails the backend's start: a group follows them.
+          if ${jq} -e '.type | IN("selector", "urltest")' <<< "$ob" >/dev/null; then
+            echo "proxy-suite: runtime outbound '$tag' picks among others; add a group instead: proxy-ctl proxy groups add" >&2
+            return 1
+          fi
+          # Its own detour is chained as <tag>.detour is (which wins): checked once every
+          # outbound exists, where the backend's check alone cannot see the hop.
+          if ${jq} -e 'has("detour")' <<< "$ob" >/dev/null; then
+            if ! hop=$(${jq} -er '.detour | strings | select(. != "")' <<< "$ob"); then
+              echo "proxy-suite: runtime outbound '$tag' has a detour that is not a tag" >&2
+              return 1
+            fi
+            ob=$(${jq} -c 'del(.detour)' <<< "$ob")
+          fi
+        fi
         if [ "$source" = runtime ] && ! _proxy_suite_check_json_outbound "$kind" "$ob"; then
           echo "proxy-suite: runtime outbound '$tag' is not one the backend takes (a field misspelt, or one it no longer has)" >&2
           return 1
         fi
         ${jsonAddBlock}
+        if [ -n "$hop" ]; then
+          RUNTIME_DETOURS_JSON=$(${jq} -c --arg t "$tag" --arg h "$hop" '.[$t] = $h' <<< "$RUNTIME_DETOURS_JSON")
+        fi
         _proxy_suite_record_tag_source "$tag" "$source"
       }
 
@@ -359,7 +381,7 @@ let
       _proxy_suite_runtime_outbounds() {
         local f tag
         [ -d "${runtimeOutboundsDir}" ] || return 0
-        for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json${lib.optionalString awgRuntimeOutbounds ''"${runtimeOutboundsDir}"/*.awg''}; do
+        for f in "${runtimeOutboundsDir}"/*.url "${runtimeOutboundsDir}"/*.json ${lib.optionalString awgRuntimeOutbounds ''"${runtimeOutboundsDir}"/*.awg''}; do
           [ -f "$f" ] && [ ! -L "$f" ] || continue
           tag="''${f##*/}"
           tag="''${tag%.*}"
@@ -546,8 +568,9 @@ let
         else
           "[${sshProxyCfg.server.host}]:${toString sshProxyCfg.server.port}";
       hostKeyFileBlock = lib.optionalString (!pureXrayEnabled && sshProxyCfg.hostKeyFile != null) ''
-        SSH_HOST_KEYS=$(${pkgs.openssh}/bin/ssh-keygen -F ${lib.escapeShellArg knownHostsTarget} \
-          -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} \
+        # ssh-keygen -F exits 1 when the host is not in the file: that is the check below.
+        SSH_HOST_KEYS=$({ ${pkgs.openssh}/bin/ssh-keygen -F ${lib.escapeShellArg knownHostsTarget} \
+          -f ${lib.escapeShellArg sshProxyCfg.hostKeyFile} || [ $? -eq 1 ]; } \
           | ${jq} -R -s '[splits("\n")] | map(select(length > 0 and (startswith("#") | not))) | map(sub("^\\S+\\s+"; ""))')
         if [ "$(${jq} 'length' <<< "$SSH_HOST_KEYS")" -eq 0 ]; then
           echo "proxy-suite: no host keys for "${lib.escapeShellArg knownHostsTarget}" in "${lib.escapeShellArg sshProxyCfg.hostKeyFile} >&2
@@ -754,11 +777,29 @@ let
   # Always there: `proxy-ctl proxy outbounds add --detour` chains runtime outbounds too. A
   # declared chain that cannot be built fails the start. A runtime one is left out with a
   # warning, like any other runtime outbound that does not come up, rather than going out
-  # unchained; whatever chained through it is checked again.
+  # unchained; whatever chained through it is checked again. So is a subscription entry only
+  # XRay parsed, in hybrid, whose subscription chains through sing-box: the others still can.
+  # A group may be the hop too, but groups are only built after this: the declared ones and
+  # those the spool has are taken at their word here, and groupsBlock checks the hop is there.
+  detourDroppable = ''def droppable: $sources[0][.tag] as $s | $s == "runtime" or (.sidecar == true and ($s // "" | startswith("sub:")));'';
   detourBlock = ''
     # outbound chaining
     DETOURS_JSON=$(${jq} -c --slurpfile runtime <(printf '%s' "$RUNTIME_DETOURS_JSON") '.outbounds = $runtime[0] + .outbounds' \
       <<< ${lib.escapeShellArg (builtins.toJSON detours)})
+    ${
+      if pureXrayEnabled then
+        "DETOUR_GROUPS_JSON='[]'"
+      else
+        ''
+          DETOUR_GROUPS_JSON=$(
+            for f in "${runtimeOutboundsDir}"/*.group; do
+              [ -e "$f" ] || continue
+              f="''${f##*/}"
+              printf '%s\n' "''${f%.group}"
+            done | ${jq} -R . | ${jq} -cs --argjson declared ${lib.escapeShellArg (builtins.toJSON (builtins.attrNames proxyCfg.groups))} '. + $declared'
+          )
+        ''
+    }
     while [ "$DETOURS_JSON" != '{"outbounds":{},"subscriptions":{}}' ]; do
       # The filter reads $sources as the object itself, so the program unwraps the slurped one.
       DETOUR_RESULT=$(${jq} -c --slurpfile xob <(printf '%s' "${
@@ -772,10 +813,11 @@ let
         }) \
           --argjson d "$DETOURS_JSON" \
           --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
-          --arg kind ${detourKind})
+          --arg kind ${detourKind} \
+          --argjson groups "$DETOUR_GROUPS_JSON")
       DETOUR_DROP=$(${jq} -c --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
-        '[.errors[] | select($sources[0][.tag] == "runtime")] | unique_by(.tag)' <<< "$DETOUR_RESULT")
-      if ${jq} -e --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") 'any(.errors[]; $sources[0][.tag] != "runtime")' <<< "$DETOUR_RESULT" >/dev/null; then
+        '${detourDroppable} [.errors[] | select(droppable)] | unique_by(.tag)' <<< "$DETOUR_RESULT")
+      if ${jq} -e --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") '${detourDroppable} any(.errors[]; droppable | not)' <<< "$DETOUR_RESULT" >/dev/null; then
         ${jq} -r '.errors[] | "proxy-suite: " + .message' <<< "$DETOUR_RESULT" >&2
         exit 1
       fi
@@ -784,7 +826,7 @@ let
         ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c '.xray' <<< "$DETOUR_RESULT")''}
         break
       fi
-      ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime outbound '"'"'\(.tag)'"'"': \(.message)"' <<< "$DETOUR_DROP" >&2
+      ${jq} -r '.[] | "proxy-suite: warning: ignoring outbound '"'"'\(.tag)'"'"': \(.message)"' <<< "$DETOUR_DROP" >&2
       OUTBOUNDS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '[.[] | select(.tag as $t | $drop | any(.tag == $t) | not)]' <<< "$OUTBOUNDS_JSON")
       ${lib.optionalString hybridEnabled ''XRAY_OUTBOUNDS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '[.[] | select(.tag as $t | $drop | any(.tag == $t) | not)]' <<< "$XRAY_OUTBOUNDS_JSON")''}
       DETOURS_JSON=$(${jq} -c --argjson drop "$DETOUR_DROP" '.outbounds |= with_entries(select(.key as $t | $drop | any(.tag == $t) | not))' <<< "$DETOURS_JSON")
@@ -863,7 +905,7 @@ let
                runtime: true}
               | select(.strategy | IN("failover", "urltest", "selector"))
               | select([.outbounds, .subscriptions, .match] | all(type == "array" and all(type == "string")))
-              | select(.interval == null or (.interval | type == "string" and test("^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$")))'); then
+              | select(.interval == null or (.interval | type == "string" and test("^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+\\z")))'); then
               echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': not a valid group" >&2
               continue
             fi
@@ -892,11 +934,15 @@ let
         GROUPS_CONFIG_JSON=$(${jq} -c --arg g "$GROUP_NAME" 'del(.[$g])' <<< "$GROUPS_CONFIG_JSON")
       done < <(${jq} -r --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") 'keys[] | select(. as $g | $tags[0] | index([$g]))' <<< "$GROUPS_CONFIG_JSON")
       # A runtime group inside itself is left out, like any runtime outbound that cannot be
-      # built; only a loop among declared groups fails the start.
+      # built; only a loop among declared groups fails the start. So is a runtime outbound
+      # chained through a group that is not there (one left out, or never a valid one), and the
+      # groups are resolved again without it; a declared one fails the start.
       while :; do
         GROUPS_RESULT=$(${jq} -nc --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") \
           --slurpfile sources <(printf '%s' "''${OUTBOUND_SOURCES_JSON:-{\}}") \
-          '{tags: $tags[0], sources: $sources[0]}' \
+          --slurpfile obs <(printf '%s' "$OUTBOUNDS_JSON") \
+          '{tags: $tags[0], sources: $sources[0],
+            detours: ([$obs[0][] | select(.detour != null) | {key: .tag, value: .detour}] | from_entries)}' \
           | ${jq} -c -f ${groupsJq} \
             --argjson groups "$GROUPS_CONFIG_JSON" \
             --argjson priority "$PRIORITY_JSON" \
@@ -907,9 +953,28 @@ let
             --argjson tolerance ${toString singBoxCfg.urlTest.tolerance} \
             --argjson watched "''${GROUPS_WATCHED:-true}")
         GROUPS_LOOP_DROP=$(${jq} -c --argjson g "$GROUPS_CONFIG_JSON" '[.loops[] | select($g[.].runtime == true)]' <<< "$GROUPS_RESULT")
-        [ "$GROUPS_LOOP_DROP" != '[]' ] || break
-        ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime group '"'"'\(.)'"'"': it contains itself"' <<< "$GROUPS_LOOP_DROP" >&2
-        GROUPS_CONFIG_JSON=$(${jq} -c --argjson drop "$GROUPS_LOOP_DROP" 'with_entries(select(.key as $k | $drop | index([$k]) | not))' <<< "$GROUPS_CONFIG_JSON")
+        if [ "$GROUPS_LOOP_DROP" != '[]' ]; then
+          ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime group '"'"'\(.)'"'"': it contains itself"' <<< "$GROUPS_LOOP_DROP" >&2
+          GROUPS_CONFIG_JSON=$(${jq} -c --argjson drop "$GROUPS_LOOP_DROP" 'with_entries(select(.key as $k | $drop | index([$k]) | not))' <<< "$GROUPS_CONFIG_JSON")
+          continue
+        fi
+        # The chains detourBlock made, as it read them.
+        GROUPS_HOP_DROP=$(${jq} -c --argjson g "$GROUPS_CONFIG_JSON" --argjson d "''${DETOURS_JSON:-{\}}" \
+          --slurpfile sources <(printf '%s' "''${OUTBOUND_SOURCES_JSON:-{\}}") '
+          [.[].tag] as $tags
+          | [.[] | .tag as $t | ($sources[0][$t] // "") as $s
+             | ($d.outbounds[$t]? // (if $s | startswith("sub:") then $d.subscriptions[$s[4:]]? else null end)) as $h
+             | select($h != null and ($tags | index([$h]) | not) and ($g | has($h) | not))
+             | {tag: $t, hop: $h, runtime: ($s == "runtime")}]' <<< "$OUTBOUNDS_JSON")
+        [ "$GROUPS_HOP_DROP" != '[]' ] || break
+        if ${jq} -e 'any(.[]; .runtime | not)' <<< "$GROUPS_HOP_DROP" >/dev/null; then
+          ${jq} -r '.[] | select(.runtime | not) | "proxy-suite: outbound '"'"'\(.tag)'"'"' chains through '"'"'\(.hop)'"'"', which is not an outbound or group"' <<< "$GROUPS_HOP_DROP" >&2
+          exit 1
+        fi
+        ${jq} -r '.[] | "proxy-suite: warning: ignoring runtime outbound '"'"'\(.tag)'"'"': it chains through '"'"'\(.hop)'"'"', which is not an outbound or group"' <<< "$GROUPS_HOP_DROP" >&2
+        OUTBOUNDS_JSON=$(${jq} -c --argjson drop "$GROUPS_HOP_DROP" '[.[] | select(.tag as $t | $drop | any(.tag == $t) | not)]' <<< "$OUTBOUNDS_JSON")
+        OUTBOUND_TAGS_JSON=$(${jq} -c '[.[].tag]' <<< "$OUTBOUNDS_JSON")
+        DISABLED_TAGS_JSON=$(${jq} -c --argjson drop "$GROUPS_HOP_DROP" 'map(select(. as $t | $drop | any(.tag == $t) | not))' <<< "$DISABLED_TAGS_JSON")
       done
       ${jq} -r '.warnings[] | "proxy-suite: warning: " + .' <<< "$GROUPS_RESULT" >&2
       if ${jq} -e '.errors != []' <<< "$GROUPS_RESULT" >/dev/null; then
@@ -953,8 +1018,10 @@ let
   '';
 
   # proxy-ctl reads this unprivileged: tags, where each came from, the pin, what each one
-  # chains through, what selection leaves alone, and what was disabled.
+  # chains through, what selection leaves alone, and what was disabled. Renamed into place,
+  # so a reader never sees half of it.
   inventoryBlock = ''
+    INVENTORY_TMP="$RUNTIME_DIR/outbounds.json.tmp"
     ${jq} -n \
       --slurpfile tags <(printf '%s' "$OUTBOUND_TAGS_JSON") \
       --slurpfile sources <(printf '%s' "$OUTBOUND_SOURCES_JSON") \
@@ -975,8 +1042,9 @@ let
           | select($h != null) | {key: .tag, value: $h}] | from_entries),
         excluded: ($top - $selectable), disabled: $disabled,
         groups: $groups, top: $top, priority: $priority, url: $url}' \
-      > "$RUNTIME_DIR/outbounds.json"
-    chmod 644 "$RUNTIME_DIR/outbounds.json"
+      > "$INVENTORY_TMP"
+    chmod 644 "$INVENTORY_TMP"
+    mv "$INVENTORY_TMP" "$RUNTIME_DIR/outbounds.json"
   '';
 
   mkOutboundScript =

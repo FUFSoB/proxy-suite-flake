@@ -1,10 +1,13 @@
 # $1: zapret2's state directory, $2: the directory to write the two rule-sets to; $3, the
 # checks': a dump to read in place of systemd-resolved's cache.
 # direct.json: the hosts zapret2 handles, so the proxy sends them direct and zapret2 sees
-#   them: the pinned ones, and the learned ones once a strategy got through for them
+#   them: the sites the strategy source's profiles take from the start (site-domains.nix),
+#   the pinned ones, and the learned ones once a strategy got through for them
 #   (detect.lua's "works"), unless learned from transfers cut short ("stalls"); a learned
 #   site zapret2 cannot fix keeps the proxy's route. With learning off
-#   (autoHostlist.enable), the pinned ones alone: nfqws2 no longer reads the learned list.
+#   (autoHostlist.enable), the source's and the pinned ones alone: nfqws2 no longer reads
+#   the learned list. What it finds it cannot fix still reaches the proxy: proxy.json's
+#   rule comes first.
 # proxy.json: what zapret2 cannot fix, for the proxy to carry: sites every strategy failed
 #   for ("unfixable": all of a site's TCP, or only its QUIC), and addresses that leave
 #   connections unanswered ("blocked").
@@ -20,6 +23,7 @@ dir=$1
 out=$2
 cache=${3:-}
 learned=@learned@
+sites=@siteHosts@
 
 # The zapret scope's group writes these: never through a symlink it left (to a file only
 # root may read, which would land in the world-readable rule-sets), nor into a FIFO.
@@ -43,15 +47,16 @@ write() {
 # nfqws hostlists: one host per line, "#" comments, "^" for the name alone.
 # The zapret scope can write them, and an entry sing-box cannot take (999.1.1.1, ::/0,
 # fe80::1%eth0) would fail the rule-set and the proxy with it: only an address or a name.
+# The validators end on \z: jq's $ also matches before a final newline.
 hosts='def octet: "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
-  def ipv4: test("^(" + octet + "\\.){3}" + octet + "$");
-  def ipv6: test("^[0-9a-f:]+$") and test(":::") == false
+  def ipv4: test("^(" + octet + "\\.){3}" + octet + "\\z");
+  def ipv6: test("^[0-9a-f:]+\\z") and test(":::") == false
     and (split("::") | length) <= 2
     and (split(":") | map(select(. != "")) | length <= 8 and all(length <= 4))
     and (test("::") or (split(":") | length) == 8)
     and test("^:[^:]|[^:]:$") == false;
   # Two labels at least: a bare "com" would send the whole TLD past the proxy.
-  def hostname: test("^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+$")
+  def hostname: test("^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+\\z")
     and test("^[0-9.]+$") == false and length <= 253;
   def valid: ipv4 or ipv6 or hostname;
   def hosts: split("\n") | map(gsub("^\\s+|\\s+$"; "") | ascii_downcase | ltrimstr("^"))
@@ -62,12 +67,13 @@ hosts='def octet: "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
   def covers($b): . as $a | $a == $b or ($a | endswith("." + $b)) or ($b | endswith("." + $a));
   # "kind<TAB>name<TAB>proto<TAB>...", the last per name and proto.
   # The zapret scope'"'"'s group can write the file: only names a rule can take.
-  def verdicts: split("\n") | map(split("\t") | select(length >= 3 and (.[1] | test("^[a-z0-9.-]+$|^[0-9a-f:.]+$") and valid)))
+  def verdicts: split("\n") | map(split("\t") | select(length >= 3 and (.[1] | test("^[a-z0-9.-]+\\z|^[0-9a-f:.]+\\z") and valid)))
     | reduce .[] as $v ({}; .[$v[1] + "\t" + $v[2]] = $v[0])
     | to_entries | map({name: (.key | split("\t")[0]), proto: (.key | split("\t")[1]), kind: .value});
   def named($kind; $proto): map(select(.kind == $kind and .proto == $proto) | .name);'
 
 jq -n -c \
+  --rawfile sites "$sites" \
   --rawfile user <(lists "$dir/zapret-hosts-user.txt") \
   --rawfile auto <(if [ "$learned" = 1 ]; then lists "$dir/zapret-hosts-auto.txt"; fi) \
   --rawfile excluded <(lists "$dir/zapret-hosts-user-exclude.txt") \
@@ -79,7 +85,7 @@ jq -n -c \
   # cutoff lets through, so "works" proves nothing for it.
   | ($v | named("stalls"; "cutoff")) as $stalls
   | ($excluded | hosts) as $excluded
-  | (($user | hosts) + ($auto | hosts | map(. as $h
+  | (($sites | hosts) + ($user | hosts) + ($auto | hosts | map(. as $h
       | select(any($works[]; . as $w | $h | covers($w)) and (any($stalls[]; . as $s | $h | covers($s)) | not)))))
   | unique - $excluded
   | map(select(ip)) as $ips
@@ -97,7 +103,8 @@ jq -n -c --rawfile verdicts <(lists "$dir/verdicts.tsv") "$hosts"'
   | {version: 1, rules: (
       [$tcp | map(select(ip | not)) | select(length > 0) | {domain_suffix: .}]
       + [$udp | map(select(ip | not)) | select(length > 0) | {network: ["udp"], port: [443], domain_suffix: .}]
-      + [$udp | map(select(ip)) | select(length > 0) | {network: ["udp"], port: [443], ip_cidr: cidr}]
+      # By address: a UDP profile without names, as nfqws2-keenetic has, is not QUIC alone.
+      + [$udp | map(select(ip)) | select(length > 0) | {network: ["udp"], ip_cidr: cidr}]
       + [($v | named("blocked"; "ip")) + ($tcp | map(select(ip))) | select(length > 0) | {ip_cidr: cidr}])}
 ' >"$out/proxy.json.tmp"
 write "$out/proxy.json"

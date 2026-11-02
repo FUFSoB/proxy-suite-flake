@@ -5,12 +5,15 @@
 # the backend: sing-box sets detour, XRay sockopt.dialerProxy. In hybrid, .xray holds the
 # sidecar's outbounds, each also standing in .outbounds as a loopback SOCKS hop: a
 # sing-box outbound may chain through either, a sidecar one only through another
-# sidecar one, since the sidecar cannot dial through sing-box. Each error is
-# {tag, message}, the tag being the outbound that cannot be chained.
+# sidecar one, since the sidecar cannot dial through sing-box. $groups (optional) names
+# the groups a sing-box outbound may chain through too: they are only built after this.
+# Each error is {tag, message}, the tag being the outbound that cannot be chained;
+# sidecar marks a sidecar one chaining through sing-box.
 def dialer($h): .streamSettings.sockopt.dialerProxy = $h;
 
 ([.outbounds[].tag]) as $tags
 | ([(.xray // [])[].tag]) as $xtags
+| ($ARGS.named.groups // []) as $groups
 | ($sources | to_entries | map(
     .key as $t
     | ($d.outbounds[$t]
@@ -19,7 +22,7 @@ def dialer($h): .streamSettings.sockopt.dialerProxy = $h;
     | {key: $t, value: .}
   ) | from_entries) as $hops
 | .errors = (
-    [$hops | to_entries[] | select(.value as $v | $tags | index([$v]) | not)
+    [$hops | to_entries[] | select(.value as $v | ($tags + $groups) | index([$v]) | not)
      | {tag: .key, message: "outbound '\(.key)' chains through '\(.value)', which is not an outbound"}]
     + [$hops | keys[] as $t
        | select([limit($hops | length + 1; $t | recurse($hops[.] // empty))][1:] | any(. == $t))
@@ -27,8 +30,15 @@ def dialer($h): .streamSettings.sockopt.dialerProxy = $h;
     + (if $kind == "hybrid" then
         [$hops | to_entries[]
          | select((.key as $t | $xtags | index([$t])) and (.value as $v | $xtags | index([$v]) | not))
-         | {tag: .key, message: "outbound '\(.key)' runs on XRay and can only chain through another XRay outbound, not '\(.value)'"}]
+         | {tag: .key, message: "outbound '\(.key)' runs on XRay and can only chain through another XRay outbound, not '\(.value)'",
+            sidecar: true}]
        else [] end)
+    # sing-box refuses a detour on these, and with it the whole config.
+    + (if $kind == "xray" then [] else
+        [.outbounds[] | select($hops[.tag] and (.tag as $t | $xtags | index([$t]) | not)
+                               and (.type | IN("direct", "selector", "urltest", "block", "dns")))
+         | {tag, message: "outbound '\(.tag)' cannot chain through '\($hops[.tag])': a \(.type) outbound takes no detour"}]
+       end)
   )
 | if .errors != [] then .
   elif $kind == "xray" then

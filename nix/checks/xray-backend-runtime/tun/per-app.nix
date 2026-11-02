@@ -27,7 +27,7 @@
         ];
       assert perAppTunInbound.sniffing.destOverride == [ "fakedns+others" ];
       assert perAppTunInbound.sniffing.metadataOnly == false;
-      assert xrayPerAppTunConfig.routing.domainStrategy == "IPIfNonMatch";
+      assert xrayPerAppTunConfig.routing.domainStrategy == "IPOnDemand";
       assert (builtins.head xrayPerAppTunConfig.dns.servers).address == "fakedns";
       assert builtins.length xrayPerAppTunConfig.fakedns == 2;
       assert perAppTunDirectOutbound.streamSettings.sockopt.mark == 2;

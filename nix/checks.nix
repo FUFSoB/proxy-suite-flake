@@ -7,6 +7,8 @@
   generatedOptionsDoc,
   generatedReadmeDoc,
   zapret,
+  nfqws2-keenetic,
+  z2k,
 }:
 
 let
@@ -31,6 +33,7 @@ let
       serverModule
       zapret
       ;
+    zapret2Sources = { inherit nfqws2-keenetic z2k; };
   };
   repoChecks = import ./checks/repo.nix {
     inherit

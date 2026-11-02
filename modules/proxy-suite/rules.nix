@@ -4,6 +4,8 @@
   pkgs,
   cfg,
   zapret,
+  # The zapret2 strategy sources' site lists; the docs assemble without them.
+  zapret2Sources ? { },
 }:
 
 let
@@ -14,8 +16,10 @@ let
   zapretDirect = import ./rules-zapret-direct.nix {
     inherit
       lib
+      pkgs
       cfg
       zapret
+      zapret2Sources
       ;
   };
   inherit (zapretDirect) direct;

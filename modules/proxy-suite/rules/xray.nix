@@ -62,27 +62,34 @@ let
       } tag
     );
 
-  xrayCustomRuleTag = category: kind: "custom-${category}-${kind}";
+  # XRay refuses a ruleTag twice: a category's 2nd+ rule takes its index among them.
+  xrayCustomRuleTag =
+    category: n: kind:
+    "custom-${category}-${kind}" + lib.optionalString (n > 0) "-${toString n}";
 
   mkXrayCustomRuleEntries =
-    rule:
+    n: rule:
+    let
+      tag = xrayCustomRuleTag (customRuleCategory rule.outbound) n;
+    in
     lib.flatten [
-      (xrayDomainRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "domain") rule.outbound
-        rule.domains
-      )
-      (xrayIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "ip") rule.outbound rule.ips)
-      (xrayGeositeRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geosite") rule.outbound
-        rule.geosites
-      )
-      (xrayGeoIPRules (xrayCustomRuleTag (customRuleCategory rule.outbound) "geoip") rule.outbound
-        rule.geoips
-      )
+      (xrayDomainRules (tag "domain") rule.outbound rule.domains)
+      (xrayIPRules (tag "ip") rule.outbound rule.ips)
+      (xrayGeositeRules (tag "geosite") rule.outbound rule.geosites)
+      (xrayGeoIPRules (tag "geoip") rule.outbound rule.geoips)
     ];
 
-  xrayCustomRouteRules = map (rule: {
-    category = customRuleCategory rule.outbound;
-    entries = mkXrayCustomRuleEntries rule;
-  }) customRules;
+  customCategories = map (rule: customRuleCategory rule.outbound) customRules;
+  xrayCustomRouteRules = lib.imap0 (
+    i: rule:
+    let
+      category = customRuleCategory rule.outbound;
+    in
+    {
+      inherit category;
+      entries = mkXrayCustomRuleEntries (lib.count (c: c == category) (lib.take i customCategories)) rule;
+    }
+  ) customRules;
 
   xrayProxyPrimaryRules = lib.flatten [
     (xrayDomainRules "proxy-domain" "proxy" r.proxy.domains)
@@ -139,12 +146,14 @@ let
     } "block")
   ];
 
-  # Kept by every route mode, like sing-box's common rules.
+  # Kept by every route mode, like sing-box's common rules. .onion ahead of the guards: under
+  # IPOnDemand (config-templates/xray.nix) their ip match looks the name up, and an onion name
+  # must never reach a resolver. It resolves to no loopback, so the guards lose nothing.
   xrayCommonRules =
-    xrayLoopbackGuardRules
-    ++ lib.optional (onionOutbound != null) (
+    lib.optional (onionOutbound != null) (
       mkXrayRule "tor-onion" { domain = [ "domain:onion" ]; } onionOutbound
-    );
+    )
+    ++ xrayLoopbackGuardRules;
 
   # Block ahead of the direct lists, as sing-box has it (rules/sing-box.nix).
   xrayRoutingRules =

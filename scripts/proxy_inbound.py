@@ -30,6 +30,9 @@ PASSWORD_TYPES = ("trojan", "hysteria2", "shadowsocks", "socks", "http", "anytls
 SING_BOX_TYPES = ("anytls", "naive", "tuic", "shadowtls")
 # How long the server keeps a VLESS Encryption session's ticket for a 0-RTT reconnect.
 VLESS_ENCRYPTION_TICKET = "600s"
+# The one client of a multi-user Shadowsocks listener with every user switched off: no
+# user's name (inbound_runtime.NAME has no "!"), and lowercase, as XRay keeps emails.
+SS_NOBODY = "proxy-suite!nobody"
 
 TRANSPORT_SETTINGS_KEY = {
     "ws": "wsSettings",
@@ -356,6 +359,14 @@ def render_xray_inbound(listener: dict) -> dict:
             # Multi-user is 2022-blake3-aes only: the server key, then one key per user.
             settings["password"] = _server_secret(listener, tag)
             settings["clients"] = _clients(listener, tag)
+            if not settings["clients"]:
+                # Everyone switched off: XRay would serve an empty list as one user, on the
+                # server key every user holds. A key nobody has keeps it multi-user, ready
+                # for them through the API (inbound_apply.py never adds or removes it).
+                size = inbound_runtime.SS2022_KEY_BYTES.get(listener["method"], 32)
+                settings["clients"] = [
+                    {"password": base64.b64encode(secrets.token_bytes(size)).decode("ascii"), "email": SS_NOBODY}
+                ]
             keys = [("server", settings["password"])] + [(c["email"], c["password"]) for c in settings["clients"]]
         # Keys from files are only seen here; XRay refuses one of another length with a bare
         # "bad key" and does not start at all.
@@ -863,13 +874,14 @@ def build_listener(
 
     if listener.get("type") == "amneziawg":
         port = _share_port(listener)
+        endpoint = listener.get("shareAddress") or server_address
         return {
             "tag": tag,
             "type": "amneziawg",
             "port": port,
             "inbound": render_amneziawg_inbound(listener),
             "links": [],
-            "configs": client_entries(listener, server_address, port) if share_links else [],
+            "configs": client_entries(listener, endpoint, port) if share_links else [],
         }
 
     raw = listener.get("xrayJson")

@@ -81,6 +81,7 @@ let
   homeWatchdog = awgOnly.config.systemd.services.proxy-suite-awg-home-watchdog;
   homeWatchdogScript = generated.readDerivation homeWatchdog.serviceConfig.ExecStart;
   homeStart = generated.readDerivation homeService.serviceConfig.ExecStart;
+  homeStop = generated.readDerivation homeService.serviceConfig.ExecStop;
 
   sourceFixture = evalProxySuite [
     {
@@ -305,6 +306,22 @@ in
       # A silent handshake moves the interface to a new port: at start, and from the watchdog.
       assert pkgs.lib.hasInfix "set \"$interface\" listen-port 0" homeStart;
       assert pkgs.lib.hasInfix "--inspect" homeStart;
+      # awg-quick's rules go behind proxy-suite's, which the kernel would put them ahead of.
+      assert pkgs.lib.hasInfix ''rule add pref 30001 not fwmark "$table" table "$table"'' homeStart;
+      assert pkgs.lib.hasInfix "rule add pref 30000 table main suppress_prefixlength 0" homeStart;
+      # The IPv6 fallback only where awg-quick routes IPv4 by its table (not Table=off).
+      assert pkgs.lib.hasInfix "$8 == t { found = 1 } END { exit !found }" homeStart;
+      # A failed start ends at its rollback (cleanup's set +e outlives the trap).
+      assert pkgs.lib.hasInfix "trap 'cleanup; exit 1' ERR" homeStart;
+      # The IPv6 fallback, and the moved rules by their prefs, go ahead of awg-quick down, which
+      # deletes the rules the fallback is found by, and suppress_prefixlength rules of any mark.
+      assert pkgs.lib.hasInfix "awg-quick down" homeStop;
+      assert pkgs.lib.hasInfix "route del unreachable default table" (
+        builtins.head (pkgs.lib.splitString "awg-quick down" homeStop)
+      );
+      assert pkgs.lib.hasInfix "rule del pref 30000 2>/dev/null" (
+        builtins.head (pkgs.lib.splitString "awg-quick down" homeStop)
+      );
       assert homeWatchdog.bindsTo == [ "proxy-suite-awg-home.service" ];
       assert homeWatchdog.wantedBy == [ "proxy-suite-awg-home.service" ];
       assert pkgs.lib.hasInfix "rekey + 10" homeWatchdogScript;
@@ -424,11 +441,13 @@ in
         runtimeOutboundScript;
       assert runtimeCtl.wrapperEnv.AWG_RUNTIME_IFACE_OUTBOUNDS == "1";
       assert runtimeCtl.wrapperEnv.AWG_RUNTIME_OUTBOUND_KIND == "userspace";
-      # The backend dials each one's tunnel on the port in <tag>.port.
-      assert pkgs.lib.hasInfix ''"/var/lib/proxy-suite/outbounds.d"/*.awg'' runtimeOutboundScript;
+      # The backend dials each one's tunnel on the port in <tag>.port: a glob of its own.
+      assert pkgs.lib.hasInfix ''/*.json "/var/lib/proxy-suite/outbounds.d"/*.awg'' runtimeOutboundScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_socks_hop" runtimeOutboundScript;
       assert pkgs.lib.hasInfix ''oifname { "awg-rt" } accept'' runtimeKillSwitchRules;
       assert pkgs.lib.hasInfix ''meta skgid "proxy-suite-awg" accept'' runtimeKillSwitchRules;
+      # An outbound's interface is a tunnel already: its units' probes go out through it.
+      assert pkgs.lib.hasInfix ''oifname "psawgr*" accept'' runtimeKillSwitchRules;
       assert builtins.elem "d /var/lib/proxy-suite/amneziawg.d 2775 root proxy-suite -"
         runtimeOnly.config.systemd.tmpfiles.rules;
       assert builtins.elem "d /var/lib/proxy-suite/outbounds.d 0700 root root -"

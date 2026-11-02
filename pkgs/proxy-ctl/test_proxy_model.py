@@ -122,6 +122,18 @@ class ModelTest(unittest.TestCase):
                 self.assertIn(restart, model.applicable(tab, row))
                 self.assertEqual(restart.argv(row), [*group, "restart"])
 
+    def test_toggle_stops_a_unit_on_its_way_up(self):
+        """Activating (a Restart= wait reads so too) is stopped, not started again."""
+        space = next(a for a in model.TABS[0].actions if a.key == "space")
+        awg_space = next(a for a in next(t for t in model.TABS if t.id == "awg").actions if a.key == "space")
+        for state, verb in (("active", "off"), ("activating", "off"), ("reloading", "off"), ("deactivating", "on"), ("failed", "on")):
+            row = {"key": "proxy-suite-socks", "unit": "proxy-suite-socks", "name": "proxy-suite-socks", "state": state}
+            self.assertEqual(model.toggle_argv(row), ["proxy", verb], state)
+            self.assertEqual(space.confirm(row), verb == "off", state)  # proxy off takes tun and tproxy along
+            self.assertEqual(model.toggle_argv({**row, "unit": model.AWG_PREFIX + "home"}), ["awg", verb, "home"], state)
+            self.assertEqual(awg_space.argv({"profile": "home", "state": state}, "", {}), ["awg", verb, "home"], state)
+            self.assertEqual(model._zapret_toggle(None, "", {"proxy-suite-zapret": state}), ["zapret", verb], state)
+
     def test_inbound_amneziawg_actions(self):
         tab = next(t for t in model.TABS if t.id == "inbounds")
         actions = {a.key: a for a in tab.actions}
@@ -386,15 +398,28 @@ class ModelTest(unittest.TestCase):
         self.assertTrue(items["mode-default"].checked)
         self.assertEqual(items["mode-blacklist"].argv, ["proxy", "mode", "blacklist"])
         self.assertEqual(items["pin"].label, "Outbound: b")
-        self.assertTrue(items["pin-b"].checked)
-        self.assertEqual(items["pin-a"].argv, ["proxy", "pin", "a"])
+        self.assertTrue(items["pin:b"].checked)
+        self.assertEqual(items["pin:a"].argv, ["proxy", "pin", "a"])
         self.assertEqual(items["pin-auto"].argv, ["proxy", "unpin"])
-        self.assertTrue(items["awg-home"].checked)
+        self.assertTrue(items["awg:home"].checked)
         self.assertEqual(items["awg-off"].argv, ["awg", "off"])
         self.assertEqual(items["zapret"].argv, ["zapret", "on"])
         self.assertFalse(items["subs"].enabled)  # an update already runs
         self.assertTrue(items["restart"].confirm)  # as R in the TUI and GUI
         self.assertEqual(items["quit"].app, "quit")
+
+    def test_tray_menu_ids_are_unique(self):
+        """A tag "auto" or a profile "off" got the fixed item's id: the tray numbers items by it."""
+        with mock.patch.object(ctl, "_awg_profiles", lambda: ["off", "home"]):
+            snap = model.snapshot({"proxy-suite-socks": "active", ctl._awg_service("off"): "active"})
+            items = list(walk(model.tray_menu(snap, (["auto", "a"], "auto"))))
+        ids = [i.id for i in items]
+        self.assertEqual(len(ids), len(set(ids)))
+        by_id = {i.id: i for i in items}
+        self.assertEqual((by_id["pin-auto"].argv, by_id["pin-auto"].checked), (["proxy", "unpin"], False))
+        self.assertEqual((by_id["pin:auto"].argv, by_id["pin:auto"].checked), (["proxy", "pin", "auto"], True))
+        self.assertEqual((by_id["awg-off"].argv, by_id["awg-off"].checked), (["awg", "off"], False))
+        self.assertEqual((by_id["awg:off"].argv, by_id["awg:off"].checked), (["awg", "on", "off"], True))
 
     def test_tray_menu_without_proxy(self):
         items = self.menu({"proxy-suite-zapret": "active"})

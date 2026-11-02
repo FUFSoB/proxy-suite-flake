@@ -14,7 +14,7 @@ def xray_rewrite_proxy_rule($single_tag):
 def xray_preserved_rules:
   [.routing.rules[]
    | select((.ruleTag? // "") | . == "dns-hijack" or . == "dns-upstream-direct" or . == "dns-upstream-remote"
-       or . == "dns-remote-bridge" or . == "inbounds-private-guard" or . == "inbounds-host-guard")];
+       or . == "dns-remote-bridge" or . == "inbounds-tor-onion" or . == "inbounds-private-guard" or . == "inbounds-host-guard")];
 def xray_final_rule($tag; $single_tag):
   if $tag == "proxy" and "@selectionMode@" == "urltest" then
     {type:"field",network:"tcp,udp",ruleTag:"final-default"} + xray_proxy_rule_target($single_tag)
@@ -33,7 +33,7 @@ def xray_dns_server_order($dns_final):
 def xray_server_names:
   [.outbounds[].settings
    | (.vnext[]?.address, .servers[]?.address, .address?)
-   | strings | select(test("^[0-9.]+$|:|^localhost$") | not)]
+   | strings | select(test("^[0-9.]+\\z|:|^localhost\\z") | not)]
   | unique;
 # A copy of "local" answering only for them: routed direct by its tag, so looking up a
 # proxy server never waits on that proxy.

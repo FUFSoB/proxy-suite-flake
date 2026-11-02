@@ -1110,7 +1110,9 @@ class Window(Adw.ApplicationWindow):
         header.pack_start(self.root_badge)
         menu = Gio.Menu()
         section = Gio.Menu()
-        section.append("Paste a link into this tab", "win.paste")
+        paste = Gio.MenuItem.new("Paste a link into this tab", "win.paste")
+        paste.set_attribute_value("accel", GLib.Variant("s", "<Control>v"))
+        section.append_item(paste)
         section.append("How is a domain routed…", "win.where")
         section.append("Follow all logs", "win.logs")
         section.append("Output of the last command", "win.last-output")
@@ -1172,7 +1174,6 @@ class Window(Adw.ApplicationWindow):
             action.connect("activate", callback)
             self.add_action(action)
         app.set_accels_for_action("win.filter", ["<Control>f"])
-        app.set_accels_for_action("win.paste", ["<Control>v"])
         app.set_accels_for_action("app.elevated", ["<Control>e"])
         app.set_accels_for_action("win.shortcuts", ["<Control>question"])
         app.set_accels_for_action("app.reload", ["F5"])
@@ -1181,6 +1182,7 @@ class Window(Adw.ApplicationWindow):
         for n in range(1, 9):
             app.set_accels_for_action(f"win.tab({n - 1})", [f"<Alt>{n}"])
 
+        self.add_controller(self.paste_key())
         self.connect("close-request", self.on_close)
 
     def open_floating(self, width, height):
@@ -1308,6 +1310,13 @@ class Window(Adw.ApplicationWindow):
     def where(self):
         self.perform(model.WHERE, None)
         return True
+
+    def paste_key(self):
+        """Ctrl+V as the window's own key, which a focused text field has already taken: an
+        application accelerator would come before the field's paste, and take it."""
+        controller = Gtk.ShortcutController(propagation_phase=Gtk.PropagationPhase.BUBBLE)
+        controller.add_shortcut(Gtk.Shortcut(trigger=Gtk.ShortcutTrigger.parse_string("<Control>v"), action=Gtk.CallbackAction.new(lambda *_: self.paste())))
+        return controller
 
     def paste(self):
         """Ctrl+V anywhere but a text field: whatever is in the clipboard is added to this tab, once confirmed."""

@@ -77,6 +77,13 @@ class RuntimeError_(ValueError):
     """A runtime entry that cannot be used, or a command that cannot be carried out."""
 
 
+def name_clash(name: str, names) -> str | None:
+    """The one of names that XRay takes for this user name, if any: it lowercases emails,
+    and refuses to start on two that are then one. Names keep the case they were given."""
+    key = name.lower()
+    return next((other for other in names if other.lower() == key), None)
+
+
 # --- the spool ------------------------------------------------------------------------
 
 
@@ -86,15 +93,25 @@ def _open_kind_dir(directory: str) -> int:
     return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
+def awg_offsets_end(awg: dict) -> int:
+    """One past the last host offset an AmneziaWG listener can give a client: the IPv4
+    broadcast is none, and with subnet6 the same offset is the client's IPv6 address,
+    which must fit there too."""
+    network = ipaddress.ip_network(awg["subnet"], strict=False)
+    end = network.num_addresses - (1 if network.prefixlen < 31 else 0)
+    if awg.get("subnet6") is not None:
+        end = min(end, ipaddress.ip_network(awg["subnet6"], strict=False).num_addresses)
+    return end
+
+
 def _awg_capacity(listener: dict) -> int | None:
-    """How many users an AmneziaWG listener's subnet holds, as awg_inbound.py hands out
+    """How many users an AmneziaWG listener's subnets hold, as awg_inbound.py hands out
     addresses: the network, this host (offset 1) and the broadcast are not theirs. None
     when the spec does not say."""
     try:
-        network = ipaddress.ip_network(listener["amneziaWg"]["subnet"], strict=False)
+        last = awg_offsets_end(listener["amneziaWg"])
     except (KeyError, TypeError, ValueError):
         return None
-    last = network.num_addresses - (1 if network.prefixlen < 31 else 0)
     return max(last - 2, 0)
 
 
@@ -641,7 +658,8 @@ def listener_problems(listener: dict, runtime: dict, share_links: bool, shared: 
     need(listener["via"] in runtime.get("vias") or [],
          f"via '{listener['via']}' is not routing.via, \"block\" or in inbounds.runtime.vias")
     need(not (tls["enable"] and reality["enable"]), "tls and reality are mutually exclusive")
-    need(len({user["name"] for user in users}) == len(users), "users must each have a distinct name")
+    need(len({user["name"].lower() for user in users}) == len(users),
+         "users must each have a distinct name, case aside (XRay ignores it)")
     multi_ss = kind == "shadowsocks" and len(users) > 1
     need(not multi_ss or listener["method"].startswith("2022-blake3-aes-"),
          "shadowsocks with more than one user needs a 2022-blake3-aes-* method")
@@ -863,7 +881,8 @@ def number_users(spec: dict, names: list[str], state_users: dict, warnings: list
 
 # Listener types whose XRay inbound runs with no client at all, so a user switched off by
 # the manager leaves it in place, ready to take them back without a restart. A Shadowsocks
-# listener has a client list only with more than one user (render_xray_inbound).
+# listener has a client list only with more than one user, and with all of them off a
+# stand-in whose key nobody holds, never an empty one (render_xray_inbound).
 EMPTY_CLIENTS_TYPES = ("vless", "vmess", "trojan", "hysteria2", *SING_BOX_TYPES)
 
 
@@ -922,14 +941,21 @@ def merge_state(spec: dict, state: dict, check_ports: bool | set = False, status
     declared = {listener["tag"]: listener for listener in merged["listeners"]}
 
     users: dict[str, dict] = {}
-    for name, entry in state["users"].items():
+    for name, entry in sorted(state["users"].items()):
         try:
             check_user_shape(entry)
         except RuntimeError_ as exc:
             problem("user", name, str(exc))
             continue
-        if name in declared_users:
-            problem("user", name, "a declared user has this name")
+        clash = name_clash(name, declared_users)
+        if clash is not None:
+            problem("user", name, "a declared user has this name" if clash == name
+                    else f"declared user '{clash}' has this name to XRay, which ignores case")
+            continue
+        # Two spool files that differ in case only: the first stays.
+        clash = name_clash(name, users)
+        if clash is not None:
+            problem("user", name, f"runtime user '{clash}' has this name to XRay, which ignores case")
             continue
         users[name] = _runtime_user(name, entry)
 
@@ -1224,10 +1250,15 @@ def cmd_users_add(spec: dict, spool: str, name: str, order: int | None, listener
     state, _ = load_spool(spool)
     before = copy.deepcopy(state)
     _require_name(name, "user name")
-    if name in _declared_users(spec):
-        raise RuntimeError_(f"'{name}' is a declared user.")
-    if name in state["users"]:
-        raise RuntimeError_(f"A runtime user named '{name}' already exists.")
+    # XRay ignores case in names (name_clash): "Phone" next to "phone" would stop it.
+    clash = name_clash(name, _declared_users(spec))
+    if clash is not None:
+        raise RuntimeError_(f"'{name}' is a declared user." if clash == name
+                            else f"'{name}' is declared user '{clash}' to XRay, which ignores case.")
+    clash = name_clash(name, state["users"])
+    if clash is not None:
+        raise RuntimeError_(f"A runtime user named '{clash}' already exists."
+                            + ("" if clash == name else " XRay ignores case in names."))
     tags = _listener_tags(spec, state)
     for tag in listeners:
         if tag not in tags:

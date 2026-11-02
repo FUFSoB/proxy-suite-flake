@@ -44,7 +44,7 @@ last=$(cat ts 2>/dev/null || true)
 # answer alone counts only for the network already known (or when none is yet); no
 # answer at all (offline, captive portal) is no reason to probe.
 asn() {
-  curl -sS --max-time 10 "$1" 2>/dev/null | jq -r "$2"' | select(test("^AS[0-9]+$"))' 2>/dev/null || true
+  curl -sS --max-time 10 "$1" 2>/dev/null | jq -r "$2"' | select(test("^AS[0-9]+\\z"))' 2>/dev/null || true
 }
 known=$(cat egress 2>/dev/null || true)
 ipinfo=$(asn https://ipinfo.io/json '(.org // "") | split(" ")[0]')

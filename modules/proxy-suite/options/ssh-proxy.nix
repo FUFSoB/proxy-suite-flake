@@ -99,7 +99,7 @@ in
       default = "proxy-suite-daemon";
       description = ''
         User that runs OpenSSH. The default is sandboxed; `null` runs it as root. Another user's
-        traffic gets past the kill switch, all of it: never a login user's.
+        traffic gets past the kill switch, TUN and TProxy, all of it: never a login user's.
       '';
       example = "proxy";
     };

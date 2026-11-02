@@ -76,12 +76,18 @@ proxy-ctl zapret auto forget example.com  # forget it and its strategy
 proxy-ctl zapret cutoff                   # networks cut off at 16 KB (z2k)
 ```
 
+`retry` takes full effect once zapret2 restarts, which it does itself when you may restart
+services. Otherwise it warns, and the next restart of zapret finishes it.
+
 ## With a proxy
 
 zapret and the proxy work side by side. By default (`zapret.directSync`), the sites zapret
-handles are sent direct, so they skip the proxy and reach zapret. With zapret2 that includes
-the ones you pin with `proxy-ctl zapret auto add`, and the sites it learns once one of its
-strategies is seen getting through; your own rules and autoProxy still come first.
+handles are sent direct, so they skip the proxy and reach zapret. Each engine sends its own:
+zapret-discord-youtube its site lists; zapret2 its strategy source's site lists (YouTube,
+Discord and the like), `zapret2.domains`, the ones you pin with `proxy-ctl zapret auto add`,
+and the sites it learns once one of its strategies is seen getting through. Your own rules
+and autoProxy still come first, and with zapret2 on sing-box, a site it finds it cannot fix
+goes back through the proxy.
 Everything else follows your [routing rules](./routing.md).
 
 ## Only for some apps
@@ -105,8 +111,15 @@ services.proxy-suite = {
 ```
 
 Then run `proxy-ctl apps run zapret -- firefox`. The app gets zapret's strategy for every
-site, not only the listed ones. `directSync`, `cidrExemption` and the sites zapret2 learns
-belong to the system-wide zapret, so they do nothing here. See
+site, not only the listed ones. With zapret2 that is every connection that names its site
+(TLS SNI, HTTP Host; with z2k, one without a name takes the name last seen on its address),
+less the excluded sites: the strategy source's own, `zapret2.excludeDomains` and
+`proxy-ctl zapret auto exclude`. Traffic that names no site gets it only where the source
+takes it unnamed: nfqws2-keenetic's UDP profile (WireGuard, STUN, Discord and the like),
+z2k's Discord voice and STUN, and its port 5222. Nothing the app does is learned or sent
+through the proxy, but a strategy found working for a site is remembered for the
+system-wide zapret too. `directSync`, `cidrExemption`, `zapret2.domains` and the sites
+zapret2 pins and learns belong to the system-wide zapret, so they do nothing here. See
 [Route a single app](./per-app.md) for more.
 
 ## Good to know

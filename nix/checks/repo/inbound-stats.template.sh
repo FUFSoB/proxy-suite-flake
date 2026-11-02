@@ -39,4 +39,12 @@ jq -e '.days["2026-09-11"].user.tablet == {up: 1600, down: 5300} and .seen.table
 # A peer gone from the listeners leaves no counters behind.
 jq -e '.awgCounters == {}' <<<"$(a '{}' "$s")" > /dev/null
 
+# Peers that could not be read (null) leave the counters to count from.
+s="$(a '{}' "$s" '{}' "$(p 100 100 1789135700)")"
+s="$(a '{}' "$s" '{}' null)"
+jq -e '.days["2026-09-11"].user.tablet == {up: 1600, down: 5300} and .awgCounters["awgi-home"].K == {rx: 100, tx: 100}
+  and .awgPeers.tablet.handshake == 1789135700' <<<"$s" > /dev/null
+s="$(a '{}' "$s" '{}' "$(p 300 200 1789135800)")"
+jq -e '.days["2026-09-11"].user.tablet == {up: 1800, down: 5400}' <<<"$s" > /dev/null
+
 touch "$out"

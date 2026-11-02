@@ -10,8 +10,9 @@
 --   of the time (some connections pass, the rest are dropped) is still learned;
 -- - a download that stops mid TLS record and stays stopped (the 16 KB cutoff) is a
 --   failure, where nfqws2 took anything past 4 KB received for a working site;
--- - so is a ClientHello with no answer, retransmitted `retrans` times (the client gets
---   a reset then, as nfqws2 gave it, so it fails fast) or met by an early reset.
+-- - so is a ClientHello with no answer, retransmitted `retrans` times (with `reset`,
+--   autoHostlist.retransReset, the client gets a reset then, as nfqws2 gave it, so it
+--   fails fast) or met by an early reset.
 -- A site is learned at `fails` failures within `time` seconds: appended to the auto
 -- hostlist, which nfqws2 reloads, so the profiles for blocked sites take it over.
 --
@@ -49,11 +50,19 @@ local verdicts_full = false
 local MAX_IP_VERDICT_KEYS = 2000
 local ip_count = 0
 local ip_full = false
+-- The file's size as last read or written here. Otherwise only appended to (by the global
+-- instance alone: the per-app one has none), it changes size when proxy-ctl rewrites it
+-- (forget, exclude, clear; retry adds lines): then it is read again. io has no stat; a
+-- rewrite to the very same size goes unnoticed until the next change.
+local seen
+-- Set below: what this process keeps of a name whose verdict is gone.
+local forget
 
 -- The last verdicts, as the file has them now: proxy-ctl's retries land there too.
 local function reload()
   local f = VERDICTS and io.open(VERDICTS, "r")
   if not f then return end
+  local was = status
   status, status_count, ip_count = {}, 0, 0
   for line in f:lines() do
     local kind, name, proto = line:match("^(%w+)\t([^\t]+)\t([^\t]*)")
@@ -66,9 +75,33 @@ local function reload()
       status[key] = kind
     end
   end
+  seen = f:seek("cur")
   f:close()
+  verdicts_full = verdicts_full and status_count >= MAX_VERDICT_KEYS
+  ip_full = ip_full and ip_count >= MAX_IP_VERDICT_KEYS
+  -- Dropped since (proxy-ctl's forget, exclude, clear) or retried: judged afresh, as
+  -- after a restart.
+  for key, kind in pairs(was) do
+    local now = status[key]
+    if now ~= kind and (now == nil or now == "retry") then forget(key) end
+  end
 end
 reload()
+
+-- Read again if changed since. Ahead of a count towards a verdict, so one dropped since
+-- takes what was counted towards it along (forget, below) before this count adds to it.
+local function refresh()
+  local f = VERDICTS and io.open(VERDICTS, "r")
+  if not f then return end
+  local size = f:seek("end")
+  f:close()
+  if size ~= seen then reload() end
+end
+
+local function current(key)
+  refresh()
+  return status[key]
+end
 
 -- A name as a rule can take it: the SNI comes from the wire, raw, and a tab or newline in it
 -- would forge lines of its own in the verdicts and lists.
@@ -79,9 +112,7 @@ end
 local function verdict(kind, name, proto, note)
   if not plain(name) then return end
   local key = name .. " " .. proto
-  if not VERDICTS or status[key] == kind then return end
-  reload()
-  if status[key] == kind then return end
+  if not VERDICTS or current(key) == kind then return end
   if status[key] == nil and status_count >= MAX_VERDICT_KEYS then
     if not verdicts_full then say("no verdict for " .. name .. ": " .. VERDICTS .. " holds " .. MAX_VERDICT_KEYS .. " names already") end
     verdicts_full = true
@@ -99,8 +130,10 @@ local function verdict(kind, name, proto, note)
   status[key] = kind
   local f = io.open(VERDICTS, "a")
   if not f then return end
-  f:write(kind, "\t", name, "\t", proto, "\t", note or "", "\t", os.time(), "\n")
+  local line = table.concat({ kind, name, proto, note or "", os.time() }, "\t") .. "\n"
+  f:write(line)
   f:close()
+  seen = (seen or 0) + #line
 end
 
 -- "<circular key> <site>" of a host record: autostate maps them to it.
@@ -116,20 +149,31 @@ local function udp_key(askey)
   return askey:match("quic") or askey:match("udp")
 end
 
+-- What a host record rotates for: the transport of the connection last judged on it
+-- (automate_failure_check and ps_noreply_timer, below), as a circular without key=
+-- (keenetic's UDP one) is named by its instance alone. Before any, the key's name: z2k's
+-- say udp or quic.
+local function transport(askey, rec)
+  if rec.ps_udp ~= nil then return rec.ps_udp and "udp" or "tcp" end
+  return udp_key(askey) and "udp" or "tcp"
+end
+
 -- --- rotation ----------------------------------------------------------------------------
 
 -- Every strategy failed in turn, none got through: the site is unfixable here. Its
--- rotation stops (it would only cycle on), and the proxy carries it from now on.
+-- rotation stops (it would only cycle on), and the proxy carries it from now on. Without a
+-- verdicts file (the per-app instance) no proxy takes over, so it cycles on.
 local count = automate_failure_counter
 function automate_failure_counter(hrec, crec, fails, maxtime)
   local reached = count(hrec, crec, fails, maxtime)
   if reached and hrec.ctstrategy then
+    refresh()
     hrec.ps_cycle = (hrec.ps_cycle or 0) + 1
-    if hrec.ps_cycle >= hrec.ctstrategy and not hrec.final then
+    if VERDICTS and hrec.ps_cycle >= hrec.ctstrategy and not hrec.final then
       local askey, host = ident(hrec)
       if host then
         hrec.final = hrec.nstrategy or 1
-        local proto = udp_key(askey) and "udp" or "tcp"
+        local proto = transport(askey, hrec)
         say(askey .. " " .. host .. ": no strategy of " .. hrec.ctstrategy .. " gets through, the proxy carries its " .. proto)
         verdict("unfixable", host, proto, askey)
       end
@@ -141,6 +185,7 @@ end
 -- A connection that got through: its site works with zapret2.
 local check = automate_failure_check
 function automate_failure_check(desync, hrec, crec)
+  hrec.ps_udp = desync.dis ~= nil and desync.dis.udp ~= nil
   local judged = crec.nocheck
   local reached = check(desync, hrec, crec)
   if not judged and crec.nocheck and not crec.failure and not reached then
@@ -160,6 +205,7 @@ function ps_noreply_timer(_, data)
   -- itself (a cancelled page, the loser of a connection race): no verdict on the site.
   if crec.ps_answered or crec.ps_closed or crec.nocheck or crec.failure then return end
   crec.nocheck = true
+  hrec.ps_udp = false
   if not automate_failure_counter(hrec, crec, tonumber(data.fails) or 3, tonumber(data.maxtime) or 60) then return end
   -- circular's own formula, outside circular.
   if not hrec.ctstrategy or hrec.ctstrategy < 1 or (hrec.final and hrec.final == hrec.nstrategy) then return end
@@ -221,6 +267,23 @@ end
 
 local failures, tracked = {}, 0 -- host -> failure times within the window
 local learned = {}
+
+-- A verdict gone from the file: the failures counted towards it go too, and a site's
+-- rotation needs a whole cycle again before it is unfixable. (z2k-state-persist.lua puts
+-- the strategy back to the first one itself, when proxy-ctl drops it from state.tsv.)
+forget = function(key)
+  local name, proto = key:match("^(.*) (%S*)$")
+  if proto == "ip" then
+    failures["ip " .. name] = nil
+  elseif proto == "cutoff" then
+    failures["cut " .. name] = nil
+  else
+    for askey, hosts in pairs(autostate or {}) do
+      local rec = hosts[name]
+      if rec and transport(askey, rec) == proto then rec.ps_cycle = 0 end
+    end
+  end
+end
 
 local function lines(path)
   local out = {}
@@ -344,6 +407,13 @@ local function failure(st, arg, why, stall)
   if st.counted then return end
   st.counted = true
   local host = st.host
+  -- Learned here, and gone from the list since (proxy-ctl's forget, exclude, clear): judged
+  -- afresh. Only then does a learned name come back here: nfqws2 hands the listed ones to
+  -- the profiles before this one.
+  if learned[host] and not covered(host, lines(arg.auto)) then
+    learned[host], failures[host], stalled[host] = nil, nil, nil
+    learned_count = learned_count - 1
+  end
   if learned[host] or excluded(host, arg) then return end
   if stall and not stalled[host] then
     stalled, stalled_count = bounded(stalled, stalled_count + 1)
@@ -451,7 +521,8 @@ function ps_learn(_, desync)
       if st.retrans >= (tonumber(desync.arg.retrans) or 3) then
         failure(st, desync.arg, "ClientHello retransmitted " .. st.retrans .. " times")
         st.done = true
-        reset_client(desync)
+        -- autoHostlist.retransReset, as for nfqws2's own detector.
+        if desync.arg.reset then reset_client(desync) end
       end
     end
     return
@@ -486,6 +557,7 @@ function ps_watch_stall(_, data)
   local st = data.st
   if not cut_short(st, data.arg) then return end
   st.done = true
+  refresh()
   local n, need = tally("cut " .. st.host, tonumber(data.arg.time) or 300), tonumber(data.arg.fails) or 3
   if data.arg.log then
     say(st.host .. ": transfer stalled after " .. math.floor((st.next - 1) / 1024) .. " KB (" .. n .. "/" .. need .. " to keep it on the proxy)")
@@ -545,6 +617,7 @@ end
 function ps_syn_timer(_, data)
   local st = data.st
   if st.answered or st.closed then return end
+  refresh()
   local n, need = tally("ip " .. st.ip, tonumber(data.arg.time) or 300), tonumber(data.arg.fails) or 3
   if data.arg.log then say(st.ip .. ": connection unanswered (" .. n .. "/" .. need .. ")") end
   if n >= need and status[st.ip .. " ip"] ~= "blocked" then
@@ -571,7 +644,8 @@ function ps_syn(_, desync)
   elseif st and bitand(flags, TH_SYN) ~= 0 and bitand(flags, TH_ACK) ~= 0 then
     st.answered = true
     failures["ip " .. st.ip] = nil
-    if status[st.ip .. " ip"] == "blocked" then
+    -- The file only for what it has blocked: every answered connection comes by here.
+    if status[st.ip .. " ip"] == "blocked" and current(st.ip .. " ip") == "blocked" then
       say(st.ip .. " answers again: zapret2 has it back")
       verdict("reachable", st.ip, "ip")
     end

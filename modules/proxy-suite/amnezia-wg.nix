@@ -14,6 +14,8 @@ let
   inherit (derived.constants)
     awgGlobalFwmark
     awgGlobalGroup
+    awgGlobalRulePriority
+    awgGlobalSuppressRulePriority
     awgOutboundRulePriority
     awgServerUdpRulePriority
     runtimeAwgDir
@@ -387,8 +389,12 @@ let
   '';
   repliesUp = profile: ''
     fwmark=$(${awgCfg.toolsPackage}/bin/awg show ${lib.escapeShellArg profile.interfaceName} fwmark)
-    # Off when the profile routes nothing by default (a table of its own, or Table=off).
+    # Off when the profile routes nothing by default (a table of its own, or Table=off), unless
+    # the kill switch set one (awgIPv6FallbackUp tells).
     if [[ "$fwmark" != off ]]; then
+      # awg-quick's table: its fwmark, as a number.
+      table=$((fwmark))
+      ${awgRulesBehind}
       ${awgIPv6FallbackUp}
       ${serverUdpRulesUp}
       ${pkgs.nftables}/bin/nft -f - <<EOF
@@ -406,33 +412,77 @@ let
     EOF
     fi
   '';
+  # The IPv6 fallback's teardown goes ahead of awg-quick down (awgIPv6FallbackDown).
   repliesDown = profile: ''
     ${pkgs.nftables}/bin/nft delete table inet ${repliesTable profile} 2>/dev/null || true
     ${serverUdpRulesDown}
-    ${awgIPv6FallbackDown}
+  '';
+
+  ip = "${pkgs.iproute2}/bin/ip";
+  ip6 = "${ip} -6";
+  rulePref = toString awgGlobalRulePriority;
+  suppressPref = toString awgGlobalSuppressRulePriority;
+  # awg-quick adds its rules with no pref, which the kernel takes as one below the first rule
+  # there is: ahead of proxy-suite's (the proxy-backend bypass, the server UDP ports, per-app
+  # routing and its pins), so these would never be looked at. Moved behind them, each put
+  # there before it goes from where it was. $table: awg-quick's. awgRulesDown takes them out.
+  awgRulesBehind = ''
+    for family in -4 -6; do
+      while read -r pref; do
+        ${ip} "$family" rule del pref ${rulePref} not fwmark "$table" table "$table" 2>/dev/null || true
+        ${ip} "$family" rule add pref ${rulePref} not fwmark "$table" table "$table"
+        ${ip} "$family" rule del pref "$pref" not fwmark "$table" table "$table"
+        # Its suppress_prefixlength rule, added right after it: one below.
+        if ${ip} "$family" rule show pref $(( pref - 1 )) 2>/dev/null \
+          | ${pkgs.gnugrep}/bin/grep -q 'from all lookup main suppress_prefixlength 0'; then
+          ${ip} "$family" rule del pref ${suppressPref} table main suppress_prefixlength 0 2>/dev/null || true
+          ${ip} "$family" rule add pref ${suppressPref} table main suppress_prefixlength 0
+          ${ip} "$family" rule del pref $(( pref - 1 )) table main suppress_prefixlength 0
+        fi
+      done < <(${ip} "$family" rule show 2>/dev/null \
+        | ${pkgs.gawk}/bin/awk -v t="$table" '$1 != "${rulePref}:" && $2 == "not" && $5 == "fwmark" && $7 == "lookup" && $8 == t { sub(":", "", $1); print $1 }')
+    done
+  '';
+
+  # Ahead of awg-quick down, whose loops would delete by table and by suppress_prefixlength
+  # alone, so the first match whatever its mark (per-app TProxy's IPv6 rule among them).
+  # Only the moved rules are at these prefs.
+  awgRulesDown = ''
+    for family in -4 -6; do
+      while ${ip} "$family" rule del pref ${rulePref} 2>/dev/null; do :; done
+      while ${ip} "$family" rule del pref ${suppressPref} 2>/dev/null; do :; done
+    done
   '';
 
   # A global profile without IPv6 (AllowedIPs 0.0.0.0/0 alone): IPv6 unreachable rather than
-  # out the uplink, behind the main table's more specific routes. $fwmark: the interface's.
-  ip6 = "${pkgs.iproute2}/bin/ip -6";
+  # out the uplink, behind the main table's more specific routes, by rules where awg-quick's
+  # go. Only where awg-quick routes IPv4 by its table: the kill switch's FwMark alone (Table=off,
+  # or a table of the profile's own) routes nothing. $table: the interface's. An unreachable
+  # default is never awg-quick's: one left behind is taken over.
   awgIPv6FallbackUp = ''
-    table=$((fwmark))
-    if [ -e /proc/net/if_inet6 ] && [ -z "$(${ip6} route show default table "$table" 2>/dev/null)" ]; then
+    if [ -e /proc/net/if_inet6 ] \
+      && ${ip} -4 rule show 2>/dev/null \
+        | ${pkgs.gawk}/bin/awk -v t="$table" '$2 == "not" && $5 == "fwmark" && $7 == "lookup" && $8 == t { found = 1 } END { exit !found }' \
+      && [ -z "$(${ip6} route show default table "$table" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -v '^unreachable ' || true)" ]; then
       ${ip6} route replace unreachable default table "$table"
-      ${ip6} rule add not fwmark "$table" table "$table"
-      ${ip6} rule add table main suppress_prefixlength 0
+      ${ip6} rule del pref ${rulePref} not fwmark "$table" table "$table" 2>/dev/null || true
+      ${ip6} rule add pref ${rulePref} not fwmark "$table" table "$table"
+      ${ip6} rule del pref ${suppressPref} table main suppress_prefixlength 0 2>/dev/null || true
+      ${ip6} rule add pref ${suppressPref} table main suppress_prefixlength 0
     fi
   '';
-  # The interface (and its fwmark) may be gone: found by the rule naming its mark as its
-  # table and that table's unreachable default, which awg-quick's never has.
+  # Ahead of awg-quick down, which deletes every rule naming its table, and of awg-quick up
+  # (one left behind). The interface (and its fwmark) may be gone: the tables our rules name,
+  # and the one a kill switch pins awg-quick to (the rules gone), where the default is
+  # unreachable, which awg-quick's never is.
   awgIPv6FallbackDown = ''
-    while read -r mark table; do
-      [[ $mark =~ ^(0x[0-9a-f]+|[0-9]+)$ && $table =~ ^[0-9]+$ ]] && (( mark == table )) || continue
-      ${ip6} route show table "$table" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q '^unreachable default' || continue
-      while ${ip6} rule del not fwmark "$table" table "$table" 2>/dev/null; do :; done
-      ${ip6} rule del table main suppress_prefixlength 0 2>/dev/null || true
-      ${ip6} route flush table "$table" 2>/dev/null || true
-    done < <(${ip6} rule show 2>/dev/null | ${pkgs.gawk}/bin/awk '$2 == "not" && $5 == "fwmark" && $7 == "lookup" { print $6, $8 }')
+    for table in $( { ${ip6} rule show pref ${rulePref} 2>/dev/null || true; } \
+      | ${pkgs.gawk}/bin/awk '$2 == "not" && $5 == "fwmark" && $7 == "lookup" && $8 ~ /^[0-9]+$/ { print $8 }'; echo ${toString awgGlobalFwmark}); do
+      ${ip6} route show default table "$table" 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q '^unreachable ' || continue
+      while ${ip6} rule del pref ${rulePref} not fwmark "$table" table "$table" 2>/dev/null; do :; done
+      ${ip6} rule del pref ${suppressPref} table main suppress_prefixlength 0 2>/dev/null || true
+      ${ip6} route del unreachable default table "$table" 2>/dev/null || true
+    done
   '';
 
   # awg-quick turns src_valid_mark on for a default route and never back off; left on, it
@@ -518,6 +568,7 @@ let
 
         cleanup() {
           set +e
+          ${lib.optionalString (!outbound) (awgIPv6FallbackDown + awgRulesDown)}
           ${awgCfg.toolsPackage}/bin/awg-quick down "${configPath}"
 
           # Without the control socket awg-quick cannot find its fwmark; clean up this
@@ -530,8 +581,9 @@ let
               while ${pkgs.iproute2}/bin/ip "$family" rule delete table "$table" 2>/dev/null; do :; done
               ${pkgs.iproute2}/bin/ip "$family" route flush table "$table" 2>/dev/null || true
             done
+            # By its pref: alone, this matches any mark's.
             if (( had_table )); then
-              ${pkgs.iproute2}/bin/ip "$family" rule delete table main suppress_prefixlength 0 2>/dev/null || true
+              ${pkgs.iproute2}/bin/ip "$family" rule delete pref ${suppressPref} table main suppress_prefixlength 0 2>/dev/null || true
             fi
           done
           if command -v nft >/dev/null; then
@@ -544,7 +596,8 @@ let
           ${if outbound then outboundRuleCleanup spec else repliesDown profile + restoreSrcValidMark spec}
           ${spec.release or ""}
         }
-        trap cleanup ERR
+        # And the start ends there: set +e (cleanup's) outlives the trap.
+        trap 'cleanup; exit 1' ERR
         # Stopped (or conflicted out) during the handshake wait: no ExecStop follows a start
         # that never finished, so what is up so far would stay up with the unit inactive.
         trap 'cleanup; exit 143' TERM INT
@@ -553,7 +606,7 @@ let
 
         read -r implementation probe _ < <(${pkgs.python3}/bin/python3 ${configTool} \
           --inspect "${configPath}")
-        ${lib.optionalString (!outbound) (saveSrcValidMark spec)}
+        ${lib.optionalString (!outbound) (saveSrcValidMark spec + awgIPv6FallbackDown + awgRulesDown)}
         ${awgCommon.awgQuickUp "$implementation" ''"${configPath}"''}
         ${if outbound then outboundRoutesUp spec else repliesUp profile}
 
@@ -576,6 +629,7 @@ let
       stop = pkgs.writeShellScript "proxy-suite-awg" (withInit ''
         set -uo pipefail
         status=0
+        ${lib.optionalString (!outbound) (awgIPv6FallbackDown + awgRulesDown)}
         ${awgCfg.toolsPackage}/bin/awg-quick down "${configPath}" || status=$?
         ${if outbound then outboundRuleCleanup spec else repliesDown profile + restoreSrcValidMark spec}
         ${spec.release or ""}

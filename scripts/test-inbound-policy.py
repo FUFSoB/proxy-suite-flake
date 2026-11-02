@@ -42,6 +42,16 @@ class Parsing(unittest.TestCase):
         with self.assertRaises(policy.PolicyError):
             policy.parse_speed({"sideways": "1M"})
 
+    def test_a_zero_with_a_unit_is_no_limit_too(self):
+        # As 0 and "0" are: never a limit of nothing, which would cut the user off.
+        for none in ("0G", "0.0M", "0KiB", "0.1"):
+            self.assertIsNone(policy.parse_size(none), none)
+        self.assertIsNone(policy.parse_rate("0M"))
+        self.assertIsNone(policy.parse_duration("00"))
+        self.assertEqual(policy.parse_speed("20M/0"), {"up": None, "down": 20_000_000})
+        self.assertIsNone(policy.parse_speed("0M/0k"))
+        self.assertTrue(policy.status(policy.effective(policy.normalize({"trafficLimit": "0G"}), None), 0, 0)["active"])
+
     def test_times(self):
         now = 1_800_000_000
         self.assertEqual(policy.parse_time("+30d", now), now + 30 * 86400)
@@ -184,6 +194,24 @@ class Statuses(unittest.TestCase):
         views = policy.statuses(spec, ["rt"], now)
         self.assertEqual(views["rt"], {"active": False, "reasons": ["traffic"], "level": 0})
         self.assertEqual(views["phone"], {"active": True, "reasons": [], "level": 3})
+
+    def test_a_stored_zero_limit_keeps_the_rest_of_the_policy(self):
+        # What normalize() stored from "0G" or "20M/0" before it read them as no limit: the
+        # entry stays, the user switched off stays so.
+        fields = policy.normalize({"enabled": False, "trafficLimit": "0G", "speedLimit": "20M/0"})
+        self.assertEqual(policy.check_stored(fields), fields)
+        self.write("policyFile", {"users": {"a": {"enabled": False, "trafficLimit": 0, "ipLimit": 2,
+                                                  "speedLimit": {"up": 0, "down": 20_000_000}},
+                                            "b": {"speedLimit": {"up": 0, "down": 0}}}})
+        stored = policy.load_policies(self.manager["policyFile"])
+        self.assertEqual(stored["a"], {"enabled": False, "trafficLimit": None, "ipLimit": 2,
+                                       "speedLimit": {"up": None, "down": 20_000_000}})
+        self.assertEqual(stored["b"], {"speedLimit": None})
+        views = policy.statuses({"manager": self.manager, "users": {"a": {}}}, [], time.time())
+        self.assertEqual(views["a"]["reasons"], ["disabled"])
+        # Other entries not in their stored form still go.
+        with self.assertRaises(policy.PolicyError):
+            policy.check_stored({"trafficLimit": "1G"})
 
     def test_a_broken_policy_file_is_no_policy(self):
         with open(self.manager["policyFile"], "w", encoding="utf-8") as handle:

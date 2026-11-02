@@ -29,6 +29,7 @@ let
   render = import ./autoproxy-render.nix {
     inherit pkgs;
     inherit ((import ./derived.nix { inherit lib cfg; }).constants) serviceUser ifPrivileged;
+    inherit (apCfg) exclude;
   };
   jqFile =
     path:
@@ -99,16 +100,22 @@ let
       roundsJq = jqFile ./autoproxy-rounds.jq;
       interval = apCfg.interval;
       inherit journalctl;
-      # Quoted whole: escapeRegex leaves a quote or backtick in a name as it is.
+      # Quoted whole: escapeRegex leaves a quote or backtick in a name as it is. -i: names
+      # match whatever their case, as in render.
       excludeHosts = lib.optionalString (
         excludePattern != ""
-      ) "grep -vE ${lib.escapeShellArg "(^|\\.)(${excludePattern})$"} |";
+      ) "grep -viE ${lib.escapeShellArg "(^|\\.)(${excludePattern})$"} |";
       excludeSampleHosts = lib.optionalString (
         excludePattern != ""
-      ) "grep -vE ${lib.escapeShellArg "(^|\\.)(${excludePattern})"}$'\\t' |";
+      ) "grep -viE ${lib.escapeShellArg "(^|\\.)(${excludePattern})"}$'\\t' |";
       slowJudgeJq = jqFile ./autoproxy-slow-judge.jq;
       probesPerRun = toString apCfg.probesPerRun;
       inherit publicSuffixes;
+      # A censor verdict (DPI) is zapret2's to unblock only while zapret2 runs for this
+      # host's traffic; otherwise the exit that got past carries it.
+      routeCensor = lib.optionalString (
+        !(derived.zapretEngine == "zapret2" && derived.zapretGlobalEnabled)
+      ) "1";
     }
   );
 

@@ -302,6 +302,8 @@ def needs_root(out, status):
 
 
 STATE_ICONS = {"active": "●", "inactive": "○", "failed": "✗", "activating": "◐", "deactivating": "◐", "reloading": "◐"}
+# What a toggle stops rather than starts: a unit on its way up, or waiting out RestartSec=, too.
+UP_STATES = ("active", "activating", "reloading")
 
 
 # --- readers ------------------------------------------------------------------
@@ -387,7 +389,7 @@ def _unit_argv(row, verb):
 
 
 def toggle_argv(row, *_):
-    return _unit_argv(row, "off" if row["state"] == "active" else "on")
+    return _unit_argv(row, "off" if row["state"] in UP_STATES else "on")
 
 
 def restart_argv(row, *_):
@@ -834,7 +836,7 @@ def _runtime_rule(row):
 
 
 def _zapret_toggle(row, _, states):
-    return ["zapret", "off" if states.get("proxy-suite-zapret") == "active" else "on"]
+    return ["zapret", "off" if states.get("proxy-suite-zapret") in UP_STATES else "on"]
 
 
 TABS = [
@@ -851,7 +853,7 @@ TABS = [
                 toggle_argv,
                 when=_controllable,
                 # proxy off takes tun and tproxy down with it.
-                confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] == "active",
+                confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] in UP_STATES,
             ),
             Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
             # A failed unit restarts too: that is how it gets another try.
@@ -908,7 +910,7 @@ TABS = [
         awg_rows,
         summary=lambda: "Only one global tunnel runs at a time: starting a profile stops TUN, TProxy and any other profile.",
         actions=[
-            Action("space", "start / stop", lambda r, *_: ["awg", "off" if r["state"] == "active" else "on", r["profile"]], when=ROW),
+            Action("space", "start / stop", lambda r, *_: ["awg", "off" if r["state"] in UP_STATES else "on", r["profile"]], when=ROW),
             Action("ctrl+r", "restart it", lambda r, *_: ["awg", "restart", r["profile"]], when=lambda r: r["state"] in ("active", "failed")),
             Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
             Action(
@@ -1656,6 +1658,8 @@ def _read_states():
 
 @dataclass
 class MenuItem:
+    # Unique in the menu (the tray numbers items by it): a tag's or profile's has a colon, which
+    # no fixed one has, so a tag "auto" or a profile "off" leaves "pin-auto" and "awg-off" be.
     id: str
     label: str = ""
     kind: str = "normal"  # normal, check, radio, separator, submenu
@@ -1705,7 +1709,7 @@ def tray_menu(snap, outbounds=None):
                 children=[
                     MenuItem("pin-auto", "Automatic (unpin)", kind="radio", checked=not pinned, argv=["proxy", "unpin"]),
                     _sep(2),
-                    *(MenuItem(f"pin-{t}", t, kind="radio", checked=t == pinned, argv=["proxy", "pin", t]) for t in tags),
+                    *(MenuItem(f"pin:{t}", t, kind="radio", checked=t == pinned, argv=["proxy", "pin", t]) for t in tags),
                 ],
             )
         )
@@ -1724,7 +1728,7 @@ def tray_menu(snap, outbounds=None):
                 kind="submenu",
                 children=[
                     MenuItem("awg-off", "Off", kind="radio", checked=not current, argv=["awg", "off"]),
-                    *(MenuItem(f"awg-{p}", p, kind="radio", checked=p == current, argv=["awg", "on", p]) for p in snap["awg"]["profiles"]),
+                    *(MenuItem(f"awg:{p}", p, kind="radio", checked=p == current, argv=["awg", "on", p]) for p in snap["awg"]["profiles"]),
                 ],
             )
         )

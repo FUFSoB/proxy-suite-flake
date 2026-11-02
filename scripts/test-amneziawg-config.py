@@ -15,6 +15,7 @@ import amneziawg_config
 from amneziawg_config import (
     ConfigError,
     decode_vpn_link,
+    encode_vpn_link,
     extract_vpn_config,
     prepare,
     probe_address,
@@ -209,8 +210,24 @@ class AmneziaWgConfigTests(unittest.TestCase):
         config = extract_vpn_config(data)
         self.assertIn("DNS = 1.1.1.1,8.8.8.8", config)
         self.assertIn("MTU = 1280", config)
-        self.assertIn("ListenPort = 41111", config)
         self.assertIn("HeaderProtectionKey = header", config)
+        # last_config's port is the server's: never this end's ListenPort...
+        self.assertNotIn("ListenPort", config)
+        # ...while one the embedded config sets stays.
+        listening = BASE_CONFIG.replace("Address =", "ListenPort = 40000\nAddress =")
+        config = extract_vpn_config(decode_vpn_link(encode_vpn(vpn_data(("amnezia-awg", "awg", listening)))))
+        self.assertEqual(amneziawg_config.section_values(config, "interface", "listenport"), ["40000"])
+
+    def test_encoded_vpn_link_reads_every_address_dns_and_allowed_ips_line(self):
+        config = BASE_CONFIG.replace(
+            "Address = 10.8.0.2/32\nDNS = $PRIMARY_DNS,$SECONDARY_DNS",
+            "Address = 10.8.0.2/32\nAddress = fd00::2/128\nDNS = 1.1.1.1\nDNS = 8.8.8.8",
+        ).replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = 0.0.0.0/0\nAllowedIPs = ::/0")
+        data = decode_vpn_link(encode_vpn_link(config, "vpn.example.com", "test"))
+        last = json.loads(data["containers"][0]["awg"]["last_config"])
+        self.assertEqual(last["client_ip"], "10.8.0.2")
+        self.assertEqual(last["allowed_ips"], ["0.0.0.0/0", "::/0"])
+        self.assertEqual((data["dns1"], data["dns2"]), ("1.1.1.1", "8.8.8.8"))
 
     def test_uncompressed_vpn_link(self):
         data = decode_vpn_link(

@@ -18,21 +18,46 @@ transaction; the bans' sets are left alone.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import subprocess
 
 TABLE = "proxy_suite_inbound_limits"
 MARK_BASE = 0x04000000
 MARK_MASK = 0xFFFF0000
+# A connection's mark may get zapret's marks (0x10000000 and up) ORed in after ours, e.g.
+# by its CONNMARKER (FILTER_TTL_EXPIRED_ICMP): the limits look past them.
+CT_MARK_MASK = 0x0FFF0000
+CT_MARK_KEY = 0x0FFFFFFF
 # What the exits' sockopt.mark carries: the patch's flag, and the base the levels are added to.
 LEVEL_MARK_FLAG = 0x40000000
 EXIT_MARK = LEVEL_MARK_FLAG | MARK_BASE
 MAX_SLOTS = 0xFFFF
 
 
+def plain_address(text: str) -> str | None:
+    """An address as nft and ss take it, from one as XRay's stats give it: an IPv6 one in
+    brackets ("[2001:db8::1]"), maybe with a port or zone; an IPv4-mapped one as IPv4,
+    which its packets are. None when it is none."""
+    text = str(text).strip()
+    if text.startswith("["):
+        text = text[1:].partition("]")[0]
+    elif text.count(":") == 1:
+        text = text.partition(":")[0]
+    try:
+        address = ipaddress.ip_address(text.partition("%")[0])
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return str(mapped or address)
+
+
 def ruleset(table: str = TABLE) -> str:
     """The table from nothing: an existing one of that name goes first."""
-    mark = f"ct mark & 0x{MARK_MASK:08x} == 0x{MARK_BASE:08x}"
+    # The socket's mark is taken whole, at OUTPUT, before zapret's chains (POSTROUTING)
+    # could add to it: no other bit goes into the connection's mark from here.
+    mark = f"ct mark & 0x{CT_MARK_MASK:08x} == 0x{MARK_BASE:08x}"
+    key = f"ct mark & 0x{CT_MARK_KEY:08x}"
     return f"""table inet {table}
 delete table inet {table}
 table inet {table} {{
@@ -53,12 +78,12 @@ table inet {table} {{
     ip6 saddr . th dport @ban6 drop
     meta l4proto udp ip saddr . th dport @cut4 drop
     meta l4proto udp ip6 saddr . th dport @cut6 drop
-    ct direction reply {mark} limit name ct mark map @down drop
+    ct direction reply {mark} limit name {key} map @down drop
   }}
   chain output {{
     type filter hook output priority filter - 5; policy accept;
     ct state new meta mark & 0x{MARK_MASK:08x} == 0x{MARK_BASE:08x} ct mark set meta mark
-    ct direction original {mark} limit name ct mark map @up drop
+    ct direction original {mark} limit name {key} map @up drop
   }}
   chain awg_in {{
     type filter hook prerouting priority filter - 5; policy accept;
@@ -163,6 +188,9 @@ class Netfilter:
     def ban(self, ip: str, ports: list[int], seconds: int) -> None:
         if not self.enabled or not ports:
             return
+        ip = plain_address(ip) or ""
+        if not ip:
+            raise RuntimeError("not an IP address")
         family = "6" if ":" in ip else "4"
         elements = ", ".join(f"{ip} . {port} timeout {int(seconds)}s" for port in sorted(set(ports)))
         self._run("add", "element", "inet", self.table, f"ban{family}", "{ " + elements + " }")
@@ -186,7 +214,9 @@ class Netfilter:
 
     def unban(self, ip: str) -> int:
         """Lift every ban of this address; how many there were."""
-        found = [ban for ban in self.bans() if ban["ip"] == ip]
+        # As ban() stored it, whatever way it is written.
+        ip = plain_address(ip) or ip
+        found = [ban for ban in self.bans() if plain_address(ban["ip"]) == ip]
         if found:
             family = "6" if ":" in ip else "4"
             elements = ", ".join(f"{ip} . {ban['port']}" for ban in found)

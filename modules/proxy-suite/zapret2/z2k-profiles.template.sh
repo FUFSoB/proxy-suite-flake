@@ -51,11 +51,25 @@ grep -q -- '--lua-desync=circular' raw || { echo "z2k generator produced no prof
 #
 # $stallWatch (detect.lua's ps_watch) goes first among the instances of the profile
 # that takes the learned sites, ahead of its in-profile filters, which it resets after.
+#
+# $everySite, the per-app instance's set: the profiles over the blocked-sites list drop
+# every list they take sites from (RKN's, Discord's, YouTube's QUIC), and so take every
+# site a connection names, less the excludes. rkn_tcp keeps YouTube's as excludes, for
+# yt_tcp/gv_tcp below it, whose lists stay. It learns nothing: no last profile.
 awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
     -v wl="--hostlist-exclude=$root/lists/whitelist.txt" \
     -v yt="--hostlist-exclude=$root/extra_strats/TCP/YT/List.txt --hostlist-exclude=$root/extra_strats/TCP/YT_GV/List.txt" \
     -v hsuf="$hostlistSuffix" -v esuf="$excludeSuffix" \
-    -v learn="$learnArgs" -v wlfile="$root/lists/whitelist.txt" -v watch="$stallWatch" '
+    -v learn="$learnArgs" -v wlfile="$root/lists/whitelist.txt" -v watch="$stallWatch" \
+    -v every="${everySite:-}" '
+  # The first read: which profiles are over the blocked-sites list.
+  FNR == NR {
+    for (i = 1; i <= NF; i++) {
+      if ($i == "--new") np++
+      else if ($i == rkn) overrkn[np] = 1
+    }
+    next
+  }
   {
     for (i = 1; i <= NF; i++) {
       t = $i
@@ -70,12 +84,14 @@ awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
         filtered[prof] = 1
       }
       if (t == rkn) {
-        t = t " <HOSTLIST_NOAUTO>" hsuf
+        t = every == "" ? t " <HOSTLIST_NOAUTO>" hsuf : ""
         if (!seen++) {
-          t = t " " yt
+          t = (t == "" ? "" : t " ") yt
           learner = prof
           if (prof in filtered) { print "z2k general TLS profile: hostlist after its instances" > "/dev/stderr"; exit 1 }
         }
+      } else if (every != "" && (prof in overrkn) && t ~ /^--hostlist=/) {
+        t = ""
       } else if (t == wl) {
         t = t esuf
       } else if (t ~ /^--lua-desync=circular:/) {
@@ -86,13 +102,14 @@ awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
         if (seen && prof == learner && t !~ /:key=rkn_tcp(:|$)/) { print "z2k general TLS profile is not rkn_tcp" > "/dev/stderr"; exit 1 }
         if (t ~ /:key=quic(:|$)/ && !quic++ && !sub(/:udp_in=1:/, ":udp_in=4:", t)) { print "z2k QUIC udp_in=1 not found" > "/dev/stderr"; exit 1 }
       }
-      printf "%s%s%s", (i > 1 ? " " : ""), pre, t
+      if (t != "") printf "%s%s%s", (printed++ ? " " : ""), pre, t
     }
   }
   END {
     if (!seen || !(learner in ports)) { print "z2k general TLS profile not found" > "/dev/stderr"; exit 1 }
     if (quic != 1) { print "z2k QUIC profile not found" > "/dev/stderr"; exit 1 }
     if (watch != "" && !watched) { print "z2k general TLS profile has no instances" > "/dev/stderr"; exit 1 }
+    if (every != "") exit
     if (learn == "")
       printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
     else {
@@ -100,7 +117,7 @@ awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
       sub(/:exclude=/, ":exclude=" wlfile ",", learn)
       printf " --new --filter-tcp=%s --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:%s", ports[learner], learn
     }
-  }' raw >body
+  }' raw raw >body
 
 awk -v z=@z2k@ '
   match($0, /^([A-Z0-9_]+_BLOB)="\$ZAPRET_BASE\/([^"]+)"/, m) { file[m[1]] = m[2] }

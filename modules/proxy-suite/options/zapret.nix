@@ -32,12 +32,15 @@ in
     # What zapret feeds back into the client routing table.
     directSync = {
       enable = bool true ''
-        Send zapret's domains direct in the proxy routing, so zapret handles them. With zapret2,
-        also the sites pinned at runtime, and the ones it learns once a strategy is seen getting
-        through for them, after your own rules and autoProxy's. The all-proxy and all-bypass
-        route modes leave them out, like every direct list.
+        Send the engine's own sites direct in the proxy routing, so zapret handles them:
+        zapret-discord-youtube's lists; or zapret2's `domains`, the site lists of its
+        `strategySource` (YouTube, Discord...), the sites pinned at runtime, and the ones it
+        learns once a strategy is seen getting through for them, after your own rules and
+        autoProxy's, and on sing-box after what zapret2 finds it cannot fix
+        (`zapret2.proxyFallback`). The all-proxy and all-bypass route modes leave them out,
+        like every direct list.
       '';
-      upstreamIps = bool false "Also send zapret's upstream IP lists direct.";
+      upstreamIps = bool false "Also send zapret-discord-youtube's upstream IP lists direct.";
       userIps = bool true "Also send `zapret-discord-youtube.ips` (minus `excludeIps`) direct.";
     };
 

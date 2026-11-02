@@ -156,6 +156,8 @@ let
   exitNodeNoOnion = mkInboundsConfig (
     mkFixture "sing-box" (exitInbounds // { tor.routeOnion = false; })
   );
+  # Pure XRay, whose mixed-in takes those names behind the inbounds' guard.
+  xrayExitRules = (mkTProxyConfig (mkFixture "xray" exitInbounds)).routing.rules;
 
   # inbounds.routing.blockPrivate's resolve guard must come after the .onion rule: resolving
   # a .onion name fails, and the connection with it. autoProxy's probe pins sit first.
@@ -190,7 +192,7 @@ let
     jq -e '
       .route.rules as $r
       | ($r | map(.domain_suffix? == ["onion"]) | index(true)) as $onion
-      | ($r | map(.action? == "resolve") | index(true)) as $guard
+      | ($r | map(.inbound? == ["mixed-in"] and .action? == "resolve") | index(true)) as $guard
       | ($r | map(.domain_suffix? == ["ru"]) | index(true)) as $ru
       | $onion != null and $guard > $onion and $guard < $ru
     ' rules.json
@@ -383,10 +385,33 @@ in
         };
       true
     )
+    # Then the loopback hops, Tor's SOCKS port among them: a name on one is looked up first,
+    # so one resolving to loopback is refused as the address is.
     (
-      # After the loopback guard, which every route mode keeps first.
       assert
-        lib.last xrayRouting.xrayRouteModeRules.common == {
+        lib.sublist 3 2 singBoxModes.common == [
+          {
+            port = [ 18530 ];
+            action = "resolve";
+          }
+          {
+            ip_cidr = [
+              "127.0.0.0/8"
+              "::1/128"
+              "0.0.0.0/32"
+              "::/128"
+            ];
+            port = [ 18530 ];
+            action = "reject";
+          }
+        ];
+      true
+    )
+    (
+      # Ahead of the loopback guard, which every route mode keeps right after it: the guard's
+      # ip match would look the onion name up (IPOnDemand).
+      assert
+        lib.head xrayRouting.xrayRouteModeRules.common == {
           type = "field";
           ruleTag = "tor-onion";
           domain = [ "domain:onion" ];
@@ -396,8 +421,25 @@ in
           lib.take (builtins.length xrayRouting.xrayRouteModeRules.common) xrayRouting.xrayRoutingRules
           == xrayRouting.xrayRouteModeRules.common
         # Sniffing must not turn a transparent client's connection into one to this host.
-        && (lib.head xrayRouting.xrayRoutingRules).ruleTag == "guard-loopback-ip"
-        && (lib.head xrayRouting.xrayRoutingRules).outboundTag == "block";
+        && (builtins.elemAt xrayRouting.xrayRoutingRules 1).ruleTag == "guard-loopback-ip"
+        && (builtins.elemAt xrayRouting.xrayRoutingRules 1).outboundTag == "block";
+      true
+    )
+    # Likewise ahead of the inbounds' guard on mixed-in, which sits before the common rules.
+    (
+      let
+        at = tag: lib.lists.findFirstIndex (rule: rule.ruleTag or "" == tag) null xrayExitRules;
+      in
+      assert at "inbounds-tor-onion" != null && at "inbounds-private-guard" != null;
+      assert
+        builtins.elemAt xrayExitRules (at "inbounds-tor-onion") == {
+          type = "field";
+          ruleTag = "inbounds-tor-onion";
+          inboundTag = [ "mixed-in" ];
+          domain = [ "domain:onion" ];
+          outboundTag = "tor";
+        };
+      assert at "inbounds-tor-onion" < at "inbounds-private-guard";
       true
     )
     (

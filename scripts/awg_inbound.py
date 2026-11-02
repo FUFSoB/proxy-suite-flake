@@ -134,7 +134,9 @@ def allocate_addresses(awg: dict, users: list[dict], stored: dict[str, dict]) ->
     """
     tag = awg["tag"]
     network = ipaddress.ip_network(awg["subnet"], strict=False)
-    last = network.num_addresses - (1 if network.prefixlen < 31 else 0)
+    # The same offset in subnet6 is the user's IPv6 address: a narrower one has less room.
+    last = inbound_runtime.awg_offsets_end(awg)
+    within = f"{network} (with {awg['subnet6']})" if awg.get("subnet6") is not None else f"{network}"
     offsets: dict[str, int] = {}
     taken = {1}
     for user in users:
@@ -143,7 +145,7 @@ def allocate_addresses(awg: dict, users: list[dict], stored: dict[str, dict]) ->
         address = ipaddress.ip_address(user["address"])
         offset = int(address) - int(network.network_address)
         if address not in network or not 1 < offset < last:
-            raise ConfigError(f"listener '{tag}': address {address} of user '{user['name']}' is not a client address in {network}")
+            raise ConfigError(f"listener '{tag}': address {address} of user '{user['name']}' is not a client address in {within}")
         if offset in taken:
             raise ConfigError(f"listener '{tag}': address {address} is taken twice")
         offsets[user["name"]] = offset
@@ -159,7 +161,7 @@ def allocate_addresses(awg: dict, users: list[dict], stored: dict[str, dict]) ->
         if user["name"] not in offsets:
             offset = next(free, None)
             if offset is None:
-                raise ConfigError(f"listener '{tag}': subnet {network} has no free address for user '{user['name']}'")
+                raise ConfigError(f"listener '{tag}': subnet {within} has no free address for user '{user['name']}'")
             offsets[user["name"]] = offset
             taken.add(offset)
     return offsets

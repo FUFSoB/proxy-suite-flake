@@ -162,6 +162,9 @@ let
       ++ lib.concatMap (ob: ob.routing.ruleSets) proxyCfg.outbounds
     )
   );
+  badRuleSetNames = builtins.filter (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" name == null) (
+    builtins.attrNames proxyCfg.routing.ruleSets
+  );
 
   featureAssertions = [
     # Declaring no outbound at all is legal: they can be added at runtime with
@@ -319,6 +322,10 @@ let
     )
     (mkAssertion (!proxyEnabled || unknownRuleSets == [ ])
       "proxy-suite: routing refers to rule set(s) proxy.routing.ruleSets does not declare: ${lib.concatStringsSep ", " unknownRuleSets}"
+    )
+    # They become file names, in tmpfiles lines among others.
+    (mkAssertion (badRuleSetNames == [ ])
+      "proxy-suite: proxy.routing.ruleSets names must be letters, digits, '.', '_' and '-', starting with a letter or digit: ${lib.concatStringsSep ", " badRuleSetNames}"
     )
     (mkAssertion (!(pureXrayEnabled && proxyCfg.routing.ruleSets != { }))
       "proxy-suite: proxy.routing.ruleSets are sing-box rule sets, which proxy.backend = \"xray\" cannot read; use \"sing-box\" or \"hybrid\""
@@ -550,6 +557,10 @@ let
       localProxyAuthCfg.password
       localProxyAuthCfg.passwordFile
     ] "proxy-suite: proxy.listener.auth requires exactly one of password or passwordFile")
+    # sing-box serves the listener on the sing-box and hybrid backends.
+    (mkAssertion (!singBoxEnabled || builtins.match "[0-9a-fA-F:.]+" proxyCfg.listener.address != null)
+      "proxy-suite: sing-box listens on an IP address only, not proxy.listener.address '${proxyCfg.listener.address}'"
+    )
   ];
 
   secretAssertions = [
@@ -634,6 +645,44 @@ let
     port:
     builtins.elem port derived.proxyInboundRuntimeSinglePorts
     || lib.any (range: range.from <= port && port <= range.to) derived.proxyInboundRuntimePortRanges;
+
+  # A port or "from-to" range of the options' port lists, as { from, to }.
+  portRange =
+    p:
+    if builtins.isInt p then
+      {
+        from = p;
+        to = p;
+      }
+    else
+      let
+        bounds = map lib.toInt (lib.splitString "-" p);
+      in
+      {
+        from = builtins.elemAt bounds 0;
+        to = builtins.elemAt bounds 1;
+      };
+  hopListeners = builtins.filter (
+    ib: ib.listener.type == "hysteria2" && ib.listener.hysteria.portHopping != null
+  ) proxyInbounds;
+  # What a listener's hop range would take from the UDP this host serves on, which the
+  # redirect reaches first: the other UDP listeners' ports and hop ranges, the runtime
+  # listeners', and AmneziaWG's. Not inbounds.serverPorts: they are often TCP alone.
+  hopOverlaps =
+    ib:
+    let
+      hop = portRange ib.listener.hysteria.portHopping;
+      served =
+        map portRange (
+          lib.remove ib.listener.port derived.proxyInboundFirewallUdpPorts
+          ++ derived.proxyInboundRuntimePorts
+          ++ cfg.amneziaWg.serverUdpPorts
+        )
+        ++ map (other: portRange other.listener.hysteria.portHopping) (
+          builtins.filter (other: other.tag != ib.tag) hopListeners
+        );
+    in
+    builtins.filter (range: range.from <= hop.to && hop.from <= range.to) served;
 
   proxyInboundAssertions = [
     (mkAssertion (!proxyInboundsEnabled || derived.invalidInboundViaTargets == [ ])
@@ -773,14 +822,13 @@ let
     (mkAssertion
       (
         !proxyInboundsEnabled
-        || !lib.any (port: builtins.elem port derived.proxyInboundPorts) (
-          map (listener: listener.internalPort) (derived.proxyInboundsAwg ++ derived.proxyInboundsSingBox)
-          ++ awgRuntimeTunnelPorts
-          ++ builtins.attrValues derived.constants.xrayDnsBridgePorts
-          ++ lib.optionals hybridEnabled (builtins.attrValues derived.constants.xraySidecarPorts)
-        )
+        || !lib.any (port: builtins.elem port derived.proxyInboundPorts) reservedLoopbackPorts
       )
-      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (the AmneziaWG listeners' loopback inbounds from 18700, the runtime AmneziaWG outbounds' 18800-18831, the sing-box listeners' loopback inbounds from 18850, 18533-18535, or the hybrid XRay sidecar's 33080, 33180 and 33280)"
+      "proxy-suite: a proxyInbounds listener port collides with a port proxy-suite uses internally (${
+        lib.concatMapStringsSep ", " toString (
+          builtins.filter (port: builtins.elem port reservedLoopbackPorts) derived.proxyInboundPorts
+        )
+      }): the XRay DNS bridges' 18533-18535, the outbound test's 18537, the WARP tunnels' 18538-18539 and from 18900, tor.socksPort, and the loopback listeners of the AmneziaWG outbounds from 18600, the AmneziaWG listeners from 18700, the whitelistBypass joiners from 18750, the runtime AmneziaWG outbounds at 18800-18831 and the sing-box listeners from 18850, or the hybrid XRay sidecar's 33080, 33180 and 33280"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -849,9 +897,9 @@ let
       (mkAssertion (
         !proxyInboundsEnabled || l.type == null || l.users != [ ] || derived.proxyInboundsRuntimeEnabled
       ) "${prefix}: at least one entry in users is required (or inbounds.runtime, to add them there)")
-      # XRay refuses to start on a repeated email, which is the user's name.
+      # XRay refuses to start on a repeated email, which is the user's name, lowercased.
       (uniqueValues (proxyInboundsEnabled && l.type != null) (builtins.filter (n: n != "") (
-        map (user: user.name) l.users
+        map (user: lib.toLower user.name) l.users
       )) "${prefix}: users must each have a distinct name")
       (eachUser (proxyInboundsEnabled && (needsUuid || l.type == "tuic")) [
         "uuid"
@@ -974,6 +1022,23 @@ let
           && builtins.elemAt bounds 1 <= 65535
         )
       ) "${prefix}: hysteria.portHopping must be a range \"from-to\" within 1-65535, from <= to")
+      (mkAssertion
+        (
+          !proxyInboundsEnabled
+          || l.type != "hysteria2"
+          || l.hysteria.portHopping == null
+          || hopOverlaps ib == [ ]
+        )
+        "${prefix}: hysteria.portHopping ${l.hysteria.portHopping} covers UDP ports this host serves on (${
+          lib.concatMapStringsSep ", " (
+            range:
+            if range.from == range.to then
+              toString range.from
+            else
+              "${toString range.from}-${toString range.to}"
+          ) (hopOverlaps ib)
+        }), whose packets it would hand to this listener: another listener's port or hop range, inbounds.runtime.ports or amneziaWg.serverUdpPorts"
+      )
       # The redirect is an nftables table, which only the NixOS adapter installs.
       (mkAssertion (
         !proxyInboundsEnabled || l.hysteria.portHopping == null || hostKind == "nixos"
@@ -1317,6 +1382,9 @@ let
       tgWsBypass = tgWsProxyCfg.enable && tgWsProxyCfg.bypassTransparentProxy;
     in
     [
+      (distinct globalTproxy.enable globalTproxy.fwmark globalTproxy.proxyMark
+        "proxy.tproxy.fwmark and proxy.tproxy.proxyMark must differ"
+      )
       (distinct bothTun globalTun.interface perAppRoutingTun.interface
         "proxy.tun.interface and perAppRouting.tun.interface must differ"
       )
@@ -1329,8 +1397,10 @@ let
       (distinct perAppTunWithTproxy perAppRoutingTun.fwmark globalTproxy.fwmark
         "perAppRouting.tun.fwmark must differ from proxy.tproxy.fwmark when global TProxy is enabled"
       )
-      (distinct perAppTunWithTproxy perAppRoutingTun.fwmark globalTproxy.proxyMark
-        "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark when global TProxy is enabled"
+      # proxyMark marks the proxy's own sockets whatever the mode: on per-app TUN's mark
+      # they would be routed into its TUN.
+      (distinct perAppRoutingTun.enable perAppRoutingTun.fwmark globalTproxy.proxyMark
+        "perAppRouting.tun.fwmark must differ from proxy.tproxy.proxyMark"
       )
       (distinct perAppTunWithTproxy perAppRoutingTun.routeTable globalTproxy.routeTable
         "perAppRouting.tun.routeTable must differ from proxy.tproxy.routeTable when global TProxy is enabled"
@@ -1393,7 +1463,8 @@ let
     (positive globalTun.enable globalTun.mtu "proxy.tun.mtu")
     (positive perAppRoutingTun.enable perAppRoutingTun.mtu "perAppRouting.tun.mtu")
     (positive globalTproxy.enable globalTproxy.fwmark "proxy.tproxy.fwmark")
-    (positive globalTproxy.enable globalTproxy.proxyMark "proxy.tproxy.proxyMark")
+    # Set on the proxy's and proxy-suite's own sockets wherever they may mark them.
+    (positive constants.privileged globalTproxy.proxyMark "proxy.tproxy.proxyMark")
     (positive globalTproxy.enable globalTproxy.routeTable "proxy.tproxy.routeTable")
     (positive perAppRoutingTun.enable perAppRoutingTun.fwmark "perAppRouting.tun.fwmark")
     (positive perAppRoutingTun.enable perAppRoutingTun.routeTable "perAppRouting.tun.routeTable")

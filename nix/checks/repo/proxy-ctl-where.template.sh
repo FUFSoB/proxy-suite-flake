@@ -22,7 +22,7 @@ verdict() {
 verdict open.spotify.com '-> proxied via community-de'
 grep -q 'autoProxy .*routed via community-de' where
 # What proxy-ctl cannot see has to be said out loud.
-grep -q 'sing-box config is not readable' where
+grep -q 'proxy config is not readable' where
 
 verdict discord.com '-> direct, with the zapret bypass'
 verdict nyt.com '-> direct, with the zapret bypass'

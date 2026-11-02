@@ -689,12 +689,45 @@ let
     )
     ++ lib.optional awgRuntimeGlobal "proxy-suite-awg@*.service";
   };
-  # A tag as proxy-ctl names its via units: in hex, as Python's str.encode().hex().
+  # Every byte UTF-8 text holds, as a one-byte string, to its two hex digits. Nix has no
+  # byte values (lib's charToInt knows printable ASCII only): each byte is cut out of a code
+  # point a JSON escape spells, a continuation byte (0x80-0xBF) out of U+0080-U+00BF, a lead
+  # byte out of the first code point it starts (U+0080, U+0800, U+10000 at the least).
+  utf8ByteHex =
+    let
+      # Past U+FFFF, JSON spells a code point as a surrogate pair.
+      escape =
+        cp:
+        if cp < 65536 then
+          "\\u${lib.fixedWidthString 4 "0" (lib.toHexString cp)}"
+        else
+          escape (55296 + (cp - 65536) / 1024) + escape (56320 + lib.mod (cp - 65536) 1024);
+      # `count` bytes from `first`, each at `offset` in the UTF-8 of `codePoint i`.
+      bytes =
+        first: count: offset: codePoint:
+        lib.genList (i: {
+          name = builtins.substring offset 1 (builtins.fromJSON ''"${escape (codePoint i)}"'');
+          value = lib.fixedWidthString 2 "0" (lib.toLower (lib.toHexString (first + i)));
+        }) count;
+    in
+    builtins.listToAttrs (
+      bytes 1 127 0 (i: 1 + i)
+      ++ bytes 128 64 1 (i: 128 + i)
+      ++ bytes 194 30 0 (i: (2 + i) * 64)
+      ++ bytes 224 16 0 (i: lib.max 2048 (i * 4096))
+      ++ bytes 240 5 0 (i: lib.max 65536 (i * 262144))
+    );
+  # A tag as proxy-ctl names its via units: in hex, as Python's str.encode().hex(). One that
+  # is no UTF-8 is no tag proxy-ctl could start a unit for: it gets a name all the same.
   hexOf =
     s:
-    lib.concatMapStrings (
-      c: lib.fixedWidthString 2 "0" (lib.toLower (lib.toHexString (lib.strings.charToInt c)))
-    ) (lib.stringToCharacters s);
+    let
+      chars = lib.stringToCharacters s;
+    in
+    if lib.all (c: utf8ByteHex ? ${c}) chars then
+      lib.concatMapStrings (c: utf8ByteHex.${c}) chars
+    else
+      builtins.hashString "sha256" s;
   # What `proxy-ctl apps run` starts for a declared profile (_run_via, cmd_apps_run), null for
   # nothing of its own (direct, proxychains): `units`, in order, without ".service"; `modes`,
   # the global units they step aside for; `key`, the via instance, if any.
@@ -785,6 +818,9 @@ let
   # directSync for what zapret2 pins and learns at runtime: a rule-set the proxy reloads.
   # The fixed lists go in with the routing rules (rules-zapret-direct.nix).
   zapret2DirectSync = zapretEngine == "zapret2" && zapretGlobalEnabled && zapretCfg.directSync.enable;
+  # zapret2 without ipv6 queues IPv4 alone: what its direct list sends past the proxy over
+  # IPv6 would meet the DPI untouched.
+  zapret2DirectIpv4Only = zapret2DirectSync && !zapretCfg.zapret2.ipv6 && hasAvailableOutbounds;
   # What zapret2 cannot fix (detect.lua's verdicts) goes through the proxy outbound.
   zapret2ProxyFallback =
     zapretEngine == "zapret2"
@@ -869,6 +905,16 @@ let
     ownTrafficUsersNft = "{ ${
       lib.concatMapStringsSep ", " (u: ''"${u}"'') constants.ownTrafficUsers
     } }";
+    # Those, and a sshProxy.serviceUser of the host's own, which proxy-suite does not make:
+    # OpenSSH dials its server as it. TUN, TProxy and the kill switch let them all past.
+    bypassUsers =
+      constants.ownTrafficUsers
+      ++ lib.optional (
+        sshProxyUnitEnabled
+        && sshProxyCfg.serviceUser != null
+        && sshProxyCfg.serviceUser != constants.serviceUser
+      ) sshProxyCfg.serviceUser;
+    bypassUsersNft = "{ ${lib.concatMapStringsSep ", " (u: ''"${u}"'') constants.bypassUsers} }";
     # Shell text that only matters when the services run as root.
     ifPrivileged = lib.optionalString cfg.host.privileged;
     # The commands scripts manage units and read their logs with: the units live in the
@@ -1149,6 +1195,12 @@ let
     # (an Endpoint's name) get past the kill switch.
     awgGlobalFwmark = 51820;
     awgGlobalGroup = "proxy-suite-awg";
+    # awg-quick adds a global profile's rules with no pref, which the kernel puts ahead of
+    # every other rule: moved behind all of these (the IPv6 fallback's with them), at prefs no
+    # rule added without one gets (those count down from 32765, or below 8986 once any of these
+    # is in), so deleting by pref finds only them. suppress_prefixlength first.
+    awgGlobalSuppressRulePriority = 30000;
+    awgGlobalRulePriority = 30001;
     # An "interface" AmneziaWG outbound's table (the base plus its index) and the rule
     # sending sockets bound to the interface there, clear of the tables above.
     awgOutboundRouteTableBase = 110;
@@ -1319,6 +1371,7 @@ in
     zapretCutoffEnabled
     zapretCutoffProxyFallback
     zapret2DirectSync
+    zapret2DirectIpv4Only
     zapret2ProxyFallback
     userControlCfg
     userControlEnabled

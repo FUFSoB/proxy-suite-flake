@@ -121,7 +121,14 @@ in
     };
 
     zapret = {
-      enable = mkEnableOption "per-app zapret, a separate zapret for wrapped apps only";
+      enable = mkEnableOption "per-app zapret" // {
+        description = ''
+          A separate zapret for wrapped apps only (`proxy-ctl apps run zapret`). With zapret2 it
+          takes every site they name, less the excludes (the strategy source's own,
+          `zapret2.excludeDomains`, `proxy-ctl zapret auto exclude`); it learns nothing and
+          sends nothing to the proxy.
+        '';
+      };
       keepRunning = keepRunning "per-app zapret" "TUN, TProxy or AmneziaWG profile";
       filterMark = int 268435456 "Firewall mark bit for wrapped apps' traffic.";
       qnum = int 201 "NFQUEUE number. Must differ from the global zapret's.";

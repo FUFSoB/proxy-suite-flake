@@ -162,6 +162,8 @@ class SupervisorTest(unittest.TestCase):
             ["Id=proxy-suite-counter.service\nLoadState=loaded\nActiveState=inactive", "Id=nope.service\nLoadState=not-found\nActiveState=inactive\n"],
         )
         self.assertEqual(self.ctl("stop", "proxy-suite-counter")[0], 0)
+        # inbound_apply.py's verb: nothing runs, so nothing to do (and no daemon to start).
+        self.assertEqual(self.ctl("try-reload-or-restart", "proxy-suite-counter")[0], 0)
         self.assertFalse(self.daemon_running())
 
     def test_boot_restart_timers_and_stop(self):
@@ -394,6 +396,307 @@ class InProcessTest(unittest.TestCase):
         self.assertEqual(sup.start("svc"), 0)
         self.assertEqual(unit.state, self.ps.ACTIVE)
         self.assertIsNotNone(stat(unit.main.pid))
+
+    def test_restart_brings_back_what_is_bound_to_it(self):
+        """systemd restarts PartOf= and BindsTo= units along: a stop alone left them down."""
+        sup = self.supervisor({
+            "main": {"Service": {"ExecStart": "sleep 1000"}},
+            "part": {"Unit": {"PartOf": "main.service", "After": "main.service"}, "Service": {"ExecStart": "sleep 1000"}},
+            "bound": {"Unit": {"BindsTo": "main.service"}, "Service": {"ExecStart": "sleep 1000"}},
+            # Bound to one bound to main: comes back too.
+            "deeper": {"Unit": {"PartOf": "part.service"}, "Service": {"ExecStart": "sleep 1000"}},
+            "requires": {"Unit": {"Requires": "main.service"}, "Service": {"ExecStart": "sleep 1000"}},
+            # Not running: stays down.
+            "idle": {"Unit": {"PartOf": "main.service"}, "Service": {"ExecStart": "sleep 1000"}},
+        })
+        names = ("main", "part", "bound", "deeper", "requires", "idle")
+        for name in names:
+            self.assertEqual(sup.start(name), 0)
+        self.assertEqual(sup.stop("idle"), 0)
+        units = {name: sup.units[f"{name}.service"] for name in names}
+        before = {name: unit.main.pid for name, unit in units.items() if unit.main}
+        for only_if_active in (False, True):
+            self.assertEqual(sup.restart("main", only_if_active=only_if_active), 0)
+            for name in names[:-1]:
+                self.assertEqual(units[name].state, self.ps.ACTIVE, name)
+                self.assertNotEqual(units[name].main.pid, before[name], name)
+                self.assertIsNone(stat(before[name]), name)
+                before[name] = units[name].main.pid
+            self.assertEqual(units["idle"].state, self.ps.INACTIVE)
+
+    def test_stop_reaches_what_requires_it(self):
+        """Requires= both ways: each stops once."""
+        sup = self.supervisor({
+            "a": {"Unit": {"Requires": "b.service"}, "Service": {"ExecStart": "sleep 1000"}},
+            "b": {"Unit": {"Requires": "a.service"}, "Service": {"ExecStart": "sleep 1000"}},
+        })
+        self.assertEqual(sup.start("a"), 0)
+        a, b = sup.units["a.service"], sup.units["b.service"]
+        pids = [a.main.pid, b.main.pid]
+        self.assertEqual(sup.stop("a"), 0)
+        self.assertEqual((a.state, b.state), (self.ps.INACTIVE, self.ps.INACTIVE))
+        self.assertEqual([stat(pid) for pid in pids], [None, None])
+        self.assertEqual(sup.restart("b"), 0)
+        self.assertEqual((a.state, b.state), (self.ps.ACTIVE, self.ps.ACTIVE))
+
+    def test_stop_lets_stop_commands_finish(self):
+        """ExecStopPost= already running when a stop comes: run to the end, not SIGTERMed."""
+        cleanup = lambda name: "/bin/sh -c " + json.dumps(f"touch {self.path(name + '-began')}; sleep 0.5; touch {self.path(name + '-done')}")
+        sup = self.supervisor({
+            # A oneshot's own, as its start ends; a main process's, as watch() handles its exit.
+            "oneshot": {"Service": {"Type": "oneshot", "ExecStart": "true", "ExecStopPost": cleanup("oneshot")}},
+            "exits": {"Service": {"ExecStart": "true", "ExecStopPost": cleanup("exits")}},
+        })
+
+        def stopped_while_cleaning_up(name):
+            starting = threading.Thread(target=sup.start, args=(name,))
+            starting.start()
+            wait_for(lambda: os.path.exists(self.path(name + "-began")))
+            self.assertEqual(sup.stop(name), 0)
+            starting.join()
+            self.assertTrue(os.path.exists(self.path(name + "-done")), name)
+            self.assertEqual(sup.units[f"{name}.service"].state, self.ps.INACTIVE, name)
+
+        stopped_while_cleaning_up("oneshot")
+        stopped_while_cleaning_up("exits")
+
+    def test_hanging_stop_command_is_ended(self):
+        """An ExecStopPost= that never ends is killed after the stop-command timeout, as systemd's TimeoutStopSec=."""
+        hang = "/bin/sh -c " + json.dumps(f"echo $$ > {self.path('hang-pid')}; exec sleep 1000")
+        sup = self.supervisor({"hangs": {"Service": {"ExecStart": "sleep 1000", "ExecStopPost": hang}}})
+        self.assertEqual(sup.start("hangs"), 0)
+        saved, self.ps.STOP_COMMAND_TIMEOUT = self.ps.STOP_COMMAND_TIMEOUT, 0.3
+        try:
+            began = time.monotonic()
+            sup.stop("hangs")
+            self.assertLess(time.monotonic() - began, 10)
+        finally:
+            self.ps.STOP_COMMAND_TIMEOUT = saved
+        self.assertIsNone(stat(int(open(self.path("hang-pid")).read())))
+        self.assertNotEqual(sup.units["hangs.service"].state, self.ps.ACTIVE)
+
+    def test_auto_restart_pulls_its_dependencies_in_again(self):
+        """Restart= starts the unit as start() does: Wants= and WantedBy= come back, a failing Requires= fails it."""
+        crash = lambda name: "/bin/sh -c " + json.dumps(
+            f"echo x >> {self.path(name + '-runs')}; while [ ! -e {self.path(name + '-crash')} ]; do sleep 0.05; done;"
+            f" rm {self.path(name + '-crash')}; exit 3")
+        restarts = {"Restart": "on-failure", "RestartSec": "0.1"}
+        flag = self.path("fail")
+        sup = self.supervisor({
+            "main": {"Unit": {"Wants": "wanted.service"}, "Service": dict(restarts, ExecStart=crash("main"))},
+            "wanted": {"Service": {"ExecStart": "sleep 1000"}},
+            "follower": {"Unit": {"After": "main.service"}, "Service": {"ExecStart": "sleep 1000"}, "Install": {"WantedBy": ["main.service"]}},
+            "needs": {"Unit": {"Requires": "dep.service"}, "Service": dict(restarts, ExecStart=crash("needs"))},
+            "dep": {"Service": {"Type": "oneshot", "ExecStart": "/bin/sh -c " + json.dumps(f"[ ! -e {flag} ]")}},
+        })
+        self.assertEqual(sup.start("main"), 0)
+        main, wanted, follower = (sup.units[f"{n}.service"] for n in ("main", "wanted", "follower"))
+        self.assertEqual((wanted.state, follower.state), (self.ps.ACTIVE, self.ps.ACTIVE))
+        for unit in (wanted, follower):
+            self.assertEqual(sup.stop(unit.name), 0)
+        pid = main.main.pid
+        open(self.path("main-crash"), "w").close()
+        wait_for(lambda: main.main is not None and main.main.pid != pid and main.state == self.ps.ACTIVE)
+        wait_for(lambda: wanted.state == self.ps.ACTIVE and follower.state == self.ps.ACTIVE)
+
+        self.assertEqual(sup.start("needs"), 0)
+        needs = sup.units["needs.service"]
+        wait_for(lambda: os.path.exists(self.path("needs-runs")))
+        open(flag, "w").close()
+        open(self.path("needs-crash"), "w").close()
+        wait_for(lambda: needs.state == self.ps.FAILED)
+        self.assertEqual(needs.result, "dependency")
+        with open(self.path("needs-runs")) as f:
+            self.assertEqual(f.read().split(), ["x"])
+
+    def test_try_reload_or_restart(self):
+        hups = self.path("hups")
+        sup = self.supervisor({
+            "reloads": {"Service": {
+                "ExecStart": "/bin/sh -c " + json.dumps(
+                    f"trap 'echo hup >> {hups}' HUP; touch {self.path('ready')}; while :; do sleep 0.05; done"),
+                "ExecReload": "/bin/sh -c " + json.dumps('kill -HUP "$1"') + " sh $MAINPID",
+            }},
+            "plain": {"Service": {"ExecStart": "sleep 1000"}},
+        })
+        handle = lambda verb, *names: self.ps.handle(sup, {"verb": verb, "units": list(names)})
+        # Not running: try- leaves it so, the other starts it.
+        self.assertEqual(handle("try-reload-or-restart", "reloads", "plain"), (0, ""))
+        self.assertNotIn("reloads.service", sup.units)
+        self.assertEqual(handle("reload-or-restart", "plain"), (0, ""))
+        plain = sup.units["plain.service"]
+        self.assertEqual(plain.state, self.ps.ACTIVE)
+        self.assertEqual(sup.start("reloads"), 0)
+        reloads = sup.units["reloads.service"]
+        pid = reloads.main.pid
+        wait_for(lambda: os.path.exists(self.path("ready")))  # the trap set
+        # ExecReload, with $MAINPID, and the process stays.
+        self.assertEqual(handle("try-reload-or-restart", "reloads"), (0, ""))
+        wait_for(lambda: os.path.exists(hups))
+        self.assertEqual(reloads.main.pid, pid)
+        # No ExecReload: restarted.
+        pid = plain.main.pid
+        self.assertEqual(handle("try-reload-or-restart", "plain"), (0, ""))
+        self.assertEqual(plain.state, self.ps.ACTIVE)
+        self.assertNotEqual(plain.main.pid, pid)
+
+    def test_command_variables(self):
+        env = {"MAINPID": "42", "TWO": "a  b"}
+        self.assertEqual(
+            self.ps.expand_variables(["$MAINPID", "$TWO", "${TWO}", "x${MAINPID}y", "$UNSET", "${UNSET}", "$$", "a$MAINPID"], env),
+            ["42", "a", "b", "a  b", "x42y", "", "$$", "a$MAINPID"],
+        )
+
+    def test_wanted_by_a_service_starts_with_it(self):
+        """WantedBy=<service>: a Wants= of that service, started once it is up."""
+        sup = self.supervisor({
+            "main": {"Service": {"ExecStart": "sleep 1000"}},
+            "wanted": {
+                "Unit": {"After": "main.service", "BindsTo": "main.service"},
+                "Service": {"ExecStart": "sleep 1000"},
+                "Install": {"WantedBy": ["main.service"]},
+            },
+            "booted": {"Service": {"ExecStart": "sleep 1000"}, "Install": {"WantedBy": ["default.target"]}},
+        })
+        self.assertEqual(sup.start("main"), 0)
+        main, wanted = sup.units["main.service"], sup.units["wanted.service"]
+        self.assertEqual(wanted.state, self.ps.ACTIVE)
+        self.assertGreaterEqual(wanted.last_activated, main.last_activated)
+        self.assertNotIn("booted.service", sup.units)
+        # And again with a restart of main, which took it down.
+        pid = wanted.main.pid
+        self.assertEqual(sup.restart("main"), 0)
+        self.assertEqual(wanted.state, self.ps.ACTIVE)
+        self.assertNotEqual(wanted.main.pid, pid)
+
+        # One a switch adds comes up beside the running service it names.
+        with open(self.sup.manifest_path, "w") as f:
+            json.dump({"services": dict(sup.manifest["services"], added={
+                "Service": {"ExecStart": "sleep 1000"}, "Install": {"WantedBy": ["main.service"]},
+            })}, f)
+        sup.booted = True
+        pid = main.main.pid
+        self.assertEqual(sup.reload(restart_changed=True), 0)
+        self.assertEqual(sup.units["added.service"].state, self.ps.ACTIVE)
+        self.assertEqual(main.main.pid, pid)
+
+    def test_conditions_skip_a_start(self):
+        here, missing = self.path("here"), self.path("missing")
+        with open(here, "w"):
+            pass
+        unit = lambda conditions: {
+            "Unit": {"ConditionPathExists": conditions},
+            "Service": {"Type": "oneshot", "RemainAfterExit": True, "ExecStart": "true"},
+        }
+        sup = self.supervisor({
+            "unmet": unit(missing),
+            "met": unit([here, "!" + missing]),
+            "negated": unit("!" + here),
+            "any": unit(["|" + missing, "|" + here]),
+            "none": unit(["|" + missing, "| " + missing + "2"]),
+            "both": unit([here, "|" + missing]),
+            # Started once, then gone with its file: a restart does not come either.
+            "loses": {
+                "Unit": {"ConditionPathExists": self.path("flag")},
+                "Service": {
+                    "Restart": "always",
+                    "RestartSec": 0,
+                    "ExecStart": "/bin/sh -c " + json.dumps(f"echo x >> {self.path('runs')}; rm {self.path('flag')}; exit 1"),
+                },
+            },
+        })
+        expected = {"unmet": False, "met": True, "negated": False, "any": True, "none": False, "both": False}
+        for name, starts in expected.items():
+            # Skipped is no failure.
+            self.assertEqual(sup.start(name), 0, name)
+            self.assertEqual(sup.units[f"{name}.service"].state, self.ps.ACTIVE if starts else self.ps.INACTIVE, name)
+        self.assertIn("ConditionPathExists=", self.ps.journal_lines(["unmet"], fmt="cat")[-1])
+
+        with open(self.path("flag"), "w"):
+            pass
+        self.assertEqual(sup.start("loses"), 0)
+        loses = sup.units["loses.service"]
+        wait_for(lambda: loses.state == self.ps.INACTIVE and "not met" in self.ps.journal_lines(["loses"], fmt="cat")[-1])
+        time.sleep(0.3)
+        self.assertEqual(loses.state, self.ps.INACTIVE)
+        with open(self.path("runs")) as f:
+            self.assertEqual(f.read().split(), ["x"])
+
+    def test_start_limit(self):
+        runs = self.path("runs")
+        crash = "/bin/sh -c " + json.dumps(f"echo x >> {runs}; [ $(wc -l < {runs}) -gt 7 ] && exec sleep 1000; exit 3")
+        sup = self.supervisor({
+            # systemd's default: 5 starts in 10 s, Restart='s too.
+            "limited": {"Service": {"Restart": "always", "RestartSec": 0, "ExecStart": crash}},
+            "unlimited": {
+                "Unit": {"StartLimitIntervalSec": 0},
+                "Service": {"Restart": "always", "RestartSec": 0, "ExecStart": crash},
+            },
+        })
+        def count():
+            try:
+                with open(runs) as f:
+                    return len(f.read().split())
+            except FileNotFoundError:
+                return 0
+
+        self.assertEqual(sup.start("limited"), 0)
+        limited = sup.units["limited.service"]
+        wait_for(lambda: limited.state == self.ps.FAILED)
+        self.assertEqual((limited.result, count()), ("start-limit-hit", 5))
+        # Refused until reset-failed.
+        self.assertEqual(sup.start("limited"), 1)
+        self.assertEqual(count(), 5)
+        self.assertEqual(self.ps.handle(sup, {"verb": "reset-failed", "units": ["limited"]}), (0, ""))
+        self.assertEqual(sup.start("limited"), 0)
+        wait_for(lambda: count() >= 6)
+        sup.stop("limited")
+
+        os.unlink(runs)
+        self.assertEqual(sup.start("unlimited"), 0)
+        unlimited = sup.units["unlimited.service"]
+        wait_for(lambda: count() == 8 and unlimited.state == self.ps.ACTIVE)
+
+    def test_restart_steps(self):
+        # whitelist-bypass's: 5 s, up to 2 min over 5 restarts.
+        unit = self.ps.Unit("x.service", {"Service": {"RestartSec": 5, "RestartSteps": 5, "RestartMaxDelaySec": 120}})
+        delays = []
+        for restarts in range(1, 8):
+            unit.restarts = restarts
+            delays.append(round(self.ps.Supervisor.restart_delay(unit), 1))
+        self.assertEqual(delays, [5, 9.4, 17.8, 33.7, 63.6, 120, 120])
+        unit = self.ps.Unit("x.service", {"Service": {"RestartSec": "5s"}})
+        unit.restarts = 9
+        self.assertEqual(self.ps.Supervisor.restart_delay(unit), 5)
+
+    def test_a_failing_dependency_leaves_a_running_unit_alone(self):
+        """Marked failed, a running unit was skipped by stop(): its process ran on."""
+        flag = self.path("fail")
+        sup = self.supervisor({
+            "dep": {"Service": {"Type": "oneshot", "ExecStart": "/bin/sh -c " + json.dumps(f"[ ! -e {flag} ]")}},
+            "main": {"Unit": {"Requires": "dep.service"}, "Service": {"ExecStart": "sleep 1000"}},
+        })
+        self.assertEqual(sup.start("main"), 0)
+        main = sup.units["main.service"]
+        pid = main.main.pid
+        with open(flag, "w"):
+            pass
+        self.assertEqual(sup.start("main"), 1)
+        self.assertEqual((main.state, main.main.pid), (self.ps.ACTIVE, pid))
+        self.assertEqual(sup.stop("main"), 0)
+        self.assertIsNone(stat(pid))
+        # Not running, the dependency's failure is its own.
+        self.assertEqual(sup.start("main"), 1)
+        self.assertEqual((main.state, main.result), (self.ps.FAILED, "dependency"))
+
+        # And stop() ends a process left in any state.
+        os.unlink(flag)
+        self.assertEqual(sup.start("main"), 0)
+        pid = main.main.pid
+        main.set_state(self.ps.FAILED)
+        self.assertEqual(sup.stop("main"), 0)
+        self.assertIsNone(stat(pid))
+        self.assertEqual(main.state, self.ps.INACTIVE)
 
 
 class EnvironmentTest(unittest.TestCase):

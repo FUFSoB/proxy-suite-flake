@@ -11,11 +11,27 @@ from typing import Any
 from amneziawg_config import VPN_INTERFACE_FIELDS, ConfigError, conf_sections
 
 
+# wg-quick takes these on as many lines as one likes (render_settings writes an
+# Address line per address): each line adds to the list, where any other key's last
+# line wins.
+LIST_KEYS = frozenset({"address", "allowedips", "dns"})
+
+
+def _section(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    section: dict[str, str] = {}
+    for key, value in pairs:
+        if key in LIST_KEYS and section.get(key):
+            section[key] = f"{section[key]}, {value}"
+        else:
+            section[key] = value
+    return section
+
+
 def parse_conf(text: str) -> tuple[dict[str, str], dict[str, str]]:
     """Return the [Interface] section and the first [Peer], keys lowercased."""
     sections = conf_sections(text)
-    interface = next((dict(pairs) for name, pairs in sections if name == "interface"), None)
-    peer = next((dict(pairs) for name, pairs in sections if name == "peer"), None)
+    interface = next((_section(pairs) for name, pairs in sections if name == "interface"), None)
+    peer = next((_section(pairs) for name, pairs in sections if name == "peer"), None)
     if interface is None or peer is None:
         raise ConfigError("configuration requires [Interface] and [Peer] sections")
     for section, key in ((interface, "privatekey"), (interface, "address"), (peer, "publickey"), (peer, "endpoint")):

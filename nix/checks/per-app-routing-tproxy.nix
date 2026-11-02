@@ -154,6 +154,10 @@ in
         perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".requires == [
           "proxy-suite-per-app-tproxy.service"
         ];
+      # proxy-ctl reloads the marking ahead of each app: the start again (per-app-routing-tun.nix).
+      assert
+        perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".serviceConfig.ExecReload
+        == perAppRoutingTproxyFixture.config.systemd.services."proxy-suite-per-app-tproxy-user@".serviceConfig.ExecStart;
       # Started with the first app, so nothing to keep running.
       assert !(perAppRoutingTproxyFixture.config.systemd.services ? proxy-suite-per-app-standby);
       true

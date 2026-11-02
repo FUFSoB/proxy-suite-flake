@@ -64,6 +64,23 @@ def run_fetcher(
 
 
 class FetchSubscriptionTests(unittest.TestCase):
+    def test_decode_survives_a_bad_byte_and_a_bom(self):
+        bom = b"\xef\xbb\xbf"
+        # One undecodable byte costs its own line, not the subscription.
+        broken = base64.b64encode(f"{VLESS_URI}#ok\n".encode() + b"ss://\xff\xfe@x:1\n" + HY2_URI.encode())
+        lines = decode_subscription(broken)
+        self.assertEqual((lines[0], lines[2]), (f"{VLESS_URI}#ok", HY2_URI))
+        self.assertEqual(len(lines), 3)
+        # A BOM in front of the base64, inside it, or in front of plain links.
+        for body in (
+            bom + _make_b64_payload(VLESS_URI, HY2_URI),
+            base64.b64encode(bom + f"{VLESS_URI}\n{HY2_URI}".encode()),
+            bom + f"{VLESS_URI}\n{HY2_URI}\n".encode(),
+        ):
+            with self.subTest(body=body[:12]):
+                self.assertEqual(decode_subscription(body), [VLESS_URI, HY2_URI])
+        self.assertEqual(len(run_fetcher(bom + f"{VLESS_URI}\n{HY2_URI}".encode())), 2)
+
     def test_fetch_rejects_non_http_schemes(self):
         for url in ("file:///etc/shadow", "ftp://example.com/sub", "data:text/plain,x"):
             with self.assertRaisesRegex(ValueError, "http"):
@@ -291,6 +308,18 @@ class FetchSubscriptionTests(unittest.TestCase):
             obs["xray"][1]["streamSettings"]["tlsSettings"]["echConfigList"],
             "udp://1.1.1.1",
         )
+
+    def test_hybrid_subscription_sends_each_entry_where_it_dials(self):
+        payload = _make_b64_payload(
+            "ss://aes-128-gcm:pw@ss.example.com:8388?plugin=obfs-local%3Bobfs%3Dtls",
+            "socks4://me@proxy.example.com:1080",
+            "vless://uuid@example.com:443?security=tls&type=tcp&headerType=http&path=%2Fx",
+        )
+        obs = run_fetcher(payload, backend="hybrid")
+        self.assertEqual([ob["type"] for ob in obs["singBox"]], ["shadowsocks", "socks"])
+        self.assertEqual(obs["singBox"][0]["plugin"], "obfs-local")
+        self.assertEqual(obs["singBox"][1]["version"], "4")
+        self.assertEqual([ob["streamSettings"]["rawSettings"]["header"]["type"] for ob in obs["xray"]], ["http"])
 
     def test_hybrid_subscription_deduplicates_tags_across_backend_lists(self):
         payload = _make_b64_payload(

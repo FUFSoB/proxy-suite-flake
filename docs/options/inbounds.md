@@ -757,11 +757,13 @@ next hop instead of for the whole session\. Share links name it as ` mport `; cl
 that do not know it stay on ` port `\.
 
 Keep it clear of ports other services on this host receive on, and below the
-ephemeral range (32768 and up on Linux)\.
+ephemeral range (32768 and up on Linux)\. A range over the UDP ports proxy-suite
+knows of is refused: the other listeners’ ports and ranges, ` inbounds.runtime.ports `
+and ` amneziaWg.serverUdpPorts `\.
 
 **Type:** null or string matching the pattern \[0-9]±\[0-9]+\
 **Default:** `null`\
-**Example:** `"20000-30000"`
+**Example:** `"30000-32000"`
 
 <a id="services-proxy-suite-inbounds-listeners-name-hysteria-rewritehost"></a>
 ## services\.proxy-suite\.inbounds\.listeners\.\<name>\.hysteria\.rewriteHost

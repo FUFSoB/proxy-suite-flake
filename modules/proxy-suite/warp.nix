@@ -62,8 +62,9 @@ let
           done
           userinfo=
           ${userinfo}
+          # socks5h: the proxy resolves the name, curl's (generate) as well as wgcf's.
           proxied() {
-            HTTPS_PROXY="socks5://''${userinfo}${hostPart}:${toString listener.port}" "$@"
+            HTTPS_PROXY="socks5h://''${userinfo}${hostPart}:${toString listener.port}" "$@"
           }
           ${
             # Direct, as the service user: past the kill switch (killSwitch.directFallbacks).
@@ -192,9 +193,20 @@ in
           };
 
           # Only pulls registration in: a simple unit gives the profile no ordering guarantee.
-          "proxy-suite-awg-${d.tag}" = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) {
-            wants = [ "${d.registerUnit}.service" ];
-          };
+          "proxy-suite-awg-${d.tag}" = lib.mkIf (w.asAmneziaWg || viaAmneziaWg) (
+            {
+              wants = [ "${d.registerUnit}.service" ];
+            }
+            # So a global profile, a oneshot that reads the profile as it starts (at boot,
+            # ahead of the registration), tries again until it is there; an outbound does already.
+            // lib.optionalAttrs (!viaAmneziaWg) {
+              startLimitIntervalSec = 0;
+              serviceConfig = {
+                Restart = "on-failure";
+                RestartSec = 30;
+              };
+            }
+          );
         })
       ]
     ) w.devices

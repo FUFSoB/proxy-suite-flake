@@ -19,6 +19,7 @@
 let
   cfg = config.services.proxy-suite;
   packages = import ../../pkgs/default.nix { inherit pkgs; };
+  zapret2Sources = { inherit nfqws2-keenetic z2k; };
   assembly = import ./assembly.nix {
     inherit
       lib
@@ -26,6 +27,7 @@ let
       cfg
       packages
       zapret
+      zapret2Sources
       ;
   };
   inherit (assembly) nftr derived;
@@ -134,7 +136,7 @@ in
               packages
               ;
             inherit (nftr) perAppZapretRulesFile nft;
-            zapret2Sources = { inherit nfqws2-keenetic z2k; };
+            inherit zapret2Sources;
           }
         ))
 

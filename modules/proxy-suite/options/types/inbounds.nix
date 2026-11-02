@@ -806,9 +806,11 @@ let
             that do not know it stay on `port`.
 
             Keep it clear of ports other services on this host receive on, and below the
-            ephemeral range (32768 and up on Linux).
+            ephemeral range (32768 and up on Linux). A range over the UDP ports proxy-suite
+            knows of is refused: the other listeners' ports and ranges, `inbounds.runtime.ports`
+            and `amneziaWg.serverUdpPorts`.
           '';
-          example = "20000-30000";
+          example = "30000-32000";
         };
 
         amneziaWg = mkOption {

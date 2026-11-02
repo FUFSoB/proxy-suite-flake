@@ -20,7 +20,7 @@ in
         type = "tcp";
       };
       description = ''
-        Resolver for direct traffic. In global TUN mode it goes through the proxy. TCP by default,
+        Resolver for direct traffic, always reached directly, in TUN mode too. TCP by default,
         because ISP DPI often fakes UDP answers from well-known resolvers, which breaks zapret.
       '';
       example = {

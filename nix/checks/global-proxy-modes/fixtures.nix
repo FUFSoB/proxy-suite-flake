@@ -153,9 +153,8 @@ let
     )
   ];
   xrayIPv4OnlyTunConfig = mkTunConfig xrayIPv4OnlyFixture;
-  xrayIPv4OnlyTunUpScript =
-    generated.readDerivation
-      xrayIPv4OnlyFixture.config.systemd.services."proxy-suite-tun".serviceConfig.ExecStartPost;
+  xrayIPv4OnlyTunService = xrayIPv4OnlyFixture.config.systemd.services."proxy-suite-tun";
+  xrayIPv4OnlyTunUpScript = generated.readDerivation xrayIPv4OnlyTunService.serviceConfig.ExecStartPost;
 
   tproxyAutostartFixture = evalProxySuite [
     baseModule
@@ -241,6 +240,7 @@ in
     ipv4OnlyTunConfig
     ipv4OnlyPerAppTunUpScript
     xrayIPv4OnlyTunConfig
+    xrayIPv4OnlyTunService
     xrayIPv4OnlyTunUpScript
     tproxyWithFirewall
     tunAutostartFixture

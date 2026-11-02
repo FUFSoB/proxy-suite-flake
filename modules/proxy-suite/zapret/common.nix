@@ -11,7 +11,14 @@
 }:
 let
   derived = import ../derived.nix { inherit lib cfg; };
-  dropMarkTable = "${nft} delete table inet proxy_suite_per_app_zapret_mark 2>/dev/null || true";
+  markTable = "inet proxy_suite_per_app_zapret_mark";
+  dropMarkTable = "${nft} delete table ${markTable} 2>/dev/null || true";
+
+  perAppZapretMarkUpScript = pkgs.writeShellScript scriptName ''
+    set -euo pipefail
+    ${dropMarkTable}
+    ${nft} -f ${perAppZapretRulesFile}
+  '';
 in
 {
   # Global AmneziaWG profiles only: an outbound one leaves the host's routes alone.
@@ -61,10 +68,17 @@ in
     derived.constants.refuseUnderGlobal pkgs
       derived.perAppGlobalModes."proxy-suite-per-app-zapret";
 
-  perAppZapretMarkUpScript = pkgs.writeShellScript scriptName ''
+  inherit perAppZapretMarkUpScript;
+
+  # The per-app instance's ExecReload, ahead of its firewall's: the mark table back if a
+  # firewall reload (a switch's) flushed it with the rest of the ruleset. Only then: the
+  # mark-up drops the users' rules in it, and only a firewall reload also reloads their
+  # units (ordered after the backend's), which puts them back.
+  perAppZapretMarkReloadScript = pkgs.writeShellScript scriptName ''
     set -euo pipefail
-    ${dropMarkTable}
-    ${nft} -f ${perAppZapretRulesFile}
+    if ! ${nft} list table ${markTable} >/dev/null 2>&1; then
+      ${perAppZapretMarkUpScript}
+    fi
   '';
 
   perAppZapretMarkDownScript = pkgs.writeShellScript scriptName ''

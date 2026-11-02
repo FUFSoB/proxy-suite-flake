@@ -11,6 +11,7 @@ import textwrap
 import unittest
 
 import awg_inbound
+import inbound_runtime
 from amneziawg_config import conf_sections, decode_vpn_link, extract_vpn_config
 from proxy_inbound import build_inbounds
 
@@ -232,6 +233,19 @@ class StateTests(Fixture):
         with self.assertRaises(awg_inbound.ConfigError):
             awg_inbound.prepare(self.spec(listener), self.awg, self.runtime)
 
+    def test_a_narrower_ipv6_subnet_bounds_the_addresses(self):
+        # fd00:66::/126 holds offsets 0-3: a fourth user's IPv6 address would be outside it.
+        listener = self.listener(subnet6="fd00:66::/126", users=[user("alice"), user("bob")])
+        awg_inbound.prepare(self.spec(listener), self.awg, self.runtime)
+        self.assertEqual(sorted(u["offset"] for u in self.state(listener)["users"].values()), [2, 3])
+        self.assertEqual(inbound_runtime._awg_capacity(listener), 2)
+        listener["users"].append(user("carol"))
+        with self.assertRaisesRegex(awg_inbound.ConfigError, "no free address"):
+            awg_inbound.prepare(self.spec(listener), self.awg, self.runtime)
+        listener["users"] = [user("alice", address="10.66.0.4")]
+        with self.assertRaisesRegex(awg_inbound.ConfigError, "not a client address"):
+            awg_inbound.prepare(self.spec(listener), self.awg, self.runtime)
+
     def test_ipv6_subnet_adds_addresses(self):
         listener = self.listener(subnet6="fd00:66::/64")
         prepared = awg_inbound.prepare(self.spec(listener), self.awg, self.runtime)
@@ -382,6 +396,11 @@ class ClientTests(Fixture):
             self.assertEqual(link["port"], 443)
             self.assertTrue(link["link"].startswith("vpn://"))
             self.assertIn("Endpoint = vpn.example.com:443", link["config"])
+        # A listener's own shareAddress, as its links would have.
+        listener["shareAddress"] = "awg.example.com"
+        rendered = build_inbounds(spec, "vpn.example.com")
+        for link in [link for link in rendered["links"] if link["tag"] == "awg-in"]:
+            self.assertIn("Endpoint = awg.example.com:443", link["config"])
         # Subscriptions carry only what v2ray-style clients read.
         for subscription in rendered["subscriptions"]:
             body = base64.b64decode(subscription["body"]).decode()

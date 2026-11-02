@@ -9,7 +9,9 @@ import unittest
 import urllib.parse
 
 import inbound_subscription
+import inbound_runtime
 from proxy_inbound import (
+    SS_NOBODY,
     _derive_vless_client_key,
     build_inbounds,
     build_share_link,
@@ -270,6 +272,39 @@ class RenderInboundTests(unittest.TestCase):
             ib["settings"]["clients"],
             [{"password": "cHNrLWEtcHNrLWEtcHNrLQ==", "email": "a"}, {"password": "cHNrLWItcHNrLWItcHNrLQ==", "email": "b"}],
         )
+
+    def test_shadowsocks_multi_user_with_everyone_off_never_serves_the_server_key(self):
+        # An empty list would be XRay's single-user mode on the server key, which every user,
+        # switched off or not, holds: one client nobody has the key of keeps it multi-user.
+        spec = multi_user_shadowsocks()
+        for user in spec["users"]:
+            user["active"] = False
+        ib = render_xray_inbound(spec)
+        clients = ib["settings"]["clients"]
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(clients[0]["email"], SS_NOBODY)
+        self.assertFalse(inbound_runtime.NAME.fullmatch(SS_NOBODY))
+        self.assertTrue(inbound_runtime._ss2022_key_ok(clients[0]["password"], spec["method"]))
+        self.assertNotIn(clients[0]["password"], [ib["settings"]["password"]] + [u["password"] for u in spec["users"]])
+        self.assertNotEqual(render_xray_inbound(spec)["settings"]["clients"][0]["password"], clients[0]["password"])
+        # One user back: only that one.
+        spec["users"][0]["active"] = True
+        self.assertEqual([c["email"] for c in render_xray_inbound(spec)["settings"]["clients"]], ["a"])
+
+    @unittest.skipUnless(os.environ.get("XRAY"), "XRAY not set")
+    def test_shadowsocks_stand_in_passes_xray(self):
+        import subprocess
+
+        spec = multi_user_shadowsocks(listen="127.0.0.1", port=40000 + os.getpid() % 20000)
+        for user in spec["users"]:
+            user["active"] = False
+        config = {"inbounds": [render_xray_inbound(spec)], "outbounds": [{"protocol": "freedom"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(config, handle)
+            done = subprocess.run([os.environ["XRAY"], "run", "-test", "-c", path], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
     def test_shadowsocks_multi_user_needs_server_key(self):
         with self.assertRaisesRegex(ValueError, "no server password"):

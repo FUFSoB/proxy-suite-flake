@@ -17,6 +17,7 @@ let
     constants
     zapretCutoffProxyFallback
     zapret2DirectSync
+    zapret2DirectIpv4Only
     zapret2ProxyFallback
     jq
     singBox
@@ -49,6 +50,7 @@ let
   autoProxyRender = import ../autoproxy-render.nix {
     inherit pkgs;
     inherit (constants) serviceUser ifPrivileged;
+    inherit (proxyCfg.autoProxy) exclude;
   };
   autoProxyMigrate = import ../autoproxy-migrate.nix { inherit pkgs; };
   routingRuntime = import ./script-blocks/routing-runtime.nix { inherit ctx; };
@@ -419,6 +421,12 @@ let
             chmod 644 "$ZAPRET_RULE_SET"
             AUTOPROXY_RULE_SETS_JSON=$(${jq} -c --arg p "$ZAPRET_RULE_SET" \
               '. + [{type: "local", format: "source", tag: "zapret-hosts", path: $p}]' <<< "$AUTOPROXY_RULE_SETS_JSON")
+            ${lib.optionalString zapret2DirectIpv4Only ''
+              # zapret2 handles IPv4 alone: a name is looked up for IPv4 (SOCKS, HTTP, the
+              # TUN's fake addresses), and a flow already on IPv6 (TProxy) takes the proxy.
+              AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-hosts"], action: "resolve", strategy: "ipv4_only"},
+                {rule_set: ["zapret-hosts"], ip_version: 6, outbound: "proxy"}]' <<< "$AUTOPROXY_RULES_JSON")
+            ''}
             AUTOPROXY_RULES_JSON=$(${jq} -c '. + [{rule_set: ["zapret-hosts"], outbound: "direct"}]' <<< "$AUTOPROXY_RULES_JSON")
             ;;
         esac
@@ -469,9 +477,9 @@ let
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json")
       ${lib.optionalString excludeServiceUserFromTun ''
-        # proxy-suite's own daemons (the inbound XRay, replies to its clients included)
-        # stay out of the TUN; the uid is only known on this host.
-        SERVICE_UIDS=$(for service_user in ${lib.escapeShellArgs constants.ownTrafficUsers}; do
+        # proxy-suite's own daemons (the inbound XRay, replies to its clients included), and
+        # OpenSSH's own user, stay out of the TUN; the uid is only known on this host.
+        SERVICE_UIDS=$(for service_user in ${lib.escapeShellArgs constants.bypassUsers}; do
           ${pkgs.coreutils}/bin/id -u "$service_user"
         done | ${jq} -cs .)
         (umask 077 && ${jq} --argjson uids "$SERVICE_UIDS" '(.inbounds[] | select(.type == "tun") | .exclude_uid) = $uids' \
@@ -564,7 +572,9 @@ let
                 fi
               }
               trap _proxy_suite_cleanup_xray_sidecar EXIT
-              trap 'exit 143' INT TERM
+              # A stop is a clean end: 143 would leave the unit failed. A backend that dies on its
+              # own still ends it non-zero, below.
+              trap 'exit 0' INT TERM
 
               ${runBackend} ${xray} run -c "$RUNTIME_DIR/xray-sidecar.json" &
               XRAY_SIDECAR_PID="$!"

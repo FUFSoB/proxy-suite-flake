@@ -46,7 +46,7 @@
         ];
       assert tunInbound.sniffing.destOverride == [ "fakedns+others" ];
       assert tunInbound.sniffing.metadataOnly == false;
-      assert xrayTunConfig.routing.domainStrategy == "IPIfNonMatch";
+      assert xrayTunConfig.routing.domainStrategy == "IPOnDemand";
       assert tunHasFinalRuleTag;
       assert tunHasDirectGeositeRule;
       assert tunHasDnsHijackRule;

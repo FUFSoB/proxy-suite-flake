@@ -50,7 +50,7 @@ let
       else
         ''type == "array"''
     );
-    inherit (pkgs) diffutils findutils;
+    inherit (pkgs) coreutils diffutils findutils;
     # The directory alone, not what is in it (constants.grantDirAcl): the caches are 0644, and
     # a recursive pass would trip over another start script's temporary file.
     cacheDirAccess =
@@ -130,6 +130,8 @@ let
               for f in ${lib.escapeShellArg runtimeOutboundsDir}/*.url ${lib.escapeShellArg runtimeOutboundsDir}/*.json \
                 ${lib.escapeShellArg runtimeOutboundsDir}/*.awg ${lib.escapeShellArg runtimeOutboundsDir}/*.group; do
                 [ -e "$f" ] || continue
+                # priority.json is the priority overrides, not an outbound.
+                [ "$f" = ${lib.escapeShellArg runtimeOutboundsDir}/priority.json ] && continue
                 name="''${f##*/}"
                 printf '%s\n' "''${name%.*}"
               done
@@ -148,11 +150,12 @@ let
       }
 
       # $1 tag, $2 file holding the subscription URL, then the fetcher's flags. Fetches on a
-      # cold cache and merges whatever is cached; a subscription that cannot be fetched is a
-      # warning, never a failed start.
+      # cold cache, or one fetched with another URL or flags, and merges whatever is cached; a
+      # subscription that cannot be fetched is a warning, never a failed start.
       _proxy_suite_load_subscription() {
         local tag="$1" src="$2" cache="$SUB_CACHE_DIR/$1.json" before after
         _proxy_suite_drop_invalid_subscription_cache "$cache" "$tag"
+        _proxy_suite_drop_stale_subscription_cache "$tag" "$src" "''${@:3}"
         if [ ! -f "$cache" ]; then
           _proxy_suite_fetch_subscription "$tag" "$src" "''${@:3}" \
             || echo "proxy-suite: warning: could not fetch subscription '$tag'" >&2

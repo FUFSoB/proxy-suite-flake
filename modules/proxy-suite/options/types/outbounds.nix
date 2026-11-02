@@ -63,8 +63,9 @@ let
   outboundType = types.submodule {
     options = {
       tag = mkOption {
-        type = types.str;
-        description = "Unique name, used in routing rules, `detour` and `proxy-ctl`. Not \"proxy\", \"direct\" or \"block\".";
+        # `proxy-ctl proxy pin` reads "group/member" in a name.
+        type = types.strMatching "[^/]+";
+        description = "Unique name, used in routing rules, `detour` and `proxy-ctl`. Not \"proxy\", \"direct\" or \"block\", and without \"/\".";
         example = "vps-de";
       };
 

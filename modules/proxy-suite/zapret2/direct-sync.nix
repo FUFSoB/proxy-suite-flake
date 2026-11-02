@@ -1,5 +1,6 @@
 # The proxy's two rule-sets from zapret2's runtime state (direct-sync.template.sh):
-# direct.json, the hosts zapret2 pins (`proxy-ctl zapret auto add`) and learns and can
+# direct.json, the sites the strategy source's profiles take from the start (YouTube,
+# Discord...) and the hosts zapret2 pins (`proxy-ctl zapret auto add`) and learns and can
 # fix, sent direct so zapret2 sees their traffic (directSync); proxy.json, what it cannot
 # fix, for the proxy to carry (zapret2.proxyFallback); and names.tsv, the names the
 # addresses blocked outright were looked up by, for proxy-ctl. Rebuilt whenever a host
@@ -8,6 +9,7 @@
   lib,
   pkgs,
   cfg,
+  zapret2Sources,
 }:
 
 let
@@ -17,10 +19,24 @@ let
   outDir = constants.zapret2DirectDir;
   # Without learning nfqws2 no longer reads the learned list: neither does the sync.
   learn = cfg.zapret.zapret2.autoHostlist.enable;
+  # Baked into the script: the list is always the one nfqws2's profiles were built from.
+  siteHosts = pkgs.writeText "proxy-suite-zapret2-site-hosts" (
+    lib.concatLines (
+      import ./site-domains.nix {
+        inherit
+          lib
+          pkgs
+          cfg
+          zapret2Sources
+          ;
+      }
+    )
+  );
 
   sync = pkgs.writeShellScript "proxy-suite-zapret2" (
     fillTemplate ./direct-sync.template.sh {
       learned = if learn then "1" else "0";
+      inherit siteHosts;
       path = lib.makeBinPath [
         pkgs.coreutils
         pkgs.diffutils

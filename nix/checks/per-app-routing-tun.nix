@@ -156,6 +156,11 @@ in
         ];
       assert
         perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".bindsTo == [ ];
+      # proxy-ctl reloads the marking ahead of each app, for a slice made anew since: the start
+      # again, not a restart, under which the running apps would wait for their marking.
+      assert
+        perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".serviceConfig.ExecReload
+        == perAppRoutingTunFixture.config.systemd.services."proxy-suite-per-app-tun-user@".serviceConfig.ExecStart;
       assert perAppRoutingTunFixture.config.systemd.user.services ? "proxy-suite-per-app-tun-anchor";
       assert
         builtins.head perAppRoutingTunServiceConfig.ExecStartPre

@@ -50,6 +50,8 @@ in
       assert pkgs.lib.hasInfix "proxy groups watch" unit.serviceConfig.ExecStart;
       assert pkgs.lib.hasInfix ''"outbounds":["primary","second"]'' script;
       assert pkgs.lib.hasInfix "interrupt_exist_connections:true" script;
+      # A chain may go through a group: the detour stage takes the group names as hops.
+      assert pkgs.lib.hasInfix "--argjson declared '[\"pool\"]'" script;
       true
     )
 

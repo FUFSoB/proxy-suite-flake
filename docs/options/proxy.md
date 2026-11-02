@@ -282,7 +282,7 @@ Address range for fake IPs\.
 <a id="services-proxy-suite-proxy-dns-local"></a>
 ## services\.proxy-suite\.proxy\.dns\.local
 
-Resolver for direct traffic\. In global TUN mode it goes through the proxy\. TCP by default,
+Resolver for direct traffic, always reached directly, in TUN mode too\. TCP by default,
 because ISP DPI often fakes UDP answers from well-known resolvers, which breaks zapret\.
 
 **Type:** submodule\
@@ -679,9 +679,9 @@ Raw sing-box outbound JSON, instead of ` url ` (sing-box backend)\. Its tag is r
 <a id="services-proxy-suite-proxy-outbounds-tag"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.tag
 
-Unique name, used in routing rules, ` detour ` and ` proxy-ctl `\. Not “proxy”, “direct” or “block”\.
+Unique name, used in routing rules, ` detour ` and ` proxy-ctl `\. Not “proxy”, “direct” or “block”, and without “/”\.
 
-**Type:** string\
+**Type:** string matching the pattern \[^/]+\
 **Example:** `"vps-de"`
 
 <a id="services-proxy-suite-proxy-outbounds-url"></a>

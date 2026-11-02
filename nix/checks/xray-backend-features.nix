@@ -48,7 +48,7 @@ in
       assert xrayRawStreamOutbound.streamSettings.wsSettings.path == "/ws";
       assert xrayRawStreamOutbound.streamSettings.sockopt.tcpFastOpen == true;
       assert xrayRawStreamOutbound.streamSettings.sockopt.mark == 2;
-      assert localDns.address == "tcp://9.9.9.9";
+      assert localDns.address == "tcp://9.9.9.9:5353";
       assert localDns.port == 5353;
       assert localDns.queryStrategy == "UseIP";
       true

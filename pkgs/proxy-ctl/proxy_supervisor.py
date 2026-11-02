@@ -7,7 +7,7 @@ It runs the units the Nix module renders for a user manager, read from a JSON ma
 and the suite's own scripts use, so both only swap the binary:
 
     proxy-suitectl ensure | boot | reload | shutdown | daemon
-    proxy-suitectl start|stop|restart|try-restart|is-active|show|cat|status|list-timers ...
+    proxy-suitectl start|stop|restart|try-restart|[try-]reload-or-restart|is-active|show|cat|status|list-timers ...
     proxy-suitectl journal [-u UNIT]... [-f] [-n N] [--since TIME] [-o cat]
 
 One daemon per user owns the processes: it starts on the first command that needs it,
@@ -44,10 +44,16 @@ LOG_DIR = os.path.join(SUPERVISOR_DIR, "logs")
 CREDENTIALS_DIR = os.path.join(SUPERVISOR_DIR, "credentials")
 LOG_LIMIT = 1024 * 1024
 STOP_TIMEOUT = 15
+# systemd's DefaultTimeoutStopSec=: how long an ExecStop=/ExecStopPost= command may run.
+STOP_COMMAND_TIMEOUT = 90
 # Stand-ins for the targets a user manager reaches at login.
 BOOT_TARGETS = {"default.target", "multi-user.target", "timers.target", "paths.target"}
 ACTIVE, ACTIVATING, DEACTIVATING, INACTIVE, FAILED = "active", "activating", "deactivating", "inactive", "failed"
 AUTO_RESTART = "auto-restart"
+# What try-restart acts on, and a restart takes along (PartOf=, BindsTo=, Requires=).
+RUNNING = (ACTIVE, ACTIVATING, AUTO_RESTART)
+# systemd's DefaultStartLimitIntervalSec= and DefaultStartLimitBurst=.
+START_LIMIT_INTERVAL, START_LIMIT_BURST = 10, 5
 
 
 # --- manifest -------------------------------------------------------------------
@@ -118,6 +124,19 @@ def timespan(value):
     if not matched:
         raise ValueError(f"not a time span: {value}")
     return total
+
+
+def expand_variables(args, env):
+    """systemd's variables in a command's arguments (not its program): $NAME as a word of its
+    own, split at whitespace and gone when unset; ${NAME} anywhere, as it is ("kill -HUP $MAINPID")."""
+    out = []
+    for arg in args:
+        whole = re.fullmatch(r"\$([A-Za-z_][A-Za-z0-9_]*)", arg)
+        if whole:
+            out.extend(env.get(whole.group(1), "").split())
+        else:
+            out.append(re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: env.get(m.group(1), ""), arg))
+    return out
 
 
 # --- logs -----------------------------------------------------------------------
@@ -331,6 +350,8 @@ class Unit:
         self.job = threading.RLock()
         self.done = threading.Condition()
         self.last_activated = None
+        self.restarts = 0  # since the last start that was not a Restart=, for RestartSteps=
+        self.start_limit = None  # [window start, starts in it], for StartLimitBurst=
 
     @property
     def unit(self):
@@ -517,6 +538,7 @@ class Supervisor:
             return None, ignore
         env = self.environment(unit)
         env.update(extra_env or {})
+        argv = argv[:1] + expand_variables(argv[1:], env)
         workdir = unit.service.get("WorkingDirectory")
         cwd = os.path.expanduser("~")
         if workdir:
@@ -552,7 +574,16 @@ class Supervisor:
                 return False
             if proc is None:
                 continue
-            unit.current = proc
+            # What a stop cuts short: a start or reload under way, not stop commands, which it
+            # would only leave half done (systemd lets them run, too, up to TimeoutStopSec=).
+            if not key.startswith("ExecStop"):
+                unit.current = proc
+            elif self.stop_command_hangs(proc):
+                append_log(unit.name, f"proxy-suitectl: {key} still running after {STOP_COMMAND_TIMEOUT}s, ended")
+                self.terminate(proc)
+                if ignore:
+                    continue
+                return False
             status = proc.wait()
             self.groups.remove(proc.pid)
             unit.current = None
@@ -560,6 +591,13 @@ class Supervisor:
                 append_log(unit.name, f"proxy-suitectl: {key} exited with status {status}")
                 return False
         return True
+
+    @staticmethod
+    def stop_command_hangs(proc):
+        try:
+            return wait_exit(proc, STOP_COMMAND_TIMEOUT) is None
+        except ChildProcessError:
+            return False
 
     @staticmethod
     def kill_group(proc, sig):
@@ -591,6 +629,90 @@ class Supervisor:
     def deps(self, unit, *keys):
         return [d for key in keys for d in as_list(unit.unit.get(key)) if self.definition(d) is not None]
 
+    def wanted_by(self, unit):
+        """The services whose WantedBy= names this one rather than a target: its Wants= once enabled."""
+        return [
+            f"{base}.service"
+            for base, definition in self.manifest["services"].items()
+            if not base.endswith("@")
+            and any(
+                split_name(w)[0] == "service" and full_name(w) == unit.name
+                for w in as_list((definition.get("Install") or {}).get("WantedBy"))
+            )
+        ]
+
+    def bound(self, unit):
+        """The units PartOf=, BindsTo= or Requires= this one: its stop and restart reach them."""
+        keys = ("PartOf", "BindsTo", "Requires")
+        return [
+            other
+            for other in self.unit_list()
+            if other is not unit and any(full_name(d) == unit.name for key in keys for d in as_list(other.unit.get(key)))
+        ]
+
+    def running_bound(self, unit, found=None):
+        """What a restart of unit takes along: the running units bound to it, and to those, in order."""
+        found = [] if found is None else found
+        for other in self.bound(unit):
+            if other.state in RUNNING and other not in found:
+                found.append(other)
+                self.running_bound(other, found)
+        return found
+
+    def unmet_condition(self, unit):
+        """The Condition*= that keeps unit from starting, or None: ConditionPathExists= ("!"
+        negates, "|" makes it one of which any will do), the one the suite's units carry here."""
+        triggers, unmet = [], None
+        for key, check in (("ConditionPathExists", os.path.exists),):
+            for entry in as_list(unit.unit.get(key)):
+                text = self.specifiers(unit, str(entry))
+                trigger = text.startswith("|")
+                text = text[trigger:].lstrip()
+                negate = text.startswith("!")
+                text = text[negate:].lstrip()
+                if not text:
+                    continue
+                met = check(text) != negate
+                if trigger:
+                    triggers.append((f"{key}={entry}", met))
+                elif not met:
+                    unmet = unmet or f"{key}={entry}"
+        if unmet is None and triggers and not any(met for _, met in triggers):
+            unmet = " or ".join(condition for condition, _ in triggers)
+        return unmet
+
+    @staticmethod
+    def start_limited(unit):
+        """Counts a start: True past StartLimitBurst= of them in StartLimitIntervalSec= (systemd's
+        fixed window and defaults; either 0 turns it off). Restart='s starts count too."""
+        try:
+            interval = timespan(unit.unit.get("StartLimitIntervalSec", START_LIMIT_INTERVAL))
+            burst = int(unit.unit.get("StartLimitBurst", START_LIMIT_BURST))
+        except (TypeError, ValueError):
+            return False
+        if interval <= 0 or burst <= 0:
+            return False
+        now = time.monotonic()
+        if unit.start_limit is None or now - unit.start_limit[0] > interval:
+            unit.start_limit = [now, 0]
+        unit.start_limit[1] += 1
+        return unit.start_limit[1] > burst
+
+    @staticmethod
+    def restart_delay(unit):
+        """RestartSec=, growing over RestartSteps= restarts up to RestartMaxDelaySec=, on systemd's
+        curve; unit.restarts counts this one."""
+        service = unit.service
+        delay = timespan(service.get("RestartSec", 0.1))
+        steps = int(service.get("RestartSteps") or 0)
+        top = service.get("RestartMaxDelaySec")
+        top = timespan(top) if top not in (None, "", "infinity") else None
+        if unit.restarts <= 1 or steps <= 0 or delay <= 0 or top is None or delay >= top:
+            return delay
+        if unit.restarts > steps:
+            return top
+        return delay * (top / delay) ** ((unit.restarts - 1) / steps)
+
     def start(self, name, seen=None):
         """Starts a service (or timer/path unit) and what it pulls in: 0, or a systemctl status."""
         kind, _, _ = split_name(name)
@@ -610,12 +732,19 @@ class Supervisor:
                 self.stop(other)
         for dep in self.deps(unit, "Requires", "BindsTo"):
             if self.start(dep, seen):
-                unit.result = "dependency"
-                unit.set_state(FAILED)
+                # Only this start failed: one already running stays so (and stop() still ends it).
+                if unit.state in (INACTIVE, FAILED):
+                    unit.result = "dependency"
+                    unit.set_state(FAILED)
                 return 1
         for dep in self.deps(unit, "Wants"):
             self.start(dep, seen)
-        return self.activate(unit)
+        status = self.activate(unit)
+        if not status:
+            # After it: they are ordered After= it, and bound to it besides.
+            for dep in self.wanted_by(unit):
+                self.start(dep, seen)
+        return status
 
     def activate(self, unit, restarting=False):
         with unit.job:
@@ -626,6 +755,22 @@ class Supervisor:
             if unit.state == AUTO_RESTART:
                 # Started now, not left down until RestartSec is up: this wakes watch() out of its wait.
                 unit.cancel.set()
+            unmet = self.unmet_condition(unit)
+            if unmet or self.start_limited(unit):
+                if unit.state == AUTO_RESTART:
+                    self.drop_credentials(unit)  # kept for a restart that is not coming
+                if unmet:
+                    # Skipped, not failed, as systemd has it.
+                    append_log(unit.name, f"proxy-suitectl: {unmet} not met; not starting")
+                    if unit.state == AUTO_RESTART:
+                        unit.set_state(INACTIVE)
+                    return 0
+                append_log(unit.name, "proxy-suitectl: started too often (StartLimitBurst=); not starting")
+                unit.result = "start-limit-hit"
+                unit.set_state(FAILED)
+                return 1
+            if not restarting and unit.state != AUTO_RESTART:
+                unit.restarts = 0
             unit.stopping = False
             unit.cancel.clear()
             unit.last_activated = time.time()
@@ -727,12 +872,28 @@ class Supervisor:
                 unit.set_state(INACTIVE if status == 0 else FAILED)
                 return
             append_log(unit.name, f"proxy-suitectl: exited with status {status}; restarting")
+            unit.restarts += 1
+            delay = self.restart_delay(unit)
             unit.set_state(AUTO_RESTART)
-        if unit.cancel.wait(timespan(service.get("RestartSec", 0.1))):
+        if unit.cancel.wait(delay):
             return
-        self.activate(unit, restarting=True)
+        # As systemd's, a restart is a start: what it Requires= and Wants= comes up first, what it
+        # is wanted by after it. Not through start(), whose activate would undo a stop() since.
+        for dep in self.deps(unit, "Requires", "BindsTo"):
+            if self.start(dep):
+                with unit.job:
+                    if unit.state == AUTO_RESTART and not unit.cancel.is_set():
+                        self.drop_credentials(unit)
+                        unit.result = "dependency"
+                        unit.set_state(FAILED)
+                return
+        for dep in self.deps(unit, "Wants"):
+            self.start(dep)
+        if not self.activate(unit, restarting=True) and unit.state == ACTIVE:
+            for dep in self.wanted_by(unit):
+                self.start(dep)
 
-    def stop(self, name):
+    def stop(self, name, seen=None):
         kind, _, _ = split_name(name)
         if kind == "timer":
             return self.stop_timer(name)
@@ -741,18 +902,21 @@ class Supervisor:
         unit = self.units.get(full_name(name))
         if unit is None:
             return 0 if self.definition(name) is not None else 5
+        # Two units may Requires= each other: each stop once.
+        seen = seen if seen is not None else set()
+        seen.add(unit.name)
         unit.stopping = True
         unit.cancel.set()
         # Bound to this one: they go first.
-        for other in self.unit_list():
-            if other is not unit and other.state != INACTIVE:
-                if unit.name in map(full_name, as_list(other.unit.get("PartOf")) + as_list(other.unit.get("BindsTo"))):
-                    self.stop(other.name)
+        for other in self.bound(unit):
+            if other.state != INACTIVE and other.name not in seen:
+                self.stop(other.name, seen)
         # Read once: run_commands clears it from the activating thread.
         self.kill_group(unit.current, signal.SIGTERM)
         with unit.job:
             unit.stopping = True
-            if unit.state in (INACTIVE, FAILED, AUTO_RESTART):
+            # A main process still there is ended, whatever the state says.
+            if unit.state in (INACTIVE, FAILED, AUTO_RESTART) and unit.main is None:
                 if unit.state == AUTO_RESTART:
                     # A restart keeps them; one that will not come leaves none behind.
                     self.drop_credentials(unit)
@@ -774,10 +938,27 @@ class Supervisor:
         if kind != "service":
             return self.stop(name) or self.start(name)
         unit = self.units.get(full_name(name))
-        if only_if_active and (unit is None or unit.state not in (ACTIVE, ACTIVATING, AUTO_RESTART)):
+        if only_if_active and (unit is None or unit.state not in RUNNING):
             return 0 if self.definition(name) is not None else 5
-        status = self.stop(name)
-        return status or self.start(name)
+        # As systemd, what is PartOf=, BindsTo= or Requires= it restarts with it: the stop takes them down.
+        dependents = self.running_bound(unit) if unit else []
+        status = self.stop(name) or self.start(name)
+        for other in dependents:
+            # Bar one that cannot run without it, when it did not come up.
+            if not status or unit.name not in map(full_name, self.deps(other, "Requires", "BindsTo")):
+                self.start(other.name)
+        return status
+
+    def reload_or_restart(self, name, only_if_active=False):
+        """ExecReload= for a running unit that has one (a failed reload fails, the unit runs on),
+        a restart otherwise; try- leaves a unit that is not running alone."""
+        unit = self.units.get(full_name(name)) if split_name(name)[0] == "service" else None
+        if unit is not None and unit.service.get("ExecReload"):
+            with unit.job:
+                if unit.state == ACTIVE:
+                    env = {"MAINPID": str(unit.main.pid)} if unit.main else {}
+                    return 0 if self.run_commands(unit, "ExecReload", env) else 1
+        return self.restart(name, only_if_active)
 
     # timers and paths
 
@@ -945,6 +1126,7 @@ class Supervisor:
             return 0
         self.make_tmpfiles()
         status = 0
+        changed = []
         for unit in self.unit_list():
             new = self.definition(unit.name)
             running = unit.state not in (INACTIVE, FAILED)
@@ -956,7 +1138,14 @@ class Supervisor:
             elif new != unit.definition:
                 unit.definition = new
                 if running:
-                    status = self.restart(unit.name) or status
+                    changed.append(unit)
+        # All new first: a restart starts what is bound to the unit with it. Not one a removed
+        # unit's stop took down.
+        restarted = set()
+        for unit in changed:
+            if unit.name not in restarted and unit.state in RUNNING:
+                restarted.update(other.name for other in self.running_bound(unit))
+                status = self.restart(unit.name) or status
         for table, kind in ((self.timers, "timers"), (self.paths, "paths")):
             for name, item in list(table.items()):
                 base = split_name(name)[1]
@@ -974,6 +1163,13 @@ class Supervisor:
                         status = self.start(name) or status
                 else:
                     status = self.start(name) or status
+            # New ones a running service wants (WantedBy=): they would have started with it.
+            for unit in self.unit_list():
+                if unit.state == ACTIVE:
+                    for name in self.wanted_by(unit):
+                        dep = self.instance(name)
+                        if dep is not None and dep.state == INACTIVE and dep.last_activated is None:
+                            status = self.start(name) or status
         return status
 
     def shutdown(self):
@@ -1075,19 +1271,24 @@ def handle(supervisor, request):
                 out.append(f"Job for {full_name(name, split_name(name)[0])} failed. See \"proxy-ctl logs {split_name(name)[1]}\".")
             status = status or result
         return status, "\n".join(out)
-    if verb in ("stop", "restart", "try-restart"):
+    if verb in ("stop", "restart", "try-restart", "reload-or-restart", "try-reload-or-restart"):
         status = 0
         for name in units:
             if verb == "stop":
                 result = supervisor.stop(name)
+            elif verb.endswith("reload-or-restart"):
+                result = supervisor.reload_or_restart(name, only_if_active=verb.startswith("try-"))
             else:
                 result = supervisor.restart(name, only_if_active=verb == "try-restart")
             status = status or result
         return status, ""
     if verb == "reset-failed":
         for unit in supervisor.unit_list():
-            if unit.state == FAILED and (not units or unit.name in map(full_name, units)):
-                unit.set_state(INACTIVE)
+            if not units or unit.name in map(full_name, units):
+                # The starts StartLimitBurst= and RestartSteps= count go too, as in systemd.
+                unit.start_limit, unit.restarts = None, 0
+                if unit.state == FAILED:
+                    unit.set_state(INACTIVE)
         return 0, ""
     if verb == "is-active":
         states = [supervisor.state_of(name)[1] for name in units]
@@ -1306,7 +1507,7 @@ def offline(verb, units, options):
     if verb in ("stop", "shutdown"):
         # Nothing is active as far as a daemon knows, but one killed outright may have left them running.
         end_orphans_unsupervised([full_name(u) for u in units] if verb == "stop" else None)
-    if verb in ("stop", "try-restart", "reset-failed", "daemon-reload", "shutdown", "reload"):
+    if verb in ("stop", "try-restart", "try-reload-or-restart", "reset-failed", "daemon-reload", "shutdown", "reload"):
         return 0, ""
     if supervisor is None:
         return (3 if verb == "is-active" else 1), "\n".join(INACTIVE for _ in units)
@@ -1326,7 +1527,7 @@ def systemctl_main(args):
         if request("ping") is not None:
             return 0
         verb = "boot"
-    spawn = verb in ("start", "restart", "boot")
+    spawn = verb in ("start", "restart", "reload-or-restart", "boot")
     reply = request(verb, units, options, spawn=spawn)
     if reply is None:
         reply = offline(verb, units, options)

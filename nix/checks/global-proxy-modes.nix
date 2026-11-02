@@ -55,6 +55,7 @@ let
     ipv4OnlyTunConfig
     ipv4OnlyPerAppTunUpScript
     xrayIPv4OnlyTunConfig
+    xrayIPv4OnlyTunService
     xrayIPv4OnlyTunUpScript
     tproxyWithFirewall
     tunAutostartFixture
@@ -265,6 +266,14 @@ in
       # On-link IPv6 leaves marked by the main table: not dropped as misrouted.
       assert pkgs.lib.hasInfix ''meta nfproto ipv4 meta mark 1 oifname != { "lo" } drop''
         tproxyIPv4OnlyNftRules;
+      # Lookups excepted: an on-link resolver is unreachable, and dropped if the rules are gone.
+      assert pkgs.lib.hasInfix "-6 rule add fwmark 1 ipproto udp dport 53 table 100"
+        tproxyIPv4OnlyStartScript;
+      assert pkgs.lib.hasInfix "-6 rule add fwmark 1 ipproto tcp dport 53 table 100"
+        tproxyIPv4OnlyStartScript;
+      assert pkgs.lib.hasInfix
+        ''meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 meta mark 1 oifname != { "lo" } drop''
+        tproxyIPv4OnlyNftRules;
       assert tproxyTags tproxyIPv4OnlyConfig == [ "tproxy-in" ];
       true
     )
@@ -293,6 +302,10 @@ in
       # IPv6 only into an unreachable route, as the sing-box and per-app TUNs have it.
       assert !(pkgs.lib.hasInfix "-6 route replace default dev" xrayIPv4OnlyTunUpScript);
       assert pkgs.lib.hasInfix "-6 route replace unreachable default table" xrayIPv4OnlyTunUpScript;
+      # XRay's TUN reads the configured geodata, as its socks unit does.
+      assert builtins.any (pkgs.lib.hasPrefix "XRAY_LOCATION_ASSET=") (
+        pkgs.lib.toList (xrayIPv4OnlyTunService.serviceConfig.Environment or [ ])
+      );
       assert pkgs.lib.hasInfix "rule del fwmark 1 table 100" tproxyManualStopScript;
       true
     )

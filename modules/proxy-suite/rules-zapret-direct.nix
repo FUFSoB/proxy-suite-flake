@@ -1,11 +1,14 @@
 {
   lib,
+  pkgs,
   cfg,
   zapret,
+  zapret2Sources ? { },
 }:
 
 let
   r = cfg.proxy.routing;
+  derived = import ./derived.nix { inherit lib cfg; };
   zapretCfg = cfg.zapret;
   zapretDomainGroups = import ./zapret-domain-groups.nix { inherit lib zapret; };
 
@@ -28,8 +31,13 @@ let
   # Only the system-wide instance handles traffic the proxy would send direct.
   globalEnabled = zapretCfg.enable && zapretCfg.global.enable;
   syncZapretDirectDomains = globalEnabled && zapretCfg.directSync.enable;
-  syncZapretDirectUpstreamIps = globalEnabled && zapretCfg.directSync.upstreamIps;
-  syncZapretDirectUserIps = globalEnabled && zapretCfg.directSync.userIps;
+  # Each engine syncs its own lists: zapret2 runs none of zapret-discord-youtube's, and
+  # sending them direct would keep those sites (YouTube, Google...) off the proxy even
+  # where zapret2 cannot fix them and its proxyFallback routes them to the proxy.
+  zapret2 = zapretCfg.engine == "zapret2";
+  syncDiscordYoutubeDomains = syncZapretDirectDomains && !zapret2;
+  syncZapretDirectUpstreamIps = globalEnabled && !zapret2 && zapretCfg.directSync.upstreamIps;
+  syncZapretDirectUserIps = globalEnabled && !zapret2 && zapretCfg.directSync.userIps;
   syncZapretDirectAnyIps = syncZapretDirectUpstreamIps || syncZapretDirectUserIps;
 
   zapretDefaultDomainFiles = [
@@ -43,7 +51,7 @@ let
   ];
 
   zapretDefaultDomains =
-    if syncZapretDirectDomains then
+    if syncDiscordYoutubeDomains then
       lib.unique (
         lib.concatMap (file: parseListFile "${zapretSrc}/hostlists/${file}") zapretDefaultDomainFiles
       )
@@ -53,7 +61,7 @@ let
     if syncZapretDirectUpstreamIps then parseListFile "${zapretSrc}/hostlists/ipset-all.txt" else [ ];
   zapretUserIps = if syncZapretDirectUserIps then zapretCfg.zapret-discord-youtube.ips else [ ];
   zapretCustomDomains =
-    if syncZapretDirectDomains then
+    if syncDiscordYoutubeDomains then
       lib.unique (
         lib.concatMap (
           rule: lib.optionals rule.enableDirectSync (zapretDomainGroups.effectiveRuleDomains rule)
@@ -80,10 +88,25 @@ let
     else
       [ ];
   zapretExcludedDomains =
-    if syncZapretDirectDomains then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
-  # zapret2's own pinned domains; what it learns at runtime is not synced.
-  zapret2 = zapretCfg.engine == "zapret2";
+    if syncDiscordYoutubeDomains then parseListFile "${zapretSrc}/hostlists/list-exclude.txt" else [ ];
+  # zapret2's own pinned domains; what it pins and learns at runtime comes in as a
+  # rule-set (derived.nix zapret2DirectSync).
   zapret2Domains = lib.optionals (syncZapretDirectDomains && zapret2) zapretCfg.zapret2.domains;
+  # The sites its strategy source's profiles take from the start (YouTube, Discord...).
+  # The client's sing-box gets them in that rule-set too, after what zapret2 cannot fix,
+  # which then reaches the proxy; a static direct rule here would come first and keep them
+  # off it. XRay has no runtime rule-sets and no proxy fallback, nor have the inbounds.
+  zapret2SiteDomains = lib.optionals (syncZapretDirectDomains && zapret2) (
+    import ./zapret2/site-domains.nix {
+      inherit
+        lib
+        pkgs
+        cfg
+        zapret2Sources
+        ;
+    }
+  );
+  staticSiteDomains = lib.optionals derived.pureXrayEnabled zapret2SiteDomains;
   zapret2ExcludedDomains = lib.optionals (
     syncZapretDirectDomains && zapret2
   ) zapretCfg.zapret2.excludeDomains;
@@ -110,7 +133,7 @@ let
         (lib.unique (
           map stripExactPrefix (
             zapretDefaultDomains
-            ++ zapretCfg.zapret-discord-youtube.domains
+            ++ lib.optionals syncDiscordYoutubeDomains zapretCfg.zapret-discord-youtube.domains
             ++ zapretCustomDomains
             ++ zapret2Domains
           )
@@ -118,7 +141,9 @@ let
         (
           lib.unique (
             map stripExactPrefix (
-              zapretExcludedDomains ++ zapretCfg.zapret-discord-youtube.excludeDomains ++ zapret2ExcludedDomains
+              zapretExcludedDomains
+              ++ lib.optionals syncDiscordYoutubeDomains zapretCfg.zapret-discord-youtube.excludeDomains
+              ++ zapret2ExcludedDomains
             )
           )
         )
@@ -137,12 +162,12 @@ in
   # direct outbound so the host's own zapret handles the DPI bypass for inbound
   # clients, instead of paying for a proxy hop it does not need.
   zapretDirect = {
-    domains = zapretDirectDomains;
+    domains = lib.unique (zapretDirectDomains ++ zapret2SiteDomains);
     ips = zapretDirectIps;
   };
 
   direct = {
-    domains = lib.unique (r.direct.domains ++ zapretDirectDomains);
+    domains = lib.unique (r.direct.domains ++ zapretDirectDomains ++ staticSiteDomains);
     ips = lib.unique (r.direct.ips ++ zapretDirectIps);
     geosites = lib.unique (r.direct.geosites ++ lib.optional r.directRu "category-ru");
     geoips = lib.unique (r.direct.geoips ++ lib.optional r.directRu "ru");

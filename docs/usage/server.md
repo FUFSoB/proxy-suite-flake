@@ -263,8 +263,9 @@ Worth knowing:
   (`ss -K`), UDP ones (Hysteria2, XHTTP over HTTP/3) dropped for a while. Others behind the
   same address reconnect once. Without the manager, removing a runtime user cuts its TCP
   connections only.
-- Giving a user a speed limit, or taking it away, changes their XRay level: their
-  connections drop once.
+- Giving a user a speed limit, or taking it away, changes their XRay level: their TCP
+  connections drop once. Their QUIC ones (Hysteria2, XHTTP over HTTP/3) are left alone
+  and keep the old level, and so the old limit, until the client reconnects.
 - An exit whose own JSON or URL sets `sockopt.mark` keeps it, and its users are not
   speed-limited there. Socks and http listeners take no speed limit either.
 

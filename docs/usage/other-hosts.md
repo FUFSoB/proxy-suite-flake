@@ -23,6 +23,12 @@ systemConfigs.default = system-manager.lib.makeSystemConfig {
 ```
 
 - Open inbound ports in your distribution's firewall yourself. proxy-suite leaves it alone.
+- With `proxy.tproxy.lanInterfaces`, that firewall must also let in what the LAN devices send
+  through the proxy: it reaches input with its original destination. The build warns with
+  the nftables rule.
+- Where systemd-networkd runs (Ubuntu Server, for one), restart it once after the first
+  switch (`sudo systemctl restart systemd-networkd`), or reboot. Until then it can still
+  delete the TProxy and TUN ip rules: it reads proxy-suite's drop-in only when it starts.
 - AmneziaWG runs in userspace, since kernel modules cannot come from Nix here.
 
 ## home-manager

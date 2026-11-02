@@ -5,6 +5,7 @@
   proxySuiteModule,
   serverModule,
   zapret,
+  zapret2Sources ? { },
 }:
 
 let
@@ -25,7 +26,7 @@ let
     fixture:
     import ../../modules/proxy-suite/assembly.nix {
       lib = pkgs.lib;
-      inherit pkgs zapret;
+      inherit pkgs zapret zapret2Sources;
       cfg = fixture.config.services.proxy-suite;
       packages = import ../../pkgs/default.nix { inherit pkgs; };
     };

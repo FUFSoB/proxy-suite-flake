@@ -75,6 +75,9 @@ in
       assert pkgs.lib.hasInfix "/bin/sing-box run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "/bin/xray run -c" hybridStartScript;
       assert pkgs.lib.hasInfix "xray-sidecar.json" hybridStartScript;
+      # A normal stop leaves the unit inactive, not failed.
+      assert pkgs.lib.hasInfix "trap 'exit 0' INT TERM" hybridStartScript;
+      assert !(pkgs.lib.hasInfix "exit 143" hybridStartScript);
       assert pkgs.lib.hasInfix "XRAY_SIDECAR_PORT=${toString checkConstants.xraySidecarPorts.socks}"
         hybridStartScript;
       assert pkgs.lib.hasInfix "XRAY_SIDECAR_DNS_PORT=${toString checkConstants.xrayDnsBridgePorts.socks}"
@@ -115,6 +118,9 @@ in
       assert pkgs.lib.hasInfix ".singBox" hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_obs \"$(" hybridSubscriptionStartScript;
       assert pkgs.lib.hasInfix "_proxy_suite_add_xray_sidecar_ob" hybridSubscriptionStartScript;
+      # A subscription entry only XRay parsed, whose subscription chains through sing-box, is
+      # left out like a runtime one rather than failing the start.
+      assert pkgs.lib.hasInfix ''.sidecar == true and ($s // "" | startswith("sub:"))'' hybridStartScript;
       true
     )
   ];

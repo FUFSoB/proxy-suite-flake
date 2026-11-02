@@ -12,9 +12,18 @@ jq -c '.[]' "$1" | while IFS= read -r exit; do
   install -d -m 0750 @groupArg@"$(dirname "$path")"
   # Written aside and renamed into place: sing-box reloads on rename (as well
   # as on in-place writes), and it never reads a half-written file.
-  jq -c --arg t "$tag" '
-    [(.domains // {}) | to_entries[] | select(.value.exit == $t) | .key] as $d
-    | {version: 1, rules: (if ($d | length) > 0 then [{domain_suffix: $d}] else [] end)}
+  # autoProxy.exclude ($ex), applied here so routes learned before it named them go too: a
+  # route under an excluded name is left out, and an excluded name under a route (which
+  # covers a whole site) is cut out of it.
+  jq -c --arg t "$tag" --argjson ex @excludeJson@ '
+    def under($l): . as $n | any($l[]; . as $e | $n == $e or ($n | endswith("." + $e)));
+    ($ex | map(ascii_downcase)) as $ex
+    | [(.domains // {}) | to_entries[] | select(.value.exit == $t and (.key | under($ex) | not)) | .key] as $d
+    | [$ex[] | select(under($d))] as $cut
+    | {version: 1, rules: (if ($d | length) == 0 then []
+        elif ($cut | length) == 0 then [{domain_suffix: $d}]
+        else [{type: "logical", mode: "and",
+               rules: [{domain_suffix: $d}, {domain_suffix: $cut, invert: true}]}] end)}
   ' "$2" > "$path.tmp"
   chmod 644 "$path.tmp"
   mv -f "$path.tmp" "$path"

@@ -7,6 +7,7 @@
   cfg,
   packages,
   zapret,
+  zapret2Sources ? { },
 }:
 let
   rules = import ./rules.nix {
@@ -15,6 +16,7 @@ let
       pkgs
       cfg
       zapret
+      zapret2Sources
       ;
   };
   configs = import ./config.nix {

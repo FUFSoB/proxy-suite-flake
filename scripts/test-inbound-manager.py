@@ -84,7 +84,7 @@ class ManagerTest(unittest.TestCase):
         self.netfilter = FakeNetfilter()
         self.webhooks = im.Webhooks([])
         self.applies = []
-        patcher = mock.patch.object(inbound_apply, "apply", side_effect=lambda config, spec: self.applies.append(spec) or [])
+        patcher = mock.patch.object(inbound_apply, "apply", side_effect=lambda config, spec, now=None: self.applies.append(spec) or [])
         patcher.start()
         self.addCleanup(patcher.stop)
         self.cut = mock.patch.object(inbound_apply, "cut").start()
@@ -255,6 +255,30 @@ class ManagerTest(unittest.TestCase):
         self.manager.set_policy("a5", {"speedLimit": "1M"})
         self.assertIn("a5", self.manager.state()["slots"])
 
+    def test_a_slot_past_fewer_slots_is_given_again(self):
+        # speedLimits.slots lowered from 8 to 4: XRay has levels 0-4 only, and level 7
+        # would count no stats.
+        self.manager.create_user({"name": "alice", "policy": {"speedLimit": "1M"}})
+        state = self.manager.state()
+        state["slots"]["alice"] = 7
+        self.manager.save_state(state)
+        runtime_users = self.manager.runtime_state()["users"]
+        self.assertEqual(policy.statuses(self.spec, runtime_users)["alice"]["level"], 7)
+        limited = self.spec | {"manager": self.spec["manager"] | {"slots": 4}}
+        self.assertEqual(policy.statuses(limited, runtime_users)["alice"]["level"], 0)
+        self.manager.tick()
+        self.assertEqual(self.manager.state()["slots"]["alice"], 1)
+        self.assertEqual(self.netfilter.limits[0], {1: {"up": 1_000_000, "down": 1_000_000}})
+        # With none free, none: level 0, unlimited, but counted.
+        state = self.manager.state()
+        state["slots"]["alice"] = 9
+        self.manager.save_state(state)
+        for name in ("a1", "a2", "a3", "a4"):
+            self.manager.create_user({"name": name, "policy": {"speedLimit": "1M"}})
+        self.manager.tick()
+        self.assertNotIn("alice", self.manager.state()["slots"])
+        self.assertEqual(self.manager.view()["alice"], (True, 0))
+
     # --- the tick ---------------------------------------------------------------------
 
     def test_traffic_runs_out_and_comes_back_with_the_period(self):
@@ -291,6 +315,28 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(self.manager.overview("alice")[0]["reasons"], ["expired"])
         self.assertIn(("user.disabled", "alice"), self.events())
 
+    def test_an_expiry_during_an_apply_is_applied_next(self):
+        # The apply renders at one time and the manager keeps what it applied at the same
+        # one: an expiry in between is a change the next tick still sees.
+        expires = int(self.clock.now) + 60
+        self.manager.create_user({"name": "alice", "policy": {"expiresAt": expires}})
+        times = []
+
+        def slow_apply(config, spec, now=None):
+            times.append(now)
+            self.clock.now = expires + 1
+            return []
+
+        self.clock.now = expires - 1
+        with mock.patch.object(inbound_apply, "apply", side_effect=slow_apply):
+            self.manager.apply_now()
+            self.assertEqual(times, [expires - 1])
+            self.assertEqual(self.manager.applied["alice"], (True, 0))
+            self.manager.tick()
+        self.assertEqual(times[1:], [expires + 1])
+        self.assertEqual(self.manager.applied["alice"], (False, 0))
+        self.assertIn(("user.disabled", "alice"), self.events())
+
     def test_ip_limit_bans_the_newest(self):
         self.manager.create_user({"name": "alice", "listeners": ["vless-in"], "policy": {"ipLimit": 1}})
         self.write_rendered({"inbounds": [
@@ -306,6 +352,23 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(self.netfilter.banned, [("203.0.113.9", [443], 300)])
         self.assertTrue(self.cut.called)
         self.assertEqual(self.events("user.ip-limit"), [("user.ip-limit", "alice")])
+
+    def test_no_ban_where_a_runtime_listener_sees_its_front(self):
+        # A runtime listener behind a PROXY-protocol front: the spec has no word of it.
+        self.manager.create_user({"name": "alice", "listeners": ["vless-in"], "policy": {"ipLimit": 1}})
+        self.write_rendered({"inbounds": [
+            {"tag": "vless-in", "listen": "::", "port": 443, "protocol": "vless", "settings": {"clients": [{"email": "alice"}]}},
+            {"tag": "rt-front", "listen": "::", "port": 8443, "protocol": "vless", "settings": {"clients": [{"email": "alice"}]},
+             "streamSettings": {"sockopt": {"acceptProxyProtocol": True}}},
+        ]})
+        self.assertEqual(self.manager.ban_ports(), {"alice": [443]})
+
+    def test_unban_takes_addresses_as_xray_gives_them(self):
+        self.netfilter.banned = [("2001:db8::1", [443], 300)]
+        self.assertEqual(self.manager.unban("[2001:db8::1]"), {"ip": "2001:db8::1", "lifted": 1})
+        with self.assertRaises(im.ApiError) as raised:
+            self.manager.unban("nonsense")
+        self.assertEqual(raised.exception.status, 400)
 
     def test_speed_limits_follow_activity(self):
         self.manager.create_user({"name": "alice", "policy": {"speedLimit": "8M/2M"}})
@@ -561,6 +624,21 @@ class ManagerTest(unittest.TestCase):
             self.manager.import_bundle(bundle)
         self.assertEqual(raised.exception.status, 409)
         self.assertNotIn(declared, rt.load_spool(self.spool)[0]["users"])
+
+    def test_import_refuses_names_xray_takes_for_another(self):
+        # XRay ignores case in names: "Bob" next to declared "bob" would stop it.
+        self.manager.create_user({"name": "alice", "listeners": ["vless-in"]})
+        entry = {"order": 900, "uuid": str(uuid.uuid4()), "password": "x" * 16}
+        for users in ({"Bob": entry}, {"ALICE": entry}, {"carol": entry, "Carol": dict(entry, order=901)}):
+            bundle = self.manager.export()
+            bundle["runtime"]["users"] = users
+            with self.subTest(users=list(users)), self.assertRaises(im.ApiError) as raised:
+                self.manager.import_bundle(bundle, replace=True)
+            self.assertEqual(raised.exception.status, 409)
+        self.assertEqual(list(rt.load_spool(self.spool)[0]["users"]), ["alice"])
+        # The same name, as it is: replace takes it.
+        bundle = self.manager.export()
+        self.assertEqual(self.manager.import_bundle(bundle, replace=True)["users"], ["alice"])
 
     def test_a_malformed_state_entry_is_left_out(self):
         policy.write_json(self.config["stateFile"], {"users": {"alice": {"periodStart": "x"}, "bob": {"periodStart": 5}},

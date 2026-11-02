@@ -84,10 +84,13 @@ in
       true
     )
 
-    # proxy-ctl reads the inventory the start script leaves behind.
+    # proxy-ctl reads the inventory the start script leaves behind, renamed into place whole.
     (
-      assert pkgs.lib.hasInfix ''> "$RUNTIME_DIR/outbounds.json"'' subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''chmod 644 "$RUNTIME_DIR/outbounds.json"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''INVENTORY_TMP="$RUNTIME_DIR/outbounds.json.tmp"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''chmod 644 "$INVENTORY_TMP"'' subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''mv "$INVENTORY_TMP" "$RUNTIME_DIR/outbounds.json"''
+        subscriptionOnlyStartScript;
       true
     )
 
@@ -214,6 +217,19 @@ in
       assert pkgs.lib.hasInfix "_proxy_suite_drop_invalid_subscription_cache" subscriptionOnlyStartScript;
       assert pkgs.lib.hasInfix "removed invalid subscription cache" subscriptionOnlyStartScript;
       assert pkgs.lib.hasInfix "produced an invalid cache" subscriptionOnlyUpdateScript;
+      true
+    )
+
+    # So is one fetched with another URL or other fetcher flags: a start drops it and fetches
+    # afresh. What a cache was fetched with is kept as a hash, the URL being a secret.
+    (
+      assert pkgs.lib.hasInfix ''_proxy_suite_drop_stale_subscription_cache "$tag" "$src" "''${@:3}"''
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix "has a new URL or fetch settings; dropped its cache"
+        subscriptionOnlyStartScript;
+      assert pkgs.lib.hasInfix ''_proxy_suite_write_subscription_fingerprint "$tag" "$sum"''
+        subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "/bin/sha256sum" subscriptionOnlyUpdateScript;
       true
     )
 

@@ -15,7 +15,8 @@ let
   package = packages.zapret2;
   zapretBase = "${package}/opt/zapret2";
 
-  # Shared by both instances: what the global one learns applies per-app too.
+  # Shared by both instances: the excludes, and the strategy each site was seen working
+  # with. The pinned and learned sites are the global one's: the per-app one takes every site.
   inherit (import ../derived.nix { inherit lib cfg; }) constants;
   stateDir = constants.zapret2StateDir;
   autoHostlistFile = "${stateDir}/zapret-hosts-auto.txt";
@@ -58,7 +59,8 @@ let
     "<HOSTLIST_NOAUTO>"
   ];
 
-  # Static domain filters join every profile that uses a hostlist marker.
+  # Static domain filters join every profile that uses a hostlist marker, in the global
+  # instance.
   staticListArgs =
     lib.optional (
       zapret2Cfg.domains != [ ]
@@ -67,16 +69,9 @@ let
   excludeDomainArgs = lib.optional (
     zapret2Cfg.excludeDomains != [ ]
   ) "--hostlist-exclude-domains=${lib.concatStringsSep "," zapret2Cfg.excludeDomains}";
-
-  # lib.trim drops string context: without it the source's list paths are no build input,
-  # so lazy trees never materialize them and the closure omits them.
-  # <STALLWATCH>: where the source's profile for learned sites takes stallWatch.
-  renderProfile =
-    profile:
-    lib.replaceStrings (hostlistMarkers ++ [ "<STALLWATCH> " ]) (
-      map (marker: marker + withSpaces staticListArgs) hostlistMarkers
-      ++ [ (lib.optionalString (stallWatch != "") (stallWatch + " ")) ]
-    ) (lib.addContextFrom profile (lib.trim profile));
+  # In the per-app one, the excludes alone: under its MODE_FILTER=none the markers expand
+  # to nothing, and a list of sites would narrow "every site" again.
+  excludeListArgs = [ "--hostlist-exclude=${excludeHostlistFile}" ] ++ excludeDomainArgs;
 
   # detect.lua learns in place of nfqws2's autohostlist, in a last TLS profile of its
   # own: z2k-profiles.template.sh puts it there, tailProfiles for nfqws2-keenetic.
@@ -92,6 +87,8 @@ let
         "retrans=${toString autoCfg.retransThreshold}"
         "win=${toString packetWindow.tcpIn}"
       ]
+      # The client's reset at `retrans`, as circularFill gives nfqws2's detector.
+      ++ lib.optional autoCfg.retransReset "reset"
       ++ lib.optional (
         zapret2Cfg.excludeDomains != [ ]
       ) "exclude_domains=${lib.concatStringsSep "," zapret2Cfg.excludeDomains}"
@@ -116,53 +113,83 @@ let
     + " --in-range=x --payload=all"
   );
 
-  z2kGenerated = sources.z2k.mkProfiles {
-    inherit learnArgs stallWatch;
-    hostlistSuffix = withSpaces staticListArgs;
-    # z2k's category profiles filter on their own lists, not on a marker.
-    excludeSuffix = withSpaces ([ "--hostlist-exclude=${excludeHostlistFile}" ] ++ excludeDomainArgs);
-  };
+  # Each instance's profiles. The global one's take the source's sites, the pinned and
+  # the learned ones. The per-app one's (everySite) take every site a connection names
+  # (SNI, HTTP Host; with z2k, the name last seen on the address), less the excludes; a
+  # profile with no list takes every flow it filters, named or not. The per-app one learns
+  # nothing and writes no verdicts (mkEnv): what it sees goes direct, never by the proxy,
+  # and what fails among every site its apps visit says nothing of which ones the rest of
+  # the system should send through the proxy.
+  mkProfileSet =
+    everySite:
+    let
+      listArgs = if everySite then excludeListArgs else staticListArgs;
+      watch = lib.optionalString (!everySite) stallWatch;
 
-  # With detect.lua learning, the source's own learning profile only reads the auto list.
-  sourceProfiles =
-    if learnLua then
-      map (lib.replaceStrings [ "<HOSTLIST>" ] [ "<HOSTLIST_NOAUTO>" ]) source.profiles
-    else
-      source.profiles;
+      # lib.trim drops string context: without it the source's list paths are no build
+      # input, so lazy trees never materialize them and the closure omits them.
+      # <STALLWATCH>: where the source's profile for learned sites takes stallWatch.
+      renderProfile =
+        profile:
+        lib.replaceStrings (hostlistMarkers ++ [ "<STALLWATCH> " ]) (
+          map (marker: marker + withSpaces listArgs) hostlistMarkers
+          ++ [ (lib.optionalString (watch != "") (watch + " ")) ]
+        ) (lib.addContextFrom profile (lib.trim profile));
 
-  profilesFile =
-    if zapret2Cfg.profiles == null && isZ2k then
-      "${z2kGenerated}/profiles"
-    else
-      pkgs.writeText "proxy-suite-zapret2" (
-        lib.concatStringsSep " --new " (map renderProfile (orSource zapret2Cfg.profiles sourceProfiles))
+      z2kGenerated = sources.z2k.mkProfiles (
+        {
+          hostlistSuffix = lib.optionalString (!everySite) (withSpaces staticListArgs);
+          # z2k's category profiles filter on their own lists, not on a marker.
+          excludeSuffix = withSpaces excludeListArgs;
+        }
+        // (if everySite then { everySite = true; } else { inherit learnArgs stallWatch; })
       );
 
-  # After every source profile, so each only takes what none of them did. ps_learn: the
-  # TLS sites in no list (z2k's template places its own). ps_syn: every new TCP connection
-  # until its first data names the protocol, to tell an address blocked outright.
-  tailProfiles = lib.concatMapStrings (profile: " --new " + profile) (
-    lib.optional (learnLua && !isZ2k) (
-      "--filter-tcp=443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all"
-      + " --lua-desync=ps_learn:${learnArgs}"
-    )
-    ++ lib.optional zapret2Cfg.proxyFallback (
-      "--filter-tcp=* --out-range=<n2 --in-range=<n2 --payload=empty --lua-desync=ps_syn:"
-      + lib.concatStringsSep ":" (
-        [
-          "fails=${toString autoCfg.failThreshold}"
-          "time=${toString autoCfg.failTime}"
-        ]
-        ++ lib.optional zapret2Cfg.strategyLog "log"
-      )
-    )
-  );
+      # With detect.lua learning, the source's own learning profile only reads the auto list.
+      sourceProfiles =
+        if everySite then
+          source.everySiteProfiles
+        else if learnLua then
+          map (lib.replaceStrings [ "<HOSTLIST>" ] [ "<HOSTLIST_NOAUTO>" ]) source.profiles
+        else
+          source.profiles;
+    in
+    {
+      profilesFile =
+        if zapret2Cfg.profiles == null && isZ2k then
+          "${z2kGenerated}/profiles"
+        else
+          pkgs.writeText "proxy-suite-zapret2" (
+            lib.concatStringsSep " --new " (map renderProfile (orSource zapret2Cfg.profiles sourceProfiles))
+          );
 
-  blobsFile =
-    if isZ2k then
-      "${z2kGenerated}/blobs"
-    else
-      pkgs.writeText "proxy-suite-zapret2" (lib.concatStringsSep " " source.blobArgs);
+      # After every source profile, so each only takes what none of them did. ps_learn:
+      # the TLS sites in no list (z2k's template places its own). ps_syn: every new TCP
+      # connection until its first data names the protocol, to tell an address blocked
+      # outright.
+      tailProfiles = lib.concatMapStrings (profile: " --new " + profile) (
+        lib.optional (learnLua && !isZ2k && !everySite) (
+          "--filter-tcp=443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all"
+          + " --lua-desync=ps_learn:${learnArgs}"
+        )
+        ++ lib.optional (zapret2Cfg.proxyFallback && !everySite) (
+          "--filter-tcp=* --out-range=<n2 --in-range=<n2 --payload=empty --lua-desync=ps_syn:"
+          + lib.concatStringsSep ":" (
+            [
+              "fails=${toString autoCfg.failThreshold}"
+              "time=${toString autoCfg.failTime}"
+            ]
+            ++ lib.optional zapret2Cfg.strategyLog "log"
+          )
+        )
+      );
+
+      blobsFile =
+        if isZ2k then
+          "${z2kGenerated}/blobs"
+        else
+          pkgs.writeText "proxy-suite-zapret2" (lib.concatStringsSep " " source.blobArgs);
+    };
 
   publicSuffixHostkey = pkgs.writeText "proxy-suite-zapret2-public-suffix-hostkey.lua" (
     fillTemplate ./public-suffix-hostkey.lua {
@@ -219,14 +246,16 @@ let
 
   # The NFQUEUE window must exceed the retransmission threshold it counts, and
   # cover what the source's detectors need.
-  packetWindow = {
+  mkPacketWindow = learns: {
     tcpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.tcpOut or 0);
     # The learner tells a stalled transfer from a finished one only while it still sees
     # the server's packets; the 16 KB cutoff falls at about 12 of them.
-    tcpIn = if learnLua then 32 else 15;
+    tcpIn = if learns then 32 else 15;
     udpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.udpOut or 0);
     udpIn = source.window.udpIn or 3;
   };
+  # The global instance's, which detect.lua's learner and watch run in.
+  packetWindow = mkPacketWindow learnLua;
 
   mkConfig =
     {
@@ -236,8 +265,11 @@ let
       nftTable,
       filterMark ? null,
       modeFilter,
+      everySite ? false,
     }:
     let
+      inherit (mkProfileSet everySite) profilesFile tailProfiles blobsFile;
+      window = mkPacketWindow (learnLua && !everySite);
       header = pkgs.writeText "proxy-suite-zapret2" (
         lib.concatStringsSep "\n" (
           [
@@ -257,10 +289,10 @@ let
           ++ lib.optional (!zapret2Cfg.ipv6) "DISABLE_IPV6=1"
           ++ [
             "NFQWS2_ENABLE=1"
-            "NFQWS2_TCP_PKT_OUT=${toString packetWindow.tcpOut}"
-            "NFQWS2_TCP_PKT_IN=${toString packetWindow.tcpIn}"
-            "NFQWS2_UDP_PKT_OUT=${toString packetWindow.udpOut}"
-            "NFQWS2_UDP_PKT_IN=${toString packetWindow.udpIn}"
+            "NFQWS2_TCP_PKT_OUT=${toString window.tcpOut}"
+            "NFQWS2_TCP_PKT_IN=${toString window.tcpIn}"
+            "NFQWS2_UDP_PKT_OUT=${toString window.udpOut}"
+            "NFQWS2_UDP_PKT_IN=${toString window.udpIn}"
             "MODE_FILTER=${modeFilter}"
             "AUTOHOSTLIST_FAIL_THRESHOLD=${toString autoCfg.failThreshold}"
             "AUTOHOSTLIST_FAIL_TIME=${toString autoCfg.failTime}"
@@ -337,25 +369,31 @@ let
         {
           name = "postrouting";
           direction = "oifname";
-          ipMatch = "daddr";
         }
         {
           name = "postnat";
           direction = "oifname";
-          ipMatch = "daddr";
         }
         {
           name = "prerouting";
           direction = "iifname";
-          ipMatch = "saddr";
         }
         {
           name = "prenat";
           direction = "iifname";
-          ipMatch = "saddr";
         }
       ];
       nftFamily = cidr: if lib.hasInfix ":" cidr then "ip6" else "ip";
+      # A connection from the subnet or to it, both ways, by conntrack's original
+      # direction: it keeps a NATed VM's address once masquerade rewrote the packet's, and
+      # names the VM the source on the replies too, which carry it as their destination.
+      exemptMatches = lib.concatMap (
+        cidr:
+        map (side: "ct original ${nftFamily cidr} ${side} ${cidr}") [
+          "saddr"
+          "daddr"
+        ]
+      ) exemptCidrs;
       mkRule =
         chain: match: comment:
         "  nft insert rule inet $ZAPRET_NFT_TABLE ${chain} ${match} return comment '\"${comment}\"'";
@@ -371,9 +409,7 @@ let
         ++ map (
           interface: mkRule chain.name "${chain.direction} '\"${interface}\"'" "proxy-suite TUN bypass"
         ) tunInterfaces
-        ++ map (
-          cidr: mkRule chain.name "${nftFamily cidr} ${chain.ipMatch} ${cidr}" "proxy-suite CIDR exemption"
-        ) exemptCidrs
+        ++ map (match: mkRule chain.name match "proxy-suite CIDR exemption") exemptMatches
       ) chains;
     in
     pkgs.writeText "proxy-suite-zapret2" (
@@ -402,7 +438,7 @@ let
         ]
       );
     in
-    pkgs.runCommand name { } ''
+    pkgs.runCommand name { passthru.everySite = args.everySite or false; } ''
       mkdir -p "$out/init.d/sysv/custom.d"
       cp ${config} "$out/config"
       cp ${mkStrategies config} "$out/strategies.json"
@@ -421,10 +457,13 @@ let
       "PATH=${lib.makeBinPath runtimeDeps}"
       # Read by z2k-state-persist.lua inside nfqws2, which inherits the unit's environment.
       "Z2K_STATE_DIR_OVERRIDE=${circularStateDir}"
-      # detect.lua's verdicts: what zapret2 fixes, and what the proxy has to carry.
-      "PROXY_SUITE_ZAPRET2_VERDICTS=${stateDir}/verdicts.tsv"
-      "Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE=${pidDir}"
     ]
+    # detect.lua's verdicts: what zapret2 fixes, and what the proxy has to carry. The
+    # global instance's alone (mkProfileSet): without the file, detect.lua writes none.
+    ++ lib.optional (
+      !(runtime.everySite or false)
+    ) "PROXY_SUITE_ZAPRET2_VERDICTS=${stateDir}/verdicts.tsv"
+    ++ [ "Z2K_AUTOCIRCULAR_FALLBACK_OVERRIDE=${pidDir}" ]
     # The cutoff probe's maps, read by z2k's tcp16 name step; pin.txt forces one name for the line.
     ++ lib.optionals (zapret2Cfg.cutoff.enable && isZ2k) [
       "Z2K_TCP16_ASN=${constants.zapret2CutoffDir}/asn.txt"

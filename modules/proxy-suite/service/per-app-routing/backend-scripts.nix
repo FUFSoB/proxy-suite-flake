@@ -95,8 +95,10 @@ let
       else
         ''
           # No IPv6 in the app TUN: unreachable, so wrapped apps fall back to IPv4 instead of
-          # leaving directly.
-          ${ip} -6 route replace unreachable default table ${toString perAppRoutingTun.routeTable}
+          # leaving directly. Not where the kernel has no IPv6 at all.
+          if [ -e /proc/net/if_inet6 ]; then
+            ${ip} -6 route replace unreachable default table ${toString perAppRoutingTun.routeTable}
+          fi
         ''
     }
     ${ip} -6 rule add fwmark ${toString perAppRoutingTun.fwmark} table ${toString perAppRoutingTun.routeTable} 2>/dev/null || true

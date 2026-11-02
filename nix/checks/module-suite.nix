@@ -284,6 +284,7 @@ let
       pkgs
       evalProxySuite
       baseModule
+      mkRouting
       mkRoutingRules
       hasDirectDomain
       mkProxyCtlDerived

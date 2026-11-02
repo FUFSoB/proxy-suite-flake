@@ -174,7 +174,7 @@ class StatusNotifierItem:
 
     on_activate(token): a click on the icon, with the host's xdg-activation token or None.
     on_menu(item): a menu item was clicked; take_token() has the host's token for it.
-    on_available(bool): whether a host shows the icon.
+    on_available(bool): whether a host shows the icon; told once it is known, even if not.
     """
 
     def __init__(self, connection, app_id, title, icon_theme_path, on_activate, on_menu, on_available=None):
@@ -184,7 +184,9 @@ class StatusNotifierItem:
         self.icon, self.tooltip, self.status = "proxy-suite-disabled-unknown", "", "Active"
         self.token = None  # from ProvideXdgActivationToken, for the click that follows
         self.menu = Menu()
-        self.available = False
+        # Not known yet: GIO says at once that no watcher runs, and the app has to hear that
+        # (one started hidden shows its window then), so the first report always goes out.
+        self.available = None
         self.name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
         # register_object_with_closures2 is GLib 2.84's; register_object is the older name for the same.
         register = getattr(connection, "register_object_with_closures2", None) or connection.register_object

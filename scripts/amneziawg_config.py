@@ -192,16 +192,23 @@ def encode_vpn_link(
     peer = {key: value for name, pairs in conf_sections(config) if name == "peer" for key, value in pairs}
     endpoint = peer.get("endpoint", "")
     port = endpoint.rsplit(":", 1)[1] if ":" in endpoint else ""
-    dns = [item.strip() for item in interface.get("dns", "").split(",") if item.strip()]
+
+    # Address, DNS and AllowedIPs may each take several lines, which the dicts above collapse
+    # to the last: the client's address is the first, the rest add up.
+    def listed(section: str, key: str) -> list[str]:
+        return [item.strip() for value in section_values(config, section, key) for item in value.split(",") if item.strip()]
+
+    addresses = listed("interface", "address")
+    dns = listed("interface", "dns")
     last: dict[str, Any] = {
         "config": config,
         "hostName": host,
         "port": int(port) if port.isdigit() else port,
-        "client_ip": interface.get("address", "").split(",")[0].strip().split("/")[0],
+        "client_ip": addresses[0].split("/")[0] if addresses else "",
         "client_priv_key": interface.get("privatekey", ""),
         "server_pub_key": peer.get("publickey", ""),
         "psk_key": peer.get("presharedkey", ""),
-        "allowed_ips": [item.strip() for item in peer.get("allowedips", "").split(",") if item.strip()],
+        "allowed_ips": listed("peer", "allowedips"),
         "persistent_keep_alive": peer.get("persistentkeepalive", ""),
     }
     if client_public_key:
@@ -333,8 +340,8 @@ def extract_vpn_config(data: dict[str, Any], requested_container: str | None = N
             config = _set_interface_value(config, config_key, str(value))
     if last.get("mtu") not in (None, ""):
         config = _set_interface_value(config, "MTU", str(last["mtu"]))
-    if last.get("port") not in (None, ""):
-        config = _set_interface_value(config, "ListenPort", str(last["port"]))
+    # last["port"] is the server's (its Endpoint's, see encode_vpn_link), not one for this
+    # end to listen on: as ListenPort it would bind 443 or 51820 here.
     return _apply_awg3_mtu_default(config)
 
 

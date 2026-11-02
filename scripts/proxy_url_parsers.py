@@ -113,6 +113,13 @@ def _param(params: dict, name: str, default: str = "") -> str:
     return params.get(name) or default
 
 
+# TLS server name of a VLESS or Trojan link, read as VMess's (parse_vmess): sni, else
+# the transport's Host, else the server. A CDN-fronted link often names its domain only
+# in host=, and the server's IP for SNI fails the handshake.
+def _server_name(params: dict, host: str) -> str:
+    return _param(params, "sni") or _param(params, "host", host)
+
+
 # sing-box stores a port as uint16 and refuses to start on anything else, so one
 # bad share link would otherwise take the whole config down with it, the same way
 # an unknown transport or fingerprint would (see _check_transport below).
@@ -294,6 +301,27 @@ def _check_transport(transport: str, backend: str, protocol: str) -> str:
     return normalized
 
 
+# TCP's HTTP header disguise is XRay's alone (rendered as rawSettings.header); sing-box has
+# none, nor QUIC's packet headers. Dropping one leaves an outbound the server never answers.
+def _http_header(header_type, transport: str, backend: str, protocol: str) -> bool:
+    header_type = str(header_type or "none").lower()
+    if header_type == "none" or transport not in ("", "tcp", "raw", "quic"):
+        return False
+    if backend == "xray" and header_type == "http":
+        return True
+    raise ValueError(f"unsupported {protocol} headerType {header_type[:20]!r} on {transport or 'tcp'} for {backend}")
+
+
+def _http_header_transport(path: str, host_header: str) -> dict:
+    # Comma-separated lists, as v2rayN reads them: XRay picks one per connection.
+    return {
+        "type": "tcp",
+        "header": "http",
+        "path": [urllib.parse.unquote(p.strip()) for p in path.split(",") if p.strip()] or ["/"],
+        "host": [h.strip() for h in host_header.split(",") if h.strip()],
+    }
+
+
 def _require(params: dict, name: str, security: str) -> str:
     if name not in params:
         raise ValueError(f"{security} link is missing the '{name}' parameter")
@@ -432,7 +460,8 @@ def _vless_encryption(value: str) -> str:
 
 def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
     userinfo, host, port, params = _parse_url_parts(url, "vless")
-    security = _param(params, "security", "none")
+    # Read as anything else, "TLS" or a typo would dial the server in the clear.
+    security = _one_of(_param(params, "security", "none").lower(), {"none", "tls", "reality"}, "VLESS security")
     encryption = urllib.parse.unquote(params.get("encryption", "")) or "none"
     if encryption != "none" and backend != "xray":
         raise ValueError("VLESS Encryption is XRay's alone: sing-box cannot dial it")
@@ -458,7 +487,7 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
 
     if security == "reality":
         fp = _check_fingerprint(_param(params, "fp", "chrome"), backend, reality=True)
-        ob["tls"] = _mk_tls(_param(params, "sni", host), fp=fp, backend=backend)
+        ob["tls"] = _mk_tls(_server_name(params, host), fp=fp, backend=backend)
         public_key = _require(params, "pbk", "reality")
         if not REALITY_PUBLIC_KEY_RE.fullmatch(public_key):
             raise ValueError(f"invalid reality pbk '{public_key}': expected a 43-character base64url key")
@@ -476,7 +505,7 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
             ob["tls"]["reality"]["spider_x"] = params["spx"]
     elif security == "tls":
         ob["tls"] = _mk_tls(
-            _param(params, "sni", host),
+            _server_name(params, host),
             fp=params.get("fp"),
             alpn=params.get("alpn"),
             backend=backend,
@@ -498,6 +527,8 @@ def parse_vless(url: str, tag: str, backend: str = "sing-box") -> dict:
         extra=params.get("extra", ""),
         x_padding_bytes=params.get("x_padding_bytes", ""),
     )
+    if _http_header(params.get("headerType"), normalized_transport, backend, "VLESS"):
+        tr = _http_header_transport(_param(params, "path", "/"), _param(params, "host", host))
     if tr is not None:
         ob["transport"] = tr
 
@@ -537,7 +568,8 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
         host = host[1:-1]
     port = _port(data["port"])
     net = _check_transport(str(data.get("net", "tcp")), backend, "VMess")
-    tls_field = str(data.get("tls", ""))
+    # As VLESS's security; and REALITY's key has no field here, so "reality" is no better.
+    tls_field = _one_of(str(data.get("tls") or "none").lower(), {"none", "tls"}, "VMess tls")
     sni = str(data.get("sni") or data.get("host") or host)
 
     # Panels write unset fields as "": that is the default, not a value. XRay reads
@@ -558,7 +590,7 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
         "alter_id": _alter_id(data.get("aid")),
     }
 
-    if tls_field in ("tls", "reality"):
+    if tls_field == "tls":
         ob["tls"] = _mk_tls(
             sni,
             fp=str(data["fp"]) if data.get("fp") else None,
@@ -575,6 +607,9 @@ def parse_vmess(url: str, tag: str, backend: str = "sing-box") -> dict:
         host_header=h_host,
         service_name=path.lstrip("/"),
     )
+    # "type" is the header for tcp and quic (for grpc it is the mode, not checked).
+    if _http_header(data.get("type"), net, backend, "VMess"):
+        tr = _http_header_transport(path, h_host)
     if tr is not None:
         ob["transport"] = tr
 
@@ -592,7 +627,7 @@ def parse_trojan(url: str, tag: str, backend: str = "sing-box") -> dict:
         "server_port": _port(port),
         "password": _nonempty_password(urllib.parse.unquote(userinfo), "Trojan"),
         "tls": _mk_tls(
-            _param(params, "sni", host),
+            _server_name(params, host),
             fp=params.get("fp"),
             alpn=params.get("alpn"),
             backend=backend,
@@ -605,6 +640,8 @@ def parse_trojan(url: str, tag: str, backend: str = "sing-box") -> dict:
         host_header=_param(params, "host", host),
         service_name=params.get("serviceName", ""),
     )
+    if _http_header(params.get("headerType"), transport, backend, "Trojan"):
+        tr = _http_header_transport(_param(params, "path", "/"), _param(params, "host", host))
     if tr is not None:
         ob["transport"] = tr
 
@@ -616,9 +653,11 @@ def _decode_ss_userinfo(userinfo: str) -> tuple[str, str]:
     if ":" in plain:
         return tuple(plain.split(":", 1))
 
-    pad = "=" * (-len(userinfo) % 4)
+    # Unquoted first: links percent-encode the padding ("%3D") and standard base64's + and /.
+    plain = plain.rstrip("=")
+    pad = "=" * (-len(plain) % 4)
     try:
-        decoded = base64.urlsafe_b64decode(userinfo + pad).decode()
+        decoded = base64.urlsafe_b64decode(plain + pad).decode()
         if ":" not in decoded:
             raise ValueError
         return tuple(decoded.split(":", 1))
@@ -658,6 +697,43 @@ def _check_ss(method: str, password: str, backend: str) -> None:
             raise ValueError(f"{method} needs a base64 key of {SS2022_KEY_BYTES[method]} bytes")
 
 
+# The SIP003 plugins sing-box has built in, each with the option naming its mode and the
+# modes it starts on (an unknown one takes the whole config down). XRay has none.
+SS_PLUGIN_MODES = {
+    "obfs-local": ("obfs", {"http", "tls"}),
+    "v2ray-plugin": ("mode", {"websocket", "quic"}),
+}
+
+
+def _ss_plugin(value: str, backend: str) -> tuple[str, str]:
+    """plugin=name;opts as sing-box's plugin and plugin_opts, checked as sing-box reads them."""
+    name, _, opts = value.partition(";")
+    # Older links name obfs-local by its former name.
+    name = {"simple-obfs": "obfs-local"}.get(name, name)
+    if backend == "xray":
+        raise ValueError(f"shadowsocks plugin {name[:40]!r}: XRay has no SIP003 plugins")
+    _one_of(name, set(SS_PLUGIN_MODES), "shadowsocks plugin")
+    # A backslash escapes ";" and "=", and could hide a key from the checks below.
+    if "\\" in opts:
+        raise ValueError("shadowsocks plugin options with escapes are not supported")
+    args: dict[str, list[str]] = {}
+    for item in opts.removesuffix(";").split(";") if opts else []:
+        key, separator, val = item.partition("=")
+        if not key:
+            raise ValueError("shadowsocks plugin options have an empty key")
+        args.setdefault(key, []).append(val if separator else "1")
+    # cert is a local file, which sing-box quotes back in its error when it is no certificate;
+    # a bad certRaw takes the whole config down.
+    if "cert" in args or "certRaw" in args:
+        raise ValueError("shadowsocks plugin pins a certificate (cert, certRaw): not supported")
+    mode_key, modes = SS_PLUGIN_MODES[name]
+    for mode in args.get(mode_key, []):
+        _one_of(mode, modes, f"{name} {mode_key}")
+    if name == "v2ray-plugin" and "quic" in args.get("mode", []) and "tls" not in args:
+        raise ValueError("v2ray-plugin mode=quic needs tls")
+    return name, opts
+
+
 def parse_shadowsocks(url: str, tag: str, backend: str = "sing-box") -> dict:
     # Support both SIP002 form:
     #   ss://base64(method:password)@host:port#name
@@ -665,11 +741,14 @@ def parse_shadowsocks(url: str, tag: str, backend: str = "sing-box") -> dict:
     #   ss://base64(method:password@host:port)#name
     rest = url[len("ss://") :]
     rest, _, _ = rest.partition("#")
-    endpoint, _, _ = rest.partition("?")
+    endpoint, _, query = rest.partition("?")
+    params = _qs(query)
 
     if "@" in endpoint:
         userinfo, host, port, _ = _parse_url_parts(url, "ss")
     else:
+        # As in the userinfo: unquoted first, padding and all.
+        endpoint = urllib.parse.unquote(endpoint).rstrip("=")
         pad = "=" * (-len(endpoint) % 4)
         try:
             decoded = base64.urlsafe_b64decode(endpoint + pad).decode()
@@ -683,7 +762,7 @@ def parse_shadowsocks(url: str, tag: str, backend: str = "sing-box") -> dict:
     method, password = _decode_ss_userinfo(userinfo)
     _check_ss(method, password, backend)
 
-    return {
+    ob = {
         "type": "shadowsocks",
         "tag": tag,
         "server": host,
@@ -691,6 +770,11 @@ def parse_shadowsocks(url: str, tag: str, backend: str = "sing-box") -> dict:
         "method": method,
         "password": password,
     }
+    if plugin := _param(params, "plugin"):
+        ob["plugin"], opts = _ss_plugin(plugin, backend)
+        if opts:
+            ob["plugin_opts"] = opts
+    return ob
 
 
 # "20000-30000" or a lone "443" in sing-box's "a:b" form: it refuses to start on a bare port.
@@ -810,7 +894,8 @@ def _parse_plain_proxy(url: str, tag: str, kind: str) -> dict:
 
     ob: dict = {"type": kind, "tag": tag}
     if kind == "socks":
-        ob["version"] = "4" if scheme.startswith("socks4") else "5"
+        # 4a hands the name to the proxy; on "4" sing-box resolves it itself first.
+        ob["version"] = {"socks4": "4", "socks4a": "4a"}.get(scheme, "5")
     _set_auth(ob, userinfo)
     ob["server"] = host
     ob["server_port"] = _port(port)

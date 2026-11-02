@@ -41,6 +41,7 @@ let
     perAppRefuseUnderGlobal
     daemonSandbox
     perAppZapretMarkUpScript
+    perAppZapretMarkReloadScript
     perAppZapretMarkDownScript
     ;
 
@@ -75,7 +76,8 @@ let
         null;
   };
 
-  # Wrapped apps opted in: MODE_FILTER=none applies every profile to all their traffic.
+  # Wrapped apps opted in: every site they name, less the excludes (everySite), not the
+  # global instance's sites; MODE_FILTER=none expands the hostlist markers to nothing.
   perAppRuntime = runtime.mkRuntime {
     name = "proxy-suite-zapret2";
     qnum = perAppZapretCfg.qnum;
@@ -84,6 +86,7 @@ let
     filterMark = perAppZapretCfg.filterMark;
     nftTable = "proxy_suite_per_app_zapret";
     modeFilter = "none";
+    everySite = true;
     customScript =
       if tunInterfaces != [ ] then runtime.mkCustomScript { inherit tunInterfaces; } else null;
   };
@@ -127,12 +130,31 @@ let
     ${runtime.initScript} start_fw
   '';
 
+  # A firewall reload (a switch's) that flushed the whole ruleset took the instance's table
+  # with it; the units' reload follows it (After=, or the flush could come after). Rebuilt
+  # then, only then: a rebuild re-queues the traffic in flight.
+  firewallReload = pkgs.writeShellScript "proxy-suite-zapret2" ''
+    set -euo pipefail
+    table=$(${pkgs.gnused}/bin/sed -n 's/^ZAPRET_NFT_TABLE=//p' "$ZAPRET_RW/config")
+    if ! ${nft} list table inet "$table" >/dev/null 2>&1; then
+      ${runtime.initScript} restart_fw
+    fi
+  '';
+
   # nfqws2 runs supervised; the firewall comes and goes around it.
   daemonConfig =
-    runtimeEnv:
+    {
+      runtimeEnv,
+      # What goes back ahead of the instance's table: the per-app mark table.
+      reloadFirst ? [ ],
+    }:
     {
       Type = "notify";
-      ExecReload = "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID";
+      # What a firewall flush took goes back first, then nfqws2 re-reads its lists.
+      ExecReload = reloadFirst ++ [
+        "${firewallReload}"
+        "${lib.getExe' pkgs.coreutils "kill"} -HUP $MAINPID"
+      ];
       Environment = runtimeEnv;
       # Its own part of the state only: under the sandbox below, the rest stays read-only.
       StateDirectoryMode = if userControlAnyAllows "zapret" then "2775" else "0755";
@@ -161,7 +183,14 @@ let
       ;
   };
 
-  directSync = import ./zapret2/direct-sync.nix { inherit lib pkgs cfg; };
+  directSync = import ./zapret2/direct-sync.nix {
+    inherit
+      lib
+      pkgs
+      cfg
+      zapret2Sources
+      ;
+  };
 
   # autohostlist wants nf_conntrack_tcp_be_liberal on; the stop puts back what the host had.
   # Outside the sandbox ("+"), which keeps /proc/sys read-only.
@@ -176,9 +205,11 @@ let
   ''}";
   conntrackLiberalRestore = "-+${pkgs.writeShellScript "proxy-suite-zapret2-liberal" ''
     saved="$RUNTIME_DIRECTORY/conntrack-liberal"
-    value=$(${pkgs.coreutils}/bin/cat "$saved" 2>/dev/null || echo 0)
-    [[ $value =~ ^[01]$ ]] || value=0
-    echo "$value" > ${conntrackLiberalKey}
+    # Nothing saved (the start failed before it got that far, or the key could not be
+    # read): the host's value was never changed here, so it stays.
+    if value=$(${pkgs.coreutils}/bin/cat "$saved" 2>/dev/null) && [[ $value =~ ^[01]$ ]]; then
+      echo "$value" > ${conntrackLiberalKey}
+    fi
     ${pkgs.coreutils}/bin/rm -f "$saved"
   ''}";
 
@@ -199,34 +230,40 @@ in
     lib.mkIf cutoffCfg.enable cutoff.timer;
   services.proxy-suite.internal.tmpfiles = lib.mkIf cutoffCfg.enable cutoff.tmpfiles;
 
-  services.proxy-suite.internal.services.proxy-suite-zapret =
-    lib.mkIf zapretGlobalEnabled
-      (mkRestartingService {
-        description = "zapret2 DPI bypass";
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
-        conflicts = awgServiceNames;
-        wantedBy = [ "multi-user.target" ];
-        preStart = mkPreStart + ''
-          ln -sfn ${globalRuntime}/strategies.json ${constants.zapret2StrategiesFile}
-        '';
-        runtimeDirectory = "proxy-suite-zapret";
-        stateDirectory = "proxy-suite/zapret2";
-        execStart = "${runtime.daemonScript}";
-        execStopPost = [
-          "${runtime.initScript} stop_fw"
-        ]
-        ++ lib.optional zapretCfg.zapret2.autoHostlist.enable conntrackLiberalRestore;
-        # What zapret's start_fw would do for autohostlist, here outside the sandbox ("+"),
-        # once the firewall has loaded nf_conntrack.
-        execStartPost = if zapretCfg.zapret2.autoHostlist.enable then conntrackLiberalOn else null;
-        extraServiceConfig = daemonConfig (
-          runtime.mkEnv {
-            runtime = globalRuntime;
-            pidDir = "/run/proxy-suite-zapret";
-          }
-        );
-      });
+  services.proxy-suite.internal.services.proxy-suite-zapret = lib.mkIf zapretGlobalEnabled (
+    mkRestartingService {
+      description = "zapret2 DPI bypass";
+      after = [
+        "network-online.target"
+        "nftables.service"
+      ];
+      wants = [ "network-online.target" ];
+      conflicts = awgServiceNames;
+      wantedBy = [ "multi-user.target" ];
+      preStart = mkPreStart + ''
+        ln -sfn ${globalRuntime}/strategies.json ${constants.zapret2StrategiesFile}
+      '';
+      runtimeDirectory = "proxy-suite-zapret";
+      stateDirectory = "proxy-suite/zapret2";
+      execStart = "${runtime.daemonScript}";
+      execStopPost = [
+        "${runtime.initScript} stop_fw"
+      ]
+      ++ lib.optional zapretCfg.zapret2.autoHostlist.enable conntrackLiberalRestore;
+      # What zapret's start_fw would do for autohostlist, here outside the sandbox ("+"),
+      # once the firewall has loaded nf_conntrack.
+      execStartPost = if zapretCfg.zapret2.autoHostlist.enable then conntrackLiberalOn else null;
+      extraServiceConfig = daemonConfig {
+        runtimeEnv = runtime.mkEnv {
+          runtime = globalRuntime;
+          pidDir = "/run/proxy-suite-zapret";
+        };
+      };
+    }
+    // {
+      unitConfig.ReloadPropagatedFrom = [ "nftables.service" ];
+    }
+  );
 
   services.proxy-suite.internal.services.proxy-suite-per-app-zapret =
     lib.mkIf perAppZapretCfg.enable
@@ -234,7 +271,10 @@ in
         lib.mkMerge [
           (mkRestartingService {
             description = "proxy-suite per-app-routing zapret2 backend";
-            after = [ "network-online.target" ];
+            after = [
+              "network-online.target"
+              "nftables.service"
+            ];
             wants = [ "network-online.target" ];
             preStart = mkPreStart;
             runtimeDirectory = "proxy-suite-per-app-zapret";
@@ -245,17 +285,20 @@ in
               "${runtime.initScript} stop_fw"
               "${perAppZapretMarkDownScript}"
             ];
-            extraServiceConfig = daemonConfig (
-              runtime.mkEnv {
+            extraServiceConfig = daemonConfig {
+              runtimeEnv = runtime.mkEnv {
                 runtime = perAppRuntime;
                 pidDir = "/run/proxy-suite-per-app-zapret";
-              }
-            );
+              };
+              reloadFirst = [ "${perAppZapretMarkReloadScript}" ];
+            };
           })
           {
             # Ahead of everything, preStart's script among them (mkBefore there): under a global
             # mode nothing of it runs, not even the queue's firewall rules.
             serviceConfig.ExecStartPre = lib.mkOrder 400 [ perAppRefuseUnderGlobal ];
+            # Its tables back after the firewall's flush (firewallReload).
+            unitConfig.ReloadPropagatedFrom = [ "nftables.service" ];
           }
         ]
       );

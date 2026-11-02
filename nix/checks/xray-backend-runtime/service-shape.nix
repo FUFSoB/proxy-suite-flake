@@ -21,6 +21,14 @@
             rule: (rule ? domain) && builtins.elem "domain:specific.example" rule.domain
           ) xrayTproxyConfig.routing.rules
         );
+        specificRule2 = builtins.head (
+          builtins.filter (
+            rule: (rule ? domain) && builtins.elem "domain:specific2.example" rule.domain
+          ) xrayTproxyConfig.routing.rules
+        );
+        ruleTags = map (rule: rule.ruleTag) (
+          builtins.filter (rule: rule ? ruleTag) xrayTproxyConfig.routing.rules
+        );
         balancer = builtins.head xrayTproxyConfig.routing.balancers;
       in
       assert xrayFixture.config.services.proxy-suite.proxy.backend == "xray";
@@ -52,6 +60,8 @@
       assert builtins.any (outbound: outbound.tag == "dns-out") xrayTproxyConfig.outbounds;
       assert specificRule.outboundTag == "proxy-suite-ob-primary";
       assert specificRule.ruleTag == "custom-proxy-domain";
+      assert specificRule2.ruleTag == "custom-proxy-domain-1";
+      assert pkgs.lib.unique ruleTags == ruleTags;
       assert balancer.tag == "proxy";
       assert balancer.selector == [ "proxy-suite-ob-" ];
       assert balancer.strategy.type == "leastPing";

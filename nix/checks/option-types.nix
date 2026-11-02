@@ -98,6 +98,21 @@ in
       assert refuses opts.proxy.listener.address.type.check injected;
       true
     )
+    # A tag names pin units and runtime files: no "/" in it.
+    (
+      let
+        tagType = (opts.proxy.outbounds.type.nestedTypes.elemType.getSubOptions [ ]).tag.type;
+      in
+      assert tagType.check "my-exit";
+      assert !(tagType.check "a/b");
+      true
+    )
+    (checkLib.rejects "proxy.routing.ruleSets names must be letters" [
+      { services.proxy-suite.proxy.routing.ruleSets."a b".url = "https://example.com/x.srs"; }
+    ])
+    (checkLib.rejects "sing-box listens on an IP address only, not proxy.listener.address" [
+      { services.proxy-suite.proxy.listener.address = "localhost"; }
+    ])
     # A bad value stops the evaluation; it is not quietly left out.
     (
       assert

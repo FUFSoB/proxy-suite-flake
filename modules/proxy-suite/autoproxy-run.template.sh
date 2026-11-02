@@ -12,6 +12,9 @@ index=$PROBE_EXITS_FILE
 state="$state_dir/state.json"
 now=$(date +%s)
 ttl=$(( @ttlDays@ * 86400 ))
+# Set unless zapret2 runs for this host's traffic: then nothing here unblocks a censor
+# verdict's host (DPI), so it goes through the exit that got past, as a destination's does.
+route_censor=@routeCensor@
 
 @migrate@ "$state_dir" "$spool"
 
@@ -62,31 +65,46 @@ update() {
   mv -f "$tmp" "$state"
 }
 
+# `proxy-ctl proxy auto forget|relearn|clear` requests, applied; sets edited if any was.
+apply_edits() {
+  local f op dom
+  take edits
+  for f in "${taken[@]}"; do
+    while read -r op dom; do
+      case "$op" in
+        forget)
+          [[ "$dom" =~ ^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$ ]] || continue
+          update --arg op forget --arg d "$dom" -f @editJq@
+          echo "forgot $dom"
+          ;;
+        clear)
+          update --arg op clear --arg d "" -f @editJq@
+          echo "forgot everything learned"
+          ;;
+        *) continue ;;
+      esac
+      edited=1
+    done < <(read_queue "$f")
+    # Once applied: a run killed before this applies it again, to the same end. -r: a
+    # directory a member left under such a name would fail the run each time.
+    rm -rf -- "$f"
+  done
+}
+
 # --- 0. forget what `proxy-ctl proxy auto forget|relearn|clear` asked to ---
 # Before anything else, and even with the proxy stopped: its start renders the
 # rule-sets from the state again.
 edited=""
-take edits
-for f in "${taken[@]}"; do
-  while read -r op dom; do
-    case "$op" in
-      forget)
-        [[ "$dom" =~ ^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$ ]] || continue
-        update --arg op forget --arg d "$dom" -f @editJq@
-        echo "forgot $dom"
-        ;;
-      clear)
-        update --arg op clear --arg d "" -f @editJq@
-        echo "forgot everything learned"
-        ;;
-      *) continue ;;
-    esac
-    edited=1
-  done < <(read_queue "$f")
-  # Once applied: a run killed before this applies it again, to the same end. -r: a
-  # directory a member left under such a name would fail the run each time.
-  rm -rf -- "$f"
-done
+apply_edits
+# Routes learned before autoProxy.exclude named them: render leaves them out, but they would
+# still be rechecked and listed.
+domains=$(jq -r '(.domains // {}) | keys[]' "$state")
+while read -r dom; do
+  [ -n "$dom" ] || continue
+  echo "forgot $dom: autoProxy.exclude names it"
+  update --arg op forget --arg d "$dom" -f @editJq@
+  edited=1
+done < <(comm -23 <(printf '%s\n' "$domains" | sort) <(printf '%s\n' "$domains" | @excludeHosts@ sort))
 
 if [ ! -r "$index" ]; then
   echo "no probe listeners - is proxy-suite-socks running with autoProxy on?"
@@ -105,6 +123,15 @@ if [ -r "$inventory" ]; then
     | (.domains // {}) | to_entries[] | select(.value.exit as $e | $off | index([$e]))
     | "\(.key)\t\(.value.exit)"' "$state")
 fi
+# So are routes through an exit gone from the index since (dropped from a subscription,
+# renamed, past maxExits): no rule-set carries them, and they would sit dead until their TTL.
+while IFS=$'\t' read -r dom exit; do
+  echo "forgot $dom: its exit $exit is gone"
+  update --arg op forget --arg d "$dom" -f @editJq@
+  edited=1
+done < <(jq -r --slurpfile idx "$index" '($idx[0] | map(.tag)) as $tags
+  | (.domains // {}) | to_entries[] | select(.value.exit as $e | $tags | index([$e]) | not)
+  | "\(.key)\t\(.value.exit)"' "$state")
 # Once: routes learned under a public suffix (a whole workers.dev) before to_reg knew the
 # list, to be learned again per site.
 if ! jq -e '.suffixesForgotten' "$state" > /dev/null; then
@@ -123,19 +150,25 @@ strike() {
     -f @strikeJq@
 }
 
+# Whether verdict $1 gets a route: a destination's, and a censor's without zapret2.
+routes() {
+  [ "$1" = destination ] || { [ "$1" = censor ] && [ -n "$route_censor" ]; }
+}
+
 # $1 registrable domain, $2 host probed, $3 probe JSON. Routes apply to the
 # whole domain (geo-blocks are drawn around sites); other verdicts only to
 # the host probed.
 record() {
-  update --arg d "$1" --arg h "$2" --argjson r "$3" --argjson now "$now" '
-    (if $r.verdict == "destination" then
-      .domains[$d] = {verdict: "destination", exit: $r.exit, host: $h,
+  update --arg d "$1" --arg h "$2" --argjson r "$3" --argjson now "$now" --arg rc "$route_censor" '
+    ($r.exit != null and ($r.verdict == "destination" or ($r.verdict == "censor" and $rc != ""))) as $route
+    | (if $route then
+      .domains[$d] = {verdict: $r.verdict, exit: $r.exit, host: $h,
                       path: ($r.path // "/"), at: $now}
     else . end)
     | .hosts[$h] = {
         domain: $d,
         verdict: ($r.verdict // "error"),
-        exit: (if $r.verdict == "destination" then $r.exit else null end),
+        exit: (if $route then $r.exit else null end),
         at: $now
       }
     | del(.backlog[$h])'
@@ -197,6 +230,19 @@ probe_curlrc() {
   fi
 }
 
+# Whether anything answers through this host's uplink: step 1's address lookup, through
+# direct or else through an exit (a censored network may refuse it direct). A run during an
+# outage would judge every host unreachable for a TTL and drop working routes.
+online() {
+  local port ip
+  for port in $(jq -r '.[].port' "$index"); do
+    ip=$(curl -sS -f -K <(probe_curlrc) --proxy "http://127.0.0.1:$port" --max-time 10 https://api.ipify.org 2>/dev/null || true)
+    # As in step 1: a captive portal's page is no answer.
+    [[ ! "$ip" =~ ^[0-9a-fA-F.:]+$ ]] || return 0
+  done
+  return 1
+}
+
 # --- 1. verdicts are about this host's address; drop them if it changed ---
 egress=$(curl -sS -f -K <(probe_curlrc) --proxy "$direct_url" --max-time 10 https://api.ipify.org 2>/dev/null || true)
 # An error page or a captive portal must not pass for a new address: anything
@@ -207,17 +253,26 @@ if [ -n "$egress" ] && [ "$(jq -r '.egress // ""' "$state")" != "$egress" ]; the
   update --arg e "$egress" \
     '{egress: $e, domains: {}, hosts: {}, exits: {}, backlog: (.backlog // {}), lastRun: (.lastRun // 0)}'
 fi
+# Nothing answering at all is an outage, not verdicts: the run stops before it judges or
+# drops anything, and before it takes the requests or the dialled hosts, which wait for the
+# next. A learn request alone checks per verdict instead (probe_row).
+if [ "$mode" = full ] && [ -z "$egress" ] && ! online; then
+  echo "nothing answers through any egress - is the uplink down? Left for the next run"
+  exit 0
+fi
 
 # --- 2. which network (AS) each exit leaves from, once per TTL ---
 while IFS=$'\t' read -r tag port; do
-  at=$(jq -r --arg t "$tag" '.exits[$t].at // 0' "$state")
+  # An "asn" of "null" is a missing org as an older run stored it: fetched again.
+  at=$(jq -r --arg t "$tag" '.exits[$t] | if .asn == "null" then 0 else .at // 0 end' "$state")
   # Digits only: a state.json from when the group could write it may hold anything, and
   # $(( )) would run what a[$(...)] names.
   [[ "$at" =~ ^[0-9]{1,12}$ ]] || at=0
   [ $(( now - at )) -ge "$ttl" ] || continue
   info=$(curl -sS -K <(probe_curlrc) --proxy "http://127.0.0.1:$port" --max-time 10 https://ipinfo.io/json 2>/dev/null || true)
   ip=$(jq -r '.ip // empty' <<<"$info" 2>/dev/null || true)
-  asn=$(jq -r '(.org // "") | split(" ")[0]' <<<"$info" 2>/dev/null || true)
+  # No org: no AS, rather than the string "null" that every such exit would share.
+  asn=$(jq -r '(.org // "") | split(" ")[0] // ""' <<<"$info" 2>/dev/null || true)
   [ -n "$ip" ] || continue
   update --arg t "$tag" --arg ip "$ip" --arg asn "$asn" --argjson now "$now" \
     '.exits[$t] += {ip: $ip, asn: $asn, at: $now}'
@@ -258,6 +313,13 @@ walk() {
 # Route changes take effect immediately, not at the end of the run.
 publish() { @render@ "$index" "$state"; }
 
+# The uplink went down mid-run (see online): stops with what was learned so far published.
+uplink_down() {
+  echo "nothing answers through any egress - is the uplink down? The rest is left for the next run"
+  publish
+  exit 0
+}
+
 requeue=()
 if [ "$mode" = full ]; then
   # --- 3. re-check remembered exits, once per TTL ---
@@ -265,14 +327,18 @@ if [ "$mode" = full ]; then
   while IFS=$'\t' read -r dom host exit; do
     out=$(probe_json --exits "$exit" "$host")
     verdict=$(jq -r '.verdict // "error"' <<<"$out")
-    if [ "$verdict" = destination ] && [ "$(jq -r '.exit // ""' <<<"$out")" = "$exit" ]; then
-      update --arg d "$dom" --argjson now "$now" '.domains[$d].at = $now'
+    if routes "$verdict" && [ "$(jq -r '.exit // ""' <<<"$out")" = "$exit" ]; then
+      update --arg d "$dom" --arg v "$verdict" --argjson now "$now" '.domains[$d] += {verdict: $v, at: $now}'
+    elif [ "$verdict" = error ]; then
+      # A probe that failed to run says nothing about the route: kept, rechecked next run.
+      echo "recheck $dom: probe error, kept via $exit"
     elif [ "$verdict" = ok ]; then
       echo "recheck $dom: reachable directly now, dropping $exit"
       update --arg d "$dom" 'del(.domains[$d])'
       record "$dom" "$host" "$out"
       publish
     else
+      [ "$verdict" != unreachable ] || online || uplink_down
       echo "recheck $dom: $exit no longer works ($verdict), walking again"
       update --arg d "$dom" 'del(.domains[$d])'
       publish
@@ -280,7 +346,8 @@ if [ "$mode" = full ]; then
     fi
   done < <(jq -r --argjson now "$now" --argjson every "$ttl" '
     .domains | to_entries[]
-    | select(.value.verdict == "destination" and ($now - .value.at) >= $every)
+    | select((.value.verdict == "destination" or .value.verdict == "censor")
+        and ($now - .value.at) >= $every)
     | "\(.key)\t\(.value.host)\t\(.value.exit)"' "$state")
 
   # --- 4. what clients dialled since the last run, counted per host ---
@@ -368,12 +435,13 @@ if [ "$mode" = full ]; then
         fi
       done < <(jq -r '.ordered[]' <<<"$rounds")
       if [ -n "$via" ]; then
-        echo "slow $dom: crawls ${was:+via $was}${was:-directly}, routed via $via"
+        echo "slow $dom: crawls ${was:+via }${was:-directly}, routed via $via"
         update --arg d "$dom" --arg h "$host" --arg e "$via" --arg tried "$tried" --argjson now "$now" '
           .domains[$d] = {verdict: "slow", exit: $e, host: $h, at: $now, tried: ($tried | split(","))}
           | del(.slowWant[$d])'
       else
-        echo "slow $dom: crawls ${was:+via $was}${was:-directly}, and no other exit reaches it; left direct"
+        online || uplink_down
+        echo "slow $dom: crawls ${was:+via }${was:-directly}, and no other exit reaches it; left direct"
         update --arg d "$dom" --argjson until $(( now + ttl )) '.slowSkip[$d] = $until | del(.slowWant[$d])'
       fi
     # A few per run, each probed via every exit: the rest wait for the next run rather
@@ -393,17 +461,29 @@ if [ "${#taken[@]}" -gt 0 ]; then
     for f in "${taken[@]}"; do
       read_queue "$f"
       echo
-    done | grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' | awk '!seen[$0]++' | to_reg || true
+    done | grep -E '^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$' | awk '!seen[$0]++' |
+      @excludeHosts@
+      to_reg || true
   )
   drop_taken
 fi
+# Edits queued since step 0, as `relearn` queues its forget before its request: taken after
+# the requests, else a forget left for the next run would wipe what this one learns.
+edited=""
+apply_edits
+[ -z "$edited" ] || publish
+# Requested rows ("domain<TAB>host") back to the spool, for the next run.
+respool() {
+  local rest
+  rest=$(mktemp "$spool/.requests.XXXXXX")
+  printf '%s\n' "$@" | cut -f2 > "$rest"
+  chmod 0640 "$rest"
+  mv -fT "$rest" "$spool/requests.$(date +%s%N).$$"
+}
 # probesPerRun of them at most: a member could queue hosts by the hundred thousand, each a
 # probe holding the lock. The rest go back to the spool, for the next run.
 if [ "${#asked[@]}" -gt @probesPerRun@ ]; then
-  rest=$(mktemp "$spool/.requests.XXXXXX")
-  printf '%s\n' "${asked[@]:@probesPerRun@}" | cut -f2 > "$rest"
-  chmod 0640 "$rest"
-  mv -fT "$rest" "$spool/requests.$(date +%s%N).$$"
+  respool "${asked[@]:@probesPerRun@}"
   echo "$(( ${#asked[@]} - @probesPerRun@ )) requested host(s) past probesPerRun wait for the next run"
   asked=("${asked[@]:0:@probesPerRun@}")
 fi
@@ -416,33 +496,52 @@ if [ "$mode" = full ]; then
     | sort_by(-.value.hits) | .[] | "\(.value.domain)\t\(.key)"' "$state")
 fi
 
+# autoProxy.exclude, for hosts queued before it named them: whether $1 may be probed.
+included() { [ -n "$(printf '%s\n' "$1" | @excludeHosts@ cat)" ]; }
+
 declare -A seen routed
+offline=""
 probe_row() {
-  local dom=${1%%$'\t'*} host=${1#*$'\t'} out
+  local dom=${1%%$'\t'*} host=${1#*$'\t'} out verdict
   { [ -z "${seen[$host]:-}" ] && [ -z "${routed[$dom]:-}" ]; } || return 1
+  included "$host" || return 1
   seen[$host]=1
   out=$(walk "$host")
+  verdict=$(jq -r '.verdict // "error"' <<<"$out")
   # A probe that failed to run is no verdict; the host is probed again.
-  if [ "$(jq -r '.verdict // "error"' <<<"$out")" = error ]; then
+  if [ "$verdict" = error ]; then
     echo "probe $host -> error, not recorded"
     return 0
   fi
+  # Through no egress at all: this host, or the uplink (see online)? Nothing is recorded.
+  if [ "$verdict" = unreachable ] && ! online; then
+    offline=1
+    return 1
+  fi
   record "$dom" "$host" "$out"
-  if [ "$(jq -r '.verdict // ""' <<<"$out")" = destination ]; then
+  if routes "$verdict"; then
     routed[$dom]=1
     publish
   fi
-  # A censor verdict names an exit that got through, but zapret owns it.
-  echo "probe $host -> $(jq -r '(.verdict // "error") + (if .verdict == "destination" then " via " + .exit
-    elif .exit then " (" + .exit + " reaches it; left to zapret)" else "" end)' <<<"$out")"
+  # A censor verdict names an exit that got through; with zapret2, zapret owns it.
+  echo "probe $host -> $(jq -r --arg rc "$route_censor" '(.verdict // "error")
+    + (if .verdict == "destination" or (.verdict == "censor" and $rc != "") then " via " + .exit
+       elif .exit then " (" + .exit + " reaches it; left to zapret)" else "" end)' <<<"$out")"
 }
 
-for row in "${asked[@]}"; do probe_row "$row" || true; done
+for i in "${!asked[@]}"; do
+  probe_row "${asked[i]}" || true
+  if [ -n "$offline" ]; then
+    respool "${asked[@]:i}"
+    uplink_down
+  fi
+done
 
 probed=0
 for row in "${requeue[@]}" "${backlog[@]}"; do
   [ "$probed" -lt @probesPerRun@ ] || break
   if probe_row "$row"; then probed=$(( probed + 1 )); fi
+  [ -z "$offline" ] || uplink_down
 done
 echo "probed ${#asked[@]} requested and $probed queued host(s); $(jq '(.backlog // {}) | length' "$state") still waiting"
 

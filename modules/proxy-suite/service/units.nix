@@ -167,6 +167,12 @@ let
     ++ map (route: "proxy-suite-per-app-via-${route}@*.service") (
       builtins.attrNames perAppRouting.pinUp
     );
+  # zapret's tables are its scripts', never persisted: restarted on a firewall start (per-app
+  # zapret's users' units with it, by Requires=). A firewall reload reloads them instead
+  # (zapret.nix, zapret2.nix), which puts back only what its flush took.
+  firewallRestartUnits =
+    lib.optional ctx.zapretGlobalEnabled "proxy-suite-zapret.service"
+    ++ lib.optional perAppZapretEnabled "${serviceNames.perAppZapret}.service";
   # A per-app route's DNS forwarder (nftables.nix's dns_redirect), up while the route or one
   # of its pin slots is: a listener for the route's own mark, and one for each slot's.
   perAppDnsUnit = route: "proxy-suite-per-app-${route}-dns.service";
@@ -251,6 +257,10 @@ let
   ];
   perAppUnderGlobalModes = [
     "${serviceNames.perAppTproxy}.service"
+    # The pin slots' users' units, while the slots are there to find: their holds would turn
+    # away the apps the global mode carries now (per-app TProxy's go with it, by Requires=).
+    "proxy-suite-per-app-via-user@*-tproxy-*.service"
+    "proxy-suite-per-app-via-user@*-tun-*.service"
     "proxy-suite-per-app-via-tproxy@*.service"
     "proxy-suite-per-app-via-tun@*.service"
     "${serviceNames.perAppZapret}.service"
@@ -444,7 +454,7 @@ let
     # A start or restart of the firewall, which flushes the ruleset on some hosts, reloads
     # what reloadAfterFirewall covers; a reload does nothing to a unit that is not up.
     {
-      enable = ctx.constants.privileged && firewallReapplyUnits != [ ];
+      enable = ctx.constants.privileged && (firewallReapplyUnits != [ ] || firewallRestartUnits != [ ]);
       name = "proxy-suite-firewall-reapply";
       value = mkOneshotService {
         description = "proxy-suite - put its nftables tables back after the firewall starts";
@@ -452,7 +462,12 @@ let
         wantedBy = [ "nftables.service" ];
         # --no-block: the units it reloads are ordered after nftables, whose start this is
         # part of.
-        execStart = "-${ctx.constants.systemctl} try-reload-or-restart --no-block ${lib.concatStringsSep " " firewallReapplyUnits}";
+        execStart =
+          lib.optional (firewallReapplyUnits != [ ])
+            "-${ctx.constants.systemctl} try-reload-or-restart --no-block ${lib.concatStringsSep " " firewallReapplyUnits}"
+          ++
+            lib.optional (firewallRestartUnits != [ ])
+              "-${ctx.constants.systemctl} try-restart --no-block ${lib.concatStringsSep " " firewallRestartUnits}";
         # Inactive once done, so the firewall's next start runs it again.
         extraServiceConfig.RemainAfterExit = false;
       };
@@ -534,6 +549,8 @@ let
             execStopPost = ctx.constants.withPerAppStandby "${serviceNames.tun}.service" tunCleanupScript;
             runtimeDirectory = serviceNames.tun;
             stateDirectory = "proxy-suite";
+            # As the socks unit's: without, XRay reads the geodata it was built with.
+            extraServiceConfig = lib.optionalAttrs pureXrayEnabled xrayAssetEnv;
           })
       );
     }
@@ -560,6 +577,7 @@ let
           execStopPost = perAppRouting.perAppTunDownScript;
           runtimeDirectory = serviceNames.perAppTun;
           stateDirectory = "proxy-suite";
+          extraServiceConfig = lib.optionalAttrs pureXrayEnabled xrayAssetEnv;
         })
       );
     }
@@ -652,12 +670,13 @@ let
     {
       enable = perAppZapretEnabled;
       name = "${serviceNames.perAppZapret}-user@";
-      value = mkUserRuleService {
+      # Its rules back in after the backend's table came back (After=).
+      value = reloadAfterFirewall "${perAppRouting.perAppZapretUserRuleStart} %i" (mkUserRuleService {
         description = "Enable proxy-suite app zapret marking for user %i";
         backendService = serviceNames.perAppZapret;
         execStart = "${perAppRouting.perAppZapretUserRuleStart} %i";
         execStop = "${perAppRouting.perAppZapretUserRuleStop} %i";
-      };
+      });
     }
     # `apps run --via <tag>`: an instance per outbound, up while anyone runs through it: its
     # rules, and the forwarder its apps' lookups go to. Each user's apps in its slice are
@@ -765,9 +784,15 @@ let
         # No unit names the via unit from <uid>-<key>, so no Requires= can hold it for
         # StopWhenUnneeded=: the last user's unit takes it down itself.
         execStopPost = "${perAppRouting.viaRetire} %i";
-        # A switch's stop would take the via unit down under the running apps; a new via
-        # unit puts the rules back itself (viaReapply). In [Service], where the switch reads it.
-        extraServiceConfig.X-RestartIfChanged = false;
+        extraServiceConfig = {
+          # A switch's stop would take the via unit down under the running apps; a new via
+          # unit puts the rules back itself (viaReapply). In [Service], where the switch reads it.
+          X-RestartIfChanged = false;
+          # proxy-ctl reloads it ahead of each app: its rules match the slice as it was when
+          # they went in, and one made anew since would go unmarked. A new manager's too: no
+          # PartOf= can name the user's manager from <uid>-<key>.
+          ExecReload = "${perAppRouting.viaUserStart} %i";
+        };
       };
     }
     {

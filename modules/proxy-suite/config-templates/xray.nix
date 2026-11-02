@@ -31,8 +31,16 @@ let
     }
   ];
 
+  # A tcp:// server takes its port from the URL alone; the separate port field is only read
+  # for a plain address, so without it every TCP resolver is asked on 53.
   dnsAddress =
-    upstream: if upstream.type == "tcp" then "tcp://${upstream.address}" else upstream.address;
+    upstream:
+    if upstream.type == "tcp" then
+      "tcp://${
+        if lib.hasInfix ":" upstream.address then "[${upstream.address}]" else upstream.address
+      }:${toString upstream.port}"
+    else
+      upstream.address;
 
   mkDnsServer = tag: upstream: {
     address = dnsAddress upstream;
@@ -192,7 +200,9 @@ let
       tunMtu ? globalTun.mtu,
       useOutboundRoutingMark ? false,
       enableUrlTest ? proxyCfg.selection == "urltest",
-      domainStrategy ? "IPIfNonMatch",
+      # Not IPIfNonMatch: the network-only final rule matches every name on the first pass, so
+      # the IP rules never saw one. IPOnDemand resolves (XRay's DNS, never fake) at an IP rule.
+      domainStrategy ? "IPOnDemand",
       enableTunFakeDns ? false,
       # A loopback port of this config's own, where dns-out hands the queries XRay's resolver
       # does not answer (HTTPS, MX, TXT, SRV...) to dns.remote through the proxy.
@@ -287,11 +297,24 @@ let
                 derived.proxyInboundsLoopback;
             outboundTag = "block";
           };
+      # Under IPOnDemand the guard's ip match looks the name up, and an onion name must never
+      # reach a resolver: mixed-in's go where tor-onion sends them, ahead of it.
+      inboundsOnionRule = lib.optionals (inboundsPrivateGuard != [ ]) (
+        map (
+          rule:
+          rule
+          // {
+            ruleTag = "inbounds-tor-onion";
+            inboundTag = [ "mixed-in" ];
+          }
+        ) (builtins.filter (rule: rule.ruleTag == "tor-onion") rules.xrayRouteModeRules.common)
+      );
       routingRules =
         remoteDnsBridgeRule
         ++ dnsUpstreamRules
         ++ lib.optional enableTun (dnsHijackRule [ "tun-in" ])
         ++ lib.optional enableTProxy (dnsHijackRule tproxyInboundTags)
+        ++ inboundsOnionRule
         ++ inboundsPrivateGuard
         ++ rules.xrayRoutingRules
         ++ [ (finalRule (if (proxyCfg.routing.default == "proxy") then "proxy" else "direct")) ];

@@ -28,6 +28,16 @@ class WarpOutboundTest(unittest.TestCase):
             [{"address": "engage.cloudflareclient.com", "port": 2408, "public_key": "pub=", "allowed_ips": ["0.0.0.0/0", "::/0"]}],
         )
 
+    def test_repeated_list_keys_add_up(self):
+        # One Address line per address, as render_settings writes them; any other key's last line wins.
+        conf = WGCF.replace(
+            "Address = 172.16.0.2/32, 2606:4700:110:8d58::2/128", "Address = 172.16.0.2/32\naddress = 2606:4700:110:8d58::2/128"
+        ).replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0\nAllowedIPs = ::/0").replace("MTU = 1280", "MTU = 1280\nMTU = 1380")
+        ob = build(conf, "warp", None)
+        self.assertEqual(ob["address"], ["172.16.0.2/32", "2606:4700:110:8d58::2/128"])
+        self.assertEqual(ob["peers"][0]["allowed_ips"], ["0.0.0.0/0", "::/0"])
+        self.assertEqual(ob["mtu"], 1380)
+
     def test_ipv6_endpoint(self):
         ob = build(WGCF.replace("engage.cloudflareclient.com:2408", "[2606:4700:d0::a29f:c001]:500"), "warp", None)
         self.assertEqual((ob["peers"][0]["address"], ob["peers"][0]["port"]), ("2606:4700:d0::a29f:c001", 500))

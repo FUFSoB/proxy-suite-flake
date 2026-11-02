@@ -18,11 +18,12 @@
 }:
 
 let
-  # A wildcard listener is reached on loopback.
+  # A wildcard listener is reached on loopback, "::" on IPv4 too (as derived.localProxy
+  # does): a listener there takes IPv4 as well, while ::1 is gone with IPv6 off.
   host =
     {
       "0.0.0.0" = "127.0.0.1";
-      "::" = "::1";
+      "::" = "127.0.0.1";
     }
     .${address} or address;
   hostPort = "${if lib.hasInfix ":" host then "[${host}]" else host}:${toString port}";

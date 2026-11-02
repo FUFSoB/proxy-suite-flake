@@ -34,6 +34,13 @@ let
             geosites = [ "category-ru" ];
           };
           block.domains = [ "block.example" ];
+          # A 2nd proxy-category custom rule: XRay refuses a repeated ruleTag.
+          rules = [
+            {
+              outbound = "primary";
+              domains = [ "specific2.example" ];
+            }
+          ];
         };
         tproxy.enable = true;
         tun.enable = true;

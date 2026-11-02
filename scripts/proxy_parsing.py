@@ -88,6 +88,9 @@ def _xray_transport(transport: dict | None) -> tuple[str, dict]:
         }
     if t == "quic":
         return "quic", {}
+    if t == "tcp":
+        request = {"path": transport["path"], "headers": {"Host": transport["host"]} if transport["host"] else {}}
+        return "raw", {"rawSettings": {"header": {"type": transport["header"], "request": request}}}
     if t == "xhttp":
         settings = {"path": transport.get("path", "/")}
         if transport.get("host"):
@@ -187,6 +190,9 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
         return {"protocol": "hysteria", "tag": tag, "settings": settings, "streamSettings": stream}
 
     if typ == "socks":
+        # XRay's client greets with SOCKS5 whatever the settings say; a SOCKS4 server drops it.
+        if ob.get("version", "5") != "5":
+            raise ValueError(f"XRay's socks outbound speaks SOCKS5 only, not SOCKS{ob['version']}")
         settings = {"address": ob["server"], "port": ob["server_port"]}
         if ob.get("username"):
             settings["user"] = ob["username"]
@@ -343,12 +349,15 @@ def fetch_raw(url: str) -> bytes:
 
 def decode_subscription(data: bytes) -> list[str]:
     text = None
+    # A BOM, before the base64 or inside it, would otherwise skew the padding or ride
+    # into the first link; a stray bad byte costs its own line, not the whole subscription.
+    data = data.removeprefix(b"\xef\xbb\xbf")
     # Line-wrapped and URL-safe base64 both occur; the lenient decoder would drop
     # "-" and "_" as junk instead of reading them as "+" and "/".
     stripped = b"".join(data.split()).translate(bytes.maketrans(b"-_", b"+/"))
     try:
         pad = b"=" * (-len(stripped) % 4)
-        decoded = base64.b64decode(stripped + pad).decode("utf-8")
+        decoded = base64.b64decode(stripped + pad).decode("utf-8-sig", errors="replace")
         if any(f"{scheme}://" in decoded for scheme in PARSERS):
             text = decoded
     except Exception:
