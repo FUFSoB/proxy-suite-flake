@@ -9,6 +9,7 @@
   onionOutbound,
   selectionMode,
   proxyInboundsLoopback,
+  browserDoh,
 }:
 
 let
@@ -62,6 +63,16 @@ let
       } tag
     );
 
+  # "asn:N", which XRay does not know: the start script puts the system's address list in its
+  # place (backend-filter-xray.template.jq), and drops a rule left with none.
+  xrayAsnRules =
+    ruleTag: tag: asns:
+    lib.optional (asns != [ ]) (
+      mkXrayRule ruleTag {
+        ip = map (n: "asn:${toString n}") asns;
+      } tag
+    );
+
   # XRay refuses a ruleTag twice: a category's 2nd+ rule takes its index among them.
   xrayCustomRuleTag =
     category: n: kind:
@@ -77,6 +88,7 @@ let
       (xrayIPRules (tag "ip") rule.outbound rule.ips)
       (xrayGeositeRules (tag "geosite") rule.outbound rule.geosites)
       (xrayGeoIPRules (tag "geoip") rule.outbound rule.geoips)
+      (xrayAsnRules (tag "asn") rule.outbound (rule.asns or [ ]))
     ];
 
   customCategories = map (rule: customRuleCategory rule.outbound) customRules;
@@ -101,6 +113,7 @@ let
     (xrayIPRules "direct-ip" "direct" direct.ips)
     (xrayGeositeRules "direct-geosite" "direct" direct.geosites)
     (xrayGeoIPRules "direct-geoip" "direct" direct.geoips)
+    (xrayAsnRules "direct-asn" "direct" r.direct.asns)
   ];
 
   xraySafetyDirectRules = [
@@ -118,11 +131,20 @@ let
     (xrayIPRules "block-ip" "block" r.block.ips)
     (xrayGeositeRules "block-geosite" "block" r.block.geosites)
     (xrayGeoIPRules "block-geoip" "block" r.block.geoips)
+    (xrayAsnRules "block-asn" "block" r.block.asns)
+    # proxy.dns.browserDoh "block": what the TUN and TProxy pass to a DNS over HTTPS server.
+    (lib.optional (browserDoh == "block") (
+      mkXrayRule "block-doh" {
+        inboundTag = xrayTransparentInbounds;
+        domain = [ "geosite:category-doh" ];
+      } "block"
+    ))
   ];
 
   xrayProxyGeoRules = lib.flatten [
     (xrayGeositeRules "proxy-geosite" "proxy" r.proxy.geosites)
     (xrayGeoIPRules "proxy-geoip" "proxy" r.proxy.geoips)
+    (xrayAsnRules "proxy-asn" "proxy" r.proxy.asns)
   ];
 
   # Sniffing (and the TUN's fake DNS) puts a name in place of where a client connected: a

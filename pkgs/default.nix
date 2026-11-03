@@ -5,6 +5,7 @@ let
   zapret2 = import ./zapret2.nix { inherit pkgs; };
   whitelist-bypass = import ./whitelist-bypass.nix { inherit pkgs; };
   z2k-detect = import ./z2k-detect.nix { inherit pkgs; };
+  sing-geoip-extended = import ./sing-geoip-extended.nix { inherit pkgs; };
   mkProxySuiteSupervisor = import ./proxy-suite-supervisor.nix {
     lib = pkgs.lib;
     inherit pkgs;
@@ -26,6 +27,7 @@ in
     zapret2
     whitelist-bypass
     z2k-detect
+    sing-geoip-extended
     ;
   tg-ws-proxy = mkTgWsProxy { };
 }

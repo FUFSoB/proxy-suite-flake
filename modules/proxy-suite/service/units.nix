@@ -60,6 +60,7 @@ let
     perAppTproxy = "proxy-suite-per-app-tproxy";
     perAppZapret = "proxy-suite-per-app-zapret";
     subscriptionUpdate = "proxy-suite-subscription-update";
+    subscriptionRefresh = "proxy-suite-subscription-refresh";
     inbounds = "proxy-suite-inbounds";
     inboundStats = "proxy-suite-inbound-stats";
     inboundsManager = "proxy-suite-inbounds-manager";
@@ -805,7 +806,23 @@ let
         wants = [ "network-online.target" ];
         execStart = scripts.subscriptionUpdateScript;
         stateDirectory = "proxy-suite";
-        # Run by a timer and by `proxy subs update`: a unit left "active" would never run again.
+        # Run by `proxy subs update`: a unit left "active" would never run again.
+        extraServiceConfig = {
+          RemainAfterExit = false;
+        }
+        // spoolReaderSandbox [ ];
+      };
+    }
+    {
+      # The timer's: each subscription only once its own interval has run out.
+      enable = proxyEnabled;
+      name = serviceNames.subscriptionRefresh;
+      value = mkOneshotService {
+        description = "Refresh the proxy-suite subscriptions that are due";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        execStart = "${scripts.subscriptionUpdateScript} due";
+        stateDirectory = "proxy-suite";
         extraServiceConfig = {
           RemainAfterExit = false;
         }
@@ -923,9 +940,12 @@ let
         description = "Periodic proxy-suite subscription refresh";
         wantedBy = [ "timers.target" ];
         timerConfig = {
+          Unit = "${serviceNames.subscriptionRefresh}.service";
           # OnActiveSec, not OnBootSec: see the autoProxy timer.
           OnActiveSec = "5m";
-          OnUnitActiveSec = proxyCfg.subscriptionUpdateInterval;
+          # A look for subscriptions due: each has its own interval (subscriptionUpdateInterval,
+          # its updateInterval or what its server asks for), so this ticks at the shortest.
+          OnUnitActiveSec = "${toString scripts.subscriptionTickSeconds}s";
         };
       };
     }

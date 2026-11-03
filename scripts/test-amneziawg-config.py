@@ -666,6 +666,23 @@ class AmneziaWgConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 prepare({"kind": "configFile", "path": str(source), "endpoint": "192.0.2.1:500"})
 
+    def test_obfuscation_defaults_fill_only_what_is_missing(self):
+        # warp.obfuscation: a wgcf profile has none; a generator's may bring its own Jc and I1.
+        defaults = {"jc": 4, "jmin": 40, "jmax": 70, "s1": 0, "h1": 1, "i1": "<b 0xce00>", "headerProtectionKeyFile": "/x"}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "warp.conf"
+            source.write_text("[Interface]\nPrivateKey = private\nAddress = 172.16.0.2/32\nJc = 8\n"
+                              "[Peer]\nPublicKey = public\nAllowedIPs = 0.0.0.0/0\nEndpoint = 162.159.192.1:2408\n")
+            config = prepare({"kind": "configFile", "path": str(source), "obfuscationDefaults": defaults})
+            values = {k: amneziawg_config.section_values(config, "interface", k) for k in ("jc", "jmin", "jmax", "s1", "h1", "i1")}
+            self.assertEqual(values, {"jc": ["8"], "jmin": ["40"], "jmax": ["70"], "s1": ["0"], "h1": ["1"], "i1": ["<b 0xce00>"]})
+            self.assertEqual(amneziawg_config.section_values(config, "peer", "jc"), [])
+            # Without defaults, the config as it was.
+            plain = prepare({"kind": "configFile", "path": str(source)})
+            self.assertEqual(amneziawg_config.section_values(plain, "interface", "jmin"), [])
+            with self.assertRaises(ConfigError):
+                prepare({"kind": "configFile", "path": str(source), "obfuscationDefaults": {"i2": "a\nPostUp = x"}})
+
     def test_global_render_pins_the_fwmark(self):
         # The kill switch knows the tunnel's own packets by it; one set in the file is replaced.
         with tempfile.TemporaryDirectory() as directory:

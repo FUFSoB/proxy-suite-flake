@@ -596,6 +596,11 @@ let
           ob.detour != ob.tag
         ) "proxy-suite: outbound '${ob.tag}': detour cannot name the outbound itself")
       ]
+      # A link's settings: raw JSON says them itself.
+      ++ lib.optional (ob.fragment != null || ob.multiplex != null) (
+        mkAssertion (!proxyEnabled || (ob.singBoxJson == null && ob.xrayJson == null))
+          "proxy-suite: outbound '${ob.tag}': fragment and multiplex apply to url and urlFile; set them in the JSON itself"
+      )
       # Its hop is sing-box's, dialed to the outbound's own server, and owns the dialing.
       ++ lib.optionals (ob.shadowTls != null) [
         (mkAssertion

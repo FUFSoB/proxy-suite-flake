@@ -36,6 +36,8 @@ let
   inherit (ctx.scripts)
     subscriptionTagsFile
     subscriptionCacheDir
+    subscriptionMetaDir
+    subscriptionSettingsFile
     routeModeStateFile
     proxyInboundsLinksFile
     proxyInboundsSubscriptionsFile
@@ -74,6 +76,8 @@ in
       SELECTION = selectionMode;
       SUB_TAGS_FILE = toString subscriptionTagsFile;
       SUB_CACHE_DIR = subscriptionCacheDir;
+      SUB_META_DIR = subscriptionMetaDir;
+      SUB_SETTINGS_FILE = toString subscriptionSettingsFile;
       RULE_SETS_FILE = toString (
         pkgs.writeText "proxy-suite-control" (
           builtins.toJSON (map (rs: { inherit (rs) name path; }) ruleSets)
@@ -172,6 +176,8 @@ in
       OUTBOUND_INVENTORY_FILE = constants.outboundInventoryFile;
       RUNTIME_OUTBOUNDS_DIR = constants.runtimeOutboundsDir;
       RUNTIME_SUBS_DIR = constants.runtimeSubscriptionsDir;
+      # The autonomous systems' address lists (asn.nix), for `proxy rulesets list`.
+      ASN_DIR = constants.asnDir;
       RUNTIME_SUBS_ALLOW_HTTP = flag proxyCfg.runtimeSubscriptions.allowHttp;
       USER_CONTROL_GROUP = userControlCfg.group;
       # {group: [scopes]}: what proxy-suite-clash-api lets each group's members ask.

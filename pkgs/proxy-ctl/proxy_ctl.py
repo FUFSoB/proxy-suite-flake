@@ -12,6 +12,7 @@ import getpass
 import hashlib
 import http.client
 import importlib
+import io
 import ipaddress
 import json
 import math
@@ -78,9 +79,11 @@ Changes and secrets need root or the userControl group.
 
   proxy [status|on|off]                  local proxy
   proxy outbounds [list]                 outbounds, their source, and the current pick
-  proxy outbounds add [tag] <url|json|-> [--detour <tag>]
+  proxy outbounds add [tag] <url|json|-> [--detour <tag>] [--fragment] [--mux <h2mux|smux|yamux>]
                                          add an outbound from a link or JSON (-: stdin);
-                                         --detour: connect through another outbound
+                                         --detour: connect through another outbound;
+                                         --fragment: split its TLS ClientHello; --mux:
+                                         multiplex its connections (the server must too)
   proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]
                                          add an AmneziaWG outbound (runs in wireproxy)
   proxy outbounds chain <tag> <through-tag> [new tag]
@@ -111,10 +114,17 @@ Changes and secrets need root or the userControl group.
   proxy rules [list]                     routing rules, the configuration's and runtime ones,
                                          in the order they are checked
   proxy rules add <target> <match...> [--name <name>] [--priority <n>]
-                                         send domains, addresses, geosite:x, geoip:x or ruleset:x
-                                         to proxy, direct, block or an outbound; no --name: the
+                                         send domains, addresses, full:x (that name alone),
+                                         keyword:x, regexp:x, geosite:x, geoip:x, ruleset:x
+                                         or asn:N (an operator's every address) to proxy,
+                                         direct, block or an outbound; no --name: the
                                          rule named after the target, extended (priority 50:
                                          ahead of the configuration's, at 100 to 500)
+  proxy rules import <happ://routing/add/…|json|-> [--name <name>] [--replace] [--set-mode]
+                                         a Happ routing profile as rules (happ-<name>-block,
+                                         -direct, -proxy, ahead of the configuration's);
+                                         --replace: again over an earlier import;
+                                         --set-mode: its GlobalProxy as the route mode
   proxy rules matches <name> add|rm <match...>
   proxy rules matches <name> set [match...]
                                          exactly these matches
@@ -122,11 +132,21 @@ Changes and secrets need root or the userControl group.
   proxy rules priority <name> <n>|up|down
                                          lower goes first; up/down moves past the next row
   proxy rules disable|enable|rm <name>
-  proxy subs [list|update]               subscriptions; update refetches them
-  proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
+  proxy subs [list|update] [--json]      subscriptions, their traffic and expiry; update
+                                         refetches them all now
+  proxy subs show <tag> [--json]         one subscription: what its server says of it
+                                         (title, traffic, expiry, announcement), when it is
+                                         refetched, how it is fetched
+  proxy subs add [tag] <url|-> [--ua <user-agent>]... [--device-info] [--interval <span>]
+                                         add a subscription (no tag: named after its host;
+                                         -: stdin); --ua: fetch with these, in turn until one
+                                         gets entries; --device-info: send the HWID and
+                                         system; --interval: refetch this often (default: as
+                                         its server asks); --fragment, --mux: as for outbounds
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
-  proxy rulesets [list|update]           rule sets and when they were fetched; update refetches
+  proxy rulesets [list|update]           rule sets and ASN address lists, and when they were
+                                         fetched; update refetches
   proxy config [--raw]                   client config to use elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode
@@ -848,6 +868,8 @@ COMPLETE = {
             "--detour": "chain it through another outbound",
             "--interface": "an AmneziaWG config on an interface of its own",
             "--userspace": "an AmneziaWG config in wireproxy",
+            "--fragment": "split its TLS ClientHello",
+            "--mux": "multiplex its connections: h2mux, smux or yamux",
         }
     },
     "proxy outbounds link": {
@@ -900,7 +922,8 @@ COMPLETE = {
     "proxy mode": {"args": lambda: {"default": f"config default ({_route_mode_default()})", **ROUTE_MODE_LABELS}},
     "proxy subs": {
         "words": {
-            "list": "subscription caches",
+            "list": "subscriptions, their traffic and expiry",
+            "show": "one subscription: what its server says of it",
             "update": "refetch the subscriptions",
             "add": "add a subscription at runtime: [tag] <url, or - for stdin>",
             "rm": "remove a runtime subscription",
@@ -912,6 +935,7 @@ COMPLETE = {
         "words": {
             "list": "the routing rules in the order they are checked",
             "add": "add a rule, or extend one: <target> <match...>",
+            "import": "a Happ routing profile (happ://routing/add/…) as rules",
             "matches": "add or remove a rule's domains, addresses and lists",
             "target": "where a rule sends what it matches",
             "priority": "where a rule is checked: a number, up or down",
@@ -929,6 +953,17 @@ COMPLETE = {
         for verb in ("matches", "target", "priority", "disable", "enable", "rm")
     },
     "proxy subs link": {"args": lambda: _names(_sub_tags() + _runtime_tags("subscription")), "flags": {"--qr": "print a QR code"}},
+    "proxy subs show": {"args": lambda: _names(_sub_tags() + _runtime_tags("subscription")), "flags": {"--json": "machine-readable"}},
+    "proxy subs list": {"flags": {"--json": "machine-readable"}},
+    "proxy subs add": {
+        "flags": {
+            "--ua": "a User-Agent to fetch with (several: tried in turn)",
+            "--device-info": "send the HWID and system",
+            "--interval": "refetch this often, e.g. 6h",
+            "--fragment": "split each entry's TLS ClientHello",
+            "--mux": "multiplex each entry's connections: h2mux, smux or yamux",
+        }
+    },
     "proxy subs rm": {"args": lambda: _names(_runtime_tags("subscription"))},
     "proxy tun": {"words": TOGGLE},
     "proxy tproxy": {"words": TOGGLE},
@@ -1516,7 +1551,8 @@ def cmd_outbounds(verb="list", *args):
                     die("Pick one of --interface and --userspace.")
                 awg_kind = flag[2:]
                 args.remove(flag)
-        _runtime_entry_add("outbound", *args, detour=detour, container=container, awg_kind=awg_kind)
+        tweaks = _tweak_flags(args, "proxy outbounds add [tag] <url|json|-> [--fragment] [--mux <h2mux|smux|yamux>]")
+        _runtime_entry_add("outbound", *args, detour=detour, container=container, awg_kind=awg_kind, tweaks=tweaks)
     elif verb == "chain":
         cmd_outbound_chain(*args)
     elif verb in ("rm", "remove", "del"):
@@ -2193,8 +2229,18 @@ def _config_export(*args, only=None):
         return
     if only is not None and only not in _outbound_tags():
         die(f"Unknown outbound: {only}")
+    def read_local(path):
+        # Only the ASN lists asn.nix writes, as root's start script named them.
+        if os.path.dirname(path) != env("ASN_DIR", f"{state_dir()}/asn"):
+            return None
+        try:
+            rules = read_json(path).get("rules")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return rules if isinstance(rules, list) else None
+
     try:
-        cfg, warnings = proxy_export.portable(cfg, only)
+        cfg, warnings = proxy_export.portable(cfg, only, read_local)
     except ValueError as e:
         # Why each outbound stayed behind, when that left none.
         for warning in getattr(e, "warnings", []):
@@ -3028,7 +3074,27 @@ def _unique_runtime_tag(kind, name, fallback):
     return tag
 
 
-def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
+MUX_PROTOCOLS = ("h2mux", "smux", "yamux")
+
+
+def _tweak_flags(args, shape):
+    """--fragment and --mux <protocol>, taken out of args: what a link cannot say
+    (proxy_parsing.checked_tweaks), or None for neither."""
+    tweaks = {}
+    if "--fragment" in args:
+        args.remove("--fragment")
+        tweaks["fragment"] = {}
+    if "--mux" in args:
+        i = args.index("--mux")
+        protocol = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        if protocol not in MUX_PROTOCOLS:
+            usage(shape)
+        tweaks["multiplex"] = {"protocol": protocol}
+    return tweaks or None
+
+
+def _runtime_entry_add(kind, *args, detour="", container="", awg_kind="", sub_options=None, tweaks=None):
     what = "<url|json|-> [--detour <tag>]" if kind == "outbound" else "<url|->"
     shape = f"proxy {_runtime_noun(kind)} add [tag] {what}"
     if len(args) == 1 and _runtime_source(kind, args[0]):
@@ -3053,6 +3119,8 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
     if kind == "outbound" and _awg_file(url):
         url = _awg_input(url)
     if kind == "outbound" and _awg_source(url):
+        if tweaks:
+            die("--fragment and --mux apply to a proxy link, not an AmneziaWG config.")
         _awg_outbound_add(tag, url, detour, container, awg_kind)
         return
     if container:
@@ -3072,6 +3140,8 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
         print(f"Tag: {tag} (none given; pass one first to choose it)")
     ext = ".url"
     if kind == "outbound" and url.lstrip().startswith("{"):
+        if tweaks:
+            die("--fragment and --mux apply to a proxy link; JSON says them itself.")
         url, ext = _runtime_json_outbound(url), ".json"
     elif re.search(r"\s", url.strip()):
         die("A URL cannot contain whitespace.")
@@ -3087,6 +3157,20 @@ def _runtime_entry_add(kind, *args, detour="", container="", awg_kind=""):
                 _spool_write(hop, f"{detour}\n")
             elif os.path.lexists(hop):
                 os.unlink(hop)  # left from an earlier entry of this name: it would chain this one too
+            if kind == "outbound":
+                # Its fragment and multiplex, which the start script hands the parser.
+                settings = os.path.join(_runtime_dir(kind), f"{tag}.tweaks")
+                if tweaks:
+                    _spool_write(settings, json.dumps(tweaks) + "\n", 0o644)
+                elif os.path.lexists(settings):
+                    os.unlink(settings)
+            if kind == "subscription":
+                # Its User-Agents, device info and interval; none of them a secret.
+                options = os.path.join(_runtime_dir(kind), tag + SUB_OPTIONS_EXT)
+                if sub_options:
+                    _spool_write(options, json.dumps(sub_options) + "\n", 0o644)
+                elif os.path.lexists(options):
+                    os.unlink(options)
             # Root's alone to read: the link (or JSON) holds the server's credentials, which
             # other members of the group need the "secrets" scope to see (`link`).
             _spool_write(path, f"{url}\n", 0o600)
@@ -3150,7 +3234,7 @@ def _runtime_entry_rm(kind, tag="", *_):
         try:
             os.unlink(path)
             # Its hop, and a disable left from it: a new entry of this name would inherit them.
-            for extra in (".detour", ".disabled", ".port", ".iface") if kind == "outbound" else ():
+            for extra in (".detour", ".disabled", ".port", ".iface", ".tweaks") if kind == "outbound" else (SUB_OPTIONS_EXT,):
                 if os.path.exists(os.path.join(_runtime_dir(kind), tag + extra)):
                     os.unlink(os.path.join(_runtime_dir(kind), tag + extra))
         except FileNotFoundError:
@@ -3306,44 +3390,288 @@ def _subscription_state(tag):
     return (st and st.st_mtime, str(count)) if st or count else None
 
 
-def _subscription_row(tag, source):
+# What a subscription's server last said of it (subscription_meta.py): the whole of it beside
+# the cache, for the "secrets" scope; what anyone may see in SUB_META_DIR.
+def _subscription_meta(tag):
+    for path in (
+        os.path.join(env("SUB_CACHE_DIR", f"{state_dir()}/subscriptions"), f"{tag}.meta.json"),
+        os.path.join(env("SUB_META_DIR", f"{state_dir()}/subscription-meta"), f"{tag}.json"),
+    ):
+        try:
+            meta = read_json(path)
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict):
+            return meta
+    return {}
+
+
+SUB_DEFAULT_USER_AGENT = "v2rayN/6.0"
+# A runtime subscription's settings, beside its URL: what `subs add` was given.
+SUB_OPTIONS_EXT = ".options"
+SUB_RUNTIME_MIN_INTERVAL = 3600
+SUB_MAX_USER_AGENTS = 5
+
+
+def _subscription_settings(tag):
+    """{userAgent, deviceInfo, intervalSeconds}: a declared subscription's from the config, a
+    runtime one's from its .options file; the defaults where neither says."""
+    settings = {"userAgent": [SUB_DEFAULT_USER_AGENT], "deviceInfo": False, "intervalSeconds": None}
+    declared = {}
+    try:
+        declared = (read_json(env("SUB_SETTINGS_FILE", "")) or {}).get("subscriptions") or {}
+    except (OSError, ValueError, AttributeError):
+        pass
+    given = declared.get(tag) if isinstance(declared, dict) else None
+    if not isinstance(given, dict):
+        try:
+            given = read_json(os.path.join(_runtime_dir("subscription"), tag + SUB_OPTIONS_EXT))
+        except (OSError, ValueError):
+            given = None
+    if isinstance(given, dict):
+        agents = [a for a in given.get("userAgent") or [] if isinstance(a, str) and a]
+        settings["userAgent"] = agents or settings["userAgent"]
+        settings["deviceInfo"] = given.get("deviceInfo") is True
+        if isinstance(given.get("intervalSeconds"), int):
+            settings["intervalSeconds"] = given["intervalSeconds"]
+    return settings
+
+
+def _subscription_default_interval():
+    try:
+        value = (read_json(env("SUB_SETTINGS_FILE", "")) or {}).get("defaultIntervalSeconds")
+    except (OSError, ValueError, AttributeError):
+        value = None
+    return value if isinstance(value, int) and value > 0 else 86400
+
+
+def _subscription_interval(settings, meta):
+    """(seconds between fetches, where that comes from), as the update script works it out."""
+    if settings.get("intervalSeconds"):
+        return settings["intervalSeconds"], "set"
+    hours = meta.get("updateIntervalHours")
+    if isinstance(hours, int) and hours >= 1:
+        return hours * 3600, "server"
+    return _subscription_default_interval(), "default"
+
+
+TIMESPAN_SECONDS = {
+    "s": 1, "sec": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hr": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+    "w": 604800, "week": 604800, "weeks": 604800,
+}
+
+
+def _timespan_seconds(text):
+    """Whole seconds in a span like "6h", "1d" or "1h 30min"; None when it is no such span."""
+    text = text.strip()
+    parts = re.findall(r"(\d+)\s*([a-zA-Z]*)", text)
+    if not parts or re.sub(r"\d+\s*[a-zA-Z]*", "", text).strip():
+        return None
+    total = 0
+    for number, unit in parts:
+        if (unit or "s") not in TIMESPAN_SECONDS:
+            return None
+        total += int(number) * TIMESPAN_SECONDS[unit or "s"]
+    return total
+
+
+def _span_text(seconds):
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size and seconds % size == 0:
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s"
+
+
+def _sub_traffic(meta):
+    used = sum(meta.get(k) or 0 for k in ("upload", "download") if isinstance(meta.get(k), int))
+    total = meta.get("total") if isinstance(meta.get("total"), int) else None
+    if not any(isinstance(meta.get(k), int) for k in ("upload", "download", "total")):
+        return "-"
+    return f"{_human_bytes(used)} / {_human_bytes(total) if total else 'unlimited'}"
+
+
+def _sub_expires(meta, now=None):
+    expire = meta.get("expire")
+    if not isinstance(expire, int):
+        return "-"
+    if expire == 0:
+        return "never"
+    now = int(time.time()) if now is None else now
+    day = f"{datetime.datetime.fromtimestamp(expire):%Y-%m-%d}"
+    left = expire - now
+    if left < 0:
+        return f"{day} (expired)"
+    return f"{day} (in {left // 86400}d)" if left >= 86400 else f"{day} (in {max(left // 3600, 0)}h)"
+
+
+def _subscription_view(tag, source):
+    """What `subs list` and `subs show` say of one subscription, and their --json."""
     state = _subscription_state(tag)
-    if state:
-        mtime, count = state
-        age = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S") if mtime else "unknown"
+    meta = _subscription_meta(tag)
+    settings = _subscription_settings(tag)
+    interval, interval_from = _subscription_interval(settings, meta)
+    fetched = meta.get("fetchedAt") if isinstance(meta.get("fetchedAt"), int) else None
+    mtime, count = state if state else (None, None)
+    view = {
+        "tag": tag,
+        "source": source,
+        "cached": bool(state),
+        "proxies": int(count) if isinstance(count, str) and count.isdigit() else None,
+        # When it was last fetched; a cache from before metadata says when it last changed.
+        "updated": fetched or (int(mtime) if mtime else None),
+        "nextFetch": (fetched + interval) if fetched else None,
+        "intervalSeconds": interval,
+        "intervalFrom": interval_from,
+        "userAgent": settings["userAgent"],
+        "deviceInfo": settings["deviceInfo"],
+        "server": {k: v for k, v in meta.items() if k not in ("fetchedAt", "userAgent", "deviceInfo", "hwid")},
+        "fetchedWith": meta.get("userAgent"),
+        # The HWID the last fetch sent: beside the cache only, for the "secrets" scope.
+        "hwid": meta.get("hwid") if isinstance(meta.get("hwid"), str) else None,
+    }
+    return view
+
+
+def _subscription_views():
+    views = [_subscription_view(t, "static") for t in _sub_tags()]
+    return views + [_subscription_view(t, "runtime") for t in _runtime_tags("subscription")]
+
+
+def _sub_count(view):
+    if view["proxies"] is not None:
+        return str(view["proxies"])
+    return "?" if view["cached"] else "-"
+
+
+def _subscription_row(view):
+    if view["updated"]:
+        age = datetime.datetime.fromtimestamp(view["updated"]).strftime("%Y-%m-%d %H:%M")
     else:
-        age = "(no cache)"
-        count = "-"
-    print(f"  {tag:<30} {age:<22} {count:<9} {source}")
+        age = "unknown" if view["cached"] else "(no cache)"
+    count = _sub_count(view)
+    server = view["server"]
+    print(
+        f"  {view['tag']:<30} {age:<17} {count:<8} {_sub_traffic(server):<24} {_sub_expires(server):<24} {view['source']}"
+    )
 
 
-def _subscription_list():
-    static = _sub_tags()
-    runtime = _runtime_tags("subscription")
+def _subscription_list(*args):
+    as_json = "--json" in args
+    if [a for a in args if a != "--json"]:
+        usage("proxy subs list [--json]")
     hidden = _runtime_hidden("subscription")
-    if not static and not runtime:
+    views = _subscription_views()
+    if as_json:
+        print(json.dumps(views, indent=2, ensure_ascii=False))
+        return
+    if not views:
         if hidden:
             denied(hidden)
         print("No subscriptions configured.")
         return
-    print(f"  {'TAG':<30} {'LAST UPDATED':<22} {'PROXIES':<9} SOURCE")
-    for tag in static:
-        _subscription_row(tag, "static")
-    for tag in runtime:
-        _subscription_row(tag, "runtime")
+    print(f"  {'TAG':<30} {'LAST UPDATED':<17} {'PROXIES':<8} {'TRAFFIC':<24} {'EXPIRES':<24} SOURCE")
+    for view in views:
+        _subscription_row(view)
     if hidden:
         print(f"  (runtime subscriptions are not listed: cannot read {hidden} - {ask_group()})")
     next_run = _timer_next_run(f"{SUBSCRIPTION_UPDATE}.timer")
     if next_run:
         print()
-        print(f"Next update: {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
+        print(f"Next check for updates: {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
+
+
+def _subscription_show(tag="", *args):
+    as_json = "--json" in args
+    if not tag or [a for a in args if a != "--json"]:
+        usage("proxy subs show <tag> [--json]")
+    view = next((v for v in _subscription_views() if v["tag"] == tag), None)
+    if view is None:
+        if _runtime_hidden("subscription"):
+            die(f"No subscription '{tag}' among the declared ones; runtime ones are hidden - {ask_group()}")
+        die(f"No subscription named '{tag}'. See: proxy-ctl proxy subs")
+    if as_json:
+        print(json.dumps(view, indent=2, ensure_ascii=False))
+        return
+    server = view["server"]
+    rows = [("Tag", tag), ("Source", view["source"])]
+    if server.get("title"):
+        rows.append(("Title", server["title"]))
+    rows.append(("Proxies", _sub_count(view)))
+    rows.append(("Traffic", _sub_traffic(server)))
+    rows.append(("Expires", _sub_expires(server)))
+    when = view["updated"]
+    rows.append(("Last updated", datetime.datetime.fromtimestamp(when).strftime("%Y-%m-%d %H:%M:%S") if when else "never"))
+    every = _span_text(view["intervalSeconds"])
+    every += {"set": " (set for it)", "server": " (as its server asks)", "default": " (the default)"}[view["intervalFrom"]]
+    rows.append(("Refetched every", every))
+    if view["nextFetch"]:
+        rows.append(("Next fetch", "at the next check" if view["nextFetch"] <= time.time() else
+                     datetime.datetime.fromtimestamp(view["nextFetch"]).strftime("%Y-%m-%d %H:%M")))
+    agents = view["userAgent"]
+    rows.append(("User-Agent", ", ".join(agents) + (f" (got it with {view['fetchedWith']})" if len(agents) > 1 and view["fetchedWith"] else "")))
+    if view["deviceInfo"]:
+        rows.append(("Device info", f"sent (HWID {view['hwid']}, system)" if view["hwid"] else "sent (HWID, system)"))
+    else:
+        rows.append(("Device info", "not sent"))
+    for key, label in (("supportUrl", "Support"), ("webPageUrl", "Web page")):
+        if server.get(key):
+            rows.append((label, server[key]))
+    width = max(len(label) for label, _ in rows)
+    for label, value in rows:
+        print(f"{label + ':':<{width + 1}} {value}")
+    if server.get("announce"):
+        print()
+        print("Announcement:")
+        for line in server["announce"].splitlines():
+            print(f"  {line}")
+
+
+def _subscription_add(*args):
+    """`subs add [tag] <url|-> [--ua <ua>]... [--device-info] [--interval <span>]`."""
+    args = list(args)
+    shape = ("proxy subs add [tag] <url|-> [--ua <user-agent>]... [--device-info] [--interval <span>]"
+             " [--fragment] [--mux <h2mux|smux|yamux>]")
+    agents, device, interval = [], False, None
+    tweaks = _tweak_flags(args, shape) or {}
+    while "--ua" in args:
+        i = args.index("--ua")
+        value = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        if not re.fullmatch(r"[ -~]{1,256}", value):
+            die("--ua takes a User-Agent of printable ASCII, 256 characters at most.")
+        agents.append(value)
+    if len(agents) > SUB_MAX_USER_AGENTS:
+        die(f"At most {SUB_MAX_USER_AGENTS} User-Agents.")
+    if "--device-info" in args:
+        args.remove("--device-info")
+        device = True
+    if "--interval" in args:
+        i = args.index("--interval")
+        value = args[i + 1] if i + 1 < len(args) else ""
+        del args[i : i + 2]
+        interval = _timespan_seconds(value) if value else None
+        if interval is None:
+            usage(shape)
+        if interval < SUB_RUNTIME_MIN_INTERVAL:
+            die("--interval is an hour or more.")
+    if any(a.startswith("--") for a in args):
+        usage(shape)
+    options = None
+    if agents or device or interval or tweaks:
+        options = {"userAgent": agents, "deviceInfo": device, "intervalSeconds": interval, **tweaks}
+    _runtime_entry_add("subscription", *args, sub_options=options)
 
 
 def cmd_subscription(verb="list", *args):
     if verb == "list":
-        _subscription_list()
+        _subscription_list(*args)
+    elif verb == "show":
+        _subscription_show(*args)
     elif verb == "add":
-        _runtime_entry_add("subscription", *args)
+        _subscription_add(*args)
     elif verb in ("rm", "remove", "del"):
         _runtime_entry_rm("subscription", *args)
     elif verb == "link":
@@ -3354,24 +3682,53 @@ def cmd_subscription(verb="list", *args):
         must("start", "proxy-suite-subscription-update")
         print("Subscription update triggered. Follow with: proxy-ctl logs proxy-suite-subscription-update")
     else:
-        usage("proxy subs [list|update|add [tag] <url|->|rm <tag>|link <tag>]")
+        usage("proxy subs [list|show <tag>|update|add [tag] <url|->|rm <tag>|link <tag>]")
 
 
 RULE_SETS_UNIT = "proxy-suite-rulesets"
 
 
+ASN_UNIT = "proxy-suite-asn"
+
+
+def _asn_lists():
+    """[(number, its .meta or {}, the list's mtime or None)] for every list asn.nix fetched or
+    a start made: the systems the configuration and the runtime rules route by."""
+    directory = env("ASN_DIR", f"{state_dir()}/asn")
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        match = re.fullmatch(r"asn-([0-9]+)\.json", name)
+        if not match:
+            continue
+        try:
+            mtime = os.stat(os.path.join(directory, name)).st_mtime
+        except OSError:
+            mtime = None
+        meta = read_json_or(os.path.join(directory, f"asn-{match.group(1)}.meta"), {})
+        out.append((int(match.group(1)), meta if isinstance(meta, dict) else {}, mtime))
+    return sorted(out)
+
+
 def cmd_rulesets(verb="list", *_):
     rule_sets = read_json_or(env("RULE_SETS_FILE"), [])
+    asns = _asn_lists()
     if verb == "update":
-        if not rule_sets or not svc_exists(RULE_SETS_UNIT):
+        units = [u for u in ((RULE_SETS_UNIT if rule_sets else None), ASN_UNIT) if u and svc_exists(u)]
+        if not units:
             die("No proxy.routing.ruleSets in this configuration.")
-        # A oneshot: this returns once every rule set was tried.
-        status, _ = systemctl("start", RULE_SETS_UNIT)
-        print("Rule sets updated." if status == 0 else f"Some rule sets were not updated: {journal_hint(RULE_SETS_UNIT, 20)}")
-        sys.exit(status)
+        # Oneshots: this returns once every rule set and address list was tried.
+        failed = [u for u in units if systemctl("start", u)[0] != 0]
+        if failed:
+            print(f"Some were not updated: {'; '.join(journal_hint(u, 20) for u in failed)}")
+            sys.exit(1)
+        print("Rule sets and autonomous systems' address lists updated.")
     elif verb == "list":
-        if not rule_sets:
-            print("No rule sets configured.")
+        if not rule_sets and not asns:
+            print("No rule sets or ASNs configured.")
             return
         print(f"  {'NAME':<24} {'LAST UPDATED':<22} SIZE")
         for rs in rule_sets:
@@ -3382,10 +3739,18 @@ def cmd_rulesets(verb="list", *_):
                 continue
             updated = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
             print(f"  {rs['name']:<24} {updated:<22} {stat.st_size}")
-        next_run = _timer_next_run(f"{RULE_SETS_UNIT}.timer")
-        if next_run:
-            print()
-            print(f"Next update: {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
+        for number, meta, _mtime in asns:
+            fetched = meta.get("fetchedAt") if isinstance(meta.get("fetchedAt"), int) else None
+            updated = datetime.datetime.fromtimestamp(fetched).strftime("%Y-%m-%d %H:%M:%S") if fetched else "(not yet)"
+            who = " ".join(str(meta.get(k)) for k in ("handle", "description") if meta.get(k))
+            size = f"{meta['prefixes']} prefixes" if isinstance(meta.get("prefixes"), int) else "-"
+            print(f"  {'asn:' + str(number):<24} {updated:<22} {size}{'  ' + who if who else ''}")
+        for unit in (RULE_SETS_UNIT, ASN_UNIT):
+            next_run = _timer_next_run(f"{unit}.timer")
+            if next_run:
+                print()
+                print(f"Next update ({unit}): {datetime.datetime.fromtimestamp(next_run):%H:%M:%S}, {_in_time(next_run)}")
+                break
     else:
         usage("proxy rulesets [list|update]")
 
@@ -3403,10 +3768,22 @@ def cmd_rulesets(verb="list", *_):
 ROUTING_APPLY_UNIT = "proxy-suite-routing-apply"
 RULE_DEFAULT_PRIORITY = 50
 RULE_PRIORITY_LIMIT = 1_000_000
-RULE_MATCH_KINDS = ("domains", "ips", "geosites", "geoips", "ruleSets")
+RULE_MATCH_KINDS = ("domains", "fullDomains", "keywords", "regexps", "ips", "geosites", "geoips", "ruleSets", "asns")
 # What a match spells, as `rules add` takes it and `rules list` prints it back.
 RULE_MATCH_PREFIXES = {"geosite:": "geosites", "geoip:": "geoips", "ruleset:": "ruleSets"}
-RULE_MATCH_SPELLING = {"domains": "", "ips": "", "geosites": "geosite:", "geoips": "geoip:", "ruleSets": "ruleset:"}
+RULE_MATCH_SPELLING = {
+    "domains": "", "fullDomains": "full:", "keywords": "keyword:", "regexps": "regexp:",
+    "ips": "", "geosites": "geosite:", "geoips": "geoip:", "ruleSets": "ruleset:", "asns": "asn:",
+}
+# As XRay spells them, which Happ's profiles do too: the name alone, a part of it, a pattern.
+RULE_KEYWORD = re.compile(r"[a-z0-9_.-]{1,64}")
+RULE_REGEX_MAX = 256
+# What Go's regexp (RE2), which both backends use, has no notion of: lookaround, backreferences,
+# atomic and possessive groups, conditionals, comments. One of them would fail the start.
+RULE_REGEX_UNSUPPORTED = re.compile(r"\(\?[=!<>(#PCRk]|\\[1-9kgG]|[*+?}]\+")
+# An autonomous system: asn:62041, or AS62041 as whois writes it. A number, as routing-render.jq keeps.
+RULE_ASN = re.compile(r"(?:asn:|as)([0-9]{1,10})", re.IGNORECASE)
+ASN_MAX = 4294967295
 RULE_DOMAIN = re.compile(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*")
 RULE_GEO = re.compile(r"[A-Za-z0-9!@._-]{1,64}")
 RULE_TARGETS = ("proxy", "direct", "block")
@@ -3448,8 +3825,11 @@ def _rule_normal(rule):
         "disabled": rule.get("disabled") is True,
     }
     for kind in RULE_MATCH_KINDS:
-        values = rule.get(kind)
-        out[kind] = [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
+        values = rule.get(kind) if isinstance(rule.get(kind), list) else []
+        if kind == "asns":
+            out[kind] = [v for v in values if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= ASN_MAX]
+        else:
+            out[kind] = [v for v in values if isinstance(v, str)]
     return out
 
 
@@ -3599,6 +3979,33 @@ def _rule_match(word, known=True):
             if known and directory and os.path.isdir(directory) and not os.path.exists(os.path.join(directory, f"{prefix[:-1]}-{name}.srs")):
                 die(f"No {prefix[:-1]} named '{name}' in this host's geodata.")
             return kind, name
+    for prefix, kind in (("domain:", "domains"), ("full:", "fullDomains")):
+        if word.lower().startswith(prefix):
+            host = word[len(prefix) :].lower().lstrip(".")
+            if not (RULE_DOMAIN.fullmatch(host) and len(host) <= 253):
+                die(f"Not a domain: {word}")
+            return kind, host
+    if word.lower().startswith("keyword:"):
+        keyword = word[len("keyword:") :].lower()
+        if not RULE_KEYWORD.fullmatch(keyword):
+            die(f"A keyword is letters, digits, '.', '_' or '-', 64 at most: {word}")
+        return "keywords", keyword
+    if word.lower().startswith("regexp:"):
+        pattern = word[len("regexp:") :]
+        try:
+            re.compile(pattern)
+            valid = 1 <= len(pattern) <= RULE_REGEX_MAX and not RULE_REGEX_UNSUPPORTED.search(pattern)
+            valid = valid and not re.search(r"[\x00-\x1f\x7f]", pattern)
+        except re.error:
+            valid = False
+        if not valid:
+            die(f"Not a pattern both backends take (RE2: no lookaround or backreferences, {RULE_REGEX_MAX} characters at most): {word}")
+        return "regexps", pattern
+    if asn := RULE_ASN.fullmatch(word):
+        number = int(asn.group(1))
+        if not 1 <= number <= ASN_MAX:
+            die(f"Not an autonomous system number: {word}")
+        return "asns", number
     host = word
     if "://" in word:
         # The host alone: no user@ or :port, and an IPv6 address out of its brackets.
@@ -3619,7 +4026,7 @@ def _rule_match(word, known=True):
     host = host.lower().lstrip(".")
     if RULE_DOMAIN.fullmatch(host) and len(host) <= 253:
         return "domains", host
-    die(f"Not a domain, an address, or geosite:, geoip: or ruleset: something: {word}")
+    die(f"Not a domain, an address, an ASN (asn:62041), or geosite:, geoip: or ruleset: something: {word}")
 
 
 def _rule_check_target(target):
@@ -3720,6 +4127,8 @@ def cmd_rules(verb="list", *args):
         _rules_list()
     elif verb == "add":
         _rules_add(*args)
+    elif verb == "import":
+        _rules_import(*args)
     elif verb == "matches" and (len(args) >= 3 and args[1] in ("add", "rm") or len(args) >= 2 and args[1] == "set"):
         _rules_matches(*args)
     elif verb == "target" and len(args) == 2:
@@ -3758,9 +4167,129 @@ def cmd_rules(verb="list", *args):
     else:
         usage(
             "proxy rules [list] | add <target> <match...> [--name <name>] [--priority <n>]"
+            " | import <happ://routing/add/…|json|-> [--name <name>] [--replace] [--set-mode]"
             " | matches <name> add|rm <match...> | matches <name> set [match...] | target <name> <target>"
             " | priority <name> <n>|up|down | disable|enable <name> | rm <name>"
         )
+
+
+# A Happ routing profile: happ://routing/add/<base64url JSON> (or onadd, or routing://…), or the
+# JSON itself. Its lists become runtime rules, one per target; what else it says is Happ's own.
+HAPP_ROUTING_LINK = re.compile(r"(?i)^(?:happ://routing/(?:on)?add/|routing://routing/(?:on)?add/|routing://(?:on)?add/|routing://)(.+)$")
+HAPP_BUCKETS = {"block": ("blocksites", "blockip"), "direct": ("directsites", "directip"), "proxy": ("proxysites", "proxyip")}
+HAPP_IGNORED = ("dnshosts", "domainstrategy", "fakedns", "geoipurl", "geositeurl", "remotednstype", "remotednsdomain",
+                "remotednsip", "domesticdnstype", "domesticdnsdomain", "domesticdnsip")
+HAPP_PROFILE_MAX = 1024 * 1024
+
+
+def _happ_profile(text):
+    """The profile's fields, their names lowercased: from a link or from the JSON."""
+    text = text.strip()
+    if len(text) > HAPP_PROFILE_MAX:
+        die("That routing profile is larger than a megabyte.")
+    if not text.startswith("{"):
+        link = HAPP_ROUTING_LINK.match(text)
+        if not link:
+            die("Not a Happ routing profile: give a happ://routing/add/… link or its JSON.")
+        payload = re.split(r"[?#]", link.group(1), maxsplit=1)[0].strip()
+        try:
+            payload = urllib.parse.unquote(payload)
+            text = base64.urlsafe_b64decode(payload.translate(str.maketrans("+/", "-_")) + "=" * (-len(payload) % 4)).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            die("The routing profile in that link is not base64-encoded JSON.")
+    try:
+        profile = json.loads(text)
+    except ValueError:
+        die("The routing profile is not valid JSON.")
+    if not isinstance(profile, dict):
+        die("The routing profile is not a JSON object.")
+    return {str(k).lower(): v for k, v in profile.items()}
+
+
+def _rule_match_or_none(word):
+    """_rule_match, but None and the reason for what it refuses, rather than the end of the run."""
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            return _rule_match(word), ""
+    except SystemExit:
+        return None, err.getvalue().strip()
+
+
+def _rules_import(*args):
+    shape = "proxy rules import <happ://routing/add/…|json|-> [--name <name>] [--replace] [--set-mode]"
+    rest, name, replace, set_mode = list(args), None, False, False
+    words = []
+    while rest:
+        word = rest.pop(0)
+        if word == "--name":
+            if not rest:
+                usage(shape)
+            name = rest.pop(0)
+        elif word == "--replace":
+            replace = True
+        elif word == "--set-mode":
+            set_mode = True
+        else:
+            words.append(word)
+    if len(words) != 1:
+        usage(shape)
+    source = sys.stdin.read() if words[0] == "-" else words[0]
+    profile = _happ_profile(source)
+    base = name or re.sub(r"[^A-Za-z0-9._-]+", "-", str(profile.get("name") or "")).strip("-.")[:40].lower() or "happ"
+    if not _rule_name_ok(f"happ-{base}-direct"):
+        die(f"'{base}' cannot name the imported rules; give one with --name.")
+    order = str(profile.get("routeorder") or "block-direct-proxy").lower().split("-")
+    if sorted(order) != sorted(HAPP_BUCKETS):
+        print(f"RouteOrder {profile.get('routeorder')!r} is none Happ knows; block, direct, proxy instead.", file=sys.stderr)
+        order = ["block", "direct", "proxy"]
+
+    imported, skipped = [], []
+    for position, target in enumerate(order):
+        matches = []
+        for field in HAPP_BUCKETS[target]:
+            values = profile.get(field) or []
+            for value in values if isinstance(values, list) else [values]:
+                word = str(value).strip()
+                if not word or word.startswith("#"):
+                    continue
+                match, why = _rule_match_or_none(word)
+                if match is None:
+                    skipped.append(f"{word}: {why or 'not something proxy-suite can match'}")
+                elif match not in matches:
+                    matches.append(match)
+        if matches:
+            rule = {"name": f"happ-{base}-{target}", "target": target, "priority": 10 * (position + 1), "disabled": False}
+            rule.update({kind: [] for kind in RULE_MATCH_KINDS})
+            _rule_add_matches(rule, matches)
+            imported.append(rule)
+    if not imported:
+        die("Nothing in that profile can be matched here." + (f" Left out: {'; '.join(skipped[:5])}" if skipped else ""))
+
+    def change(rules):
+        names = {f"happ-{base}-{t}" for t in HAPP_BUCKETS}
+        present = [r["name"] for r in rules if r["name"] in names]
+        if present and not replace:
+            die(f"Imported before as {', '.join(present)}: add --replace to import it again, or --name for another.")
+        rules[:] = [r for r in rules if r["name"] not in names] + imported
+        counts = ", ".join(f"{r['name']} ({sum(len(r[k]) for k in RULE_MATCH_KINDS)}, priority {r['priority']})" for r in imported)
+        return f"Imported routing rules: {counts}"
+
+    _rules_edit(change)
+    for item in skipped[:20]:
+        print(f"  left out {item}", file=sys.stderr)
+    if len(skipped) > 20:
+        print(f"  … and {len(skipped) - 20} more left out", file=sys.stderr)
+    ignored = [key for key in HAPP_IGNORED if profile.get(key) not in (None, "", [], {})]
+    if ignored:
+        print(f"Not applied, Happ's own: {', '.join(ignored)} (DNS and the rest follow this host's settings).", file=sys.stderr)
+    if "globalproxy" in profile:
+        mode = "blacklist" if str(profile["globalproxy"]).lower() in ("true", "1") else "whitelist"
+        if set_mode:
+            cmd_route_mode(mode)
+        else:
+            print(f"The profile proxies {'everything else' if mode == 'blacklist' else 'nothing else'}: "
+                  f"proxy-ctl proxy mode {mode} does the same here (or import with --set-mode).")
 
 
 def _rules_add(*args):

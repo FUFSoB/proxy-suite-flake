@@ -56,6 +56,20 @@ let
     }
   ) proxyCfg.routing.ruleSets;
   ruleSetsEnabled = proxyEnabled && ruleSets != [ ];
+  # Every autonomous system the configuration routes by (proxy.routing's buckets, its rules and
+  # the outbounds' own routing). Runtime rules add theirs at start (routing-runtime.nix).
+  declaredAsns = lib.unique (
+    lib.concatMap (bucket: proxyCfg.routing.${bucket}.asns) [
+      "proxy"
+      "direct"
+      "block"
+    ]
+    ++ lib.concatMap (rule: rule.asns) proxyCfg.routing.rules
+    ++ lib.concatMap (ob: ob.routing.asns) proxyCfg.outbounds
+  );
+  # An ASN's address list, as a sing-box source rule set (asn.nix fetches them).
+  asnTag = n: "asn-${toString n}";
+  asnPath = n: "${constants.asnDir}/asn-${toString n}.json";
   # Some global tunnel for it to guard.
   killSwitchEnabled =
     cfg.killSwitch.enable
@@ -133,6 +147,10 @@ let
         stateSubdir
         ;
       endpoint = if device.endpoint != null then device.endpoint else cfg.warp.endpoint;
+      # Tried in turn, after the profile's own, when the tunnel stops answering: none when an
+      # endpoint is pinned.
+      endpointCandidates =
+        if device.endpoint != null || cfg.warp.endpoint != null then [ ] else cfg.warp.endpoints;
       # Without a configFile, its registration unit registers with wgcf into its state dir.
       autoRegister = cfg.warp.enable && configFile == null;
       profilePath =
@@ -1266,6 +1284,8 @@ let
     fakeIpCacheDir = "${stateDir}/fakeip";
     # Downloaded proxy.routing.ruleSets, one file each, written by the service user.
     ruleSetsDir = "${stateDir}/rulesets";
+    # Autonomous systems' address lists, asn-<n>.json, written by the service user (asn.nix).
+    asnDir = "${stateDir}/asn";
     # Loopback listener behind the selector `proxy-ctl proxy outbounds test` switches.
     outboundTestPort = 18537;
     inboundStatsFile = "${stateDir}/inbound-stats.json";
@@ -1356,6 +1376,9 @@ in
     killSwitchDirectFallbacks
     ruleSets
     ruleSetsEnabled
+    declaredAsns
+    asnTag
+    asnPath
     perAppRoutingTun
     perAppRoutingTproxy
     zapretCfg

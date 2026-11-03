@@ -91,6 +91,12 @@ let
             }
           ]
         )
+        # proxy.dns.browserDoh: Firefox's canary. With no address, it leaves its own DNS off.
+        ++ lib.optional (proxyCfg.dns.browserDoh != "allow") {
+          domain = [ "use-application-dns.net" ];
+          action = "predefined";
+          rcode = "NXDOMAIN";
+        }
         ++ rules.singBoxDnsRules
         # Only what apps ask through the TUN: the XRay sidecar's and sing-box's own lookups
         # need real addresses.
@@ -283,7 +289,8 @@ let
 
           route = {
             default_domain_resolver = "local";
-            rule_set = rules.geositeRuleSets ++ rules.geoIPRuleSets ++ rules.remoteRuleSets;
+            rule_set =
+              rules.geositeRuleSets ++ rules.geoIPRuleSets ++ rules.asnRuleSets ++ rules.remoteRuleSets;
             # The pins go after the common hijack-dns and sniff rules, wherever the backend
             # filter finds those.
             rules =

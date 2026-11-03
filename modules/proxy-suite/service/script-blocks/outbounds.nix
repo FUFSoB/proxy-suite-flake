@@ -474,9 +474,18 @@ let
       in
       ''
         # outbound: ${oneLine tag}
-        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static || exit 1
+        ${tweaksPrefix ob}_proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static || exit 1
         ${mkShadowTlsBlock ob tag}
       '';
+
+  # An outbound's fragment and multiplex (proxy_parsing.checked_tweaks), for the parser in that
+  # one call's environment.
+  tweaksPrefix =
+    ob:
+    lib.optionalString (ob.fragment != null || ob.multiplex != null)
+      "PROXY_SUITE_OUTBOUND_TWEAKS=${
+        lib.escapeShellArg (builtins.toJSON { inherit (ob) fragment multiplex; })
+      } ";
 
   singBoxRawOutboundJson =
     ob: tag: routingMark:
@@ -520,7 +529,7 @@ let
       in
       ''
         # outbound: ${oneLine tag} (hybrid ${pref})
-        _proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static ${pref} || exit 1
+        ${tweaksPrefix ob}_proxy_suite_add_url_outbound ${lib.escapeShellArg tag} "$(cat ${lib.escapeShellArg urlSource})" static ${pref} || exit 1
         ${mkShadowTlsBlock ob tag}
       '';
 
@@ -748,7 +757,10 @@ let
           _proxy_suite_add_socks_hop "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.port" 2>/dev/null | head -n 1)" runtime
           ${lib.optionalString awgRuntimeIfaceOutbounds "fi"}
           ;;
-        *) _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "$RUNTIME_OB_SRC")" runtime ;;
+        # Its fragment and multiplex, from <tag>.tweaks (`outbounds add --fragment --mux`): the
+        # parser checks them, as the spool is group-writable.
+        *) PROXY_SUITE_OUTBOUND_TWEAKS=$(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.tweaks" 2>/dev/null || true) \
+             _proxy_suite_add_url_outbound "$RUNTIME_OB_TAG" "$(_proxy_suite_read_source "$RUNTIME_OB_SRC")" runtime ;;
       esac || { echo "proxy-suite: warning: ignoring runtime outbound '$RUNTIME_OB_TAG'" >&2; continue; }
       if [ -s "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour" ]; then
         RUNTIME_DETOURS_JSON=$(${jq} -c --arg t "$RUNTIME_OB_TAG" --rawfile h <(_proxy_suite_read_source "${runtimeOutboundsDir}/$RUNTIME_OB_TAG.detour") \

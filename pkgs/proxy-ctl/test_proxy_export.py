@@ -132,6 +132,25 @@ class SingBoxTest(unittest.TestCase):
               "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs"}],
         )
 
+    def test_extra_geoip_and_asn_lists(self):
+        base = sing_box_config()
+        base["route"]["rule_set"] += [
+            {"type": "local", "tag": "geoip-telegram", "format": "binary",
+             "path": "/nix/store/x-sing-geoip-extended/share/sing-box/rule-set/geoip-telegram.srs"},
+            {"type": "local", "tag": "asn-62041", "format": "source", "path": "/var/lib/proxy-suite/asn/asn-62041.json"},
+        ]
+        base["route"]["rules"].insert(3, {"rule_set": ["geoip-telegram", "asn-62041"], "outbound": "proxy"})
+        lists = {"/var/lib/proxy-suite/asn/asn-62041.json": [{"ip_cidr": ["91.108.4.0/22"]}]}
+        route = export.portable(base, read_local=lists.get)[0]["route"]
+        sets = {rs["tag"]: rs for rs in route["rule_set"]}
+        self.assertEqual(sets["geoip-telegram"]["url"], "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs")
+        self.assertEqual(sets["asn-62041"], {"type": "inline", "tag": "asn-62041", "rules": [{"ip_cidr": ["91.108.4.0/22"]}]})
+        self.assertIn({"rule_set": ["geoip-telegram", "asn-62041"], "outbound": "proxy"}, route["rules"])
+        # Without the list to read, the rule goes with it, as any local one's.
+        route = export.portable(base)[0]["route"]
+        self.assertNotIn("asn-62041", [rs["tag"] for rs in route["rule_set"]])
+        self.assertFalse(any("asn-62041" in (r.get("rule_set") or []) for r in route["rules"]))
+
     def test_one_server(self):
         cfg, _ = export.portable(sing_box_config(), only="sub-de")
         self.assertEqual([o["tag"] for o in cfg["outbounds"]], ["sub-de", "proxy", "direct", "block"])
@@ -305,6 +324,26 @@ class SingBoxTest(unittest.TestCase):
 
 
 class XrayTest(unittest.TestCase):
+    def test_fragment_hop_goes_along(self):
+        # An outbound with `fragment` dials through a freedom of its own (xray-fragment-hops.jq):
+        # a client needs both, the hop without this host's mark.
+        base = xray_config()
+        base["outbounds"][1]["streamSettings"] = {"sockopt": {"dialerProxy": "proxy-suite-fragment-proxy-suite-ob-de"}}
+        base["outbounds"].append({"protocol": "freedom", "tag": "proxy-suite-fragment-proxy-suite-ob-de",
+                                  "settings": {"fragment": {"packets": "tlshello", "length": "50-100", "interval": "10-20"}},
+                                  "streamSettings": {"sockopt": {"mark": 1}}})
+        for only in (None, "de"):
+            with self.subTest(only=only):
+                cfg, _ = export.portable(base, only)
+                obs = {o["tag"]: o for o in cfg["outbounds"]}
+                hop = obs["proxy-suite-ob-de"]["streamSettings"]["sockopt"]["dialerProxy"]
+                self.assertIn(hop, obs)
+                self.assertEqual(obs[hop]["settings"]["fragment"]["packets"], "tlshello")
+                self.assertEqual(obs[hop]["streamSettings"]["sockopt"], {})
+                # Not one of the balancer's members: a direct exit by another name.
+                for balancer in cfg["routing"].get("balancers") or []:
+                    self.assertFalse(any(hop.startswith(p) for p in balancer["selector"]))
+
     def test_host_parts_leave(self):
         cfg, warnings = export.portable(xray_config())
         self.assertEqual([i["tag"] for i in cfg["inbounds"]], ["mixed-in", "http-in"])

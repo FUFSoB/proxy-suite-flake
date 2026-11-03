@@ -11,6 +11,10 @@
   ruleSets,
   proxyInboundsLoopback,
   hopPorts,
+  declaredAsns,
+  asnTag,
+  asnPath,
+  browserDoh,
 }:
 
 let
@@ -32,10 +36,23 @@ let
       (mkRulesetRule rule.outbound (map (s: "geosite-${s}") rule.geosites))
       (mkRulesetRule rule.outbound (map (s: "geoip-${s}") rule.geoips))
       (mkRulesetRule rule.outbound (map remoteTag rule.ruleSets))
+      (mkRulesetRule rule.outbound (map asnTag (rule.asns or [ ])))
     ];
 
+  # proxy.dns.browserDoh "block": what the TUN and TProxy pass to a DNS over HTTPS server.
+  dohBlockRules = lib.optional (browserDoh == "block") {
+    inbound = [
+      "tun-in"
+      "tproxy-in"
+      "tproxy-in6"
+    ];
+    rule_set = [ "geosite-category-doh" ];
+    outbound = "block";
+  };
+
   allGeositeNames = lib.unique (
-    r.proxy.geosites
+    lib.optional (browserDoh == "block") "category-doh"
+    ++ r.proxy.geosites
     ++ direct.geosites
     ++ r.block.geosites
     ++ lib.concatMap (rule: rule.geosites) customRules
@@ -57,6 +74,14 @@ let
 
   # Downloaded at runtime; sing-box reloads a local rule set when its file changes.
   # DNS rules read each one's domain-only copy (see derived.ruleSets).
+  # An autonomous system's address list (asn.nix), reloaded as it changes like the others.
+  asnRuleSets = map (n: {
+    tag = asnTag n;
+    type = "local";
+    format = "source";
+    path = asnPath n;
+  }) declaredAsns;
+
   remoteTag = name: "ruleset-${name}";
   remoteDnsTag = name: "ruleset-${name}-dns";
   remoteRuleSets = lib.concatMap (rs: [
@@ -123,6 +148,7 @@ let
     (mkRulesetRule "direct" (map (s: "geosite-${s}") direct.geosites))
     (mkRulesetRule "direct" (map (s: "geoip-${s}") direct.geoips))
     (mkRulesetRule "direct" (map remoteTag r.direct.ruleSets))
+    (mkRulesetRule "direct" (map asnTag r.direct.asns))
   ];
 
   tgWsProxyRelayDirectRules =
@@ -147,12 +173,15 @@ let
     (mkRulesetRule "block" (map (s: "geosite-${s}") r.block.geosites))
     (mkRulesetRule "block" (map (s: "geoip-${s}") r.block.geoips))
     (mkRulesetRule "block" (map remoteTag r.block.ruleSets))
+    (mkRulesetRule "block" (map asnTag r.block.asns))
+    dohBlockRules
   ];
 
   proxyGeoRules = lib.flatten [
     (mkRulesetRule "proxy" (map (s: "geosite-${s}") r.proxy.geosites))
     (mkRulesetRule "proxy" (map (s: "geoip-${s}") r.proxy.geoips))
     (mkRulesetRule "proxy" (map remoteTag r.proxy.ruleSets))
+    (mkRulesetRule "proxy" (map asnTag r.proxy.asns))
   ];
 
   # Block ahead of the direct lists (category-ru's ad domains are in category-ads-all too);
@@ -217,6 +246,7 @@ in
   inherit
     geositeRuleSets
     geoIPRuleSets
+    asnRuleSets
     remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules

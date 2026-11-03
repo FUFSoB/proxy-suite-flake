@@ -6,8 +6,9 @@
 # $backend: sing-box or xray. $tags (slurped): every outbound tag the config will have.
 # $rule_sets: the declared routing.ruleSets. $missing_geo (slurped): geosite-X/geoip-X with no
 # .srs. $dir: where the
-# rendered rule sets are. $geosite_dir/$geoip_dir: sing-box's geodata. $urltest: pure XRay's
-# urltest, which prefixes every outbound and balances "proxy".
+# rendered rule sets are. $geosite_dir/$geoip_dir: sing-box's geodata. $asn_dir: the
+# autonomous systems' address lists (asn.nix). $urltest: pure XRay's urltest, which prefixes
+# every outbound and balances "proxy".
 def builtin: . == "proxy" or . == "direct" or . == "block";
 def category: if . == "direct" then "direct" elif . == "block" then "block" else "proxy" end;
 def backend_tag: if $backend == "xray" and $urltest and (builtin | not) then "proxy-suite-ob-" + . else . end;
@@ -37,15 +38,18 @@ def why:
         if $backend == "xray" then
           # XRay takes a ruleTag once.
           ({type: "field"} + (.target | xray_target)) as $base
-          | ([.domains[] | "domain:" + .] + [.geosites[] | "geosite:" + .]) as $domain
-          | (.ips + [.geoips[] | "geoip:" + .]) as $ip
+          | ([.domains[] | "domain:" + .] + [(.fullDomains // [])[] | "full:" + .]
+             + [(.keywords // [])[] | "keyword:" + .] + [(.regexps // [])[] | "regexp:" + .]
+             + [.geosites[] | "geosite:" + .]) as $domain
+          # asn:N goes in as it is: the start script puts the system's addresses in its place.
+          | (.ips + [.geoips[] | "geoip:" + .] + [(.asns // [])[] | "asn:" + tostring]) as $ip
           | (if $domain != [] then [$base + {ruleTag: ("user:" + $r.name), domain: $domain}] else [] end)
             + (if $ip != [] then [$base + {ruleTag: ("user:" + $r.name + ":ip"), ip: $ip}] else [] end)
         else
           # Always, its own rule set first even while empty: matches added later reach sing-box
           # by the file alone, no restart. The guards find a runtime rule by that first tag.
           [{rule_set: (["user:" + .name] + [.geosites[] | "geosite-" + .] + [.geoips[] | "geoip-" + .]
-                       + [.ruleSets[] | "ruleset-" + .]),
+                       + [.ruleSets[] | "ruleset-" + .] + [(.asns // [])[] | "asn-" + tostring]),
             outbound: .target}]
         end),
       # As the configuration's lookups follow its routing (rules/sing-box.nix): names only.
@@ -63,5 +67,7 @@ def why:
                  local_set("user-dns:" + .name; $dir + "/dns/" + .name + ".json"; "source")]
         + ([$ok[].geosites[]] | unique | map(local_set("geosite-" + .; $geosite_dir + "/geosite-" + . + ".srs"; "binary")))
         + ([$ok[].geoips[]] | unique | map(local_set("geoip-" + .; $geoip_dir + "/geoip-" + . + ".srs"; "binary")))
+        + ([$ok[] | (.asns // [])[]] | unique
+           | map(tostring | local_set("asn-" + .; $asn_dir + "/asn-" + . + ".json"; "source")))
       end)
   }

@@ -3,11 +3,13 @@
 let
   inherit (lib)
     literalExpression
+    literalMD
     mkEnableOption
     mkOption
     types
     ;
   inherit (import ./lib.nix { inherit lib; }) endpoint;
+  inherit (import ./types/amnezia-wg.nix { inherit lib; }) obfuscationType;
 in
 {
   options.services.proxy-suite.warp = {
@@ -45,6 +47,30 @@ in
       host:port (IPv6 in brackets) to use instead of the profile's endpoint, if the default one
       is blocked: another Cloudflare address, another WARP port (500, 1701, 4500, …), or a relay.
     '';
+
+    endpoints = mkOption {
+      type = types.listOf (types.strMatching "(\\[[0-9A-Fa-f:.]+]|[^]:[]+):[0-9]+");
+      default = [
+        "162.159.192.8:894"
+        "162.159.192.1:894"
+        "162.159.192.8:2408"
+        "162.159.192.1:2408"
+        "162.159.193.10:2408"
+        "188.114.96.1:2408"
+        "188.114.97.1:2408"
+        "162.159.192.1:945"
+        "162.159.193.10:4500"
+        "188.114.96.1:1701"
+        "188.114.97.1:955"
+      ];
+      description = ''
+        Other WARP endpoints, tried in turn after the profile's own when the tunnel stops
+        answering (the uplink being up): another address or port often gets through where the
+        default one is blocked or throttled. The one that worked is used again after a restart.
+        Off when `endpoint` (or a device's) pins one. For the "singBox" and "userspace" tunnels;
+        "interface" and `asAmneziaWg` keep the profile's endpoint. `[ ]`: the profile's only.
+      '';
+    };
 
     asOutbound = mkOption {
       type = types.nullOr (
@@ -157,6 +183,29 @@ in
         Bring the "warp" AmneziaWG profile up at boot, as `autostart` of an `amneziaWg` profile
         does. Needs `asAmneziaWg`. Only one global mode can autostart.
       '';
+    };
+
+    obfuscation = mkOption {
+      type = types.nullOr obfuscationType;
+      default = import ../warp-obfuscation.nix;
+      defaultText = literalMD ''
+        the Amnezia WARP preset (`modules/proxy-suite/warp-obfuscation.nix`): Jc 4, Jmin 40,
+        Jmax 70, S1 = S2 = 0, H1-H4 = 1-4 and an I1 packet that reads as a QUIC Initial
+      '';
+      description = ''
+        AmneziaWG obfuscation for WARP over AmneziaWG (`asOutbound = "userspace"` or
+        `"interface"`, and `asAmneziaWg`), where its profile has none of its own: a wgcf
+        profile never does, one from `generatorUrl` may. Cloudflare takes only obfuscation
+        that leaves the handshake and data plain WireGuard, so this adds packets before each
+        handshake: against a DPI box that judges a flow by its first packets, not one that
+        checks every packet. Cloudflare drops them, so it costs nothing where there is no
+        such box. `null`: none. Plain WireGuard (`asOutbound = "singBox"`) has no obfuscation.
+      '';
+      example = {
+        jc = 4;
+        jmin = 40;
+        jmax = 70;
+      };
     };
   };
 }

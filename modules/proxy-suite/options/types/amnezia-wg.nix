@@ -245,6 +245,22 @@ let
           default = null;
           description = "The client config written in Nix, instead of a file.";
         };
+        # Obfuscation for what the config leaves out, the rest as it is: warp.obfuscation for
+        # its profiles, whose configs wgcf writes without any.
+        obfuscationDefaults = mkOption {
+          type = types.nullOr obfuscationType;
+          default = null;
+          internal = true;
+          # Its sub-options too.
+          visible = false;
+        };
+        # Endpoints its "userspace" tunnel tries in turn when the peer stops answering
+        # (wg-tunnel.nix): warp.endpoints for its profiles.
+        endpointCandidates = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          internal = true;
+        };
       };
     }
   );

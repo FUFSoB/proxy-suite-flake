@@ -42,7 +42,8 @@ let
     generated.readDerivation
       fixture.config.systemd.services."proxy-suite-warp-tunnel".serviceConfig.ExecStart;
   convertCall =
-    fixture: "warp_outbound.py --tag \"$TUNNEL_TAG\" --routing-mark ${markOf fixture} < \"$profile\"";
+    fixture:
+    "warp_outbound.py --tag \"$TUNNEL_TAG\" --routing-mark ${markOf fixture} \\\n  \${TUNNEL_ENDPOINT:+--endpoint \"$TUNNEL_ENDPOINT\"} < \"$profile\"";
   singBoxHop = ''"server":"127.0.0.1","server_port":18538,"tag":"warp","type":"socks"'';
   xrayHop = ''"protocol":"socks","settings":{"address":"127.0.0.1","port":18538},"tag":"warp"'';
 
@@ -405,11 +406,34 @@ in
         == "on-failure";
       true
     )
-    # endpoint replaces the profile's Endpoint at conversion; the sing-box tunnel gets it quoted.
+    # endpoint replaces the profile's Endpoint at conversion, quoted, and pins it: no candidates.
+    # Without one, the profile's own first, then warp.endpoints in turn, as the watchdog moves on.
     (
+      assert hasInfix "TUNNEL_ENDPOINT='[2606:4700:d0::a29f:c001]:500'\n" (tunnelOf endpointed);
+      assert !(hasInfix "candidates=(" (tunnelOf endpointed));
+      assert hasInfix "TUNNEL_ENDPOINT=''\n" singBoxTunnel;
+      assert hasInfix ''candidates=("" 162.159.192.8:894 162.159.192.1:894 '' singBoxTunnel;
+      assert hasInfix ''ENDPOINT_STATE=/var/lib/proxy-suite/wg-tunnel/"$TUNNEL_TAG.endpoint"''
+        singBoxTunnel;
       assert
-        hasInfix "--endpoint '[2606:4700:d0::a29f:c001]:500' < \"$profile\"" (tunnelOf endpointed)
-        && !(hasInfix "--endpoint" singBoxTunnel);
+        singBox.config.systemd.services."proxy-suite-warp-tunnel".serviceConfig.StateDirectory
+        == "proxy-suite/wg-tunnel";
+      assert
+        !(endpointed.config.systemd.services."proxy-suite-warp-tunnel".serviceConfig ? StateDirectory);
+      true
+    )
+    # Over AmneziaWG: the same candidates for its userspace tunnel, and the Amnezia WARP
+    # obfuscation where the profile has none.
+    (
+      let
+        profile = amneziaWg.config.services.proxy-suite.amneziaWg.profiles.warp;
+      in
+      assert profile.endpointCandidates == amneziaWg.config.services.proxy-suite.warp.endpoints;
+      assert
+        profile.obfuscationDefaults.jc == 4
+        && pkgs.lib.hasPrefix "<b 0xce000000010" profile.obfuscationDefaults.i1;
+      assert
+        amneziaWgEndpoint.config.services.proxy-suite.amneziaWg.profiles.warp.endpointCandidates == [ ];
       true
     )
     (
@@ -450,7 +474,7 @@ in
     (
       assert hasInfix ''"server":"127.0.0.1","server_port":18538,"tag":"a","type":"socks"'' devicesStart;
       assert hasInfix ''"server":"127.0.0.1","server_port":18900,"tag":"b","type":"socks"'' devicesStart;
-      assert hasInfix "--endpoint 162.159.193.10:500" (
+      assert hasInfix "TUNNEL_ENDPOINT=162.159.193.10:500\n" (
         generated.readDerivation devices.config.systemd.services.proxy-suite-warp-tunnel-b.serviceConfig.ExecStart
       );
       # a has the configFile, so only b registers.

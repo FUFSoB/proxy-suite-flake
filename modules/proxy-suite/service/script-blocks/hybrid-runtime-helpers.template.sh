@@ -66,6 +66,9 @@ _proxy_suite_write_xray_sidecar_config() {
     --slurpfile outbounds <(printf '%s' "$XRAY_OUTBOUNDS_JSON") \
     --slurpfile route_rules <(printf '%s' "$XRAY_ROUTE_RULES_JSON") \
     '
+    @fragmentHopsDef@
+    ($outbounds[0] | proxy_suite_fragment_hops) as $outbounds_fragmented
+    |
     {
       log: {
         loglevel: (if $loglevel == "" then "warning" else $loglevel end),
@@ -90,7 +93,7 @@ _proxy_suite_write_xray_sidecar_config() {
           settings: {clients: $clients[0], decryption: "none"}
         }
       ],
-      outbounds: ($outbounds[0] + [{protocol:"freedom",tag:"direct"}]),
+      outbounds: ($outbounds_fragmented + [{protocol:"freedom",tag:"direct"}]),
       routing: {
         domainStrategy: "AsIs",
         rules: ($route_rules[0] + [{type:"field",ip:["127.0.0.1"],port:$dns_port,outboundTag:"direct"}])

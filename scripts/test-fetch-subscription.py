@@ -5,6 +5,7 @@ import contextlib
 import http.server
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import urllib.request
 from unittest import mock
 
 import proxy_parsing
+import subscription_meta
 from proxy_parsing import (
     decode_subscription,
     fetch_raw,
@@ -572,6 +574,223 @@ class BackendCheckTests(unittest.TestCase):
                 kept, err = self.keep(tags, style)
                 self.assertTrue(set(map(str, range(20))) <= set(kept), kept)
                 self.assertIn("left unchecked", err)
+
+
+def _xray_config(remark, outbound, *extra):
+    return {"remarks": remark, "outbounds": [outbound, {"protocol": "freedom", "tag": "direct"}, *extra],
+            "routing": {"rules": [{"type": "field", "outboundTag": "direct", "domain": ["geosite:private"]}]},
+            "dns": {"servers": ["1.1.1.1"]}}
+
+
+def _xray_vless(address, **stream):
+    return {"tag": "proxy", "protocol": "vless",
+            "settings": {"address": address, "port": 443, "id": "11111111-1111-1111-1111-111111111111", "encryption": "none"},
+            "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"serverName": address}, **stream}}
+
+
+class JsonSubscriptionTests(unittest.TestCase):
+    """What panels serve some clients instead of links: whole XRay configs, sing-box outbounds."""
+
+    def entries(self, body, backend, **kw):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            found = proxy_parsing.json_subscription_entries(json.dumps(body).encode())
+            return proxy_parsing.parse_json_subscription(found, "sub", 7, backend, **kw), err.getvalue()
+
+    def test_remnawave_xray_configs(self):
+        body = [
+            _xray_config("🇳🇱 Amsterdam", _xray_vless("nl.example.com", sockopt={"dialerProxy": "frag", "mark": 255})),
+            _xray_config("Chained", _xray_vless("de.example.com", sockopt={"dialerProxy": "other"}),
+                         {"protocol": "vless", "tag": "other", "settings": {}}),
+            _xray_config("Here", _xray_vless("127.0.0.1")),
+            _xray_config("Insecure", _xray_vless("i.example.com", tlsSettings={"allowInsecure": True})),
+            _xray_config("Files", _xray_vless("f.example.com", tlsSettings={"certificates": [{"certificateFile": "/etc/shadow"}]})),
+        ]
+        body[0]["outbounds"].append({"protocol": "freedom", "tag": "frag",
+                                     "settings": {"fragment": {"packets": "tlshello", "length": "100-200", "interval": "10-20"}}})
+        obs, err = self.entries(body, "xray")
+        self.assertEqual([ob["tag"] for ob in obs], ["sub-Amsterdam"])
+        ob = obs[0]
+        # Its own fragment hop comes along as ours; its mark and chain are this host's to set.
+        self.assertEqual(ob["_fragment"], {"packets": "tlshello", "length": "100-200", "interval": "10-20"})
+        self.assertEqual(ob["streamSettings"]["sockopt"], {"mark": 7})
+        for why in ("dials through another outbound", "is this host", "certificate checks off", "local file"):
+            self.assertIn(why, err)
+        # A sing-box backend cannot run XRay's: nothing, and why.
+        obs, err = self.entries(body, "sing-box")
+        self.assertEqual(obs, [])
+        self.assertIn("cannot run", err)
+        obs, _ = self.entries(body, "hybrid")
+        self.assertEqual((len(obs["singBox"]), len(obs["xray"])), (0, 1))
+        # With the opt-in, the insecure one too.
+        obs, _ = self.entries(body, "xray", allow_insecure=True)
+        self.assertEqual(len(obs), 2)
+
+    def test_sing_box_outbounds(self):
+        body = {"outbounds": [
+            {"type": "selector", "tag": "proxy", "outbounds": ["a"]},
+            {"type": "trojan", "tag": "A", "server": "a.example.com", "server_port": 443, "password": "p",
+             "tls": {"enabled": True, "server_name": "a.example.com"}, "detour": "x", "bind_interface": "eth0",
+             "domain_resolver": "nope"},
+            {"type": "socks", "tag": "B", "server": "10.0.0.1", "server_port": 1080},
+            {"type": "direct", "tag": "direct"},
+        ]}
+        obs, err = self.entries(body, "sing-box", tweaks={"multiplex": {}})
+        self.assertEqual([ob["tag"] for ob in obs], ["sub-A"])
+        self.assertEqual({k: obs[0].get(k) for k in ("detour", "bind_interface", "domain_resolver", "routing_mark")},
+                         {"detour": None, "bind_interface": None, "domain_resolver": None, "routing_mark": 7})
+        self.assertTrue(obs[0]["multiplex"]["enabled"])
+        self.assertIn("private address", err)
+        self.assertEqual(len(self.entries(body, "sing-box", allow_private=True)[0]), 2)
+
+    def test_not_json_or_neither(self):
+        self.assertIsNone(proxy_parsing.json_subscription_entries(_make_b64_payload(VLESS_URI)))
+        self.assertIsNone(proxy_parsing.json_subscription_entries(b"[1, 2]"))
+        self.assertIsNone(proxy_parsing.json_subscription_entries(b'{"links": []}'))
+
+
+class SubscriptionMetaTests(unittest.TestCase):
+    """What a server says of its subscription in the response headers, and the device a fetch names."""
+
+    def test_headers_as_panels_send_them(self):
+        title = "Мой VPN 🚀"
+        meta = subscription_meta.from_headers({
+            "Subscription-Userinfo": "upload=1024; download=2048;total=1073741824; expire=1767225600",
+            "Profile-Title": "base64:" + base64.b64encode(title.encode()).decode(),
+            # http.client hands UTF-8 over as Latin-1 text.
+            "announce": "Плановые работы\r\n\r\n\r\nв 03:00".encode().decode("latin-1"),
+            "support-url": "https://t.me/support",
+            "profile-web-page-url": "https://panel.example/sub/abc",
+            "profile-update-interval": "12",
+        })
+        self.assertEqual(meta, {
+            "upload": 1024, "download": 2048, "total": 1073741824, "expire": 1767225600,
+            "title": title, "announce": "Плановые работы\n\nв 03:00",
+            "supportUrl": "https://t.me/support", "webPageUrl": "https://panel.example/sub/abc",
+            "updateIntervalHours": 12,
+        })
+        self.assertEqual(set(subscription_meta.public({**meta, "fetchedAt": 1})),
+                         {"upload", "download", "total", "expire", "title", "updateIntervalHours", "fetchedAt"})
+
+    def test_what_could_mislead_or_harm_is_dropped(self):
+        meta = subscription_meta.from_headers({
+            # A terminal escape, a bidi override that reorders what follows, a run-on.
+            "profile-title": "Pay\x1b]52;c;ZXZpbA==\x07 ‮noitpircsbus" + "x" * 500,
+            "support-url": "javascript:alert(1)",
+            "profile-web-page-url": "file:///etc/shadow",
+            "subscription-userinfo": "upload=-5; download=inf; total=nan; expire=abc; bogus=1",
+            "profile-update-interval": "0.01",
+        })
+        self.assertNotIn("\x1b", meta["title"])
+        self.assertNotIn("‮", meta["title"])
+        self.assertLessEqual(len(meta["title"]), subscription_meta.TITLE_MAX)
+        self.assertEqual({k: meta.get(k) for k in ("supportUrl", "webPageUrl", "upload", "download", "total", "expire")},
+                         dict.fromkeys(("supportUrl", "webPageUrl", "upload", "download", "total", "expire")))
+        # Not more often than hourly, not less than monthly.
+        self.assertEqual(meta["updateIntervalHours"], 1)
+        self.assertEqual(subscription_meta.interval_hours("100000"), 720)
+        self.assertIsNone(subscription_meta.interval_hours("nan"))
+        self.assertIsNone(subscription_meta.header_text("base64:%%%", 10))
+        self.assertEqual(subscription_meta.header_url("tg://resolve?domain=x"), "tg://resolve?domain=x")
+        self.assertIsNone(subscription_meta.header_url("https://"))
+
+    def test_hwid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            machine_id = os.path.join(tmp, "machine-id")
+            fallback = os.path.join(tmp, "state", "subscription-hwid")
+            with open(machine_id, "w") as f:
+                f.write("0123456789abcdef0123456789abcdef\n")
+            derived = subscription_meta.hwid(None, machine_id, fallback)
+            # Stable, its own length, and not the machine ID.
+            self.assertEqual(derived, subscription_meta.hwid(None, machine_id, fallback))
+            self.assertRegex(derived, r"^[0-9a-f]{32}$")
+            self.assertNotIn(derived, "0123456789abcdef0123456789abcdef")
+            self.assertFalse(os.path.exists(fallback))
+            # No machine ID: a random one, kept.
+            os.unlink(machine_id)
+            kept = subscription_meta.hwid(None, machine_id, fallback)
+            self.assertEqual(kept, subscription_meta.hwid(None, machine_id, fallback))
+            self.assertEqual(os.stat(fallback).st_mode & 0o777, 0o600)
+            # One given in a file wins; one that is no header value is refused.
+            given = os.path.join(tmp, "hwid")
+            with open(given, "w") as f:
+                f.write("my-old-phone-slot\n")
+            self.assertEqual(subscription_meta.hwid(given, machine_id, fallback), "my-old-phone-slot")
+            with open(given, "w") as f:
+                f.write("two words")
+            with self.assertRaises(ValueError):
+                subscription_meta.hwid(given, machine_id, fallback)
+
+    def _serve(self, handler):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}/sub"
+
+    def _fetch(self, url_and_more, *argv):
+        fetch = _load_fetch_subscription()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryFile("w+") as meta:
+            status = 0
+            # The fetcher closes the descriptor it writes to, as root's redirection would be.
+            with mock.patch.object(fetch.sys, "argv", ["fetch-subscription.py", "--tag-prefix", "t",
+                                                       "--meta-fd", str(os.dup(meta.fileno())), *argv]), \
+                    mock.patch.object(fetch.sys, "stdin", io.StringIO(url_and_more)), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    fetch.main()
+                except SystemExit as exc:
+                    status = exc.code
+            meta.seek(0)
+            text = meta.read()
+        return status, stdout.getvalue(), stderr.getvalue(), json.loads(text) if text else None
+
+    def test_user_agents_in_turn_and_the_device_named(self):
+        seen = []
+
+        class Panel(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append({k.lower(): v for k, v in self.headers.items()})
+                # A stub for clients it does not serve: an entry on this host, which no fetch keeps.
+                happ = self.headers.get("User-Agent") == "Happ/1.0"
+                body = _make_b64_payload(VLESS_URI + "#real") if happ else b"vless://u@127.0.0.1:1#app-not-supported"
+                self.send_response(200)
+                self.send_header("subscription-userinfo", "upload=1; download=2; total=3; expire=0")
+                self.send_header("profile-title", "Panel")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_):
+                pass
+
+        url = self._serve(Panel)
+        status, out, err, meta = self._fetch(f"{url}\nhwid=abcdef0123456789", "--user-agent", "v2rayN/6.0",
+                                             "--user-agent", "Happ/1.0", "--device-info")
+        self.assertEqual(status, 0, err)
+        self.assertEqual([ob["tag"] for ob in json.loads(out)], ["t-real"])
+        self.assertIn("trying the next one", err)
+        self.assertEqual([h["user-agent"] for h in seen], ["v2rayN/6.0", "Happ/1.0"])
+        self.assertEqual(seen[1]["x-hwid"], "abcdef0123456789")
+        self.assertEqual({"x-device-os", "x-ver-os", "x-device-model"} - set(seen[1]), set())
+        self.assertEqual((meta["title"], meta["total"], meta["userAgent"], meta["deviceInfo"], meta["hwid"]),
+                         ("Panel", 3, "Happ/1.0", True, "abcdef0123456789"))
+        self.assertNotIn("hwid", subscription_meta.public(meta))
+        self.assertIsInstance(meta["fetchedAt"], int)
+
+        # Without --device-info nothing of the device goes out; with it, no HWID is no fetch.
+        seen.clear()
+        status, *_ = self._fetch(f"{url}\nhwid=abcdef0123456789", "--user-agent", "Happ/1.0")
+        self.assertEqual(status, 0)
+        self.assertNotIn("x-hwid", seen[0])
+        status, _, err, _ = self._fetch(url, "--device-info")
+        self.assertEqual(status, 1)
+        self.assertIn("without an HWID", err)
+        # One User-Agent, a stub: no entries, as before.
+        status, _, err, meta = self._fetch(url)
+        self.assertEqual(status, 1)
+        self.assertIn("no parseable proxy URIs", err)
+        self.assertIsNone(meta)
 
 
 if __name__ == "__main__":

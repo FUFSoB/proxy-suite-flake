@@ -16,10 +16,11 @@ Part of the [proxy-suite options reference](./index.md).
 <a id="services-proxy-suite-geodata-singbox-geoip"></a>
 ## services\.proxy-suite\.geodata\.singBox\.geoip
 
-Package with share/sing-box/rule-set/geoip-NAME\.srs (countries by default)\.
+Package with share/sing-box/rule-set/geoip-NAME\.srs\. By default the same tags as XRay’s
+geoip\.dat, so “geoip:telegram” works on either backend\.
 
 **Type:** package\
-**Default:** `pkgs.sing-geoip`
+**Default:** ` pkgs.sing-geoip ` (countries), plus each tag of ` xray.assets `’ geoip\.dat it lacks: telegram, google, cloudflare, private and the like (` pkgs/sing-geoip-extended.nix `)
 
 <a id="services-proxy-suite-geodata-singbox-geosite"></a>
 ## services\.proxy-suite\.geodata\.singBox\.geosite
@@ -33,7 +34,8 @@ Package with share/sing-box/rule-set/geosite-NAME\.srs\.
 ## services\.proxy-suite\.geodata\.xray\.assets
 
 Package with share/v2ray/{geoip,geosite}\.dat for XRay\. ` null `: XRay’s built-in data,
-which only has countries, so a tag like “geoip:telegram” breaks XRay\.
+which only has countries, so a tag like “geoip:telegram” breaks XRay\. Its geoip\.dat also
+fills in the tags ` singBox.geoip ` lacks\.
 
 **Type:** null or package\
 **Default:** `pkgs.v2ray-rules-dat`

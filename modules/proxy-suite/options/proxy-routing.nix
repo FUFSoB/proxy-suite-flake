@@ -3,7 +3,7 @@
 let
   inherit (lib) mkOption types;
   t = import ./types.nix { inherit lib; };
-  inherit (import ./lib.nix { inherit lib; }) list;
+  inherit (import ./lib.nix { inherit lib; }) list asnList;
 in
 {
   options.services.proxy-suite.proxy.routing = {
@@ -15,6 +15,19 @@ in
       default = "proxy";
       description = "Where traffic goes when no rule matches.";
       example = "direct";
+    };
+
+    blockQuic = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Refuse QUIC (UDP to port 443) on its way to a proxy, so browsers switch to TCP at once
+        rather than run HTTP/3 over a tunnel that carries UDP badly. Only what the rules send
+        through a proxy: what goes direct (zapret unblocks QUIC there), through an outbound that
+        carries UDP itself (hysteria2, TUIC, WireGuard, AmneziaWG, WARP) and rules that name a
+        network or port themselves keep it. Mostly matters for TUN and TProxy: browsers do not
+        send QUIC through a SOCKS proxy.
+      '';
     };
 
     directRu = mkOption {
@@ -29,6 +42,9 @@ in
       geosites = list "Geosite categories sent through the proxy." [ "netflix" ];
       geoips = list "Geoip codes sent through the proxy." [ "us" ];
       ruleSets = list "Rule sets from `ruleSets` sent through the proxy." [ "antifilter" ];
+      asns =
+        asnList "Autonomous systems (all their addresses) sent through the proxy; see `asnUpdateInterval`."
+          [ 62041 ];
     };
 
     direct = {
@@ -41,6 +57,9 @@ in
       geosites = list "Geosite categories sent direct." [ "category-ru" ];
       geoips = list "Geoip codes sent direct." [ "ru" ];
       ruleSets = list "Rule sets from `ruleSets` sent direct." [ "ru-services" ];
+      asns = asnList "Autonomous systems (all their addresses) sent direct; see `asnUpdateInterval`." [
+        "AS12389"
+      ];
     };
 
     block = {
@@ -49,6 +68,9 @@ in
       geosites = list "Geosite categories to block." [ "category-ads-all" ];
       geoips = list "Geoip codes to block." [ "cn" ];
       ruleSets = list "Rule sets from `ruleSets` to block." [ "ads" ];
+      asns = asnList "Autonomous systems (all their addresses) to block; see `asnUpdateInterval`." [
+        "AS15169"
+      ];
     };
 
     rules = mkOption {
@@ -113,6 +135,19 @@ in
       default = "1d";
       description = "How often rule sets are refreshed (systemd time span).";
       example = "6h";
+    };
+
+    asnUpdateInterval = mkOption {
+      type = types.str;
+      default = "1d";
+      description = ''
+        How often the address lists of the autonomous systems in `asns` (here, in `rules`, on
+        outbounds, and in runtime rules: `proxy-ctl proxy rules add proxy asn:62041`) are
+        refetched (systemd time span). They come from the ipverse asn-ip dataset on GitHub,
+        through the proxy; an ASN matches nothing until its list first arrives.
+        `proxy-ctl proxy rulesets update` fetches them now.
+      '';
+      example = "12h";
     };
   };
 }

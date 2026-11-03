@@ -1,3 +1,4 @@
+@fragmentHopsDef@
 def xray_proxy_rule_target($single_tag):
   if $single_tag != "" then
     {outboundTag:$single_tag}
@@ -96,3 +97,15 @@ $route_rules[0] as $route_rules
       | del(.routing.balancers)
       | del(.observatory)
     end
+  # "asn:N" (rules/xray.nix, routing-convert.jq) as the system's addresses; a rule left with
+  # none matches nothing, so it goes: an empty "ip" would match everything.
+  | (($ARGS.named.asn_prefixes // [{}])[0]) as $asn
+  | if .routing.rules then
+      .routing.rules |= [.[]
+        | if ((.ip? // []) | any(type == "string" and startswith("asn:"))) then
+            .ip |= [.[] | if type == "string" and startswith("asn:") then ($asn[ltrimstr("asn:")] // [])[] else . end]
+            | select(.ip != [])
+          else . end]
+    else . end
+  # proxy.outbounds' and subscriptions' fragment: each its freedom hop (xray-fragment-hops.jq).
+  | .outbounds |= proxy_suite_fragment_hops

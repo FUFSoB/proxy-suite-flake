@@ -445,6 +445,18 @@ let
         fi
       ''}
 
+      # XRay has no rule sets: "asn:N" in its rules becomes the system's address list here,
+      # from what asn.nix fetched ({"N": [cidr, …]}).
+      ASN_PREFIXES_JSON='{}'
+      ${lib.optionalString pureXrayEnabled ''
+        ASN_FILES=(${lib.escapeShellArg constants.asnDir}/asn-*.json)
+        if [ -e "''${ASN_FILES[0]}" ]; then
+          ASN_PREFIXES_JSON=$(${jq} -cn 'reduce inputs as $set ({};
+              . + {(input_filename | capture("asn-(?<n>[0-9]+)[.]json$").n):
+                   [($set.rules // [])[] | (.ip_cidr // [])[] | strings]})' "''${ASN_FILES[@]}" 2>/dev/null) ||
+            ASN_PREFIXES_JSON='{}'
+        fi
+      ''}
       # umask: the file holds credentials until the chmod below; the process
       # substitutions keep them out of the argv every local user can read.
       (umask 077 && ${jq} \
@@ -466,6 +478,8 @@ let
         --slurpfile route_dns <(printf '%s' "$ROUTE_DNS_JSON") \
         --argjson static_dns_count "$STATIC_DNS_COUNT" \
         --slurpfile user_rule_sets <(printf '%s' "$USER_RULE_SETS_JSON") \
+        --slurpfile asn_prefixes <(printf '%s' "$ASN_PREFIXES_JSON") \
+        --slurpfile outbound_sources <(printf '%s' "''${OUTBOUND_SOURCES_JSON:-{\}}") \
         --arg route_final "$ROUTE_FINAL" \
         --arg dns_final "$DNS_FINAL" \
         --argjson clear_dns_rules "$CLEAR_DNS_RULES" \

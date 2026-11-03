@@ -68,6 +68,26 @@ in
       example = "203.0.113.0/24";
     };
 
+    browserDoh = mkOption {
+      type = types.enum [
+        "allow"
+        "canary"
+        "block"
+      ];
+      default = "canary";
+      description = ''
+        What browsers' own DNS over HTTPS gets. A browser that resolves past this host's DNS
+        still routes by its sites' names (sniffed from TLS), but past DNS-based routing: fake IPs
+        and the split between local and remote lookups.
+        - "canary": `use-application-dns.net` has no address, which tells Firefox not to turn
+          its DNS over HTTPS on by itself. One switched on by hand stays on.
+        - "block": that, and the TUN's and TProxy's connections to known DNS over HTTPS servers
+          (geosite "category-doh") are blocked, so browsers fall back to the system's DNS. A
+          browser set to use only its own then resolves nothing.
+        - "allow": neither.
+      '';
+    };
+
     fakeIp = {
       enable = mkOption {
         type = types.bool;

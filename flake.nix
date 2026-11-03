@@ -148,6 +148,7 @@
             wireproxy-awg
             z2k-detect
             zapret2
+            sing-geoip-extended
             ;
           xray = import ./pkgs/xray.nix { inherit pkgs; };
           # Console installer for a proxy-suite VPS (deploy/iso.nix).

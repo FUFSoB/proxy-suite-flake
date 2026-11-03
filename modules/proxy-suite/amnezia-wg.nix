@@ -97,6 +97,9 @@ let
           vpnContainer = profile.vpnContainer;
         }
         // lib.optionalAttrs (profile.endpoint != null) { inherit (profile) endpoint; }
+        // lib.optionalAttrs (profile.obfuscationDefaults != null) {
+          obfuscationDefaults = lib.filterAttrs (_: v: v != null) profile.obfuscationDefaults;
+        }
         // source profile
       )
     );
@@ -762,6 +765,7 @@ let
         directPort
         domainStrategy
         ;
+      inherit (profile) endpointCandidates;
       profile = ''
         ${lib.optionalString (profile.configFile != null) ''
           # It may not exist yet: WARP's appears once proxy-suite-warp has registered.

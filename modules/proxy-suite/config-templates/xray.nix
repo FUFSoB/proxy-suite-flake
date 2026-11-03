@@ -239,6 +239,12 @@ let
                   }
                 ]
               )
+              # proxy.dns.browserDoh: Firefox's canary. With no address, it leaves its own DNS off.
+              ++ lib.optional (proxyCfg.dns.browserDoh != "allow") {
+                action = "return";
+                rCode = 3;
+                domain = [ "full:use-application-dns.net" ];
+              }
               ++ [
                 {
                   action = "direct";

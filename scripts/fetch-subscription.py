@@ -10,11 +10,16 @@ import sys
 import time
 import urllib.error
 
+import subscription_meta
 from proxy_parsing import (
+    DEFAULT_USER_AGENT,
     FetchError,
+    checked_tweaks,
     decode_subscription,
-    fetch_raw,
+    fetch_subscription,
+    json_subscription_entries,
     parse_hybrid_subscription,
+    parse_json_subscription,
     parse_subscription,
 )
 
@@ -177,6 +182,33 @@ def main() -> None:
                     help="Drop the sing-box entries this sing-box binary's config check refuses.")
     ap.add_argument("--check-xray", default=None, dest="check_xray", metavar="XRAY",
                     help="Drop the XRay entries this xray binary's config check refuses.")
+    ap.add_argument(
+        "--user-agent",
+        action="append",
+        default=None,
+        dest="user_agents",
+        metavar="UA",
+        help=f"Fetch with this User-Agent (default {DEFAULT_USER_AGENT}). Given more than once: "
+        "tried in order until one gets entries, for a panel that serves some clients a stub.",
+    )
+    ap.add_argument(
+        "--device-info",
+        action="store_true",
+        dest="device_info",
+        help="Send the HWID (stdin's second line, hwid=...) and the system, as x-hwid and x-device-*.",
+    )
+    ap.add_argument(
+        "--tweaks",
+        default=None,
+        help="JSON: fragment and multiplex for every entry (subscriptions.*.fragment, .multiplex).",
+    )
+    ap.add_argument(
+        "--meta-fd",
+        type=int,
+        default=None,
+        dest="meta_fd",
+        help="Write what the response's headers say of the subscription (JSON) to this open descriptor.",
+    )
     args = ap.parse_args()
     checkers = {
         kind: _Checker(kind, binary)
@@ -187,39 +219,41 @@ def main() -> None:
     def checked(kind: str, outbounds: list[dict]) -> list[dict]:
         return checkers[kind].keep(outbounds) if kind in checkers else outbounds
 
-    url = sys.stdin.read().strip()
+    # The URL, then lines of key=value: the HWID comes this way, out of argv and the environment.
+    url, _, rest = sys.stdin.read().strip().partition("\n")
+    url = url.strip()
     if not url:
         print("error: no URL provided on stdin", file=sys.stderr)
         sys.exit(1)
     if args.https_only and not url.lower().startswith("https://"):
         print("error: this subscription must be an https:// URL", file=sys.stderr)
         sys.exit(1)
-
-    signal.signal(signal.SIGALRM, _out_of_time)
-    signal.alarm(OVERALL_DEADLINE_SECONDS)
     try:
-        raw = fetch_raw(url)
-    except Exception as exc:
-        print(f"error: failed to fetch subscription: {_describe(exc)}", file=sys.stderr)
+        tweaks = checked_tweaks(json.loads(args.tweaks)) if args.tweaks else None
+    except ValueError as exc:
+        print(f"error: --tweaks: {exc}", file=sys.stderr)
         sys.exit(1)
-    finally:
-        signal.alarm(0)
+    extra_headers: dict[str, str] = {}
+    if args.device_info:
+        given = dict(line.strip().partition("=")[::2] for line in rest.splitlines() if "=" in line)
+        hwid = given.get("hwid", "").strip()
+        if not subscription_meta.valid_hwid(hwid):
+            print("error: --device-info without an HWID on stdin", file=sys.stderr)
+            sys.exit(1)
+        extra_headers = subscription_meta.device_headers(hwid)
 
-    lines = decode_subscription(raw)
-    links: dict[str, str] = {}
-    if args.backend == "hybrid":
-        outbounds = parse_hybrid_subscription(
-            lines,
-            args.tag_prefix,
-            args.routing_mark,
-            links,
-            allow_private=args.allow_private,
-            allow_insecure=args.allow_insecure,
-        )
-        outbounds = {"singBox": checked("sing-box", outbounds["singBox"]), "xray": checked("xray", outbounds["xray"])}
-        has_outbounds = bool(outbounds["singBox"] or outbounds["xray"])
-    else:
-        outbounds = parse_subscription(
+    def parsed(lines: list[str], links: dict[str, str]):
+        if args.backend == "hybrid":
+            return parse_hybrid_subscription(
+                lines,
+                args.tag_prefix,
+                args.routing_mark,
+                links,
+                allow_private=args.allow_private,
+                allow_insecure=args.allow_insecure,
+                tweaks=tweaks,
+            )
+        return parse_subscription(
             lines,
             args.tag_prefix,
             args.routing_mark,
@@ -227,11 +261,61 @@ def main() -> None:
             links,
             allow_private=args.allow_private,
             allow_insecure=args.allow_insecure,
+            tweaks=tweaks,
         )
-        outbounds = checked(args.backend, outbounds)
-        has_outbounds = bool(outbounds)
 
-    if not has_outbounds:
+    def found(outbounds) -> bool:
+        return bool(outbounds["singBox"] or outbounds["xray"]) if args.backend == "hybrid" else bool(outbounds)
+
+    # The deadline is the whole fetch, every User-Agent tried; the alarm only ever runs
+    # around the network, so it never lands inside the parser's own error handling.
+    user_agents = args.user_agents or [DEFAULT_USER_AGENT]
+    deadline = time.monotonic() + OVERALL_DEADLINE_SECONDS
+    signal.signal(signal.SIGALRM, _out_of_time)
+    error = "subscription contained no parseable proxy URIs"
+    outbounds = None
+    for attempt, user_agent in enumerate(user_agents):
+        last = attempt == len(user_agents) - 1
+        left = deadline - time.monotonic()
+        if left <= 0:
+            error = f"failed to fetch subscription: subscription fetch took longer than {OVERALL_DEADLINE_SECONDS}s"
+            break
+        signal.alarm(max(1, int(left + 0.999)))
+        try:
+            raw, headers = fetch_subscription(url, user_agent, extra_headers)
+        except Exception as exc:
+            error = f"failed to fetch subscription: {_describe(exc)}"
+            if not last:
+                print(f"warning: with User-Agent {user_agent!r}: {error}; trying the next one", file=sys.stderr)
+            continue
+        finally:
+            signal.alarm(0)
+        links: dict[str, str] = {}
+        # JSON (whole XRay configs, sing-box outbounds) or a list of links.
+        if (from_json := json_subscription_entries(raw)) is not None:
+            candidate = parse_json_subscription(
+                from_json, args.tag_prefix, args.routing_mark, args.backend,
+                allow_private=args.allow_private, allow_insecure=args.allow_insecure, tweaks=tweaks,
+            )
+        else:
+            candidate = parsed(decode_subscription(raw), links)
+        if found(candidate):
+            outbounds = candidate
+            break
+        error = "subscription contained no parseable proxy URIs"
+        if not last:
+            print(f"warning: with User-Agent {user_agent!r} the subscription has no usable entries; trying the next one",
+                  file=sys.stderr)
+
+    if outbounds is None:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.backend == "hybrid":
+        outbounds = {"singBox": checked("sing-box", outbounds["singBox"]), "xray": checked("xray", outbounds["xray"])}
+    else:
+        outbounds = checked(args.backend, outbounds)
+    if not found(outbounds):
         print("error: subscription contained no parseable proxy URIs", file=sys.stderr)
         sys.exit(1)
 
@@ -241,6 +325,13 @@ def main() -> None:
     if links_target is not None:
         with open(links_target, "w", encoding="utf-8") as handle:
             json.dump(links, handle)
+    if args.meta_fd is not None:
+        meta = subscription_meta.from_headers(headers)
+        meta.update(fetchedAt=int(time.time()), userAgent=user_agent, deviceInfo=args.device_info)
+        if args.device_info:
+            meta["hwid"] = extra_headers["x-hwid"]
+        with open(args.meta_fd, "w", encoding="utf-8") as handle:
+            json.dump(meta, handle)
     print(json.dumps(outbounds))
 
 

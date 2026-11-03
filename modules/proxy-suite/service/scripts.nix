@@ -115,6 +115,9 @@ let
     mkSubscriptionFetchBlock
     runtimeSubscriptionsFetchBlock
     subscriptionTagsFile
+    subscriptionMetaDir
+    subscriptionSettingsFile
+    subscriptionTickSeconds
     ;
 
   outboundScripts = import ./script-blocks/outbounds.nix {
@@ -174,6 +177,7 @@ let
       in
       !(lib.hasPrefix "127." address || address == "::1" || address == "localhost");
     userDnsRules = proxyCfg.dns.singBox.rules;
+    inherit (proxyCfg.routing) blockQuic;
     awgRuntimeDnsServer =
       if ctx.awgRuntimeIfaceOutbounds then
         {
@@ -250,5 +254,8 @@ in
     subscriptionUpdateScript
     subscriptionTagsFile
     subscriptionCacheDir
+    subscriptionMetaDir
+    subscriptionSettingsFile
+    subscriptionTickSeconds
     ;
 }

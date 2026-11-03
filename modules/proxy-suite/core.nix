@@ -198,6 +198,17 @@ in
           }
         ))
 
+        (lib.mkIf derived.proxyEnabled (
+          import ./asn.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
         (lib.mkIf derived.ruleSetsEnabled (
           import ./rulesets.nix {
             inherit

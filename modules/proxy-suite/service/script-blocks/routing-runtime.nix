@@ -18,7 +18,7 @@ let
     constants
     pureXrayEnabled
     ;
-  inherit (constants) runtimeRoutingDir routingRulesDir;
+  inherit (constants) runtimeRoutingDir routingRulesDir asnDir;
   coreutils = "${pkgs.coreutils}/bin";
 
   renderJq = ./routing-render.jq;
@@ -71,15 +71,19 @@ let
     }
     printf '%s\n' "$RULES" | _put "$OUT/rules.json"
     KEEP=" "
+    # The rule sets as base64: @tsv would double every backslash a pattern has.
     while IFS=$'\t' read -r NAME SET DNS; do
-      printf '%s\n' "$SET" | _put "$OUT/rs/$NAME.json"
-      printf '%s\n' "$DNS" | _put "$OUT/dns/$NAME.json"
+      { ${coreutils}/base64 -d <<< "$SET"; echo; } | _put "$OUT/rs/$NAME.json"
+      { ${coreutils}/base64 -d <<< "$DNS"; echo; } | _put "$OUT/dns/$NAME.json"
       KEEP="$KEEP$NAME.json "
     done < <(${jq} -r '.[]
+      | [if .domains != [] then {domain_suffix: .domains} else empty end]
+        + [if (.fullDomains // []) != [] then {domain: .fullDomains} else empty end]
+        + [if (.keywords // []) != [] then {domain_keyword: .keywords} else empty end]
+        + [if (.regexps // []) != [] then {domain_regex: .regexps} else empty end] as $names
       | [.name,
-         ({version: 1, rules: ([if .domains != [] then {domain_suffix: .domains} else empty end]
-                               + [if .ips != [] then {ip_cidr: .ips} else empty end])} | tojson),
-         ({version: 1, rules: [if .domains != [] then {domain_suffix: .domains} else empty end]} | tojson)]
+         ({version: 1, rules: ($names + [if .ips != [] then {ip_cidr: .ips} else empty end])} | tojson | @base64),
+         ({version: 1, rules: $names} | tojson | @base64)]
       | @tsv' <<< "$RULES")
     if [ "$SWEEP" = true ]; then
       for F in "$OUT"/rs/*.json "$OUT"/dns/*.json; do
@@ -94,7 +98,7 @@ let
       if pureXrayEnabled then
         "map(select(.disabled | not))"
       else
-        "map(select(.disabled | not) | del(.domains, .ips))"
+        "map(select(.disabled | not) | del(.domains, .fullDomains, .keywords, .regexps, .ips))"
     }' <<< "$RULES" | _put "$OUT/structure"
   '';
 
@@ -160,12 +164,33 @@ let
         --arg dir ${lib.escapeShellArg routingRulesDir} \
         --arg geosite_dir ${lib.escapeShellArg geositeDir} \
         --arg geoip_dir ${lib.escapeShellArg geoipDir} \
+        --arg asn_dir ${lib.escapeShellArg asnDir} \
         --argjson urltest ${lib.boolToString (pureXrayEnabled && ctx.selectionMode == "urltest")} \
         -f ${convertJq} <<< "$RUNTIME_ROUTING_JSON")
       RUNTIME_SECTIONS_JSON=$(${jq} -c '.sections' <<< "$CONVERTED")
       USER_RULE_SETS_JSON=$(${jq} -c '.rule_sets' <<< "$CONVERTED")
       RUNTIME_ROUTING_SKIPPED=$(${jq} -c '.skipped' <<< "$CONVERTED")
       ${jq} -r '.[] | "proxy-suite: routing rule \(.name) left out: \(.why)"' <<< "$RUNTIME_ROUTING_SKIPPED" >&2
+    fi
+    # The autonomous systems routed by, the configuration's and the runtime rules': one with no
+    # address list yet gets an empty one (sing-box refuses a missing rule set file), and the
+    # download starts, without waiting on it; sing-box reloads a list as it arrives, and XRay
+    # is restarted for it (asn.nix).
+    ASN_WANTED=$( { printf '%s\n' ${lib.escapeShellArgs (map toString ctx.declaredAsns)}
+        ${jq} -r '[.[] | select(.disabled | not) | (.asns // [])[]] | unique[]' \
+          ${lib.escapeShellArg "${routingRulesDir}/rules.json"} 2>/dev/null || true; } | ${coreutils}/sort -un)
+    ASN_MISSING=false
+    for ASN in $ASN_WANTED; do
+      [[ $ASN =~ ^[0-9]+$ ]] || continue
+      if [ ! -e ${lib.escapeShellArg asnDir}/"asn-$ASN.json" ]; then
+        ${coreutils}/mkdir -p ${lib.escapeShellArg asnDir}
+        printf '%s\n' '{"version":2,"rules":[]}' > ${lib.escapeShellArg asnDir}/"asn-$ASN.json"
+        ${coreutils}/chmod 0644 ${lib.escapeShellArg asnDir}/"asn-$ASN.json"
+        ASN_MISSING=true
+      fi
+    done
+    if [ "$ASN_MISSING" = true ]; then
+      ${constants.systemctl} start --no-block proxy-suite-asn.service || true
     fi
     printf '%s\n' "$RUNTIME_ROUTING_SKIPPED" > "$RUNTIME_DIR/routing-skipped.json.tmp"
     chmod 644 "$RUNTIME_DIR/routing-skipped.json.tmp"

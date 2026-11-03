@@ -11,6 +11,9 @@
 let
   inherit (derived.constants) serviceUser runAsServiceUser ifPrivileged;
   hintDir = "${derived.constants.runtimeDir}/proxy-suite-outbound-groups/health";
+  # Which of its endpoint candidates each tunnel is on, <tag>.endpoint: kept across restarts
+  # and reboots, so the one that worked is tried first.
+  endpointStateDir = "${derived.constants.stateDir}/wg-tunnel";
   scriptsDir = import ./lib/scripts-dir.nix { inherit lib; };
 
   # sing-box's "local" server has no upstream on hosts behind systemd-resolved, so the tunnel
@@ -78,7 +81,14 @@ let
           ${pkgs.coreutils}/bin/touch "${hintDir}/$TUNNEL_TAG" 2>/dev/null || true
         fi
         if (( healthy ? ++failures >= 3 : SECONDS - since >= 15 )); then
-          echo "proxy-suite: $TUNNEL_TAG is not answering; restarting the tunnel on a new source port" >&2
+          # With endpoint candidates (warp.endpoints), the next one: the uplink is up, so this
+          # endpoint is what fails. The restart's conversion picks it up.
+          if [[ -n ''${ENDPOINT_STATE:-} ]]; then
+            printf '%s\n' "$(( (ENDPOINT_INDEX + 1) % ENDPOINT_COUNT ))" > "$ENDPOINT_STATE" 2>/dev/null || true
+            echo "proxy-suite: $TUNNEL_TAG is not answering; restarting the tunnel on the next endpoint" >&2
+          else
+            echo "proxy-suite: $TUNNEL_TAG is not answering; restarting the tunnel on a new source port" >&2
+          fi
           kill "$tunnel"
           wait "$tunnel"
           exit 1
@@ -99,9 +109,8 @@ let
     }:
     {
       convert = ''
-        endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag "$TUNNEL_TAG"${markArg "--routing-mark"}${
-          lib.optionalString (endpoint != null) " --endpoint ${lib.escapeShellArg endpoint}"
-        } < "$profile")
+        endpoint=$(${pkgs.python3}/bin/python3 ${scriptsDir}/warp_outbound.py --tag "$TUNNEL_TAG"${markArg "--routing-mark"} \
+          ''${TUNNEL_ENDPOINT:+--endpoint "$TUNNEL_ENDPOINT"} < "$profile")
         # direct-in gets past TProxy and the kill switch: a login drawn per start keeps other local
         # users off it (read from the environment, as argv is public).
         DIRECT_AUTH=$(${pkgs.coreutils}/bin/od -An -tx1 -N16 /dev/urandom | ${pkgs.coreutils}/bin/tr -d ' \n')
@@ -151,7 +160,8 @@ let
       convert = ''
         ${pkgs.python3}/bin/python3 ${scriptsDir}/amneziawg_config.py --config "$profile" \
           --output "$RUNTIME_DIRECTORY/wireproxy.conf" \
-          --wireproxy 127.0.0.1:${toString tunnelPort}${markArg "--outbound-fwmark"}
+          --wireproxy 127.0.0.1:${toString tunnelPort}${markArg "--outbound-fwmark"} \
+          ''${TUNNEL_ENDPOINT:+--endpoint "$TUNNEL_ENDPOINT"}
       '';
       config = "wireproxy.conf";
       command = ''${cfg.amneziaWg.wireproxyPackage}/bin/wireproxy -c "$RUNTIME_DIRECTORY/wireproxy.conf"'';
@@ -159,9 +169,10 @@ let
     };
 
   # `profile` is a shell snippet, run as root on a privileged host, that sets $profile to
-  # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort,
-  # `endpoint`, a host:port in place of the profile's Endpoint, and `domainStrategy`, the
-  # address family it dials destinations over first.
+  # the WireGuard .conf. `engine` is "singBox" or "userspace"; only sing-box uses directPort
+  # and `domainStrategy`, the address family it dials destinations over first. `endpoint` is a
+  # host:port in place of the profile's Endpoint; `endpointCandidates`, ones the tunnel goes
+  # through in turn, after the profile's own, each time the watchdog gives up on one.
   #
   # The tag comes from $TUNNEL_TAG, never spliced in (an attribute name can hold anything). A
   # template unit passes `tag = null` and `tunnelPort = "$TUNNEL_PORT"`, both from `profile`.
@@ -174,6 +185,7 @@ let
       tunnelPort,
       directPort ? null,
       endpoint ? null,
+      endpointCandidates ? [ ],
       domainStrategy ? null,
       engine ? "singBox",
       runtimeDirectory ? unit,
@@ -201,6 +213,31 @@ let
         ${derived.constants.ensureHopLogin pkgs}
         HOP_PASSWORD=$(< ${lib.escapeShellArg derived.constants.hopLoginFile})
         export HOP_PASSWORD
+
+        TUNNEL_ENDPOINT=${lib.escapeShellArg (if endpoint == null then "" else endpoint)}
+        ${lib.optionalString (endpointCandidates != [ ]) ''
+          # The candidate the last run settled on ("": the profile's own), from a file the
+          # watchdog, as the service user, moves on. Read by root: a number, or the first.
+          candidates=("" ${lib.escapeShellArgs endpointCandidates})
+          ENDPOINT_STATE=${lib.escapeShellArg endpointStateDir}/"$TUNNEL_TAG.endpoint"
+          ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg endpointStateDir}
+          ${ifPrivileged ''
+            ${pkgs.coreutils}/bin/chgrp ${serviceUser} ${lib.escapeShellArg endpointStateDir}
+            ${pkgs.coreutils}/bin/chmod 0770 ${lib.escapeShellArg endpointStateDir}
+          ''}
+          ENDPOINT_INDEX=$(${pkgs.coreutils}/bin/head -c 16 "$ENDPOINT_STATE" 2>/dev/null || true)
+          [[ $ENDPOINT_INDEX =~ ^[0-9]+$ ]] || ENDPOINT_INDEX=0
+          ENDPOINT_COUNT=''${#candidates[@]}
+          ENDPOINT_INDEX=$(( ENDPOINT_INDEX % ENDPOINT_COUNT ))
+          TUNNEL_ENDPOINT=''${candidates[ENDPOINT_INDEX]}
+          echo "proxy-suite: $TUNNEL_TAG goes through ''${TUNNEL_ENDPOINT:-the endpoint in its profile}" >&2
+          ${pkgs.coreutils}/bin/touch "$ENDPOINT_STATE"
+          ${ifPrivileged ''
+            ${pkgs.coreutils}/bin/chgrp ${serviceUser} "$ENDPOINT_STATE"
+            ${pkgs.coreutils}/bin/chmod 0660 "$ENDPOINT_STATE"
+          ''}
+          export ENDPOINT_STATE ENDPOINT_INDEX ENDPOINT_COUNT
+        ''}
 
         ${chosen.convert}
         ${ifPrivileged ''
@@ -234,6 +271,10 @@ let
         RuntimeDirectory = runtimeDirectory;
         RuntimeDirectoryMode = "0750";
         UMask = "0077";
+      }
+      // lib.optionalAttrs (endpointCandidates != [ ]) {
+        StateDirectory = "proxy-suite/wg-tunnel";
+        StateDirectoryMode = "0770";
       }
       # Root only converts the profile; the engine gets net_admin alone. No ProtectHome: a
       # configFile may sit under /home or /root.

@@ -14,7 +14,7 @@ rules you add at runtime (below) go in among them:
 | 200 | `proxy.domains` and `proxy.ips` |
 | 300 | `block` |
 | 400 | `direct`, then private addresses |
-| 500 | `proxy.geosites`, `proxy.geoips` and `proxy.ruleSets` |
+| 500 | `proxy.geosites`, `proxy.geoips`, `proxy.ruleSets` and `proxy.asns` |
 | after | what autoProxy and zapret2 learned |
 | last | `proxy.routing.default`: `"proxy"` (the default) or `"direct"` |
 
@@ -24,7 +24,7 @@ Apps run with `apps run --via` skip all of this.
 Russian sites and IPs go direct unless you set `routing.directRu = false`.
 
 Each list and rule matches by `domains` (subdomains included), `ips` (CIDR), `geosites`,
-`geoips` and `ruleSets`.
+`geoips`, `ruleSets` and `asns`.
 
 ## Only blocked sites through the proxy
 
@@ -90,6 +90,26 @@ services.proxy-suite = {
 
 They need the sing-box or hybrid backend.
 
+## Route by operator
+
+An autonomous system (ASN) is the whole address space one operator announces: Telegram is
+AS62041, Cloudflare AS13335, Hetzner AS24940. `asns` routes all of it, for services that
+connect by address, or a whole hoster or CDN at once:
+
+```nix
+services.proxy-suite.proxy.routing = {
+  proxy.asns = [ 62041 ];          # Telegram's data centres
+  direct.asns = [ "AS24940" ];     # your own servers at Hetzner
+};
+```
+
+The address lists come from the [ipverse asn-ip](https://github.com/ipverse/asn-ip) dataset,
+through the proxy, and are refreshed every `routing.asnUpdateInterval`. An ASN matches nothing
+until its list first arrives, a few minutes after the start. sing-box picks a new list up on
+its own; XRay restarts for it. ASNs cover addresses only, not names, and a big operator's
+list (Google, Amazon) runs to thousands of prefixes. `proxy-ctl proxy rulesets` shows each
+list, its operator and when it was fetched.
+
 ## Add rules at runtime
 
 `proxy-ctl proxy rules` adds rules without a rebuild. They are kept across reboots:
@@ -103,7 +123,10 @@ proxy-ctl proxy rules                                      # every rule, in the 
 ```
 
 A rule matches domains (subdomains included), addresses and CIDRs, `geosite:NAME`,
-`geoip:NAME` and `ruleset:NAME` (a rule set from `routing.ruleSets`). It sends them to
+`geoip:NAME`, `ruleset:NAME` (a rule set from `routing.ruleSets`) and `asn:N` (an operator's
+every address, as above; `AS62041` works too). As XRay spells them, `full:NAME` matches that
+name alone, `keyword:WORD` any name holding it, and `regexp:PATTERN` names the pattern matches
+(Go's syntax: no lookaround or backreferences); `domain:NAME` is a plain domain. It sends them to
 `proxy`, `direct`, `block`, or any outbound or group, ones added at runtime included.
 
 Without `--name`, the rule is named after its target, so `rules add direct …` keeps adding to
@@ -118,6 +141,18 @@ proxy-ctl proxy rules target streaming de-vps
 proxy-ctl proxy rules disable streaming         # keep it, but stop applying it
 proxy-ctl proxy rules rm streaming
 ```
+
+A routing profile from Happ (a `happ://routing/add/…` link, or its JSON) imports as runtime
+rules, one per target, ahead of the config's and in the profile's order:
+
+```sh
+proxy-ctl proxy rules import 'happ://routing/add/eyJOYW1lIjoi…'   # happ-<name>-block, -direct, -proxy
+proxy-ctl proxy rules import - --replace < profile.json           # again, over the earlier import
+```
+
+What the profile says besides its lists (its DNS, `DomainStrategy`, `FakeDNS`) is left out,
+and so is a list entry nothing here matches, such as an `ext:` file; the import names them.
+`GlobalProxy` is a route mode here: the import says which, and `--set-mode` switches to it.
 
 On equal priority, a runtime rule goes first. Route modes treat runtime rules like the
 config's: `all-proxy` drops the ones that go direct, and `all-bypass` keeps only blocks.
@@ -143,7 +178,7 @@ proxy-ctl proxy mode all-bypass    # everything direct, except blocks
 proxy-ctl proxy mode default       # back to routing.default
 proxy-ctl proxy rules              # every routing rule, in the order checked
 proxy-ctl proxy auto               # what autoProxy routed, and where
-proxy-ctl proxy rulesets update    # refetch rule sets now
+proxy-ctl proxy rulesets update    # refetch rule sets and ASN lists now
 ```
 
 A route mode set with `proxy-ctl` lasts until the next reboot. Rules added with
@@ -151,7 +186,11 @@ A route mode set with `proxy-ctl` lasts until the next reboot. Rules added with
 
 ## Good to know
 
-- Geosite and geoip names come from the [geodata](../options/geodata.md) databases.
+- Geosite and geoip names come from the [geodata](../options/geodata.md) databases. Besides
+  countries, geoip knows `telegram`, `google`, `cloudflare`, `cloudfront`, `fastly`,
+  `facebook`, `twitter`, `netflix`, `tor` and `private`, on either backend. Apps that dial
+  by address need them: Telegram reaches its data centres by IP, so pair `geosite:telegram`
+  with `geoip:telegram`.
 - With `zapret`, sites that zapret handles are sent direct, so zapret can unblock them. See
   [Unblock sites without a server](./zapret.md).
 - To send some sites to WARP, Tor or another exit, see [Chain proxies and add exits](./chains.md).

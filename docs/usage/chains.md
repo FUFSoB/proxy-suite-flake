@@ -76,7 +76,7 @@ services.proxy-suite = {
 
 | Exit | Good to know |
 |---|---|
-| WARP | Registering accepts Cloudflare's terms. If the Cloudflare API is blocked, set `warp.generatorUrl`, or `warp.configFile` with a profile made elsewhere. If the endpoint is blocked, try `warp.endpoint`. |
+| WARP | Registering accepts Cloudflare's terms. If the Cloudflare API is blocked, set `warp.generatorUrl`, or `warp.configFile` with a profile made elsewhere. When the tunnel stops answering, it moves on to the next of `warp.endpoints` (other Cloudflare addresses and ports) and keeps the one that works; `warp.endpoint` pins one instead. Over AmneziaWG (`asOutbound = "userspace"` or `"interface"`, `asAmneziaWg`) it adds the Amnezia WARP obfuscation (`warp.obfuscation`), against DPI that judges a flow by its first packets. |
 | Tor | Selection and autoProxy skip it unless it is the only outbound. Where Tor is blocked, add `tor.bridges.lines`, or reach Tor through the proxy with `tor.upstream = "proxy"`. |
 | SSH | Needs the server's host keys on sing-box (`hostKeyFile` or `hostKey`). Any SSH server that allows TCP forwarding works, with nothing to install on it. |
 

@@ -34,17 +34,21 @@ let
   ];
   restartActiveConfigConsumersBlock = restartActiveBlock ([ "proxy-suite-socks" ] ++ tunConsumers);
 
+  # $1 "due" (the timer's unit, proxy-suite-subscription-refresh): only the subscriptions whose
+  # interval has run out. Without it (`proxy-ctl proxy subs update`): every one.
   subscriptionUpdateScript = pkgs.writeShellScript "proxy-suite-core" ''
     set -euo pipefail
+    SUB_UPDATE_MODE="''${1:-all}"
     CACHE_DIR="${subscriptionCacheDir}"
     mkdir -p "$CACHE_DIR"
     FAILED=0
     ${subscriptionCacheHelpersBlock}
     ${lib.concatMapStrings mkSubscriptionFetchBlock proxyCfg.subscriptions}
     ${runtimeSubscriptionsFetchBlock}
+    _proxy_suite_prune_subscription_meta
 
-    # Only a changed cache: the timer runs this 5 minutes after every switch and daily, and
-    # a restart drops every connection through the proxy, the inbounds' users' included. A
+    # Only a changed cache: the timer runs this 5 minutes after every switch and then hourly,
+    # and a restart drops every connection through the proxy, the inbounds' users' included. A
     # failed subscription keeps its old cache, so the others' changes still apply.
     if [ "$SUB_CACHE_CHANGED" -eq 1 ]; then
       ${restartActiveConfigConsumersBlock}

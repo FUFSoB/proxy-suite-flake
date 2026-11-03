@@ -550,11 +550,19 @@ def _awg_add_stdin(v):
 
 def subscription_rows(_):
     rows = []
-    for source, tags in (("static", ctl._sub_tags()), ("runtime", ctl._runtime_tags("subscription"))):
-        for t in tags:
-            mtime, count = ctl._subscription_state(t) or (None, "-")
-            updated = ctl._ago(int(mtime), int(time.time())) + " ago" if mtime else "-"
-            rows.append({"key": t, "tag": t, "proxies": count, "updated": updated, "source": source})
+    now = int(time.time())
+    for view in ctl._subscription_views():
+        server = view["server"]
+        rows.append({
+            "key": view["tag"],
+            "tag": view["tag"],
+            "title": server.get("title") or "",
+            "proxies": ctl._sub_count(view),
+            "updated": ctl._ago(view["updated"], now) + " ago" if view["updated"] else "-",
+            "traffic": ctl._sub_traffic(server),
+            "expires": ctl._sub_expires(server, now),
+            "source": view["source"],
+        })
     # Nothing visible and the runtime entries out of reach: an error, not an empty tab.
     if not rows and (hidden := ctl._runtime_hidden("subscription")):
         ctl.denied(hidden)
@@ -564,7 +572,7 @@ def subscription_rows(_):
 def subscription_summary():
     text = f"{ctl.SUBSCRIPTION_UPDATE}: {ctl.svc_state(ctl.SUBSCRIPTION_UPDATE) or 'unknown'}"
     next_run = ctl._timer_next_run(f"{ctl.SUBSCRIPTION_UPDATE}.timer")
-    text += f", next update {ctl._in_time(next_run)}" if next_run else ""
+    text += f", next check for updates {ctl._in_time(next_run)}" if next_run else ""
     # The path is left out: an empty tab already names it in its "✗ Cannot read" line.
     if ctl._runtime_hidden("subscription"):
         text += f"\nRuntime subscriptions are not listed - {ctl.ask_group()}."
@@ -1123,12 +1131,26 @@ TABS = [
         "subs",
         "Subs",
         _socks,
-        [("tag", "Tag"), ("proxies", "Proxies"), ("updated", "Updated"), ("source", "Source")],
+        [
+            ("tag", "Tag"),
+            ("title", "Title"),
+            ("proxies", "Proxies"),
+            ("traffic", "Traffic"),
+            ("expires", "Expires"),
+            ("updated", "Updated"),
+            ("source", "Source"),
+        ],
         subscription_rows,
         summary=subscription_summary,
         actions=[
+            Action("i", "what its server says of it", lambda r, *_: ["proxy", "subs", "show", r["tag"]], when=ROW, mode="dialog"),
             Action("u", "fetch all now", lambda r, *_: ["proxy", "subs", "update"], mode="dialog"),
-            Action("l", "follow the update's logs", lambda r, *_: ["logs", "proxy-suite-subscription-update"], mode="suspend"),
+            Action(
+                "l",
+                "follow the updates' logs",
+                lambda r, *_: ["logs", "proxy-suite-subscription-update", "proxy-suite-subscription-refresh"],
+                mode="suspend",
+            ),
             Action(
                 "n",
                 "add a subscription…",

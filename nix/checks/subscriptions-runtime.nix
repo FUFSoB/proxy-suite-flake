@@ -59,11 +59,34 @@ in
       true
     )
 
-    # Custom update interval flows through to the timer.
+    # The timer looks for subscriptions due hourly (a server may ask for that), sooner when
+    # the default interval is shorter, and starts the unit that fetches only those.
     (
+      let
+        timer =
+          subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig;
+        refresh = subscriptionWithStaticFixture.config.systemd.services."proxy-suite-subscription-refresh";
+      in
+      assert timer.OnUnitActiveSec == "3600s";
+      assert timer.Unit == "proxy-suite-subscription-refresh.service";
+      assert pkgs.lib.hasSuffix " due" refresh.serviceConfig.ExecStart;
+      assert !refresh.serviceConfig.RemainAfterExit;
+      # `proxy subs update`'s unit fetches every one.
       assert
-        subscriptionWithStaticFixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
-        == "6h";
+        toString
+          subscriptionWithStaticFixture.config.systemd.services."proxy-suite-subscription-update".serviceConfig.ExecStart
+        == pkgs.lib.removeSuffix " due" refresh.serviceConfig.ExecStart;
+      true
+    )
+    (
+      assert pkgs.lib.hasInfix ''SUB_UPDATE_MODE="''${1:-all}"'' subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix
+        "if [ \"$SUB_UPDATE_MODE\" != due ] || _proxy_suite_subscription_due community ''; then"
+        subscriptionOnlyUpdateScript;
+      # Its own interval, else what the server last asked for, else the 6h default.
+      assert pkgs.lib.hasInfix "interval=21600" subscriptionWithStaticStartScript;
+      assert pkgs.lib.hasInfix ".updateIntervalHours" subscriptionOnlyUpdateScript;
+      assert pkgs.lib.hasInfix "_proxy_suite_prune_subscription_meta" subscriptionOnlyUpdateScript;
       true
     )
 
@@ -184,10 +207,10 @@ in
       assert pkgs.lib.hasInfix ''_proxy_suite_fetch_subscription "$tag" "$src" "''${@:3}"'' start;
       # Both the fetch through the tunnel and the kill switch's direct retry.
       assert pkgs.lib.hasInfix
-        ''_proxy_suite_run_fetcher tunnel "$tag" "$src" "$cache_tmp" "$links_tmp" "''${@:3}"''
+        ''_proxy_suite_run_fetcher tunnel "$tag" "$src" "$cache_tmp" "$links_tmp" "$meta_tmp" "''${@:3}"''
         update;
       assert pkgs.lib.hasInfix
-        ''_proxy_suite_run_fetcher direct "$tag" "$src" "$cache_tmp" "$links_tmp" "''${@:3}"''
+        ''_proxy_suite_run_fetcher direct "$tag" "$src" "$cache_tmp" "$links_tmp" "$meta_tmp" "''${@:3}"''
         update;
       # Through the tunnel too, the subscription server's answer is not parsed as root.
       assert pkgs.lib.hasInfix
@@ -203,9 +226,11 @@ in
     # The fetcher's output must land in the cache, not after a stray newline; each fetch in
     # a temporary file of its own, which start scripts running at once do not share.
     (
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-fd 3 "$@" > "$cache_tmp" 3> "$links_tmp"''
+      assert pkgs.lib.hasInfix
+        ''--tag-prefix "$tag" --links-fd 3 --meta-fd 4 "$@" > "$cache_tmp" 3> "$links_tmp" 4> "$meta_tmp"''
         subscriptionOnlyStartScript;
-      assert pkgs.lib.hasInfix ''--tag-prefix "$tag" --links-fd 3 "$@" > "$cache_tmp" 3> "$links_tmp"''
+      assert pkgs.lib.hasInfix
+        ''--tag-prefix "$tag" --links-fd 3 --meta-fd 4 "$@" > "$cache_tmp" 3> "$links_tmp" 4> "$meta_tmp"''
         subscriptionOnlyUpdateScript;
       assert pkgs.lib.hasInfix ''tmp=$(mktemp "$1.XXXXXX")'' subscriptionOnlyUpdateScript;
       true
@@ -253,6 +278,65 @@ in
         subscriptionPerAppTunUpdateScript;
       assert pkgs.lib.hasInfix "restart proxy-suite-per-app-tun" subscriptionPerAppTunUpdateScript;
       assert !(pkgs.lib.hasInfix "PER_APP_TUN_WAS_ACTIVE" subscriptionPerAppTunUpdateScript);
+      true
+    )
+
+    # How a declared subscription presents this client: User-Agents only when not the default
+    # (a cache fetched before there was a choice keeps its fingerprint), device info on request,
+    # the HWID worked out by root and handed over on stdin. Its own interval shortens the tick.
+    (
+      let
+        generated = import ./read-generated.nix;
+        fixture = evalProxySuite [
+          {
+            system.stateVersion = "26.05";
+            services.proxy-suite = {
+              enable = true;
+              proxy = {
+                enable = true;
+                backend = "sing-box";
+                subscriptionHwidFile = "/run/secrets/hwid";
+                subscriptions = [
+                  {
+                    tag = "panel";
+                    url = "https://panel.example/sub";
+                    userAgent = [
+                      "v2rayN/6.0"
+                      "Happ/1.0"
+                    ];
+                    sendDeviceInfo = true;
+                    updateInterval = "30min";
+                  }
+                  {
+                    tag = "plain";
+                    url = "https://plain.example/sub";
+                  }
+                ];
+              };
+            };
+          }
+        ];
+        unitScript =
+          unit: generated.readDerivation fixture.config.systemd.services.${unit}.serviceConfig.ExecStart;
+        start = unitScript "proxy-suite-socks";
+        update = unitScript "proxy-suite-subscription-update";
+      in
+      assert pkgs.lib.hasInfix " --user-agent v2rayN/6.0 --user-agent Happ/1.0 --device-info" start;
+      assert pkgs.lib.hasInfix " --user-agent v2rayN/6.0 --user-agent Happ/1.0 --device-info" update;
+      assert
+        !(builtins.any (pkgs.lib.hasInfix "--user-agent") (
+          builtins.filter (pkgs.lib.hasInfix "_proxy_suite_load_subscription plain ") (
+            pkgs.lib.splitString "\n" start
+          )
+        ));
+      assert pkgs.lib.hasInfix "_proxy_suite_subscription_due panel 1800" update;
+      assert
+        fixture.config.systemd.timers."proxy-suite-subscription-update".timerConfig.OnUnitActiveSec
+        == "1800s";
+      assert pkgs.lib.hasInfix
+        "hwid --fallback /var/lib/proxy-suite/subscription-hwid --file /run/secrets/hwid"
+        update;
+      assert pkgs.lib.hasInfix ''extra=$'\n'"hwid=$PROXY_SUITE_SUBSCRIPTION_HWID"'' update;
       true
     )
 

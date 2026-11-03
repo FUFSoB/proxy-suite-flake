@@ -24,6 +24,88 @@ let
       example = "ru-vps";
     };
 
+  # What a link cannot say: per outbound, or for every entry of a subscription.
+  fragmentOption =
+    what:
+    mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            packets = mkOption {
+              type = types.strMatching "tlshello|[0-9]{1,5}(-[0-9]{1,5})?";
+              default = "tlshello";
+              description = ''"tlshello", the ClientHello alone, or which packets by number ("1-3").'';
+            };
+            length = mkOption {
+              type = types.strMatching "[0-9]{1,5}(-[0-9]{1,5})?";
+              default = "50-100";
+              description = "Bytes per piece, or a range to draw from.";
+            };
+            interval = mkOption {
+              type = types.strMatching "[0-9]{1,5}(-[0-9]{1,5})?";
+              default = "10-20";
+              description = "Milliseconds between pieces, or a range.";
+            };
+          };
+        }
+      );
+      default = null;
+      description = ''
+        Split ${what} TLS ClientHello into pieces, against DPI that reads the server name in one
+        packet. `{ }` for the defaults. XRay sends it through a freedom hop with these
+        settings (with a `detour`, ahead of it); sing-box splits it its own way and ignores the
+        numbers, and cannot split a REALITY one. Only for TLS over TCP; others are left as they are.
+      '';
+      example = { };
+    };
+  multiplexOption =
+    what:
+    mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            protocol = mkOption {
+              type = types.enum [
+                "h2mux"
+                "smux"
+                "yamux"
+              ];
+              default = "h2mux";
+              description = "sing-box only: the multiplexer.";
+            };
+            maxConnections = mkOption {
+              type = types.ints.between 1 64;
+              default = 4;
+              description = "sing-box only: connections to the server at most.";
+            };
+            padding = mkOption {
+              type = types.bool;
+              default = false;
+              description = "sing-box only: pad the streams (the server must ask for it too).";
+            };
+            concurrency = mkOption {
+              type = types.ints.between 1 1024;
+              default = 8;
+              description = "XRay only: streams per connection.";
+            };
+          };
+        }
+      );
+      default = null;
+      description = ''
+        Carry ${what} connections over a few long-lived ones (vless, vmess, trojan,
+        shadowsocks): fewer handshakes, so pages open faster on a slow link. The server must
+        speak the same: sing-box's multiplexing (a sing-box inbound with `multiplex.enabled`) and
+        XRay's Mux.Cool are not the same protocol. A proxy-suite server serves vless, vmess and
+        trojan with XRay, which takes Mux.Cool: dial it with the XRay backend. XRay with XTLS
+        Vision multiplexes UDP alone; XHTTP has its own (`proxy.xray.xhttpXmux`). `{ }` for
+        the defaults.
+      '';
+      example = {
+        protocol = "smux";
+      };
+    };
+
   subscriptionType = types.submodule {
     options = {
       tag = mkOption {
@@ -57,6 +139,44 @@ let
           at runtime, see `proxy.runtimeSubscriptions.allowInsecure`.
         '';
       };
+      userAgent = mkOption {
+        type = types.coercedTo types.str lib.singleton (
+          types.nonEmptyListOf (types.strMatching "[ -~]{1,256}")
+        );
+        default = [ "v2rayN/6.0" ];
+        description = ''
+          User-Agent the subscription is fetched with. Panels pick what they serve by it: to
+          v2rayN's, a list of links. Several are tried in order until one gets entries, for a
+          panel that serves some clients a stub ("app not supported") instead. A change
+          refetches the subscription.
+        '';
+        example = [
+          "v2rayN/6.0"
+          "Happ/1.0"
+        ];
+      };
+      sendDeviceInfo = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Tell the server about this device, as Happ and v2RayTun do: its HWID (`x-hwid`), system,
+          kernel version and architecture (`x-device-os`, `x-ver-os`, `x-device-model`). For a
+          panel that limits devices by HWID and serves nothing without one. The HWID is derived
+          from /etc/machine-id, which it does not give away; see `proxy.subscriptionHwidFile`.
+        '';
+      };
+      fragment = fragmentOption "each entry's";
+      multiplex = multiplexOption "each entry's";
+      updateInterval = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          How often this subscription is refetched (systemd time span). `null`: as often as its
+          server asks in its `profile-update-interval` header, but not more than hourly; without
+          one, `proxy.subscriptionUpdateInterval`.
+        '';
+        example = "6h";
+      };
     };
   };
 
@@ -72,6 +192,8 @@ let
       url = nullStr "Proxy link. Ends up in the Nix store; prefer `urlFile`." "hy2://password@example.com:443?sni=example.com";
       urlFile = nullStr "File with the proxy link." "/run/secrets/my-proxy-url";
       detour = detourOption "this outbound";
+      fragment = fragmentOption "the outbound's";
+      multiplex = multiplexOption "the outbound's";
 
       singBoxJson =
         nullAttrs "Raw sing-box outbound JSON, instead of `url` (sing-box backend). Its tag is replaced."

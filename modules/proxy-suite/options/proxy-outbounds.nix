@@ -30,8 +30,12 @@ in
       type = types.listOf t.subscriptionType;
       default = [ ];
       description = ''
-        Subscription URLs that serve a list of proxy links (plain or base64). Fetched on first
-        start, cached, and refreshed on a timer. `proxy-ctl proxy subs add` adds more at runtime.
+        Subscription URLs that serve a list of proxy links (plain or base64), or JSON: whole XRay
+        configs, as Remnawave and the like serve Happ (on the XRay and hybrid backends), or sing-box
+        outbounds. Of JSON, the proxies alone: the panel's routing and DNS are left out. Fetched
+        on first start, cached, and refreshed on a timer. What the server says of the subscription
+        (traffic, expiry, a title, an announcement) shows in `proxy-ctl proxy subs`.
+        `proxy-ctl proxy subs add` adds more at runtime.
       '';
       example = [
         {
@@ -73,8 +77,23 @@ in
     subscriptionUpdateInterval = mkOption {
       type = types.str;
       default = "1d";
-      description = "How often subscriptions are refreshed (systemd time span).";
+      description = ''
+        How often subscriptions are refetched (systemd time span), unless one sets its own
+        `updateInterval` or its server asks for another in `profile-update-interval` (not more
+        often than hourly). `proxy-ctl proxy subs update` refetches them all now.
+      '';
       example = "6h";
+    };
+
+    subscriptionHwidFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        File with the HWID subscriptions with `sendDeviceInfo` send, instead of one derived from
+        /etc/machine-id: to keep a panel's device slot after moving to another machine (its
+        old HWID is in `proxy-ctl proxy subs show <tag>`). 1 to 128 printable characters.
+      '';
+      example = "/run/secrets/subscription-hwid";
     };
 
     selection = mkOption {

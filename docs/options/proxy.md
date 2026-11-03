@@ -20,6 +20,7 @@ Part of the [proxy-suite options reference](./index.md).
   - [autostart](#services-proxy-suite-proxy-autostart)
   - [backend](#services-proxy-suite-proxy-backend)
   - dns
+    - [browserDoh](#services-proxy-suite-proxy-dns-browserdoh)
     - [clientSubnet](#services-proxy-suite-proxy-dns-clientsubnet)
     - fakeIp
       - [enable](#services-proxy-suite-proxy-dns-fakeip-enable)
@@ -56,7 +57,17 @@ Part of the [proxy-suite options reference](./index.md).
     - item
       - [backend](#services-proxy-suite-proxy-outbounds-backend)
       - [detour](#services-proxy-suite-proxy-outbounds-detour)
+      - [fragment](#services-proxy-suite-proxy-outbounds-fragment)
+        - [interval](#services-proxy-suite-proxy-outbounds-fragment-interval)
+        - [length](#services-proxy-suite-proxy-outbounds-fragment-length)
+        - [packets](#services-proxy-suite-proxy-outbounds-fragment-packets)
+      - [multiplex](#services-proxy-suite-proxy-outbounds-multiplex)
+        - [concurrency](#services-proxy-suite-proxy-outbounds-multiplex-concurrency)
+        - [maxConnections](#services-proxy-suite-proxy-outbounds-multiplex-maxconnections)
+        - [padding](#services-proxy-suite-proxy-outbounds-multiplex-padding)
+        - [protocol](#services-proxy-suite-proxy-outbounds-multiplex-protocol)
       - routing
+        - [asns](#services-proxy-suite-proxy-outbounds-routing-asns)
         - [domains](#services-proxy-suite-proxy-outbounds-routing-domains)
         - [geoips](#services-proxy-suite-proxy-outbounds-routing-geoips)
         - [geosites](#services-proxy-suite-proxy-outbounds-routing-geosites)
@@ -75,14 +86,18 @@ Part of the [proxy-suite options reference](./index.md).
       - [xrayJson](#services-proxy-suite-proxy-outbounds-xrayjson)
   - [priority](#services-proxy-suite-proxy-priority)
   - routing
+    - [asnUpdateInterval](#services-proxy-suite-proxy-routing-asnupdateinterval)
     - block
+      - [asns](#services-proxy-suite-proxy-routing-block-asns)
       - [domains](#services-proxy-suite-proxy-routing-block-domains)
       - [geoips](#services-proxy-suite-proxy-routing-block-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-block-geosites)
       - [ips](#services-proxy-suite-proxy-routing-block-ips)
       - [ruleSets](#services-proxy-suite-proxy-routing-block-rulesets)
+    - [blockQuic](#services-proxy-suite-proxy-routing-blockquic)
     - [default](#services-proxy-suite-proxy-routing-default)
     - direct
+      - [asns](#services-proxy-suite-proxy-routing-direct-asns)
       - [domains](#services-proxy-suite-proxy-routing-direct-domains)
       - [geoips](#services-proxy-suite-proxy-routing-direct-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-direct-geosites)
@@ -90,6 +105,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [ruleSets](#services-proxy-suite-proxy-routing-direct-rulesets)
     - [directRu](#services-proxy-suite-proxy-routing-directru)
     - proxy
+      - [asns](#services-proxy-suite-proxy-routing-proxy-asns)
       - [domains](#services-proxy-suite-proxy-routing-proxy-domains)
       - [geoips](#services-proxy-suite-proxy-routing-proxy-geoips)
       - [geosites](#services-proxy-suite-proxy-routing-proxy-geosites)
@@ -103,6 +119,7 @@ Part of the [proxy-suite options reference](./index.md).
         - [url](#services-proxy-suite-proxy-routing-rulesets-name-url)
     - [rules](#services-proxy-suite-proxy-routing-rules)
       - item
+        - [asns](#services-proxy-suite-proxy-routing-rules-asns)
         - [domains](#services-proxy-suite-proxy-routing-rules-domains)
         - [geoips](#services-proxy-suite-proxy-routing-rules-geoips)
         - [geosites](#services-proxy-suite-proxy-routing-rules-geosites)
@@ -118,15 +135,28 @@ Part of the [proxy-suite options reference](./index.md).
   - singBox
     - [package](#services-proxy-suite-proxy-singbox-package)
     - [clashApiPort](#services-proxy-suite-proxy-singbox-clashapiport)
+  - [subscriptionHwidFile](#services-proxy-suite-proxy-subscriptionhwidfile)
   - [subscriptionUpdateInterval](#services-proxy-suite-proxy-subscriptionupdateinterval)
   - [subscriptions](#services-proxy-suite-proxy-subscriptions)
     - item
       - [allowInsecure](#services-proxy-suite-proxy-subscriptions-allowinsecure)
       - [allowPrivateServers](#services-proxy-suite-proxy-subscriptions-allowprivateservers)
       - [detour](#services-proxy-suite-proxy-subscriptions-detour)
+      - [fragment](#services-proxy-suite-proxy-subscriptions-fragment)
+        - [interval](#services-proxy-suite-proxy-subscriptions-fragment-interval)
+        - [length](#services-proxy-suite-proxy-subscriptions-fragment-length)
+        - [packets](#services-proxy-suite-proxy-subscriptions-fragment-packets)
+      - [multiplex](#services-proxy-suite-proxy-subscriptions-multiplex)
+        - [concurrency](#services-proxy-suite-proxy-subscriptions-multiplex-concurrency)
+        - [maxConnections](#services-proxy-suite-proxy-subscriptions-multiplex-maxconnections)
+        - [padding](#services-proxy-suite-proxy-subscriptions-multiplex-padding)
+        - [protocol](#services-proxy-suite-proxy-subscriptions-multiplex-protocol)
+      - [sendDeviceInfo](#services-proxy-suite-proxy-subscriptions-senddeviceinfo)
       - [tag](#services-proxy-suite-proxy-subscriptions-tag)
+      - [updateInterval](#services-proxy-suite-proxy-subscriptions-updateinterval)
       - [url](#services-proxy-suite-proxy-subscriptions-url)
       - [urlFile](#services-proxy-suite-proxy-subscriptions-urlfile)
+      - [userAgent](#services-proxy-suite-proxy-subscriptions-useragent)
   - tproxy
     - [enable](#services-proxy-suite-proxy-tproxy-enable)
     - [fwmark](#services-proxy-suite-proxy-tproxy-fwmark)
@@ -249,6 +279,23 @@ Encryption) to XRay\.
 **Type:** one of “sing-box”, “xray”, “hybrid”\
 **Default:** `"sing-box"`\
 **Example:** `"hybrid"`
+
+<a id="services-proxy-suite-proxy-dns-browserdoh"></a>
+## services\.proxy-suite\.proxy\.dns\.browserDoh
+
+What browsers’ own DNS over HTTPS gets\. A browser that resolves past this host’s DNS
+still routes by its sites’ names (sniffed from TLS), but past DNS-based routing: fake IPs
+and the split between local and remote lookups\.
+
+ - “canary”: ` use-application-dns.net ` has no address, which tells Firefox not to turn
+   its DNS over HTTPS on by itself\. One switched on by hand stays on\.
+ - “block”: that, and the TUN’s and TProxy’s connections to known DNS over HTTPS servers
+   (geosite “category-doh”) are blocked, so browsers fall back to the system’s DNS\. A
+   browser set to use only its own then resolves nothing\.
+ - “allow”: neither\.
+
+**Type:** one of “allow”, “canary”, “block”\
+**Default:** `"canary"`
 
 <a id="services-proxy-suite-proxy-dns-clientsubnet"></a>
 ## services\.proxy-suite\.proxy\.dns\.clientSubnet
@@ -561,6 +608,98 @@ outbound can only chain through another XRay one\.
 **Default:** `null`\
 **Example:** `"ru-vps"`
 
+<a id="services-proxy-suite-proxy-outbounds-fragment"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.fragment
+
+Split the outbound’s TLS ClientHello into pieces, against DPI that reads the server name in one
+packet\. ` { } ` for the defaults\. XRay sends it through a freedom hop with these
+settings (with a ` detour `, ahead of it); sing-box splits it its own way and ignores the
+numbers, and cannot split a REALITY one\. Only for TLS over TCP; others are left as they are\.
+
+**Type:** null or (submodule)\
+**Default:** `null`\
+**Example:** `{ }`
+
+<a id="services-proxy-suite-proxy-outbounds-fragment-interval"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.fragment\.interval
+
+Milliseconds between pieces, or a range\.
+
+**Type:** string matching the pattern \[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"10-20"`
+
+<a id="services-proxy-suite-proxy-outbounds-fragment-length"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.fragment\.length
+
+Bytes per piece, or a range to draw from\.
+
+**Type:** string matching the pattern \[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"50-100"`
+
+<a id="services-proxy-suite-proxy-outbounds-fragment-packets"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.fragment\.packets
+
+“tlshello”, the ClientHello alone, or which packets by number (“1-3”)\.
+
+**Type:** string matching the pattern tlshello|\[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"tlshello"`
+
+<a id="services-proxy-suite-proxy-outbounds-multiplex"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.multiplex
+
+Carry the outbound’s connections over a few long-lived ones (vless, vmess, trojan,
+shadowsocks): fewer handshakes, so pages open faster on a slow link\. The server must
+speak the same: sing-box’s multiplexing (a sing-box inbound with ` multiplex.enabled `) and
+XRay’s Mux\.Cool are not the same protocol\. A proxy-suite server serves vless, vmess and
+trojan with XRay, which takes Mux\.Cool: dial it with the XRay backend\. XRay with XTLS
+Vision multiplexes UDP alone; XHTTP has its own (` proxy.xray.xhttpXmux `)\. ` { } ` for
+the defaults\.
+
+**Type:** null or (submodule)\
+**Default:** `null`\
+**Example:** `{ protocol = "smux"; }`
+
+<a id="services-proxy-suite-proxy-outbounds-multiplex-concurrency"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.multiplex\.concurrency
+
+XRay only: streams per connection\.
+
+**Type:** integer between 1 and 1024 (both inclusive)\
+**Default:** `8`
+
+<a id="services-proxy-suite-proxy-outbounds-multiplex-maxconnections"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.multiplex\.maxConnections
+
+sing-box only: connections to the server at most\.
+
+**Type:** integer between 1 and 64 (both inclusive)\
+**Default:** `4`
+
+<a id="services-proxy-suite-proxy-outbounds-multiplex-padding"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.multiplex\.padding
+
+sing-box only: pad the streams (the server must ask for it too)\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-outbounds-multiplex-protocol"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.multiplex\.protocol
+
+sing-box only: the multiplexer\.
+
+**Type:** one of “h2mux”, “smux”, “yamux”\
+**Default:** `"h2mux"`
+
+<a id="services-proxy-suite-proxy-outbounds-routing-asns"></a>
+## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.asns
+
+Autonomous systems (every address the operator announces) always sent to this outbound, whatever the selection; see ` proxy.routing.asnUpdateInterval `\.
+
+**Type:** list of (integer between 1 and 4294967295 (both inclusive) or string matching the pattern \[Aa]\[Ss]\[0-9]{1,10} convertible to it)\
+**Default:** `[ ]`\
+**Example:** `[ 62041 "AS13335" ]`
+
 <a id="services-proxy-suite-proxy-outbounds-routing-domains"></a>
 ## services\.proxy-suite\.proxy\.outbounds\.\*\.routing\.domains
 
@@ -722,6 +861,28 @@ in their usual order\. ` proxy-ctl proxy priority ` changes it at runtime\.
 **Default:** `{ }`\
 **Example:** `{ de-vps = 20; warp-pool = 10; }`
 
+<a id="services-proxy-suite-proxy-routing-asnupdateinterval"></a>
+## services\.proxy-suite\.proxy\.routing\.asnUpdateInterval
+
+How often the address lists of the autonomous systems in ` asns ` (here, in ` rules `, on
+outbounds, and in runtime rules: ` proxy-ctl proxy rules add proxy asn:62041 `) are
+refetched (systemd time span)\. They come from the ipverse asn-ip dataset on GitHub,
+through the proxy; an ASN matches nothing until its list first arrives\.
+` proxy-ctl proxy rulesets update ` fetches them now\.
+
+**Type:** string\
+**Default:** `"1d"`\
+**Example:** `"12h"`
+
+<a id="services-proxy-suite-proxy-routing-block-asns"></a>
+## services\.proxy-suite\.proxy\.routing\.block\.asns
+
+Autonomous systems (all their addresses) to block; see ` asnUpdateInterval `\.
+
+**Type:** list of (integer between 1 and 4294967295 (both inclusive) or string matching the pattern \[Aa]\[Ss]\[0-9]{1,10} convertible to it)\
+**Default:** `[ ]`\
+**Example:** `[ "AS15169" ]`
+
 <a id="services-proxy-suite-proxy-routing-block-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.block\.domains
 
@@ -767,6 +928,19 @@ Rule sets from ` ruleSets ` to block\.
 **Default:** `[ ]`\
 **Example:** `[ "ads" ]`
 
+<a id="services-proxy-suite-proxy-routing-blockquic"></a>
+## services\.proxy-suite\.proxy\.routing\.blockQuic
+
+Refuse QUIC (UDP to port 443) on its way to a proxy, so browsers switch to TCP at once
+rather than run HTTP/3 over a tunnel that carries UDP badly\. Only what the rules send
+through a proxy: what goes direct (zapret unblocks QUIC there), through an outbound that
+carries UDP itself (hysteria2, TUIC, WireGuard, AmneziaWG, WARP) and rules that name a
+network or port themselves keep it\. Mostly matters for TUN and TProxy: browsers do not
+send QUIC through a SOCKS proxy\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-proxy-routing-default"></a>
 ## services\.proxy-suite\.proxy\.routing\.default
 
@@ -775,6 +949,15 @@ Where traffic goes when no rule matches\.
 **Type:** one of “proxy”, “direct”\
 **Default:** `"proxy"`\
 **Example:** `"direct"`
+
+<a id="services-proxy-suite-proxy-routing-direct-asns"></a>
+## services\.proxy-suite\.proxy\.routing\.direct\.asns
+
+Autonomous systems (all their addresses) sent direct; see ` asnUpdateInterval `\.
+
+**Type:** list of (integer between 1 and 4294967295 (both inclusive) or string matching the pattern \[Aa]\[Ss]\[0-9]{1,10} convertible to it)\
+**Default:** `[ ]`\
+**Example:** `[ "AS12389" ]`
 
 <a id="services-proxy-suite-proxy-routing-direct-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.direct\.domains
@@ -828,6 +1011,15 @@ Send Russian sites and IPs (geosite “category-ru”, geoip “ru”) direct\.
 
 **Type:** boolean\
 **Default:** `true`
+
+<a id="services-proxy-suite-proxy-routing-proxy-asns"></a>
+## services\.proxy-suite\.proxy\.routing\.proxy\.asns
+
+Autonomous systems (all their addresses) sent through the proxy; see ` asnUpdateInterval `\.
+
+**Type:** list of (integer between 1 and 4294967295 (both inclusive) or string matching the pattern \[Aa]\[Ss]\[0-9]{1,10} convertible to it)\
+**Default:** `[ ]`\
+**Example:** `[ 62041 ]`
 
 <a id="services-proxy-suite-proxy-routing-proxy-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.proxy\.domains
@@ -943,6 +1135,15 @@ Rules checked in order before the proxy, direct and block lists\. The first matc
   }
 ]
 ```
+
+<a id="services-proxy-suite-proxy-routing-rules-asns"></a>
+## services\.proxy-suite\.proxy\.routing\.rules\.\*\.asns
+
+Autonomous systems (every address the operator announces) that this rule matches; see ` proxy.routing.asnUpdateInterval `\.
+
+**Type:** list of (integer between 1 and 4294967295 (both inclusive) or string matching the pattern \[Aa]\[Ss]\[0-9]{1,10} convertible to it)\
+**Default:** `[ ]`\
+**Example:** `[ 62041 "AS13335" ]`
 
 <a id="services-proxy-suite-proxy-routing-rules-domains"></a>
 ## services\.proxy-suite\.proxy\.routing\.rules\.\*\.domains
@@ -1072,10 +1273,23 @@ Loopback port of the sing-box Clash API, used to switch and test outbounds\.
 **Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `9090`
 
+<a id="services-proxy-suite-proxy-subscriptionhwidfile"></a>
+## services\.proxy-suite\.proxy\.subscriptionHwidFile
+
+File with the HWID subscriptions with ` sendDeviceInfo ` send, instead of one derived from
+/etc/machine-id: to keep a panel’s device slot after moving to another machine (its
+old HWID is in ` proxy-ctl proxy subs show <tag> `)\. 1 to 128 printable characters\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"/run/secrets/subscription-hwid"`
+
 <a id="services-proxy-suite-proxy-subscriptionupdateinterval"></a>
 ## services\.proxy-suite\.proxy\.subscriptionUpdateInterval
 
-How often subscriptions are refreshed (systemd time span)\.
+How often subscriptions are refetched (systemd time span), unless one sets its own
+` updateInterval ` or its server asks for another in ` profile-update-interval ` (not more
+often than hourly)\. ` proxy-ctl proxy subs update ` refetches them all now\.
 
 **Type:** string\
 **Default:** `"1d"`\
@@ -1084,8 +1298,12 @@ How often subscriptions are refreshed (systemd time span)\.
 <a id="services-proxy-suite-proxy-subscriptions"></a>
 ## services\.proxy-suite\.proxy\.subscriptions
 
-Subscription URLs that serve a list of proxy links (plain or base64)\. Fetched on first
-start, cached, and refreshed on a timer\. ` proxy-ctl proxy subs add ` adds more at runtime\.
+Subscription URLs that serve a list of proxy links (plain or base64), or JSON: whole XRay
+configs, as Remnawave and the like serve Happ (on the XRay and hybrid backends), or sing-box
+outbounds\. Of JSON, the proxies alone: the panel’s routing and DNS are left out\. Fetched
+on first start, cached, and refreshed on a timer\. What the server says of the subscription
+(traffic, expiry, a title, an announcement) shows in ` proxy-ctl proxy subs `\.
+` proxy-ctl proxy subs add ` adds more at runtime\.
 
 **Type:** list of (submodule)\
 **Default:** `[ ]`\
@@ -1127,6 +1345,100 @@ outbound can only chain through another XRay one\.
 **Default:** `null`\
 **Example:** `"ru-vps"`
 
+<a id="services-proxy-suite-proxy-subscriptions-fragment"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.fragment
+
+Split each entry’s TLS ClientHello into pieces, against DPI that reads the server name in one
+packet\. ` { } ` for the defaults\. XRay sends it through a freedom hop with these
+settings (with a ` detour `, ahead of it); sing-box splits it its own way and ignores the
+numbers, and cannot split a REALITY one\. Only for TLS over TCP; others are left as they are\.
+
+**Type:** null or (submodule)\
+**Default:** `null`\
+**Example:** `{ }`
+
+<a id="services-proxy-suite-proxy-subscriptions-fragment-interval"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.fragment\.interval
+
+Milliseconds between pieces, or a range\.
+
+**Type:** string matching the pattern \[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"10-20"`
+
+<a id="services-proxy-suite-proxy-subscriptions-fragment-length"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.fragment\.length
+
+Bytes per piece, or a range to draw from\.
+
+**Type:** string matching the pattern \[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"50-100"`
+
+<a id="services-proxy-suite-proxy-subscriptions-fragment-packets"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.fragment\.packets
+
+“tlshello”, the ClientHello alone, or which packets by number (“1-3”)\.
+
+**Type:** string matching the pattern tlshello|\[0-9]{1,5}(-\[0-9]{1,5})?\
+**Default:** `"tlshello"`
+
+<a id="services-proxy-suite-proxy-subscriptions-multiplex"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.multiplex
+
+Carry each entry’s connections over a few long-lived ones (vless, vmess, trojan,
+shadowsocks): fewer handshakes, so pages open faster on a slow link\. The server must
+speak the same: sing-box’s multiplexing (a sing-box inbound with ` multiplex.enabled `) and
+XRay’s Mux\.Cool are not the same protocol\. A proxy-suite server serves vless, vmess and
+trojan with XRay, which takes Mux\.Cool: dial it with the XRay backend\. XRay with XTLS
+Vision multiplexes UDP alone; XHTTP has its own (` proxy.xray.xhttpXmux `)\. ` { } ` for
+the defaults\.
+
+**Type:** null or (submodule)\
+**Default:** `null`\
+**Example:** `{ protocol = "smux"; }`
+
+<a id="services-proxy-suite-proxy-subscriptions-multiplex-concurrency"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.multiplex\.concurrency
+
+XRay only: streams per connection\.
+
+**Type:** integer between 1 and 1024 (both inclusive)\
+**Default:** `8`
+
+<a id="services-proxy-suite-proxy-subscriptions-multiplex-maxconnections"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.multiplex\.maxConnections
+
+sing-box only: connections to the server at most\.
+
+**Type:** integer between 1 and 64 (both inclusive)\
+**Default:** `4`
+
+<a id="services-proxy-suite-proxy-subscriptions-multiplex-padding"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.multiplex\.padding
+
+sing-box only: pad the streams (the server must ask for it too)\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-subscriptions-multiplex-protocol"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.multiplex\.protocol
+
+sing-box only: the multiplexer\.
+
+**Type:** one of “h2mux”, “smux”, “yamux”\
+**Default:** `"h2mux"`
+
+<a id="services-proxy-suite-proxy-subscriptions-senddeviceinfo"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.sendDeviceInfo
+
+Tell the server about this device, as Happ and v2RayTun do: its HWID (` x-hwid `), system,
+kernel version and architecture (` x-device-os `, ` x-ver-os `, ` x-device-model `)\. For a
+panel that limits devices by HWID and serves nothing without one\. The HWID is derived
+from /etc/machine-id, which it does not give away; see ` proxy.subscriptionHwidFile `\.
+
+**Type:** boolean\
+**Default:** `false`
+
 <a id="services-proxy-suite-proxy-subscriptions-tag"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.tag
 
@@ -1134,6 +1446,17 @@ Unique name, used as a prefix for the tags of its outbounds\.
 
 **Type:** string matching the pattern ^\[A-Za-z0-9]\[A-Za-z0-9\._-]\*$\
 **Example:** `"community-list"`
+
+<a id="services-proxy-suite-proxy-subscriptions-updateinterval"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.updateInterval
+
+How often this subscription is refetched (systemd time span)\. ` null `: as often as its
+server asks in its ` profile-update-interval ` header, but not more than hourly; without
+one, ` proxy.subscriptionUpdateInterval `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"6h"`
 
 <a id="services-proxy-suite-proxy-subscriptions-url"></a>
 ## services\.proxy-suite\.proxy\.subscriptions\.\*\.url
@@ -1152,6 +1475,18 @@ File with the subscription URL\.
 **Type:** null or string\
 **Default:** `null`\
 **Example:** `"/run/secrets/proxy-subscription-url"`
+
+<a id="services-proxy-suite-proxy-subscriptions-useragent"></a>
+## services\.proxy-suite\.proxy\.subscriptions\.\*\.userAgent
+
+User-Agent the subscription is fetched with\. Panels pick what they serve by it: to
+v2rayN’s, a list of links\. Several are tried in order until one gets entries, for a
+panel that serves some clients a stub (“app not supported”) instead\. A change
+refetches the subscription\.
+
+**Type:** (non-empty (list of string matching the pattern \[ -~]{1,256})) or string convertible to it\
+**Default:** `[ "v2rayN/6.0" ]`\
+**Example:** `[ "v2rayN/6.0" "Happ/1.0" ]`
 
 <a id="services-proxy-suite-proxy-tproxy-enable"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.enable

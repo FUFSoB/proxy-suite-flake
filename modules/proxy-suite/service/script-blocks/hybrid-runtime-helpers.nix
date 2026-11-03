@@ -23,6 +23,7 @@ lib.optionalString hybridEnabled (
       xraySidecarRoutingMark != null
     ) "| .streamSettings.sockopt.mark = $mark";
     setXhttpXmux = xhttpXmuxJq;
+    fragmentHopsDef = builtins.readFile ./xray-fragment-hops.jq;
     hopRoutingMark = lib.optionalString (
       routingMark != null
     ) " + {routing_mark: ${toString routingMark}}";

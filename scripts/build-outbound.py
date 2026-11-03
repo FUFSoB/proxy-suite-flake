@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import sys
 
 from proxy_parsing import build_outbound
@@ -19,7 +20,10 @@ def main() -> None:
 
     url = sys.stdin.read().strip()
     try:
-        outbound = build_outbound(url, args.tag, args.routing_mark, args.backend)
+        # The outbound's fragment and multiplex settings, from the start script (a function's
+        # environment, as one call's alone).
+        tweaks = json.loads(os.environ.get("PROXY_SUITE_OUTBOUND_TWEAKS") or "null")
+        outbound = build_outbound(url, args.tag, args.routing_mark, args.backend, tweaks)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)

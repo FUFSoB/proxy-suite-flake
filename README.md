@@ -151,9 +151,11 @@ Changes and secrets need root or the userControl group.
 
   proxy [status|on|off]                  local proxy
   proxy outbounds [list]                 outbounds, their source, and the current pick
-  proxy outbounds add [tag] <url|json|-> [--detour <tag>]
+  proxy outbounds add [tag] <url|json|-> [--detour <tag>] [--fragment] [--mux <h2mux|smux|yamux>]
                                          add an outbound from a link or JSON (-: stdin);
-                                         --detour: connect through another outbound
+                                         --detour: connect through another outbound;
+                                         --fragment: split its TLS ClientHello; --mux:
+                                         multiplex its connections (the server must too)
   proxy outbounds add [tag] <vpn://…|file.conf|-> [--container <name>]
                                          add an AmneziaWG outbound (runs in wireproxy)
   proxy outbounds chain <tag> <through-tag> [new tag]
@@ -184,10 +186,17 @@ Changes and secrets need root or the userControl group.
   proxy rules [list]                     routing rules, the configuration's and runtime ones,
                                          in the order they are checked
   proxy rules add <target> <match...> [--name <name>] [--priority <n>]
-                                         send domains, addresses, geosite:x, geoip:x or ruleset:x
-                                         to proxy, direct, block or an outbound; no --name: the
+                                         send domains, addresses, full:x (that name alone),
+                                         keyword:x, regexp:x, geosite:x, geoip:x, ruleset:x
+                                         or asn:N (an operator's every address) to proxy,
+                                         direct, block or an outbound; no --name: the
                                          rule named after the target, extended (priority 50:
                                          ahead of the configuration's, at 100 to 500)
+  proxy rules import <happ://routing/add/…|json|-> [--name <name>] [--replace] [--set-mode]
+                                         a Happ routing profile as rules (happ-<name>-block,
+                                         -direct, -proxy, ahead of the configuration's);
+                                         --replace: again over an earlier import;
+                                         --set-mode: its GlobalProxy as the route mode
   proxy rules matches <name> add|rm <match...>
   proxy rules matches <name> set [match...]
                                          exactly these matches
@@ -195,11 +204,21 @@ Changes and secrets need root or the userControl group.
   proxy rules priority <name> <n>|up|down
                                          lower goes first; up/down moves past the next row
   proxy rules disable|enable|rm <name>
-  proxy subs [list|update]               subscriptions; update refetches them
-  proxy subs add [tag] <url|->           add a subscription (no tag: named after its host; -: stdin)
+  proxy subs [list|update] [--json]      subscriptions, their traffic and expiry; update
+                                         refetches them all now
+  proxy subs show <tag> [--json]         one subscription: what its server says of it
+                                         (title, traffic, expiry, announcement), when it is
+                                         refetched, how it is fetched
+  proxy subs add [tag] <url|-> [--ua <user-agent>]... [--device-info] [--interval <span>]
+                                         add a subscription (no tag: named after its host;
+                                         -: stdin); --ua: fetch with these, in turn until one
+                                         gets entries; --device-info: send the HWID and
+                                         system; --interval: refetch this often (default: as
+                                         its server asks); --fragment, --mux: as for outbounds
   proxy subs rm <tag>                    remove a runtime subscription
   proxy subs link <tag> [--qr]           its URL
-  proxy rulesets [list|update]           rule sets and when they were fetched; update refetches
+  proxy rulesets [list|update]           rule sets and ASN address lists, and when they were
+                                         fetched; update refetches
   proxy config [--raw]                   client config to use elsewhere; --raw: as running
   proxy tun [status|on|off]              global TUN mode
   proxy tproxy [status|on|off]           global TProxy mode

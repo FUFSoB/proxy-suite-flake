@@ -64,6 +64,14 @@ proxy-ctl killswitch off      # lift the kill switch without stopping the tunnel
   they are not in `192.168.0.0/16`.
 - While a global mode is on, per-app `tun`, `tproxy` and `zapret` profiles run the app
   without their route, so wrapped programs still start.
+- Browsers try HTTP/3 (QUIC, over UDP) first. Through a proxy that carries UDP inside TCP it is
+  slow, and a browser waits for it to fail before it falls back. `proxy.routing.blockQuic`
+  refuses QUIC on its way to such a proxy, so the fallback is immediate. Direct traffic,
+  where zapret unblocks QUIC, and outbounds that carry UDP themselves (hysteria2, TUIC,
+  WireGuard, AmneziaWG, WARP) keep it.
+- Firefox may turn its own DNS over HTTPS on, which bypasses this host's DNS (fake IPs, the
+  local/remote split). By default the tunnel answers its canary domain so it stays off;
+  `proxy.dns.browserDoh = "block"` also blocks known DNS over HTTPS servers.
 
 ## See also
 

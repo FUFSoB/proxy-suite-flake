@@ -63,8 +63,14 @@
       assert (builtins.elemAt xrayTunConfig.dns.servers 2).tag == "local";
       assert builtins.length xrayTunConfig.fakedns == 2;
       assert tunDnsOutbound.protocol == "dns";
+      # Firefox's canary has no address (proxy.dns.browserDoh), then everything but A/AAAA direct.
       assert
         tunDnsOutbound.settings.rules == [
+          {
+            action = "return";
+            rCode = 3;
+            domain = [ "full:use-application-dns.net" ];
+          }
           {
             action = "direct";
             qType = "2-27,29-65535";

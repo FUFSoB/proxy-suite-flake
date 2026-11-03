@@ -52,7 +52,12 @@ let
     let
       ro = ob.routing;
       hasAny =
-        ro.domains != [ ] || ro.ips != [ ] || ro.geosites != [ ] || ro.geoips != [ ] || ro.ruleSets != [ ];
+        ro.domains != [ ]
+        || ro.ips != [ ]
+        || ro.geosites != [ ]
+        || ro.geoips != [ ]
+        || ro.ruleSets != [ ]
+        || ro.asns != [ ];
     in
     lib.optional hasAny {
       outbound = resolveTag ob.tag;
@@ -62,6 +67,7 @@ let
         geosites
         geoips
         ruleSets
+        asns
         ;
     }
   ) proxyCfg.outbounds;
@@ -84,12 +90,20 @@ let
       onionOutbound
       ;
     inherit (cfg) geodata;
-    inherit (derived) ruleSets proxyInboundsLoopback;
+    inherit (derived)
+      ruleSets
+      proxyInboundsLoopback
+      declaredAsns
+      asnTag
+      asnPath
+      ;
+    inherit (proxyCfg.dns) browserDoh;
     hopPorts = lib.optionals cfg.host.privileged derived.hopPorts;
   };
   inherit (singBoxRules)
     geositeRuleSets
     geoIPRuleSets
+    asnRuleSets
     remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules
@@ -107,6 +121,7 @@ let
       onionOutbound
       ;
     inherit (derived) selectionMode proxyInboundsLoopback;
+    inherit (proxyCfg.dns) browserDoh;
   };
   inherit (xrayRules) xrayRoutingRules xrayRouteModeRules;
 
@@ -122,6 +137,7 @@ let
     geosites = rule.geosites or [ ];
     geoips = rule.geoips or [ ];
     ruleSets = rule.ruleSets or [ ];
+    asns = rule.asns or [ ];
   };
   routingSections = [
     {
@@ -156,14 +172,28 @@ let
       id = "direct";
       priority = 400;
       label = "routing.direct, private addresses";
-      entries = [ (matchFields (direct // { inherit (r.direct) ruleSets; }) // { target = "direct"; }) ];
+      entries = [
+        (matchFields (direct // { inherit (r.direct) ruleSets asns; }) // { target = "direct"; })
+      ];
     }
     {
       id = "proxyGeo";
       priority = 500;
-      label = "routing.proxy: geosites, geoips and rule sets";
+      label = "routing.proxy: geosites, geoips, rule sets and ASNs";
       entries = [
-        (matchFields { inherit (r.proxy) geosites geoips ruleSets; } // { target = "proxy"; })
+        (
+          matchFields {
+            inherit (r.proxy)
+              geosites
+              geoips
+              ruleSets
+              asns
+              ;
+          }
+          // {
+            target = "proxy";
+          }
+        )
       ];
     }
   ];
@@ -175,6 +205,7 @@ in
     zapretDirectRules
     geositeRuleSets
     geoIPRuleSets
+    asnRuleSets
     remoteRuleSets
     singBoxRoutingRules
     singBoxRouteModeRules

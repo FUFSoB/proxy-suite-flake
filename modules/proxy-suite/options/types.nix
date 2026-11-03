@@ -2,7 +2,7 @@
 
 let
   inherit (lib) mkOption types;
-  inherit (import ./lib.nix { inherit lib; }) list;
+  inherit (import ./lib.nix { inherit lib; }) list asnList;
 
   # `what` ends each description, saying where the matches go.
   routingFields = what: {
@@ -19,6 +19,13 @@ let
       ruleSets = list "Rule sets from `proxy.routing.ruleSets` ${what} (sing-box and hybrid only)." [
         "antifilter"
       ];
+      asns =
+        asnList
+          "Autonomous systems (every address the operator announces) ${what}; see `proxy.routing.asnUpdateInterval`."
+          [
+            62041
+            "AS13335"
+          ];
     };
 
   routingRuleType = types.submodule {

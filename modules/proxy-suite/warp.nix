@@ -108,6 +108,8 @@ in
           configFile = d.profilePath;
           inherit (d) endpoint;
           inherit (w) domainStrategy;
+          obfuscationDefaults = w.obfuscation;
+          inherit (d) endpointCandidates;
           asOutbound = lib.mkIf viaAmneziaWg w.asOutbound;
           autostart = lib.mkIf w.autostart true;
         }
@@ -154,6 +156,7 @@ in
               tunnelPort
               directPort
               endpoint
+              endpointCandidates
               ;
             inherit (w) domainStrategy;
           };

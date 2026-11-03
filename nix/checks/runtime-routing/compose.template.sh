@@ -16,7 +16,8 @@ paths() {
   GEOIP_DIR=$(grep -o -- '--arg geoip_dir [^ ]*' "$START" | head -n 1 | cut -d' ' -f3)
   URLTEST=$(grep -o -- '--argjson urltest [a-z]*' "$START" | head -n 1 | cut -d' ' -f3)
   BACKEND=$(grep -o -- '--arg backend [a-z-]*' "$START" | head -n 1 | cut -d' ' -f3)
-  for v in FILTER CONFIG BUCKETS CONVERT COMPOSE GEOSITE_DIR GEOIP_DIR URLTEST BACKEND; do
+  ASN_DIR=$(grep -o -- '--arg asn_dir [^ ]*' "$START" | head -n 1 | cut -d' ' -f3)
+  for v in FILTER CONFIG BUCKETS CONVERT COMPOSE GEOSITE_DIR GEOIP_DIR URLTEST BACKEND ASN_DIR; do
     if [ -z "$(eval "printf %s \"\$$v\"")" ]; then
       echo "no $v in $START" >&2
       exit 1
@@ -40,6 +41,9 @@ cat > spool.json <<'JSON'
   {"name": "gone", "target": "removed-outbound", "domains": ["x.example"]},
   {"name": "nogeo", "target": "proxy", "geosites": ["no-such-list"]},
   {"name": "empty", "target": "proxy", "priority": 250},
+  {"name": "tg", "target": "proxy", "priority": 60, "asns": [62041, "13335", 0, 1.5, 4294967296, 62041]},
+  {"name": "kw", "target": "proxy", "priority": 70, "fullDomains": ["Exact.Example", "bad name"],
+   "keywords": ["Tracker", "x y"], "regexps": ["^ads[0-9]+\\.example$", "(?=x)", "a++", "(open", "\\1"]},
   {"name": "off", "target": "proxy", "disabled": true, "domains": ["off.example"]}
 ]}
 JSON
@@ -52,7 +56,11 @@ echo '{}' > routing/rs/old.json
 "$RENDER" "$PWD/spool" "$PWD/routing"
 cp routing/rules.json rendered.json
 jq -e '
-  map(.name) == ["ads", "bank", "gone", "nogeo", "off", "empty", "work"]
+  map(.name) == ["ads", "bank", "gone", "nogeo", "off", "tg", "kw", "empty", "work"]
+  and (.[] | select(.name == "tg") | .asns == [62041])
+  # A name, a part of one, a pattern: what both backends take (Go regexp has no lookaround).
+  and (.[] | select(.name == "kw") | .fullDomains == ["exact.example"] and .keywords == ["tracker"]
+       and .regexps == ["^ads[0-9]+\\.example$"])
   and (.[] | select(.name == "bank") | .domains == ["bank.example"] and .ips == ["192.0.2.1/32"]
        and .geosites == ["category-gov-ru"] and .geoips == [] and .ruleSets == [] and .target == "direct")
 ' rendered.json > /dev/null
@@ -61,8 +69,11 @@ jq -e '
 jq -e '.rules == [{domain_suffix: ["work.example"]}, {ip_cidr: ["198.51.100.0/24"]}]' routing/rs/work.json > /dev/null
 jq -e '.rules == [{domain_suffix: ["work.example"]}]' routing/dns/work.json > /dev/null
 jq -e '.rules == []' routing/rs/empty.json > /dev/null
-# What restarts the backends: everything but the domains and addresses of enabled rules.
-jq -e --slurpfile r rendered.json '. == ($r[0] | map(select(.disabled | not) | del(.domains, .ips)))' routing/structure > /dev/null
+jq -e '.rules == [{domain: ["exact.example"]}, {domain_keyword: ["tracker"]}, {domain_regex: ["^ads[0-9]+\\.example$"]}]' \
+  routing/rs/kw.json > /dev/null
+# What restarts the backends: everything but the names and addresses of enabled rules.
+jq -e --slurpfile r rendered.json '. == ($r[0] | map(select(.disabled | not) | del(.domains, .fullDomains, .keywords, .regexps, .ips)))' \
+  routing/structure > /dev/null
 # A rule gone: its rule set stays until apply sweeps, once the backends restarted.
 [ -e routing/rs/old.json ]
 "$RENDER" --sweep "$PWD/spool" "$PWD/routing"
@@ -95,9 +106,13 @@ compose() {
         esac
       done | jq -R . | jq -cs .)
   TAGS=$(jq -c --argjson obs "$OBS" '[($obs[]?, .outbounds[]?) | .tag? | strings] | unique' "$CONFIG")
+  # The lists where the backend can read them: the state directory's is not here.
+  [ "$ASN_DIR" = /var/lib/proxy-suite/asn ]
+  mkdir -p asn
+  for n in 62041 12389; do echo '{"version":2,"rules":[]}' > "asn/asn-$n.json"; done
   jq -c --arg backend "$BACKEND" --slurpfile tags <(echo "$TAGS") --argjson rule_sets '[]' \
     --slurpfile missing_geo <(echo "$MISSING") --arg dir "$PWD/routing" --arg geosite_dir "$GEOSITE_DIR" \
-    --arg geoip_dir "$GEOIP_DIR" --argjson urltest "$URLTEST" -f "$CONVERT" rendered.json > converted.json
+    --arg geoip_dir "$GEOIP_DIR" --arg asn_dir "$PWD/asn" --argjson urltest "$URLTEST" -f "$CONVERT" rendered.json > converted.json
   jq -c --arg mode "${MODE:-blacklist}" --slurpfile runtime <(jq -c .sections converted.json) -f "$COMPOSE" "$BUCKETS" > composed.json
   FINAL=proxy DNS_FINAL=remote CLEAR=false
   case "$MODE" in
@@ -114,7 +129,8 @@ compose() {
     --arg route_final "$FINAL" --arg dns_final "$DNS_FINAL" --argjson clear_dns_rules "$CLEAR" \
     --arg xray_loglevel "" --arg xray_single_proxy_tag "" --slurpfile xray_selectable <(echo '[]') \
     --argjson xray_tun_dns_runtime false --argjson host_addresses '[]' \
-    -f "$FILTER" "$CONFIG" > "$OUT"
+    --slurpfile asn_prefixes <(echo "${ASN_PREFIXES:-{\}}") \
+    -f "$FILTER" "$CONFIG" | sed "s#/var/lib/proxy-suite/asn/#$PWD/asn/#g" > "$OUT"
 }
 
 # --- sing-box --------------------------------------------------------------------------------
@@ -133,6 +149,11 @@ jq -e '
   # The rule sets, each once: geodata the configuration has too is not declared twice.
   and ([.route.rule_set[].tag] | length == (unique | length))
   and ([.route.rule_set[] | select(.tag == "user:bank" or .tag == "user-dns:bank")] | length == 2)
+  # A runtime rule'"'"'s autonomous system, and the configuration'"'"'s: rule sets of their lists.
+  and any(.route.rules[]; .rule_set? == ["user:tg", "asn-62041"] and .outbound == "proxy")
+  and any(.route.rule_set[]; .tag == "asn-62041" and .format == "source" and (.path | endswith("/asn/asn-62041.json")))
+  and any(.route.rules[]; .rule_set? == ["asn-12389"] and .outbound == "direct")
+  and any(.route.rule_set[]; .tag == "asn-12389")
   and any(.route.rule_set[]; .tag == "geosite-category-gov-ru")
   # Lookups follow: bank locally, ahead of the configuration'"'"'s; a block rule none.
   and ([.dns.rules[] | .rule_set[0]? // .domain_suffix[0]?] as $dns
@@ -158,14 +179,25 @@ jq -e '[.route.rules[].rule_set[0]?] | index("user:ads") != null and index("user
 
 # --- xray ------------------------------------------------------------------------------------
 jq 'map(.ruleSets = [])' full.json > rendered.json
-compose @xrayStart@ "" '[{"protocol":"freedom","tag":"primary"}]' xray.json
+ASN_PREFIXES='{"62041":["91.108.4.0/22"],"12389":["2.60.0.0/16"]}' compose @xrayStart@ "" '[{"protocol":"freedom","tag":"primary"}]' xray.json
 jq -e '
   [.routing.rules[].ruleTag] as $tags
   | ($tags | index("user:bank")) < ($tags | index("user:work"))
   and ($tags | index("user:work:ip")) == ($tags | index("user:work")) + 1
   and ($tags | index("dns-remote-bridge")) != null
+  # An autonomous system as its addresses, runtime and declared alike.
+  and (.routing.rules[] | select(.ruleTag == "user:tg:ip") | .ip) == ["91.108.4.0/22"]
+  and (.routing.rules[] | select(.ruleTag == "direct-asn") | .ip) == ["2.60.0.0/16"]
+  and (.routing.rules[] | select(.ruleTag == "user:kw") | .domain)
+      == ["full:exact.example", "keyword:tracker", "regexp:^ads[0-9]+\\.example$"]
 ' xray.json > /dev/null
 XRAY_LOCATION_ASSET=@xrayAssets@ @xray@ run -test -c xray.json
+# Before the lists arrive, their rules go: an empty "ip" would match everything.
+compose @xrayStart@ "" '[{"protocol":"freedom","tag":"primary"}]' xray-no-asn.json
+jq -e '[.routing.rules[].ruleTag] | index("user:tg:ip") == null and index("direct-asn") == null
+  and ([.[] | select(. != null)] | length > 0)' xray-no-asn.json > /dev/null
+jq -e '[.. | strings | select(startswith("asn:"))] == []' xray-no-asn.json > /dev/null
+XRAY_LOCATION_ASSET=@xrayAssets@ @xray@ run -test -c xray-no-asn.json
 
 # --- the inbounds' guard ---------------------------------------------------------------------
 # A runtime direct rule above the configuration's gets a guard of its own, for what it matches;

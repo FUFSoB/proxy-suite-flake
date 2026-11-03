@@ -189,10 +189,11 @@ in
             };
           }
         ];
+        # The lookups that follow the routing; not the DNS over HTTPS canary, which answers itself.
         rules = map (r: {
           inherit (r) server;
           match = r.domain_suffix or r.rule_set;
-        }) (mkTProxyConfig routed).dns.rules;
+        }) (builtins.filter (r: r ? server) (mkTProxyConfig routed).dns.rules);
       in
       assert
         rules == [

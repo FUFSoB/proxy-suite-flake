@@ -31,6 +31,16 @@ def cidr:
     else empty end;
 # geosite-NAME.srs, geosite:NAME: "geolocation-!cn" and "google@cn" among them, never a path.
 def geo: select(test("^[A-Za-z0-9!@._-]{1,64}\\z") and (startswith(".") | not));
+# keyword:WORD, as XRay spells it: a part of a name.
+def keyword: ascii_downcase | select(test("^[a-z0-9_.-]{1,64}\\z"));
+# regexp:PATTERN, which both backends hand to Go's regexp (RE2): none of what it lacks
+# (lookaround, backreferences, atomic or possessive groups, conditionals, comments), no control
+# character, and one that compiles. One the backend refused would fail its whole start.
+def regex:
+  select(length >= 1 and length <= 256
+    and (explode | all(. >= 32 and . != 127))
+    and (test("\\(\\?[=!<>(#PCRk]|\\\\[1-9kgG]|[*+?}]\\+") | not)
+    and (. as $r | (try ("" | test($r)) catch "bad") != "bad"));
 def tag: select(test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\z"));
 
 (if length == 1 then .[0] else null end)
@@ -44,10 +54,16 @@ def tag: select(test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\z"));
      priority: (if (.priority | type) == "number" then (.priority | floor | if . < -1000000 then -1000000 elif . > 1000000 then 1000000 else . end) else 50 end),
      disabled: (.disabled == true),
      domains: ([.domains | strs[] | domain] | unique),
+     fullDomains: ([.fullDomains | strs[] | domain] | unique),
+     keywords: ([.keywords | strs[] | keyword] | unique),
+     regexps: ([.regexps | strs[] | regex] | unique),
      ips: ([.ips | strs[] | cidr] | unique),
      geosites: ([.geosites | strs[] | geo] | unique),
      geoips: ([.geoips | strs[] | geo] | unique),
-     ruleSets: ([.ruleSets | strs[] | tag] | unique)
+     ruleSets: ([.ruleSets | strs[] | tag] | unique),
+     # Autonomous system numbers, as asn:N: whole numbers in range, no more than 64 of them.
+     asns: ([(.asns | if type == "array" then .[] else empty end)
+             | numbers | select(. >= 1 and . <= 4294967295 and . == floor)] | unique | .[:64])
    }]
 | reduce .[] as $r ([]; if any(.[]; .name == $r.name) then . else . + [$r] end)
 | sort_by(.priority, .name)

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import base64
+import contextlib
+import io
 import json
 import unittest
 import urllib.parse
@@ -652,6 +654,55 @@ class BuildOutboundTests(unittest.TestCase):
         finally:
             del proxy_parsing.PARSERS["broken"]
             proxy_parsing.BACKEND_AWARE_PARSERS.remove("broken")
+
+
+class OutboundTweaksTests(unittest.TestCase):
+    """fragment and multiplex: what a link cannot say, per outbound or subscription."""
+
+    TLS = "trojan://p@tr.example.com:443?sni=tr.example.com#t"
+    VISION = "vless://11111111-1111-1111-1111-111111111111@v.example.com:443?security=tls&sni=v.example.com&flow=xtls-rprx-vision&fp=chrome#v"
+    REALITY = (
+        "vless://11111111-1111-1111-1111-111111111111@r.example.com:443?security=reality"
+        "&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&sid=ab&sni=r.example.com&fp=chrome#r"
+    )
+    HY2 = "hy2://p@h.example.com:443?sni=h.example.com#h"
+
+    def build(self, url, backend, tweaks):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            return build_outbound(url, "t", None, backend, tweaks), err.getvalue()
+
+    def test_checked(self):
+        checked = proxy_parsing.checked_tweaks
+        self.assertEqual(checked(None), {"fragment": None, "multiplex": None})
+        self.assertEqual(checked({"fragment": {}})["fragment"], {"packets": "tlshello", "length": "50-100", "interval": "10-20"})
+        self.assertEqual(checked({"multiplex": True})["multiplex"]["protocol"], "h2mux")
+        for bad in ({"fragment": {"packets": "x; y"}}, {"fragment": {"length": 5}}, {"multiplex": {"protocol": "spdy"}},
+                    {"multiplex": {"maxConnections": 0}}, {"multiplex": {"padding": "yes"}}, {"other": 1}, ["fragment"]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                checked(bad)
+
+    def test_sing_box(self):
+        ob, _ = self.build(self.TLS, "sing-box", {"fragment": {}, "multiplex": {"protocol": "smux"}})
+        self.assertTrue(ob["tls"]["fragment"])
+        self.assertEqual(ob["multiplex"], {"enabled": True, "protocol": "smux", "max_connections": 4, "padding": False})
+        ob, err = self.build(self.REALITY, "sing-box", {"fragment": {}})
+        self.assertNotIn("fragment", ob["tls"])
+        self.assertIn("REALITY", err)
+        ob, err = self.build(self.HY2, "sing-box", {"fragment": {}, "multiplex": {}})
+        self.assertNotIn("multiplex", ob)
+        self.assertNotIn("fragment", ob.get("tls", {}))
+        self.assertIn("left out", err)
+
+    def test_xray(self):
+        ob, _ = self.build(self.TLS, "xray", {"fragment": {"length": "100-200"}, "multiplex": {"concurrency": 16}})
+        self.assertEqual(ob["mux"], {"enabled": True, "concurrency": 16})
+        self.assertEqual(ob["_fragment"], {"packets": "tlshello", "length": "100-200", "interval": "10-20"})
+        # Vision: Mux.Cool for UDP alone; the server breaks a muxed TCP stream.
+        ob, _ = self.build(self.VISION, "xray", {"multiplex": {"concurrency": 16}})
+        self.assertEqual(ob["mux"], {"enabled": True, "concurrency": -1, "xudpConcurrency": 16})
+        # REALITY over TCP: XRay fragments it.
+        ob, _ = self.build(self.REALITY, "xray", {"fragment": {}})
+        self.assertIn("_fragment", ob)
 
 
 if __name__ == "__main__":

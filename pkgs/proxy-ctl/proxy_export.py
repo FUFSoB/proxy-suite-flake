@@ -18,6 +18,11 @@ GEODATA_PATH = re.compile(r"/share/sing-box/rule-set/(geosite|geoip)-([^/]+)\.sr
 # ponytail: guessed from the file name, so wrong for custom geodata packages; take the
 # URL from an option if someone ships one.
 GEODATA_URL = "https://raw.githubusercontent.com/SagerNet/sing-{kind}/rule-set/{kind}-{name}.srs"
+# SagerNet's geoip is countries only: telegram, google and the like (which this host takes
+# from XRay's geoip.dat, pkgs/sing-geoip-extended.nix) come from MetaCubeX's instead.
+GEOIP_EXTRA_URL = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/{name}.srs"
+# An autonomous system's address list (asn.nix): inlined, as no download has it.
+ASN_PATH = re.compile(r"/asn-([0-9]+)\.json$")
 XRAY_SOCKS_PORT = 10808
 XRAY_HTTP_PORT = 10809
 
@@ -110,7 +115,15 @@ def _backend_tag(tags, only, prefix=""):
     raise ValueError(f"no outbound {only} in the running config")
 
 
-def portable_sing_box(cfg, only=None):
+def _geodata_url(kind, name):
+    if kind == "geoip" and not re.fullmatch(r"[a-z]{2}", name):
+        return GEOIP_EXTRA_URL.format(name=name)
+    return GEODATA_URL.format(kind=kind, name=name)
+
+
+def portable_sing_box(cfg, only=None, read_local=None):
+    """read_local: path -> a local source rule set's "rules", or None; the ones it reads (ASNs'
+    address lists) go along inline."""
     cfg = copy.deepcopy(cfg)
     obs = cfg.get("outbounds") or []
     exits = [o for o in obs if o.get("type") not in SING_BOX_SYSTEM or interface_bound(o)]
@@ -163,10 +176,15 @@ def portable_sing_box(cfg, only=None):
     rule_sets, gone = [], set()
     for rs in route.get("rule_set") or []:
         match = GEODATA_PATH.search(rs.get("path") or "") if rs.get("type") == "local" else None
+        inline = None
+        if not match and rs.get("type") == "local" and read_local and ASN_PATH.search(rs.get("path") or ""):
+            inline = read_local(rs["path"])
         if match:
             kind, name = match.groups()
             rule_sets.append({"type": "remote", "tag": rs["tag"], "format": "binary",
-                              "url": GEODATA_URL.format(kind=kind, name=name), "download_detour": target})
+                              "url": _geodata_url(kind, name), "download_detour": target})
+        elif isinstance(inline, list):
+            rule_sets.append({"type": "inline", "tag": rs["tag"], "rules": inline})
         elif rs.get("type") == "local":
             gone.add(rs["tag"])
         else:
@@ -255,8 +273,8 @@ def portable_xray(cfg, only=None):
     return cfg, warnings
 
 
-def portable(cfg, only=None):
+def portable(cfg, only=None, read_local=None):
     """sing-box or XRay, by the config's own shape."""
     if any("protocol" in o for o in cfg.get("outbounds") or []):
         return portable_xray(cfg, only)
-    return portable_sing_box(cfg, only)
+    return portable_sing_box(cfg, only, read_local)

@@ -34,6 +34,18 @@ in
       default = [ ];
       inherit description example;
     };
+  # Autonomous system numbers: 13335, or "AS13335" as whois writes them.
+  asnList =
+    description: example:
+    mkOption {
+      type = types.listOf (
+        types.coercedTo (types.strMatching "[Aa][Ss][0-9]{1,10}") (
+          s: lib.toInt (builtins.substring 2 (-1) s)
+        ) (types.ints.between 1 4294967295)
+      );
+      default = [ ];
+      inherit description example;
+    };
   nullStr =
     description: example:
     mkOption {

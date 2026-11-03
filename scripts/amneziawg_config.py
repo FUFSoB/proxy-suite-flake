@@ -860,9 +860,30 @@ def prepare(manifest: dict[str, Any]) -> str:
     else:
         raise ConfigError(f"unsupported manifest kind '{kind}'")
     config = _apply_awg3_mtu_default(_normalize_headers(config))
+    config = fill_obfuscation(config, manifest.get("obfuscationDefaults"))
     if manifest.get("endpoint") is not None:
         config = override_endpoint(config, str(manifest["endpoint"]))
     validate_config(config, bool(manifest.get("allowConfigHooks", False)))
+    return config
+
+
+def fill_obfuscation(config: str, defaults: Any) -> str:
+    """The obfuscation keys a config leaves out, from defaults (obfuscationType's names, as
+    warp.obfuscation gives them); every key it has stays as it is."""
+    if not defaults:
+        return config
+    if not isinstance(defaults, dict):
+        raise ConfigError("obfuscationDefaults must be an object")
+    for key, value in defaults.items():
+        ini = VPN_INTERFACE_FIELDS.get(str(key).lower())
+        if ini is None or value is None:
+            continue
+        if section_values(config, "interface", ini.lower()):
+            continue
+        text = ("true" if value else "false") if isinstance(value, bool) else str(value)
+        if not text or "\n" in text or "\r" in text:
+            raise ConfigError(f"obfuscationDefaults field '{key}' has an invalid value")
+        config = _set_interface_value(config, ini, text)
     return config
 
 
@@ -918,6 +939,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest")
     parser.add_argument("--config", metavar="CONFIG", help="render a .conf file, as a configFile manifest")
+    parser.add_argument(
+        "--endpoint",
+        metavar="HOST:PORT",
+        help="with --config: the first peer's Endpoint instead of the file's (warp.endpoints)",
+    )
     parser.add_argument("--output")
     parser.add_argument(
         "--outbound-fwmark",
@@ -996,6 +1022,8 @@ def main() -> int:
             )
         if args.config is not None:
             manifest = {"kind": "configFile", "path": args.config}
+            if args.endpoint:
+                manifest["endpoint"] = args.endpoint
         else:
             manifest = json.loads(_read_limited(args.manifest))
         if not isinstance(manifest, dict):

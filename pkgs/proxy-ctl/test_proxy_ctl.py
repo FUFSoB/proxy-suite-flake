@@ -1318,8 +1318,77 @@ class RuntimeEntryTest(RuntimeSpoolTest):
 
         self.backend_start = started
         self.assertIn("Added subscription: work (2 proxies)", ok(ctl.cmd_subscription, "add", "work", "https://sub.work.test/s"))
-        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  work +unknown +2 +runtime$")
-        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  provider +\(no cache\) +- +static$")
+        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  work +unknown +2 +- +- +runtime$")
+        self.assertRegex(ok(ctl.cmd_subscription, "list"), r"(?m)^  provider +\(no cache\) +- +- +- +static$")
+
+    def test_subscription_settings_and_what_its_server_says(self):
+        os.environ["SUB_META_DIR"] = self.path("subscription-meta")
+        ok(ctl.cmd_subscription, "add", "work", "https://sub.work.test/s", "--ua", "Happ/1.0", "--ua", "v2rayN/6.0",
+           "--device-info", "--interval", "6h")
+        self.assertEqual(json.loads(ctl.read_text(self.path("subscriptions.d/work.options"))),
+                         {"userAgent": ["Happ/1.0", "v2rayN/6.0"], "deviceInfo": True, "intervalSeconds": 21600})
+        # A header line of its own is no User-Agent; the server, not this, may ask for under an hour.
+        for bad in (("--ua", "Happ\r\nX-Evil: 1"), ("--interval", "30min"), ("--interval", "soon"), ("--bogus",)):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(run(ctl.cmd_subscription, "add", "other", "https://sub.other.test/s", *bad)[0], 0)
+                self.assertFalse(os.path.exists(self.path("subscriptions.d/other.url")))
+        # A plain add leaves no settings behind, nor takes over an old entry's.
+        self.write("subscriptions.d/plain.options", {"deviceInfo": True})
+        ok(ctl.cmd_subscription, "add", "plain", "https://sub.plain.test/s")
+        self.assertFalse(os.path.exists(self.path("subscriptions.d/plain.options")))
+
+        now = int(time.time())
+        self.write("subscription-meta/work.json", {
+            "title": "Work VPN", "upload": 1 << 30, "download": 2 << 30, "total": 100 << 30,
+            "expire": now + 10 * 86400 - 3600, "fetchedAt": now - 60, "updateIntervalHours": 12,
+            "userAgent": "Happ/1.0", "deviceInfo": True,
+        })
+        # The whole of it, HWID included, beside the cache: only for whoever may read that.
+        self.write("subscriptions/work.meta.json", {**ctl.read_json(self.path("subscription-meta/work.json")), "hwid": "0f0f"})
+        self.assertRegex(ok(ctl.cmd_subscription, "list"),
+                         r"(?m)^  work +\d{4}-\d\d-\d\d \d\d:\d\d +\? +3\.0 GiB / 100\.0 GiB +\d{4}-\d\d-\d\d \(in 9d\) +runtime$")
+        shown = ok(ctl.cmd_subscription, "show", "work")
+        for line in ("Title:", "Work VPN", "Refetched every: 6h (set for it)",
+                     "User-Agent:      Happ/1.0, v2rayN/6.0 (got it with Happ/1.0)", "Device info:     sent (HWID 0f0f, system)"):
+            self.assertIn(line, shown)
+        view = json.loads(ok(ctl.cmd_subscription, "show", "work", "--json"))
+        self.assertEqual((view["server"]["total"], view["intervalSeconds"], view["intervalFrom"]), (100 << 30, 21600, "set"))
+        self.assertEqual([v["tag"] for v in json.loads(ok(ctl.cmd_subscription, "list", "--json"))], ["provider", "plain", "work"])
+
+        # A declared one: settings from the config, the interval its server asks for when none is set.
+        os.environ["SUB_SETTINGS_FILE"] = self.write("sub-settings.json", {
+            "defaultIntervalSeconds": 86400,
+            "subscriptions": {"provider": {"userAgent": ["v2rayN/6.0"], "deviceInfo": False, "intervalSeconds": None}},
+        })
+        self.write("subscription-meta/provider.json", {"updateIntervalHours": 12, "fetchedAt": now, "expire": 0})
+        shown = ok(ctl.cmd_subscription, "show", "provider")
+        self.assertIn("Refetched every: 12h (as its server asks)", shown)
+        self.assertIn("Expires:         never", shown)
+        self.assertIn("Device info:     not sent", shown)
+        os.unlink(self.path("subscription-meta/provider.json"))
+        self.assertIn("Refetched every: 1d (the default)", ok(ctl.cmd_subscription, "show", "provider"))
+        self.assertNotEqual(run(ctl.cmd_subscription, "show", "nowhere")[0], 0)
+
+        # Its settings go with it.
+        ok(ctl.cmd_subscription, "rm", "work")
+        self.assertFalse(os.path.exists(self.path("subscriptions.d/work.options")))
+
+    def test_link_settings_ride_beside_the_entry(self):
+        ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443", "--fragment", "--mux", "smux")
+        self.assertEqual(json.loads(ctl.read_text(self.path("outbounds.d/de.tweaks"))),
+                         {"fragment": {}, "multiplex": {"protocol": "smux"}})
+        for bad in (("--mux", "spdy"), ("--mux",)):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(run(ctl.cmd_outbounds, "add", "x", "vless://u@x.test:443", *bad)[0], 0)
+        self.assertIn("JSON says them itself", run(ctl.cmd_outbounds, "add", "j", '{"type": "socks", "server": "192.0.2.1"}', "--fragment")[2])
+        ok(ctl.cmd_outbounds, "rm", "de")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/de.tweaks")))
+        # A plain one takes none over from an old entry of its name.
+        self.write("outbounds.d/de.tweaks", {"fragment": {}})
+        ok(ctl.cmd_outbounds, "add", "de", "vless://u@de.test:443")
+        self.assertFalse(os.path.exists(self.path("outbounds.d/de.tweaks")))
+        ok(ctl.cmd_subscription, "add", "s", "https://sub.s.test/x", "--mux", "yamux")
+        self.assertEqual(json.loads(ctl.read_text(self.path("subscriptions.d/s.options")))["multiplex"], {"protocol": "yamux"})
 
     def test_add_while_the_proxy_is_stopped(self):
         """The reload restarts only a running proxy, and a stopped one writes no inventory:
@@ -3038,6 +3107,55 @@ class RoutingRulesTest(EnvTest):
     def rules(self):
         with open(self.path("routing.d/rules.json")) as f:
             return {r["name"]: r for r in json.load(f)["rules"]}
+
+    def test_happ_profile_import(self):
+        profile = {
+            "Name": "RU Bypass", "GlobalProxy": "true", "RouteOrder": "block-proxy-direct",
+            "DirectSites": ["geosite:netflix", "domain:Bank.example", "full:exact.example", "geosite:no-such"],
+            "DirectIp": ["10.0.0.0/8", "geoip:ru"],
+            "ProxySites": ["keyword:tracker", "regexp:^cdn[0-9]+\\.example$", "regexp:(?=x)", "ext:custom.dat:x"],
+            "BlockSites": [], "BlockIp": ["203.0.113.0/24"],
+            "DnsHosts": {"a.example": "1.1.1.1"}, "FakeDNS": "false",
+        }
+        link = "happ://routing/add/" + __import__("base64").urlsafe_b64encode(json.dumps(profile).encode()).decode().rstrip("=")
+        status, out, err = run(ctl.cmd_rules, "import", link)
+        self.assertEqual(status, 0, err)
+        rules = self.rules()
+        self.assertEqual({n: (r["target"], r["priority"]) for n, r in rules.items()},
+                         {"happ-ru-bypass-block": ("block", 10), "happ-ru-bypass-proxy": ("proxy", 20),
+                          "happ-ru-bypass-direct": ("direct", 30)})
+        direct = rules["happ-ru-bypass-direct"]
+        self.assertEqual((direct["geosites"], direct["domains"], direct["fullDomains"], direct["ips"], direct["geoips"]),
+                         (["netflix"], ["bank.example"], ["exact.example"], ["10.0.0.0/8"], ["ru"]))
+        self.assertEqual((rules["happ-ru-bypass-proxy"]["keywords"], rules["happ-ru-bypass-proxy"]["regexps"]),
+                         (["tracker"], ["^cdn[0-9]+\\.example$"]))
+        for left in ("geosite:no-such", "(?=x)", "ext:custom.dat:x"):
+            self.assertIn(left, err)
+        self.assertIn("dnshosts", err)
+        self.assertIn("proxy-ctl proxy mode blacklist", out)
+        # Again: only over the earlier one, and asked to.
+        self.assertIn("--replace", run(ctl.cmd_rules, "import", link)[2])
+        ok(ctl.cmd_rules, "import", json.dumps({**profile, "BlockIp": []}), "--name", "ru-bypass", "--replace")
+        self.assertNotIn("happ-ru-bypass-block", self.rules())
+        self.assertIn("full:exact.example", ok(ctl.cmd_rules, "list"))
+        for bad in ("happ://other/x", "happ://routing/add/%%%", "[1]"):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(run(ctl.cmd_rules, "import", bad)[0], 0)
+
+    def test_autonomous_systems(self):
+        m = ctl._rule_match
+        self.assertEqual(m("asn:62041"), ("asns", 62041))
+        self.assertEqual(m("AS13335"), ("asns", 13335))
+        for bad in ("asn:0", "asn:99999999999", "asn:x"):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(run(m, bad)[0], 0)
+        ok(ctl.cmd_rules, "add", "proxy", "asn:62041", "AS62041", "telegram.org", "--name", "tg")
+        self.assertEqual(self.rules()["tg"]["asns"], [62041])
+        self.assertIn("asn:62041", ok(ctl.cmd_rules, "list"))
+        ok(ctl.cmd_rules, "matches", "tg", "rm", "asn:62041")
+        self.assertEqual(self.rules()["tg"]["asns"], [])
+        # What another writer left that is no number stays out, as routing-render.jq leaves it.
+        self.assertEqual(ctl._rule_normal({"name": "x", "target": "proxy", "asns": [1, "2", True, 0, 5000000000]})["asns"], [1])
 
     def test_matches_as_typed(self):
         m = ctl._rule_match

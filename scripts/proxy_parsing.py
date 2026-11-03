@@ -2,13 +2,14 @@
 
 import base64
 import ipaddress
+import json
 import re
 import socket
 import sys
 import urllib.parse
 import urllib.request
 
-from proxy_url_parsers import BACKEND_AWARE_PARSERS, PARSERS
+from proxy_url_parsers import BACKEND_AWARE_PARSERS, PARSERS, _strip_socket_keys, local_file_keys
 
 
 def detect_scheme(url: str) -> str:
@@ -218,19 +219,127 @@ def render_xray_outbound(ob: dict, routing_mark: int | None = None) -> dict:
 
 
 def build_outbound(
-    url: str, tag: str, routing_mark: int | None = None, backend: str = "sing-box"
+    url: str, tag: str, routing_mark: int | None = None, backend: str = "sing-box", tweaks: dict | None = None
 ) -> dict:
     if backend not in {"sing-box", "xray"}:
         raise ValueError(f"unsupported backend '{backend}'")
 
-    return _finish_outbound(_parse_url(url, tag, backend), routing_mark, backend)
+    return _finish_outbound(_parse_url(url, tag, backend), routing_mark, backend, tweaks)
 
 
-def _finish_outbound(outbound: dict, routing_mark: int | None, backend: str) -> dict:
+# What a link cannot say but an outbound or a subscription may ask for (`fragment`,
+# `multiplex`): checked here, as it comes from the config or a group-writable spool.
+FRAGMENT_DEFAULTS = {"packets": "tlshello", "length": "50-100", "interval": "10-20"}
+MULTIPLEX_PROTOCOLS = ("h2mux", "smux", "yamux")
+MULTIPLEX_DEFAULTS = {"protocol": "h2mux", "maxConnections": 4, "padding": False, "concurrency": 8}
+_RANGE = re.compile(r"[0-9]{1,5}(-[0-9]{1,5})?")
+# Both backends take these over a TLS or REALITY stream they dial over TCP.
+MUX_TYPES = ("vless", "vmess", "trojan", "shadowsocks")
+
+
+def checked_tweaks(tweaks) -> dict:
+    """{"fragment": {packets, length, interval} | None, "multiplex": {...} | None}; ValueError
+    for anything else."""
+    if tweaks in (None, ""):
+        return {"fragment": None, "multiplex": None}
+    if not isinstance(tweaks, dict) or set(tweaks) - {"fragment", "multiplex"}:
+        raise ValueError("outbound settings take fragment and multiplex only")
+    out = {"fragment": None, "multiplex": None}
+    fragment = tweaks.get("fragment")
+    if fragment is not None:
+        if fragment is True:
+            fragment = {}
+        if not isinstance(fragment, dict) or set(fragment) - set(FRAGMENT_DEFAULTS):
+            raise ValueError("fragment takes packets, length and interval")
+        fragment = {**FRAGMENT_DEFAULTS, **{k: v for k, v in fragment.items() if v is not None}}
+        if fragment["packets"] != "tlshello" and not (isinstance(fragment["packets"], str) and _RANGE.fullmatch(fragment["packets"])):
+            raise ValueError("fragment packets is \"tlshello\" or a range such as 1-3")
+        for key in ("length", "interval"):
+            if not isinstance(fragment[key], str) or not _RANGE.fullmatch(fragment[key]):
+                raise ValueError(f"fragment {key} is a number or a range such as 10-20")
+        out["fragment"] = fragment
+    multiplex = tweaks.get("multiplex")
+    if multiplex is not None:
+        if multiplex is True:
+            multiplex = {}
+        if not isinstance(multiplex, dict) or set(multiplex) - set(MULTIPLEX_DEFAULTS):
+            raise ValueError("multiplex takes protocol, maxConnections, padding and concurrency")
+        multiplex = {**MULTIPLEX_DEFAULTS, **{k: v for k, v in multiplex.items() if v is not None}}
+        if multiplex["protocol"] not in MULTIPLEX_PROTOCOLS:
+            raise ValueError(f"multiplex protocol is one of {', '.join(MULTIPLEX_PROTOCOLS)}")
+        for key, top in (("maxConnections", 64), ("concurrency", 1024)):
+            value = multiplex[key]
+            if type(value) is not int or not 1 <= value <= top:
+                raise ValueError(f"multiplex {key} is a number from 1 to {top}")
+        if type(multiplex["padding"]) is not bool:
+            raise ValueError("multiplex padding is true or false")
+        out["multiplex"] = multiplex
+    return out
+
+
+def _skip(tag, what, why):
+    print(f"warning: outbound {tag!r}: {what} left out: {why}", file=sys.stderr)
+
+
+def _sing_box_tweaks(outbound: dict, tweaks: dict) -> None:
+    tag = outbound.get("tag")
+    if tweaks["fragment"]:
+        tls = outbound.get("tls")
+        if not (isinstance(tls, dict) and tls.get("enabled")) or outbound.get("type") in ("hysteria2", "tuic"):
+            _skip(tag, "fragment", "it splits a TLS ClientHello sent over TCP, and this outbound sends none")
+        elif isinstance(tls.get("reality"), dict) and tls["reality"].get("enabled"):
+            # sing-box builds REALITY's handshake on the connection itself, past its fragmenter.
+            _skip(tag, "fragment", "sing-box does not fragment REALITY; the XRay backend does")
+        else:
+            # sing-box sizes the pieces itself; packets, length and interval are XRay's.
+            tls["fragment"] = True
+    if multiplex := tweaks["multiplex"]:
+        if outbound.get("type") not in MUX_TYPES:
+            _skip(tag, "multiplex", f"{outbound.get('type')} has none")
+        else:
+            outbound["multiplex"] = {
+                "enabled": True,
+                "protocol": multiplex["protocol"],
+                "max_connections": multiplex["maxConnections"],
+                "padding": multiplex["padding"],
+            }
+
+
+def _xray_tweaks(rendered: dict, tweaks: dict) -> None:
+    tag = rendered.get("tag")
+    stream = rendered.get("streamSettings") if isinstance(rendered.get("streamSettings"), dict) else {}
+    if multiplex := tweaks["multiplex"]:
+        if rendered.get("protocol") not in MUX_TYPES:
+            _skip(tag, "multiplex", f"{rendered.get('protocol')} has none")
+        elif stream.get("network") == "xhttp":
+            _skip(tag, "multiplex", "XHTTP multiplexes itself (proxy.xray.xhttpXmux)")
+        else:
+            settings = rendered.get("settings") if isinstance(rendered.get("settings"), dict) else {}
+            # XRay's flat VLESS settings, or the older vnext form.
+            users = [settings] + [u for v in settings.get("vnext") or [] for u in v.get("users") or []]
+            if any(isinstance(u, dict) and u.get("flow") for u in users):
+                # Vision: mux.cool for UDP alone (XUDP); the server breaks a muxed TCP stream.
+                rendered["mux"] = {"enabled": True, "concurrency": -1, "xudpConcurrency": multiplex["concurrency"]}
+            else:
+                rendered["mux"] = {"enabled": True, "concurrency": multiplex["concurrency"]}
+    if fragment := tweaks["fragment"]:
+        if stream.get("security") not in ("tls", "reality") or stream.get("network") in ("kcp", "mkcp", "quic"):
+            _skip(tag, "fragment", "it splits a TLS ClientHello sent over TCP, and this outbound sends none")
+        else:
+            # The start script makes it a freedom hop of its own, which this outbound dials
+            # through (backend-filter-xray, xrayFragmentJq): XRay fragments in freedom alone.
+            rendered["_fragment"] = dict(fragment)
+
+
+def _finish_outbound(outbound: dict, routing_mark: int | None, backend: str, tweaks: dict | None = None) -> dict:
+    tweaks = checked_tweaks(tweaks)
     if backend == "xray":
-        return render_xray_outbound(outbound, routing_mark)
+        rendered = render_xray_outbound(outbound, routing_mark)
+        _xray_tweaks(rendered, tweaks)
+        return rendered
     if routing_mark is not None:
         outbound["routing_mark"] = routing_mark
+    _sing_box_tweaks(outbound, tweaks)
     return outbound
 
 
@@ -329,7 +438,14 @@ class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_raw(url: str) -> bytes:
+# Panels pick what they serve by the User-Agent: v2rayN's gets the plain list of links.
+DEFAULT_USER_AGENT = "v2rayN/6.0"
+
+
+def fetch_subscription(
+    url: str, user_agent: str = DEFAULT_USER_AGENT, headers: "dict[str, str] | None" = None
+) -> tuple[bytes, dict[str, str]]:
+    """The body and the response's headers (names lowercased; the last of a repeated one)."""
     # urlopen also speaks file:, ftp: and data:. This runs as root over a URL that
     # reaches it from a group-writable spool, so only the two a subscription is
     # ever served over, redirects included.
@@ -337,14 +453,19 @@ def fetch_raw(url: str) -> bytes:
         raise FetchError("subscription URL must be http:// or https://")
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "v2rayN/6.0"},
+        headers={**(headers or {}), "User-Agent": user_agent},
     )
     opener = urllib.request.build_opener(_HttpOnlyRedirects)
     with opener.open(request, timeout=30) as response:
         data = response.read(MAX_SUBSCRIPTION_BYTES + 1)
+        response_headers = {name.lower(): value for name, value in response.headers.items()}
     if len(data) > MAX_SUBSCRIPTION_BYTES:
         raise FetchError(f"subscription is larger than {MAX_SUBSCRIPTION_BYTES} bytes")
-    return data
+    return data, response_headers
+
+
+def fetch_raw(url: str) -> bytes:
+    return fetch_subscription(url)[0]
 
 
 def decode_subscription(data: bytes) -> list[str]:
@@ -453,6 +574,7 @@ def _walk_subscription(
     keep,
     allow_private: bool = False,
     allow_insecure: bool = False,
+    tweaks: dict | None = None,
 ) -> None:
     """Parses every supported line, trying each backend in turn, and hands the result to keep.
 
@@ -483,7 +605,7 @@ def _walk_subscription(
                 # anyone on the way stands in for the server then. Per backend: XRay may pin it.
                 if not allow_insecure and isinstance(outbound.get("tls"), dict) and outbound["tls"].get("insecure"):
                     raise ValueError("it turns certificate checks off (insecure=1; see allowInsecure)")
-                outbound = _finish_outbound(outbound, routing_mark, backend)
+                outbound = _finish_outbound(outbound, routing_mark, backend, tweaks)
             except RefusedServer as exc:
                 # The same server whichever backend reads the line.
                 print(f"warning: skipping entry {index} ({scheme}): {exc}", file=sys.stderr)
@@ -512,6 +634,7 @@ def parse_subscription(
     links: dict[str, str] | None = None,
     allow_private: bool = False,
     allow_insecure: bool = False,
+    tweaks: dict | None = None,
 ) -> list[dict]:
     """links, when given, collects tag -> the line it came from, to share it back."""
     if backend not in {"sing-box", "xray"}:
@@ -526,6 +649,7 @@ def parse_subscription(
         lambda _, ob: outbounds.append(ob),
         allow_private,
         allow_insecure,
+        tweaks,
     )
     return outbounds
 
@@ -537,6 +661,7 @@ def parse_hybrid_subscription(
     links: dict[str, str] | None = None,
     allow_private: bool = False,
     allow_insecure: bool = False,
+    tweaks: dict | None = None,
 ) -> dict[str, list[dict]]:
     """Each line goes to whichever backend can dial it, sing-box first."""
     outbounds: dict[str, list[dict]] = {"singBox": [], "xray": []}
@@ -549,5 +674,220 @@ def parse_hybrid_subscription(
         lambda backend, ob: outbounds["singBox" if backend == "sing-box" else "xray"].append(ob),
         allow_private,
         allow_insecure,
+        tweaks,
     )
     return outbounds
+
+
+# --- JSON subscriptions -----------------------------------------------------------------
+#
+# Panels serve some clients JSON instead of links (Remnawave and Happ: an array of whole XRay
+# configs, one per server), with what a link cannot say: XHTTP's extra, a fragment, mux. Taken
+# as entries the same way links are: each one's servers checked, nothing that steers around
+# this host's routing or reads its files, renamed after the subscription. Their routing and
+# DNS are the panel's idea of a client, not this host's, and are left out.
+
+XRAY_SYSTEM_PROTOCOLS = ("freedom", "blackhole", "dns", "loopback")
+SING_BOX_SYSTEM_TYPES = ("direct", "block", "dns", "selector", "urltest")
+# sing-box dial fields that would steer around this host's routing (detour, marks, an
+# interface, a bind address) or name a DNS server this config does not have.
+SING_BOX_DIAL_KEYS = (
+    "detour", "bind_interface", "inet4_bind_address", "inet6_bind_address", "routing_mark",
+    "reuse_addr", "netns", "domain_resolver", "network_strategy", "network_type", "fallback_network_type",
+)
+
+
+def _json_kind(outbound) -> "str | None":
+    if not isinstance(outbound, dict):
+        return None
+    if isinstance(outbound.get("protocol"), str):
+        return "xray"
+    if isinstance(outbound.get("type"), str):
+        return "sing-box"
+    return None
+
+
+def _xray_dialed_servers(outbound: dict) -> list:
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    servers = [settings.get("address")]
+    for group in ("vnext", "servers"):
+        for server in settings.get(group) or []:
+            if isinstance(server, dict):
+                servers.append(server.get("address"))
+    for peer in settings.get("peers") or []:
+        if isinstance(peer, dict) and isinstance(peer.get("endpoint"), str):
+            servers.append(peer["endpoint"].rsplit(":", 1)[0])
+    stack = [outbound.get("streamSettings")]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, value in item.items():
+                if str(key).lower() == "address":
+                    servers.append(value if isinstance(value, str) else str(value))
+                elif str(key).lower() == "echconfiglist" and (ech := _ech_dns_server(value)):
+                    servers.append(ech)
+                stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return [s for s in servers if s is not None]
+
+
+def _xray_insecure(outbound: dict) -> bool:
+    stack = [outbound.get("streamSettings")]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if item.get("allowInsecure") is True:
+                return True
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
+
+
+def _xray_config_entries(config: dict) -> list[tuple[str, dict]]:
+    """(remark, outbound) of a whole XRay config: its "proxy" outbound, or else its first that
+    is not freedom, blackhole or dns. A fragment freedom it dials through comes along as
+    `fragment` (_xray_tweaks' mark); a chain through anything else does not."""
+    outbounds = [ob for ob in config.get("outbounds") or [] if isinstance(ob, dict)]
+    proxies = [ob for ob in outbounds if ob.get("protocol") not in XRAY_SYSTEM_PROTOCOLS]
+    main = next((ob for ob in proxies if ob.get("tag") == "proxy"), proxies[0] if proxies else None)
+    if main is None:
+        return []
+    main = json.loads(json.dumps(main))
+    sockopt = ((main.get("streamSettings") or {}).get("sockopt") or {}) if isinstance(main.get("streamSettings"), dict) else {}
+    hop = sockopt.get("dialerProxy") if isinstance(sockopt, dict) else None
+    if hop:
+        through = next((ob for ob in outbounds if ob.get("tag") == hop), None)
+        fragment = ((through or {}).get("settings") or {}).get("fragment") if through and through.get("protocol") == "freedom" else None
+        if isinstance(fragment, dict):
+            main["_fragment"] = {k: str(v) for k, v in fragment.items() if k in FRAGMENT_DEFAULTS}
+        else:
+            raise ValueError(f"it dials through another outbound ({hop}), which a subscription entry cannot bring")
+    remark = config.get("remarks") if isinstance(config.get("remarks"), str) else ""
+    return [(remark, main)]
+
+
+def json_subscription_entries(data: bytes) -> "tuple[str, list] | None":
+    """(kind, [(remark, outbound)]) of a JSON body: "xray" or "sing-box", from whole configs or
+    an array of outbounds; None when the body is not JSON of either."""
+    text = data.removeprefix(b"\xef\xbb\xbf").strip()
+    if text[:1] not in (b"{", b"["):
+        return None
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None
+    items = doc if isinstance(doc, list) else [doc]
+    items = [item for item in items if isinstance(item, dict)]
+    if not items:
+        return None
+    entries: list = []
+    if all(isinstance(item.get("outbounds"), list) for item in items):
+        kinds = {_json_kind(ob) for item in items for ob in item["outbounds"]} - {None}
+        if len(kinds) != 1:
+            return None
+        kind = kinds.pop()
+        for index, item in enumerate(items):
+            if kind == "xray":
+                try:
+                    entries.extend(_xray_config_entries(item))
+                except ValueError as exc:
+                    print(f"warning: skipping config {index}: {exc}", file=sys.stderr)
+            else:
+                entries.extend((str(ob.get("tag") or ""), ob) for ob in item["outbounds"]
+                               if ob.get("type") not in SING_BOX_SYSTEM_TYPES)
+        return kind, entries
+    kinds = {_json_kind(item) for item in items}
+    if len(kinds) != 1 or None in kinds:
+        return None
+    kind = kinds.pop()
+    for ob in items:
+        if kind == "xray" and ob.get("protocol") not in XRAY_SYSTEM_PROTOCOLS:
+            entries.append((str(ob.get("tag") or ""), ob))
+        elif kind == "sing-box" and ob.get("type") not in SING_BOX_SYSTEM_TYPES:
+            entries.append((str(ob.get("tag") or ""), ob))
+    return kind, entries
+
+
+def parse_json_subscription(
+    found: tuple[str, list],
+    tag_prefix: str,
+    routing_mark: int | None,
+    backend: str,
+    allow_private: bool = False,
+    allow_insecure: bool = False,
+    tweaks: dict | None = None,
+):
+    """The entries json_subscription_entries found, for the backend: a list, or on hybrid
+    {singBox, xray}. Ones the backend cannot run (XRay configs on sing-box) are reported and left."""
+    kind, entries = found
+    tweaks = checked_tweaks(tweaks)
+    out_kind = "xray" if kind == "xray" else "singBox"
+    if backend == "hybrid":
+        result = {"singBox": [], "xray": []}
+    elif (backend == "xray") != (kind == "xray"):
+        print(
+            f"warning: the subscription serves {'XRay' if kind == 'xray' else 'sing-box'} JSON, which the "
+            f"{backend} backend cannot run; try another userAgent",
+            file=sys.stderr,
+        )
+        return []
+    else:
+        result = []
+    seen: set[str] = set()
+    for index, (remark, outbound) in enumerate(entries):
+        if len(seen) >= MAX_SUBSCRIPTION_ENTRIES:
+            print(f"warning: subscription has more than {MAX_SUBSCRIPTION_ENTRIES} entries: the rest are left out", file=sys.stderr)
+            break
+        outbound = json.loads(json.dumps(outbound))
+        name = outbound.get("protocol") or outbound.get("type")
+        try:
+            if keys := local_file_keys(outbound):
+                raise ValueError(f"it names a local file or program ({', '.join(keys)})")
+            if kind == "xray":
+                fragment = outbound.pop("_fragment", None)
+                outbound.pop("proxySettings", None)
+                _strip_socket_keys(outbound.get("streamSettings"))
+                servers = _xray_dialed_servers(outbound)
+                insecure = _xray_insecure(outbound)
+            else:
+                fragment = None
+                for key in SING_BOX_DIAL_KEYS:
+                    outbound.pop(key, None)
+                servers = _dialed_servers(outbound)
+                insecure = isinstance(outbound.get("tls"), dict) and outbound["tls"].get("insecure") is True
+            if not servers or not any(isinstance(s, str) and s for s in servers):
+                raise ValueError("it names no server")
+            for server in servers:
+                check_server(server, allow_private)
+            if insecure and not allow_insecure:
+                raise ValueError("it turns certificate checks off (see allowInsecure)")
+        except RefusedServer as exc:
+            print(f"warning: skipping entry {index} ({name}): {exc}", file=sys.stderr)
+            continue
+        except ValueError as exc:
+            print(f"warning: skipping entry {index} ({name}): {exc}", file=sys.stderr)
+            continue
+        tag = _unique_tag(make_tag(tag_prefix, remark, index), seen)
+        seen.add(tag)
+        outbound["tag"] = tag
+        if kind == "xray":
+            if routing_mark is not None:
+                outbound.setdefault("streamSettings", {}).setdefault("sockopt", {})["mark"] = routing_mark
+            _xray_tweaks(outbound, tweaks)
+            # One the config itself carried, unless the subscription sets its own.
+            if fragment and "_fragment" not in outbound:
+                try:
+                    outbound["_fragment"] = checked_tweaks({"fragment": fragment})["fragment"]
+                except ValueError:
+                    print(f"warning: entry {index}: its fragment settings are left out", file=sys.stderr)
+        else:
+            if routing_mark is not None:
+                outbound["routing_mark"] = routing_mark
+            _sing_box_tweaks(outbound, tweaks)
+        if backend == "hybrid":
+            result[out_kind].append(outbound)
+        else:
+            result.append(outbound)
+    return result

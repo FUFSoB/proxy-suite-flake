@@ -17,6 +17,8 @@
   listenerExposed ? false,
   # derived.xhttpXmuxJq.
   xhttpXmuxJq ? "",
+  # proxy.routing.blockQuic.
+  blockQuic ? false,
 }:
 
 let
@@ -53,6 +55,65 @@ let
           else . end;
       .
   '';
+  # proxy.routing.blockQuic: QUIC (UDP to 443) refused on its way to a proxy, so browsers take
+  # TCP at once. Every rule that sends traffic through an outbound carrying UDP badly gets a twin
+  # just before it, matching the same and UDP to 443, that rejects; and the final one, when it
+  # is such an outbound. Not a rule that names its own network or port (zapret2's "QUIC through
+  # the proxy" for the sites whose QUIC it cannot fix), an inbound (the guards, the probes) or
+  # an app pinned to an outbound. $outbound_sources (slurped): tag -> source, the start
+  # script's: AmneziaWG and WARP hops are tunnels that carry UDP.
+  quicNativeSources = "(($ARGS.named.outbound_sources // [{}])[0]) as $src";
+  singBoxBlockQuic = ''
+    | ${quicNativeSources}
+    | [.outbounds[]
+        | select((.type? // "") as $t
+            | $t == "hysteria" or $t == "hysteria2" or $t == "tuic" or $t == "wireguard"
+              or ($t == "direct" and (.bind_interface? | type) == "string")
+              or ((($src[.tag] // "") | tostring) as $s | $s == "awg" or $s == "warp"))
+        | .tag] as $base
+    # A group carries UDP itself only when every member it may pick does.
+    | [.outbounds[] | select(.type? == "selector" or .type? == "urltest")] as $groups
+    | (reduce range(0; 4) as $_ ($base;
+        . as $n | (. + [$groups[] | select((.outbounds // []) != [] and all(.outbounds[]; . as $m | $n | index([$m]) != null))
+                        | .tag]) | unique)) as $native
+    | def quic_bound($o): ($o | type) == "string" and $o != "direct" and $o != "block"
+        and ($o | startswith("proxy-suite-pin-") | not) and ($native | index([$o]) | not);
+      def own_scope: has("network") or has("port") or has("port_range") or has("protocol") or has("inbound")
+        or ((.action? // "route") != "route");
+      .route.rules = [.route.rules[]
+        | if quic_bound(.outbound?) and (own_scope | not) then
+            {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"], port: [443]}],
+             action: "reject"}, .
+          else . end]
+    | if quic_bound(.route.final? // "direct") then
+        .route.rules += [{network: ["udp"], port: [443], action: "reject"}]
+      else . end
+  '';
+  xrayBlockQuic = ''
+    | ${quicNativeSources}
+    | [.outbounds[]
+        | select((.protocol? // "") as $p
+            | $p == "hysteria" or $p == "wireguard"
+              or ((.streamSettings.network? // "") | . == "kcp" or . == "mkcp")
+              or (.streamSettings.network? == "xhttp" and .streamSettings.security? == "tls"
+                  and .streamSettings.tlsSettings.alpn? == ["h3"])
+              or ($p == "freedom" and (.streamSettings.sockopt.interface? | type) == "string")
+              or ((($src[.tag | ltrimstr("proxy-suite-ob-")] // "") | tostring) as $s | $s == "awg" or $s == "warp"))
+        | .tag] as $native
+    # A balancer may pick any member: as one that carries UDP badly.
+    | def quic_bound: ((.balancerTag? | type) == "string")
+        or ((.outboundTag? | type) == "string" and .outboundTag != "direct" and .outboundTag != "block"
+            and (.outboundTag as $o | $native | index([$o]) | not));
+      def own_scope: has("network") or has("port") or has("protocol") or has("inboundTag")
+        or has("source") or has("sourcePort");
+      .routing.rules = [.routing.rules[]
+        | if .type? == "field" and quic_bound and (own_scope | not) then
+            (del(.outboundTag, .balancerTag) + {network: "udp", port: "443", outboundTag: "block"}
+             | if (.ruleTag | type) == "string" then .ruleTag += ":quic" else . end), .
+          elif .ruleTag? == "final-default" and quic_bound then
+            {type: "field", ruleTag: "final-quic", network: "udp", port: "443", outboundTag: "block"}, .
+          else . end]
+  '';
   # XRay's port list: "80,1000-2000".
   closedPorts = map (
     r: if r.from == r.to then toString r.from else "${toString r.from}-${toString r.to}"
@@ -63,7 +124,9 @@ if pureXrayEnabled then
     inherit selectionMode;
     hostClosedPorts = lib.concatStringsSep "," closedPorts;
     setXhttpXmux = xhttpXmuxJq;
+    fragmentHopsDef = builtins.readFile ./xray-fragment-hops.jq;
   })
+  + lib.optionalString blockQuic xrayBlockQuic
 else
   (fillTemplate ./backend-filter-sing-box.template.jq {
     userDnsRuleCount = toString (builtins.length userDnsRules);
@@ -120,3 +183,4 @@ else
       ) ", strategy: \"${proxyInboundsGuardStrategy}\"";
     }
   )
+  + lib.optionalString blockQuic singBoxBlockQuic

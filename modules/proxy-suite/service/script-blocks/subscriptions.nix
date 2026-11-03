@@ -22,6 +22,7 @@ let
     routingMarkJq
     ;
   inherit (constants) stateDir runtimeSubscriptionsDir runtimeOutboundsDir;
+  timespan = import ../../lib/timespan.nix;
   # Outbounds and groups the start script adds after the subscriptions, which a subscription
   # entry must not take the tag of.
   laterTagsJson = builtins.toJSON (ctx.effectiveOutboundTags ++ ctx.groupTags);
@@ -33,6 +34,15 @@ let
     + lib.optionalString (subscriptionBackend != "xray") " --check-sing-box ${ctx.singBox}"
     + lib.optionalString (subscriptionBackend != "sing-box") " --check-xray ${ctx.xray}";
   subscriptionCacheDir = "${stateDir}/subscriptions/${backend}";
+  # What the servers say of their subscriptions that anyone may read (subscription_meta.py).
+  subscriptionMetaDir = "${stateDir}/subscription-meta";
+  defaultIntervalSeconds = timespan proxyCfg.subscriptionUpdateInterval;
+  # The User-Agent a subscription is fetched with when it names none: no flag for it, so the
+  # fingerprint of a cache fetched before there was a choice stays what it was.
+  defaultUserAgents = [ "v2rayN/6.0" ];
+  # An explicit `updateInterval`, in seconds; null for the server's or the default.
+  explicitIntervalSeconds =
+    sub: if sub.updateInterval == null then null else timespan sub.updateInterval;
 
   mkSubscriptionUrlSource =
     sub: if sub.urlFile != null then sub.urlFile else pkgs.writeText "proxy-suite-core" sub.url;
@@ -42,6 +52,26 @@ let
   subscriptionCacheHelpersBlock = fillTemplate ./subscription-cache-helpers.template.sh {
     readSourceFunction = constants.readSourceFunction pkgs;
     cacheDir = subscriptionCacheDir;
+    metaDir = subscriptionMetaDir;
+    subscriptionMetaPy = "${ctx.parserScriptsPythonPath}/subscription_meta.py";
+    hwidFallback = lib.escapeShellArg "${stateDir}/subscription-hwid";
+    hwidFileArg = lib.optionalString (
+      proxyCfg.subscriptionHwidFile != null
+    ) "--file ${lib.escapeShellArg proxyCfg.subscriptionHwidFile}";
+    publicMetaFilter = lib.escapeShellArg "{${
+      lib.concatStringsSep ", " [
+        "title"
+        "upload"
+        "download"
+        "total"
+        "expire"
+        "updateIntervalHours"
+        "fetchedAt"
+        "userAgent"
+        "deviceInfo"
+      ]
+    }} | with_entries(select(.value != null))";
+    defaultIntervalSeconds = toString defaultIntervalSeconds;
     inherit runtimeSubscriptionsDir jq;
     declaredTags = lib.escapeShellArgs (map (sub: sub.tag) proxyCfg.subscriptions);
     validCacheFilter = lib.escapeShellArg (
@@ -175,35 +205,64 @@ let
     sub:
     lib.optionalString sub.allowPrivateServers " --allow-private-servers"
     + lib.optionalString sub.allowInsecure " --allow-insecure";
+  # A declared subscription's also say how to present this client: User-Agents (none for the
+  # default) and device info. Runtime ones bring theirs from the spool.
+  mkDeclaredFetchArgs =
+    sub:
+    mkSubscriptionFetchArgs sub
+    + lib.optionalString (sub.userAgent != defaultUserAgents) (
+      lib.concatMapStrings (ua: " --user-agent ${lib.escapeShellArg ua}") sub.userAgent
+    )
+    + lib.optionalString sub.sendDeviceInfo " --device-info"
+    +
+      lib.optionalString (sub.fragment != null || sub.multiplex != null)
+        " --tweaks ${lib.escapeShellArg (builtins.toJSON { inherit (sub) fragment multiplex; })}";
   runtimeCfg = proxyCfg.runtimeSubscriptions;
   runtimeFetchArgs =
     mkSubscriptionFetchArgs runtimeCfg + lib.optionalString (!runtimeCfg.allowHttp) " --https-only";
 
   mkSubscriptionBlock = sub: _routingMark: ''
     # subscription: ${sub.tag}
-    _proxy_suite_load_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}${mkSubscriptionFetchArgs sub}
+    _proxy_suite_load_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}${mkDeclaredFetchArgs sub}
   '';
 
   runtimeSubscriptionsBlock = ''
     # subscriptions added at runtime
     while IFS=$'\t' read -r RUNTIME_SUB_TAG RUNTIME_SUB_SRC; do
       [ -n "$RUNTIME_SUB_TAG" ] || continue
-      _proxy_suite_load_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"${runtimeFetchArgs}
+      mapfile -d "" RUNTIME_SUB_FLAGS < <(_proxy_suite_runtime_subscription_flags "$RUNTIME_SUB_TAG")
+      _proxy_suite_load_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"${runtimeFetchArgs} "''${RUNTIME_SUB_FLAGS[@]}"
     done < <(_proxy_suite_runtime_subscriptions)
   '';
 
-  mkSubscriptionFetchBlock = sub: ''
-    if _proxy_suite_fetch_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}${mkSubscriptionFetchArgs sub}; then
-      echo "Updated subscription: ${sub.tag}"
-    else
-      FAILED=1
-    fi
-  '';
+  # $SUB_UPDATE_MODE "due" (the timer's unit): only the subscriptions whose interval has run
+  # out; otherwise (`proxy-ctl proxy subs update`) every one.
+  mkSubscriptionFetchBlock =
+    sub:
+    let
+      interval = explicitIntervalSeconds sub;
+    in
+    ''
+      if [ "$SUB_UPDATE_MODE" != due ] || _proxy_suite_subscription_due ${lib.escapeShellArg sub.tag} ${
+        lib.escapeShellArg (if interval == null then "" else toString interval)
+      }; then
+        if _proxy_suite_fetch_subscription ${lib.escapeShellArg sub.tag} ${lib.escapeShellArg (mkSubscriptionUrlSource sub)}${mkDeclaredFetchArgs sub}; then
+          echo "Updated subscription: ${sub.tag}"
+        else
+          FAILED=1
+        fi
+      fi
+    '';
 
   runtimeSubscriptionsFetchBlock = ''
     while IFS=$'\t' read -r RUNTIME_SUB_TAG RUNTIME_SUB_SRC; do
       [ -n "$RUNTIME_SUB_TAG" ] || continue
-      if _proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"${runtimeFetchArgs}; then
+      if [ "$SUB_UPDATE_MODE" = due ] &&
+        ! _proxy_suite_subscription_due "$RUNTIME_SUB_TAG" "$(_proxy_suite_runtime_subscription_interval "$RUNTIME_SUB_TAG")"; then
+        continue
+      fi
+      mapfile -d "" RUNTIME_SUB_FLAGS < <(_proxy_suite_runtime_subscription_flags "$RUNTIME_SUB_TAG")
+      if _proxy_suite_fetch_subscription "$RUNTIME_SUB_TAG" "$RUNTIME_SUB_SRC"${runtimeFetchArgs} "''${RUNTIME_SUB_FLAGS[@]}"; then
         echo "Updated subscription: $RUNTIME_SUB_TAG"
       else
         FAILED=1
@@ -214,10 +273,37 @@ let
   subscriptionTagsFile = pkgs.writeText "proxy-suite-core" (
     builtins.toJSON (map (sub: sub.tag) proxyCfg.subscriptions)
   );
+  # What proxy-ctl shows of each declared subscription's settings, and the default interval.
+  subscriptionSettingsFile = pkgs.writeText "proxy-suite-core" (
+    builtins.toJSON {
+      inherit defaultIntervalSeconds;
+      subscriptions = lib.listToAttrs (
+        map (sub: {
+          name = sub.tag;
+          value = {
+            inherit (sub) userAgent;
+            deviceInfo = sub.sendDeviceInfo;
+            intervalSeconds = explicitIntervalSeconds sub;
+          };
+        }) proxyCfg.subscriptions
+      );
+    }
+  );
+  # How often the timer looks for a subscription due: hourly at the most, as a server may ask
+  # for that, and as often as the shortest interval set.
+  # A minute at the least: an interval of "0" would be a timer that never waits.
+  subscriptionTickSeconds = lib.max 60 (
+    lib.foldl' lib.min (lib.min 3600 defaultIntervalSeconds) (
+      lib.filter (s: s != null) (map explicitIntervalSeconds proxyCfg.subscriptions)
+    )
+  );
 in
 {
   inherit
     subscriptionCacheDir
+    subscriptionMetaDir
+    subscriptionSettingsFile
+    subscriptionTickSeconds
     subscriptionCacheHelpersBlock
     mkSubscriptionLoadHelperBlock
     mkSubscriptionBlock

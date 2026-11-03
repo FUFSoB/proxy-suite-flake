@@ -19,7 +19,8 @@ $route_rules[0] as $route_rules | $probe_inbounds[0] as $probe_inbounds
       | .dns.final = $dns_final
       | if $clear_dns_rules then
           .dns.rules = .dns.rules[:@userDnsRuleCount@]
-            + [.dns.rules[@userDnsRuleCount@:][] | select(.server? == "fakeip" or .domain_suffix? == ["onion"])]
+            + [.dns.rules[@userDnsRuleCount@:][]
+               | select(.server? == "fakeip" or .domain_suffix? == ["onion"] or .domain? == ["use-application-dns.net"])]
         else
           # The DNS mirror composed with the route (routing-compose.jq), runtime rules' lookups
           # among the configuration's: in place of the configuration's own, which follows the
@@ -27,7 +28,9 @@ $route_rules[0] as $route_rules | $probe_inbounds[0] as $probe_inbounds
           (($ARGS.named.route_dns // [null])[0]) as $route_dns
           | if $route_dns == null then . else
               (.dns.rules // []) as $r
-              | ([$r[@userDnsRuleCount@:][] | .domain_suffix? == ["onion"]] | index(false)
+              # The .onion rules and the DNS over HTTPS canary (proxy.dns.browserDoh) lead.
+              | ([$r[@userDnsRuleCount@:][] | .domain_suffix? == ["onion"] or .domain? == ["use-application-dns.net"]]
+                 | index(false)
                  // ($r[@userDnsRuleCount@:] | length)) as $onion
               | (@userDnsRuleCount@ + $onion) as $at
               | .dns.rules = $r[:$at] + $route_dns + $r[$at + ($ARGS.named.static_dns_count // 0):]

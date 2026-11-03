@@ -74,7 +74,9 @@ services.proxy-suite = {
   enable = false;
   geodata = {
     singBox = {
-      geoip = pkgs.sing-geoip;
+      geoip = ‹pkgs.sing-geoip (countries), plus each tag of xray.assets' geoip.dat it lacks:
+telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix)
+›;
       geosite = pkgs.sing-geosite;
     };
     xray = {
@@ -236,6 +238,7 @@ services.proxy-suite = {
     autostart = null;
     backend = "sing-box";
     dns = {
+      browserDoh = "canary";
       clientSubnet = null;
       fakeIp = {
         enable = false;
@@ -272,15 +275,19 @@ services.proxy-suite = {
     outbounds = [ ];
     priority = { };
     routing = {
+      asnUpdateInterval = "1d";
       block = {
+        asns = [ ];
         domains = [ ];
         geoips = [ ];
         geosites = [ ];
         ips = [ ];
         ruleSets = [ ];
       };
+      blockQuic = false;
       default = "proxy";
       direct = {
+        asns = [ ];
         domains = [ ];
         geoips = [ ];
         geosites = [ ];
@@ -289,6 +296,7 @@ services.proxy-suite = {
       };
       directRu = true;
       proxy = {
+        asns = [ ];
         domains = [ ];
         geoips = [ ];
         geosites = [ ];
@@ -310,6 +318,7 @@ services.proxy-suite = {
       clashApiPort = 9090;
       package = ‹sing-box from proxy-suite's own nixpkgs input›;
     };
+    subscriptionHwidFile = null;
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
     tproxy = {
@@ -437,12 +446,28 @@ services.proxy-suite = {
     domainStrategy = if config.networking.enableIPv6 then "prefer_ipv6" else "prefer_ipv4";
     enable = false;
     endpoint = null;
+    endpoints = [
+      "162.159.192.8:894"
+      "162.159.192.1:894"
+      "162.159.192.8:2408"
+      "162.159.192.1:2408"
+      "162.159.193.10:2408"
+      "188.114.96.1:2408"
+      "188.114.97.1:2408"
+      "162.159.192.1:945"
+      "162.159.193.10:4500"
+      "188.114.96.1:1701"
+      "188.114.97.1:955"
+    ];
     generatorUrl = null;
     group = {
       failback = true;
       strategy = "failover";
     };
     instances = null;
+    obfuscation = ‹the Amnezia WARP preset (modules/proxy-suite/warp-obfuscation.nix): Jc 4, Jmin 40,
+Jmax 70, S1 = S2 = 0, H1-H4 = 1-4 and an I1 packet that reads as a QUIC Initial
+›;
   };
   whitelistBypass = {
     creators = { };

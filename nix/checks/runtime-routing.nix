@@ -30,6 +30,8 @@ let
     ];
     proxy.domains = [ "proxied.example" ];
     block.domains = [ "blocked.example" ];
+    # An autonomous system: a rule set on sing-box, its addresses spliced in on XRay.
+    direct.asns = [ 12389 ];
   };
   fixture =
     backend:
@@ -106,6 +108,25 @@ in
         shellValueByPrefix minimalProxyCtlWrapper "export GEODATA_GEOSITE_DIR="
       );
       assert lib.hasInfix "proxy rules add <target> <match...>" minimalProxyCtlScript;
+      true
+    )
+
+    # Autonomous systems: their lists fetched by the service user through the proxy, an empty one
+    # in place until then; a start makes the runtime rules' ones and starts the download without
+    # waiting; XRay, which reads them at start, is restarted as root when one changes.
+    (
+      let
+        asn = f: f.config.systemd.services.proxy-suite-asn;
+      in
+      assert (asn singBoxFixture).serviceConfig.User == "proxy-suite-daemon";
+      assert (asn singBoxFixture).serviceConfig.ExecStopPost == [ ];
+      assert lib.hasPrefix "+/nix/store/" (lib.head (asn xrayFixture).serviceConfig.ExecStopPost);
+      assert singBoxFixture.config.systemd.timers ? proxy-suite-asn;
+      assert builtins.any (lib.hasPrefix "C /var/lib/proxy-suite/asn/asn-12389.json ")
+        singBoxFixture.config.systemd.tmpfiles.rules;
+      assert lib.hasInfix "--arg asn_dir /var/lib/proxy-suite/asn" socksScript;
+      assert lib.hasInfix "start --no-block proxy-suite-asn.service" socksScript;
+      assert shellValueByPrefix minimalProxyCtlWrapper "export ASN_DIR=" == "/var/lib/proxy-suite/asn";
       true
     )
 

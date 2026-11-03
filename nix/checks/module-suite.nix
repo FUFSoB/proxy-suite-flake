@@ -80,6 +80,8 @@ let
       ;
   };
 
+  quicDohChecks = import ./quic-doh.nix { inherit checkLib pkgs; };
+
   runtimeRoutingChecks = import ./runtime-routing.nix {
     inherit
       checkLib
@@ -355,6 +357,7 @@ let
     ++ subscriptionChecks.assertions
     ++ routeModeChecks.assertions
     ++ runtimeRoutingChecks.assertions
+    ++ quicDohChecks.assertions
     ++ optionTypeChecks.assertions
     ++ perAppRoutingChecks.assertions
     ++ perAppRoutingAwgChecks.assertions
@@ -368,6 +371,7 @@ in
   xray-jq-filter-runtime = xrayBackendChecks.runtime;
   tor-guard-runtime = torChecks.runtime;
   runtime-routing = runtimeRoutingChecks.runtime;
+  quic-doh-runtime = quicDohChecks.runtime;
   per-app-zapret-runtime = perAppRoutingChecks.runtime;
   zapret-hostlist-rules = zapretChecks.rules;
   zapret2-config = zapret2Checks.runtime;
