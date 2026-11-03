@@ -2390,6 +2390,8 @@ GROUP_MISSES_DOWN = 2
 # A member that was down is up again after this many passes in a row.
 GROUP_PASSES_UP = 3
 GROUP_TEST_TIMEOUT_MS = 5000
+# A watchdog refreshes its no-ipv4/ mark every probe (15 s); one it stopped refreshing is void.
+GROUP_NO_IPV4_FRESH = 60
 
 
 def _outbound_groups():
@@ -2435,6 +2437,12 @@ class GroupWatch:
     down is up again after GROUP_PASSES_UP passes. With failback the group goes back to an
     earlier member once it is up; without, it stays until its member goes down. Pinned groups
     are left alone. urltest groups are sing-box's to move; a hint only makes them test now.
+
+    The test URL goes out over IPv6 where the outbound prefers it (WARP does), so it cannot
+    tell that IPv4 stopped, and with it every client that hands over an IPv4 address. The
+    AmneziaWG watchdog probes IPv4 itself: while it keeps a mark in no-ipv4/, a directory only
+    this watcher's own user (root, on a privileged host) can write to, the member fails its
+    tests. Unlike a hint, the mark decides, so it is taken only from there.
     """
 
     def __init__(self, clash=None, clock=time.monotonic, wall=time.time):
@@ -2444,6 +2452,7 @@ class GroupWatch:
         self.health = {}  # tag -> {"up", "misses", "passes", "since"}
         self.due = {}  # group -> clock time of its next test
         self.seen_hints = {}  # tag -> hint file mtime already acted on
+        self.without_ipv4 = set()  # tags whose no-ipv4 mark was in force at their last test
 
     @staticmethod
     def watched(inventory):
@@ -2477,7 +2486,30 @@ class GroupWatch:
             visit(name, [])
         return order
 
+    def no_ipv4(self, tag):
+        """Whether a watchdog marks tag as carrying no IPv4: a fresh file in no-ipv4/, both it and
+        the directory this user's, nobody else able to write there."""
+        if not tag or "/" in tag or tag in (".", ".."):
+            return False
+        directory = os.path.join(_groups_dir(), "no-ipv4")
+        try:
+            d = os.lstat(directory)
+            f = os.lstat(os.path.join(directory, tag))
+        except OSError:
+            return False
+        if not stat.S_ISDIR(d.st_mode) or d.st_uid != os.geteuid() or d.st_mode & 0o022:
+            return False
+        if not stat.S_ISREG(f.st_mode) or f.st_uid != d.st_uid:
+            return False
+        return self.wall() - f.st_mtime <= GROUP_NO_IPV4_FRESH
+
     def test(self, tag, url):
+        marked = self.no_ipv4(tag)
+        if marked != (tag in self.without_ipv4):
+            print(f"{tag}: {'no IPv4 through it, says its watchdog' if marked else 'IPv4 through it again'}", file=sys.stderr)
+            (self.without_ipv4.add if marked else self.without_ipv4.discard)(tag)
+        if marked:
+            return False
         query = urllib.parse.urlencode({"url": url, "timeout": GROUP_TEST_TIMEOUT_MS})
         status, body = self.clash("GET", f"/proxies/{urllib.parse.quote(tag, safe='')}/delay?{query}", timeout=GROUP_TEST_TIMEOUT_MS / 1000 + 3)
         return status == 200 and isinstance(body, dict) and "delay" in body
@@ -2613,6 +2645,12 @@ class GroupWatch:
         try:
             os.mkdir(health)
             os.chmod(health, 0o1733)
+        except FileExistsError:
+            pass
+        # The watchdogs' no-IPv4 marks decide, so the directory is this user's alone; as root,
+        # the unit makes it first. no_ipv4() ignores it if it is anyone else's or writable.
+        try:
+            os.mkdir(os.path.join(_groups_dir(), "no-ipv4"), 0o755)
         except FileExistsError:
             pass
         self.hints()  # what is there already is no news

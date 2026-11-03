@@ -496,6 +496,51 @@ class GroupWatchTest(EnvTest):
         self.assertTrue(any(p.startswith("/group/warp/delay") for _, p in self.calls))
         self.assertFalse(any(m == "PUT" for m, _ in self.calls))
 
+    def mark_no_ipv4(self, tag, mtime=None):
+        directory = self.path("proxy-suite-outbound-groups/no-ipv4")
+        os.makedirs(directory, exist_ok=True)
+        os.chmod(directory, 0o755)
+        open(os.path.join(directory, tag), "w").close()
+        os.utime(os.path.join(directory, tag), (mtime or 1000.0, mtime or 1000.0))
+        return os.path.join(directory, tag)
+
+    def test_a_watchdogs_no_ipv4_mark_takes_a_member_out(self):
+        # Its test still passes (over IPv6, say), but the watchdog saw IPv4 go.
+        self.step(0)
+        self.calls.clear()
+        mark = self.mark_no_ipv4("warp-1")
+        err = run(self.step, 1, ["warp-1"])[2]
+        self.assertEqual(self.nows["warp"], "warp-2")
+        self.assertIn("warp-1: no IPv4 through it, says its watchdog", err)
+        self.assertFalse(any(p.startswith("/proxies/warp-1/delay") for _, p in self.calls))
+        # Kept out while the mark stands, however well the test goes.
+        for _ in range(4):
+            self.assertEqual(self.step(), [])
+        # Lifted: up again after the usual passes, and failback.
+        os.unlink(mark)
+        self.assertIn("warp-1: IPv4 through it again", run(self.step)[2])
+        self.assertEqual(self.step(), [])
+        self.assertEqual(self.step(), [("warp", "warp-1")])
+
+    def test_no_ipv4_marks_count_only_when_fresh_and_ours(self):
+        self.assertFalse(self.watch.no_ipv4("warp-1"))
+        mark = self.mark_no_ipv4("warp-1")
+        self.assertTrue(self.watch.no_ipv4("warp-1"))
+        # A watchdog that stopped refreshing it is gone.
+        os.utime(mark, (1000.0 - ctl.GROUP_NO_IPV4_FRESH - 1,) * 2)
+        self.assertFalse(self.watch.no_ipv4("warp-1"))
+        os.utime(mark, (1000.0, 1000.0))
+        # A directory others may write to proves nothing.
+        os.chmod(os.path.dirname(mark), 0o775)
+        self.assertFalse(self.watch.no_ipv4("warp-1"))
+        os.chmod(os.path.dirname(mark), 0o755)
+        # Nor a symlink, nor a name outside the directory.
+        os.unlink(mark)
+        os.symlink(self.path("elsewhere"), mark)
+        open(self.path("elsewhere"), "w").close()
+        self.assertFalse(self.watch.no_ipv4("warp-1"))
+        self.assertFalse(self.watch.no_ipv4("../no-ipv4/warp-1"))
+
     def test_hint_files(self):
         health = self.path("proxy-suite-outbound-groups/health")
         os.makedirs(health)

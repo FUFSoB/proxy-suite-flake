@@ -150,14 +150,19 @@ let
         ExecStart = "${control.proxyCtl}/bin/proxy-ctl proxy groups watch";
         Restart = "on-failure";
         RestartSec = 5;
-        # health/ takes hints from watchdogs; groups-state.json is for the front ends.
+        # health/ takes hints from watchdogs, no-ipv4/ their IPv4 verdicts; groups-state.json
+        # is for the front ends.
         RuntimeDirectory = "proxy-suite-outbound-groups";
         RuntimeDirectoryMode = "0755";
       }
       // lib.optionalAttrs cfg.host.privileged {
         # health/ is the watchdogs' (root's and the service user's) to write to, not every
-        # local user's. Made here, with the capabilities the watcher lacks.
-        ExecStartPre = "+${pkgs.coreutils}/bin/install -d -m 1730 -o root -g ${constants.serviceUser} ${constants.runtimeDir}/proxy-suite-outbound-groups/health";
+        # local user's. no-ipv4/ is root's alone: its marks take a member out, not just test it.
+        # Made here, with the capabilities the watcher lacks.
+        ExecStartPre = [
+          "+${pkgs.coreutils}/bin/install -d -m 1730 -o root -g ${constants.serviceUser} ${constants.runtimeDir}/proxy-suite-outbound-groups/health"
+          "+${pkgs.coreutils}/bin/install -d -m 0755 -o root -g root ${constants.runtimeDir}/proxy-suite-outbound-groups/no-ipv4"
+        ];
       }
       // {
         NoNewPrivileges = true;
@@ -692,9 +697,24 @@ lib.mkMerge [
         serviceConfig.Type = "oneshot";
         script = ''
           # XRay reloads the files it reads itself; only copies go stale.
-          [ -d ${constants.runtimeDir}/proxy-suite-inbounds/tls ] || exit 0
+          tls=${constants.runtimeDir}/proxy-suite-inbounds/tls
+          [ -d "$tls" ] || exit 0
           # A renewal writes the chain and the key one after the other.
           sleep 10
+          # The path unit also fires on a mode or owner change, which the ACME units make on
+          # every run, renewal or not: restart only for a source that differs from its copy.
+          # Copies made before sources was kept: restart, as before.
+          if [ -f "$tls/sources" ]; then
+            stale=0
+            while IFS=$'\t' read -r source copy; do
+              [ -n "$source" ] || continue
+              ${pkgs.diffutils}/bin/cmp -s -- "$source" "$copy" || stale=1
+            done < "$tls/sources"
+            if [ "$stale" = 0 ]; then
+              echo "proxy-suite: the inbounds' certificates have not changed; no restart" >&2
+              exit 0
+            fi
+          fi
           ${constants.systemctl} try-restart proxy-suite-inbounds.service
         '';
       };

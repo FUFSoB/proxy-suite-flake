@@ -862,6 +862,12 @@ let
   # An outbound interface also fetches proxy.urlTest.url over IPv4 through the tunnel, since a
   # peer can keep rekeying while carrying no traffic. After three misses the peer is re-added
   # for a fresh session (a new port alone keeps the old one), at most once in five minutes.
+  #
+  # proxy-suite-outbound-groups' own test may go out over IPv6 (WARP prefers it) and pass with
+  # IPv4 gone, so after two misses the watchdog marks the outbound in no-ipv4/, which takes it
+  # out of its failover groups. A fresh session tends to carry IPv4 for a few minutes only, so
+  # the mark stays until IPv4 has worked for ten minutes straight; a group with failback would
+  # otherwise come back, and cut every connection, each time.
   mkWatchdog =
     spec:
     let
@@ -907,9 +913,20 @@ let
           [[ -n $(${pkgs.iproute2}/bin/ip -4 -o addr show dev "$interface") ]] && probe_egress=1
           misses=0
           last_session=-300
+          # The mark is refreshed every probe while it stands; one left by an earlier run is void.
+          no_ipv4_mark="${runtimeDir}/proxy-suite-outbound-groups/no-ipv4/$profile_name"
+          ${pkgs.coreutils}/bin/rm -f -- "$no_ipv4_mark"
+          no_ipv4=0
+          ipv4_passes=0
+          mark_no_ipv4() {
+            # Root's directory, and the watcher's: it comes and goes with that unit.
+            [[ -d ''${no_ipv4_mark%/*} && ! -L ''${no_ipv4_mark%/*} ]] || return 0
+            ${pkgs.coreutils}/bin/touch -- "$no_ipv4_mark" 2>/dev/null || true
+          }
         ''}
         stale=0
         while sleep 15; do
+          ${lib.optionalString egressProbe "(( no_ipv4 )) && mark_no_ipv4"}
           ${pingVia spec} -W 2 "$probe" >/dev/null 2>&1 || true
           if (( $(handshake_age) <= rekey + 10 )); then
             stale=0
@@ -924,13 +941,27 @@ let
             if (( !probe_egress )) || ${pkgs.curl}/bin/curl -4 -s --noproxy "*" --interface "$interface" -m 5 -o /dev/null \
               ${lib.escapeShellArg cfg.proxy.urlTest.url}; then
               misses=0
-            elif (( ++misses == 1 )); then
-              hint
-            elif (( misses >= 3 && SECONDS - last_session >= 300 )); then
-              echo "proxy-suite: AmneziaWG profile '$profile_name' carries no IPv4 past its peer; starting a new session" >&2
-              new_session
-              misses=0
-              last_session=$SECONDS
+              if (( no_ipv4 && ++ipv4_passes >= 40 )); then
+                echo "proxy-suite: AmneziaWG profile '$profile_name' has carried IPv4 for ten minutes; failover groups may use it again" >&2
+                no_ipv4=0
+                ${pkgs.coreutils}/bin/rm -f -- "$no_ipv4_mark"
+              fi
+            else
+              ipv4_passes=0
+              if (( ++misses == 1 )); then
+                hint
+              elif (( !no_ipv4 )); then
+                echo "proxy-suite: AmneziaWG profile '$profile_name' carries no IPv4; its failover groups are told to leave it" >&2
+                no_ipv4=1
+                mark_no_ipv4
+                hint
+              fi
+              if (( misses >= 3 && SECONDS - last_session >= 300 )); then
+                echo "proxy-suite: AmneziaWG profile '$profile_name' carries no IPv4 past its peer; starting a new session" >&2
+                new_session
+                misses=0
+                last_session=$SECONDS
+              fi
             fi
           ''}
         done

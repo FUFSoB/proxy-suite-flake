@@ -298,6 +298,9 @@ let
           index=$((index + 1))
           copy="$CERT_DIR/$index-$(basename "$source")"
           install -m 0640 ${constants.ifPrivileged "-g ${constants.serviceUser} "}"$source" "$copy"
+          # proxy-suite-inbounds-certs restarts the inbounds only when a source no longer
+          # matches its copy: ACME touches the files' modes daily without renewing them.
+          printf '%s\t%s\n' "$source" "$copy" >> "$CERT_DIR/sources"
           echo "proxy-suite: ${constants.serviceUser} cannot read $source; the inbounds use a copy until the next restart" >&2
           ${jq} --arg from "$source" --arg to "$copy" "($2 | select(. == \$from)) = \$to" "$1" > "$1.next"
           mv "$1.next" "$1"
