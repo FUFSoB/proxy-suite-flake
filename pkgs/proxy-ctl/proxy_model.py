@@ -630,6 +630,13 @@ def zapret_summary():
     if ctl.env("ZAPRET_AUTO_ENABLED") != "1":
         return 'Learned hostlists need zapret.engine = "zapret2".'
     text = "   ".join(f"{len(_lines(name))} {kind}" for kind, name in ZAPRET_LISTS)
+    # The strategy source's own sites, which no list above holds; root's direct-sync writes them.
+    try:
+        sites = [line for line in ctl.lines(ctl.read_text(os.path.join(ctl._zapret_direct_dir(), "sites.txt"))) if line]
+    except OSError:
+        sites = []
+    if sites:
+        text = f"{len(sites)} from the strategy source   {text}"
     if proxied := ctl._zapret_proxied():
         text += f"   {len(proxied)} via the proxy (zapret2 cannot fix them)"
     if ctl.env("ZAPRET_CUTOFF_ENABLED") == "1":

@@ -100,6 +100,15 @@ in
     };
   };
 
+  # The global and the per-app TUN route by their own sing-box, not the socks unit's.
+  zapret2Tun = mkZapret2With {
+    proxy.tun.enable = true;
+    perAppRouting = {
+      enable = true;
+      tun.enable = true;
+    };
+  } { enable = true; };
+
   zapret2NoFallback = mkZapret2 {
     enable = true;
     zapret2.cutoff.proxyFallback = false;

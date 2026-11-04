@@ -24,6 +24,7 @@ let
     zapret2Z2k
     zapret2Z2kTuned
     zapret2NoFallback
+    zapret2Tun
     zapret2Xray
     zapret2OwnProfiles
     ;
@@ -58,6 +59,9 @@ let
   z2kCutoffProbe =
     zapret2Z2k.config.systemd.services.proxy-suite-zapret2-cutoff.serviceConfig.ExecStart;
   socksStart = fixture: fixture.config.systemd.services.proxy-suite-socks.serviceConfig.ExecStart;
+  tunStart = fixture: fixture.config.systemd.services.proxy-suite-tun.serviceConfig.ExecStart;
+  perAppTunStart =
+    fixture: fixture.config.systemd.services.proxy-suite-per-app-tun.serviceConfig.ExecStart;
   directSyncOf =
     fixture:
     builtins.head (
@@ -545,6 +549,15 @@ in
         grep -qF 'tag: "zapret-unfixable"' ${socksStart zapret2Global}
         test "$(grep -n 'zapret-unfixable' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \
           "$(grep -n 'zapret-hosts' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)"
+        # The global and the per-app TUN route by their own sing-box: the same rule-sets, in the
+        # same order, or the source's sites take the proxy under them.
+        for start in ${tunStart zapret2Tun} ${perAppTunStart zapret2Tun}; do
+          for tag in zapret-cutoff zapret-unfixable zapret-hosts; do
+            grep -qF "tag: \"$tag\"" "$start"
+          done
+          test "$(grep -n 'zapret-unfixable' "$start" | head -n1 | cut -d: -f1)" -lt \
+            "$(grep -n 'zapret-hosts' "$start" | head -n1 | cut -d: -f1)"
+        done
         # Pinned hosts, and learned ones a strategy was seen working for, less the excluded;
         # IP literals as single addresses.
         mkdir -p direct-lists empty-lists out empty-out
@@ -575,6 +588,10 @@ in
               | select((.domain_suffix // [0]) | length > 0))' "$1"
         }
         jq -e '.rules[0].domain_suffix | index("googlevideo.com") and index("discord.com")' out/direct.json >/dev/null
+        # The source's sites alone, for proxy-ctl to tell them from the pinned and learned ones.
+        cmp "$sites" out/sites.txt
+        grep -qx youtube.com out/sites.txt
+        if grep -qx pinned.example out/sites.txt; then exit 1; fi
         test "$(own out/direct.json)" = '{"version":1,"rules":[{"domain_suffix":["learned.example","pinned.example"]},{"ip_cidr":["203.0.113.7/32"]}]}'
         # Excluded at runtime, a source's site is left to the proxy too.
         mkdir -p site-excluded site-excluded-out

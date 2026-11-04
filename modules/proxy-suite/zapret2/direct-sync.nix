@@ -2,9 +2,10 @@
 # direct.json, the sites the strategy source's profiles take from the start (YouTube,
 # Discord...) and the hosts zapret2 pins (`proxy-ctl zapret auto add`) and learns and can
 # fix, sent direct so zapret2 sees their traffic (directSync); proxy.json, what it cannot
-# fix, for the proxy to carry (zapret2.proxyFallback); and names.tsv, the names the
-# addresses blocked outright were looked up by, for proxy-ctl. Rebuilt whenever a host
-# list or a verdict changes; sing-box reloads them on the rename.
+# fix, for the proxy to carry (zapret2.proxyFallback); for proxy-ctl, sites.txt, the
+# source's sites alone, and names.tsv, the names the addresses blocked outright were looked
+# up by. Rebuilt whenever a host list or a verdict changes; sing-box reloads them on the
+# rename.
 {
   lib,
   pkgs,
@@ -55,7 +56,11 @@ in
   service = {
     description = "proxy-suite - route by what zapret2 can and cannot fix";
     # Ahead of the proxy at boot, so it starts with the hosts already in.
-    before = [ "proxy-suite-socks.service" ];
+    before = [
+      "proxy-suite-socks.service"
+      "proxy-suite-tun.service"
+      "proxy-suite-per-app-tun.service"
+    ];
     wantedBy = [ "multi-user.target" ];
     # nfqws2 writes verdicts in bursts (a page's unanswered addresses), each a start: the
     # start limit would fail the path unit with it, and nothing would sync until a reboot.

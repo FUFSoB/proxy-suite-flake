@@ -5737,11 +5737,16 @@ def cmd_where(domain="", *_):
     if env("ZAPRET_AUTO_ENABLED") == "1":
         excluded = _where_in_list(_zapret_auto_file("zapret-hosts-user-exclude.txt"), domain)
         pinned = _where_in_list(_zapret_auto_file("zapret-hosts-user.txt"), domain)
+        # The strategy source's own sites (YouTube, Discord...), as root's direct-sync has them.
+        site = _where_in_list(os.path.join(_zapret_direct_dir(), "sites.txt"), domain)
         learned = _where_in_list(_zapret_auto_file("zapret-hosts-auto.txt"), domain)
         if excluded:
             _where_row("zapret", f"excluded ({excluded}) - never touched, never learned")
         elif pinned:
             _where_row("zapret", f"pinned ({pinned}) - treated as blocked")
+            verdict = verdict or "direct, with the zapret bypass"
+        elif site:
+            _where_row("zapret", f"in the strategy source's list ({site}) - its profiles take it from the start")
             verdict = verdict or "direct, with the zapret bypass"
         elif learned:
             _where_row("zapret", f"learned ({learned}) - treated as blocked")

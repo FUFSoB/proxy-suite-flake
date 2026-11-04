@@ -644,6 +644,11 @@ let
     xrayDnsBridgePort = xrayDnsBridgePorts.tun;
     # Pure XRay's TUN routes by ip rules instead: see xrayTunUpScript.
     excludeServiceUserFromTun = !pureXrayEnabled;
+    # The host's traffic goes through this instance, not the socks unit's: without
+    # zapret2's rule-sets here, its sites (YouTube, Discord...) took the proxy under the TUN.
+    enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
+    enableZapretDirect = zapret2DirectSync && !pureXrayEnabled;
+    enableZapretProxy = zapret2ProxyFallback && !pureXrayEnabled;
   };
 
   startPerAppTun = mkStartScript {
@@ -653,6 +658,11 @@ let
     xrayTunDnsRuntime = pureXrayEnabled;
     xraySidecarPort = xraySidecarPorts.perAppTun;
     xrayDnsBridgePort = xrayDnsBridgePorts.perAppTun;
+    # As the global TUN's: the apps follow the routing here unless pinned (their rules come
+    # first), and per-app TProxy and proxychains get these through the socks unit.
+    enableZapretCutoff = zapretCutoffProxyFallback && !pureXrayEnabled;
+    enableZapretDirect = zapret2DirectSync && !pureXrayEnabled;
+    enableZapretProxy = zapret2ProxyFallback && !pureXrayEnabled;
   };
 in
 {

@@ -1,4 +1,4 @@
-# $1: zapret2's state directory, $2: the directory to write the two rule-sets to; $3, the
+# $1: zapret2's state directory, $2: the directory to write the rule-sets and lists to; $3, the
 # checks': a dump to read in place of systemd-resolved's cache.
 # direct.json: the hosts zapret2 handles, so the proxy sends them direct and zapret2 sees
 #   them: the sites the strategy source's profiles take from the start (site-domains.nix),
@@ -11,6 +11,8 @@
 # proxy.json: what zapret2 cannot fix, for the proxy to carry: sites every strategy failed
 #   for ("unfixable": all of a site's TCP, or only its QUIC), and addresses that leave
 #   connections unanswered ("blocked").
+# sites.txt: the strategy source's own sites alone, for proxy-ctl to tell them from the
+#   pinned and learned ones.
 # names.tsv: "address<TAB>names" of each address blocked outright, for proxy-ctl: no
 #   connection to it got far enough to name its site, but the lookups before them did. The
 #   names systemd-resolved's cache has it under, a CNAME followed back to the name asked
@@ -94,6 +96,9 @@ jq -n -c \
       + [$ips | select(length > 0) | {ip_cidr: cidr}])}
 ' >"$out/direct.json.tmp"
 write "$out/direct.json"
+
+cat "$sites" >"$out/sites.txt.tmp"
+write "$out/sites.txt"
 
 jq -n -c --rawfile verdicts <(lists "$dir/verdicts.tsv") "$hosts"'
   ($verdicts | verdicts) as $v
