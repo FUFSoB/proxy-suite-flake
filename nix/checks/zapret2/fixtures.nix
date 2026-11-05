@@ -37,6 +37,24 @@ in
 
   zapret2Global = mkZapret2 { enable = true; };
 
+  # zapret2 without IPv6: nfqws2 runs with it off, so the direct hosts take the proxy over it.
+  zapret2Ipv4 = mkZapret2 {
+    enable = true;
+    zapret2.ipv6 = false;
+  };
+
+  # A host without IPv6: zapret2.ipv6 follows proxy.ipv6, which follows networking.enableIPv6.
+  zapret2NoHostIpv6 = evalProxySuite [
+    baseModule
+    {
+      networking.enableIPv6 = false;
+      services.proxy-suite.zapret = {
+        enable = true;
+        engine = "zapret2";
+      };
+    }
+  ];
+
   # The site filters: the per-app instance keeps the excludes alone.
   zapret2PerApp = mkZapret2With perApp {
     enable = true;

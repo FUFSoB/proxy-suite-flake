@@ -456,11 +456,13 @@ Domains never touched or learned\. At runtime: ` proxy-ctl zapret auto exclude `
 <a id="services-proxy-suite-zapret-zapret2-ipv6"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ipv6
 
-Handle IPv6 too\. Without it, on sing-box the sites ` zapret.directSync ` sends direct are
-looked up for IPv4 alone, and a connection already on IPv6 to one of them takes the proxy\.
+Handle IPv6 too\. Without it, nfqws2 runs with IPv6 disabled, so the sites ` zapret.directSync `
+sends direct are looked up for IPv4 alone, and a connection already on IPv6 to one of them
+(YouTube’s, usually: apps prefer AAAA) takes the proxy instead of zapret2\. Defaults to
+` proxy.ipv6 `, which follows ` networking.enableIPv6 `\.
 
 **Type:** boolean\
-**Default:** `false`
+**Default:** `config.services.proxy-suite.proxy.ipv6`
 
 <a id="services-proxy-suite-zapret-zapret2-ports-extratcp"></a>
 ## services\.proxy-suite\.zapret\.zapret2\.ports\.extraTcp

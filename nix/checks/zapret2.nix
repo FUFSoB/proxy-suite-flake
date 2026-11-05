@@ -17,6 +17,8 @@ let
   inherit (fixtures)
     zapretDiscordYoutubeGlobal
     zapret2Global
+    zapret2Ipv4
+    zapret2NoHostIpv6
     zapret2PerApp
     zapret2PerAppZ2k
     zapret2Tuned
@@ -266,7 +268,11 @@ in
         grep -qx 'QNUM=300' "${globalRuntime}/config"
         grep -qx 'FWTYPE=nftables' "${globalRuntime}/config"
         grep -qx 'WS_USER=root' "${globalRuntime}/config"
-        grep -qx 'DISABLE_IPV6=1' "${globalRuntime}/config"
+        # zapret2.ipv6 defaults on: nfqws2 handles IPv6 too, so YouTube's IPv6 flows get its fixes.
+        ! grep -q '^DISABLE_IPV6=' "${globalRuntime}/config"
+        grep -qx 'DISABLE_IPV6=1' "${runtimeDir zapret2Ipv4 globalService}/config"
+        # Without IPv6 on the host, the default follows it off.
+        grep -qx 'DISABLE_IPV6=1' "${runtimeDir zapret2NoHostIpv6 globalService}/config"
 
         # The NFQUEUE window must exceed the retransmission threshold.
         grep -qx 'NFQWS2_TCP_PKT_OUT=9' "${globalRuntime}/config"
@@ -540,11 +546,14 @@ in
         grep -qF 'tag: "zapret-hosts"' ${socksStart zapret2Global}
         grep -qF 'all-proxy | all-bypass) ;;' ${socksStart zapret2Global}
         if grep -qF 'zapret-hosts' ${socksStart zapretDiscordYoutubeGlobal}; then exit 1; fi
-        # zapret2 queues IPv4 alone by default: its hosts are looked up for IPv4, and a flow
-        # already on IPv6 takes the proxy, ahead of their direct rule.
-        grep -qF 'action: "resolve", strategy: "ipv4_only"' ${socksStart zapret2Global}
-        test "$(grep -n 'ip_version: 6, outbound: "proxy"' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \
-          "$(grep -n 'rule_set: \["zapret-hosts"\], outbound: "direct"' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)"
+        # Default: zapret2 handles IPv6 too, so no flow is held back to the proxy for lack of it.
+        if grep -qF 'ipv4_only' ${socksStart zapret2Global}; then exit 1; fi
+        if grep -qF 'ip_version: 6, outbound: "proxy"' ${socksStart zapret2Global}; then exit 1; fi
+        # Without zapret2.ipv6 zapret2 queues IPv4 alone: its hosts are looked up for IPv4, and
+        # a flow already on IPv6 takes the proxy, ahead of their direct rule.
+        grep -qF 'action: "resolve", strategy: "ipv4_only"' ${socksStart zapret2Ipv4}
+        test "$(grep -n 'ip_version: 6, outbound: "proxy"' ${socksStart zapret2Ipv4} | head -n1 | cut -d: -f1)" -lt \
+          "$(grep -n 'rule_set: \["zapret-hosts"\], outbound: "direct"' ${socksStart zapret2Ipv4} | head -n1 | cut -d: -f1)"
         # What zapret2 cannot fix goes to the proxy, ahead of what it does.
         grep -qF 'tag: "zapret-unfixable"' ${socksStart zapret2Global}
         test "$(grep -n 'zapret-unfixable' ${socksStart zapret2Global} | head -n1 | cut -d: -f1)" -lt \

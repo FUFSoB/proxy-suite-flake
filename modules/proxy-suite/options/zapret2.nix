@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ lib, config, ... }:
 
 let
   inherit (lib) mkEnableOption mkOption types;
@@ -129,10 +129,13 @@ in
 
     ipv6 = mkOption {
       type = types.bool;
-      default = false;
+      default = config.services.proxy-suite.proxy.ipv6;
+      defaultText = lib.literalExpression "config.services.proxy-suite.proxy.ipv6";
       description = ''
-        Handle IPv6 too. Without it, on sing-box the sites `zapret.directSync` sends direct are
-        looked up for IPv4 alone, and a connection already on IPv6 to one of them takes the proxy.
+        Handle IPv6 too. Without it, nfqws2 runs with IPv6 disabled, so the sites `zapret.directSync`
+        sends direct are looked up for IPv4 alone, and a connection already on IPv6 to one of them
+        (YouTube's, usually: apps prefer AAAA) takes the proxy instead of zapret2. Defaults to
+        `proxy.ipv6`, which follows `networking.enableIPv6`.
       '';
     };
 

@@ -520,7 +520,7 @@ Jmax 70, S1 = S2 = 0, H1-H4 = 1-4 and an I1 packet that reads as a QUIC Initial
       };
       domains = [ ];
       excludeDomains = [ ];
-      ipv6 = false;
+      ipv6 = config.services.proxy-suite.proxy.ipv6;
       ports = {
         extraTcp = [ ];
         extraUdp = [ ];
