@@ -113,6 +113,39 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(model.toggle_argv(row), ["awg", "on", "warp"])  # a global profile named warp
             self.assertEqual(model.restart_argv(row), ["awg", "restart", "warp"])
 
+    def test_each_warp_device_alone(self):
+        """Several devices: a row toggles and restarts its own, not every one `warp` names."""
+        tab = model.TABS[0]
+        devices = [{"tag": "warp-1", "unit": "proxy-suite-awg-warp-1"}, {"tag": "warp-2", "unit": "proxy-suite-awg-warp-2"}]
+        with mock.patch.dict(os.environ, {"WARP_DEVICES": json.dumps(devices)}), mock.patch.object(ctl, "systemctl") as systemctl:
+            rows = {r["unit"]: r for r in model.service_rows({"proxy-suite-awg-warp-1": "active", "proxy-suite-awg-warp-2": "inactive"})}
+            one, two = rows["proxy-suite-awg-warp-1"], rows["proxy-suite-awg-warp-2"]
+            self.assertEqual(model.restart_argv(one), ["warp", "restart", "warp-1"])
+            self.assertEqual(model.toggle_argv(one), ["warp", "off", "warp-1"])
+            self.assertEqual(model.toggle_argv(two), ["warp", "on", "warp-2"])
+            self.assertIn("space", [a.key for a in model.applicable(tab, two)])
+            # The old single-device name still means every device.
+            self.assertEqual(model.restart_argv({"unit": "proxy-suite-awg-warp", "state": "active"}), ["warp", "restart"])
+        systemctl.assert_not_called()  # read from WARP_DEVICES, on every redraw
+
+    def test_any_unit_starts_stops_and_restarts(self):
+        """One with no group of its own (WARP's registration, the inbounds) by its unit."""
+        tab = model.TABS[0]
+        actions = {a.key: a for a in tab.actions}
+        space, restart = actions["space"], actions["ctrl+r"]
+        for unit in ("proxy-suite-warp", "proxy-suite-inbounds", "proxy-suite-zapret-vm-exempt"):
+            row = model.service_rows({unit: "active"})[0]
+            stopped = {**row, "state": "inactive"}
+            self.assertIn(restart, model.applicable(tab, row))
+            self.assertEqual(restart.argv(row), ["restart", unit])
+            self.assertNotIn(restart, model.applicable(tab, stopped))
+            self.assertIn(space, model.applicable(tab, stopped))
+            self.assertEqual(space.argv(row), ["stop", unit])
+            self.assertEqual(space.argv({**row, "state": "failed"}), ["start", unit])
+            # Stopping the inbounds cuts off every client: asked first, as proxy off is.
+            self.assertEqual(space.confirm(row), unit == "proxy-suite-inbounds")
+            self.assertFalse(space.confirm(stopped))
+
     def test_every_toggle_restarts(self):
         tab = model.TABS[0]
         restart = next(a for a in tab.actions if a.key == "ctrl+r")

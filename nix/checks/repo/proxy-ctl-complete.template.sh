@@ -30,6 +30,8 @@ has outbounds proxy
 has all-bypass proxy mode
 has exclude zapret auto
 has proxy-suite-awg-work logs
+has proxy-suite-awg-work restart
+has proxy-suite-awg-work stop
 has work awg on
 has add awg
 has rm awg

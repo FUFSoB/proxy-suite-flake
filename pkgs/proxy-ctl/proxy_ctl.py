@@ -65,7 +65,12 @@ Groups with on|off also take toggle and restart.
 Changes and secrets need root or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated)
-  restart                                restart running services
+  restart [unit...]                      restart running services, or only the units named
+  start <unit...>                        start the units named
+  stop <unit...>                         stop the units named
+                                         (names as status lists them, proxy-suite- optional;
+                                         a unit with a group goes through it: stop socks is
+                                         proxy off, which takes tun and tproxy along)
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
                                          terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
@@ -591,16 +596,23 @@ def _toggle(unit, name, verb="status", *_):
         usage(f"{name} [status|on|off|toggle|restart]")
 
 
+def _warp_devices_listed():
+    """[(tag, unit)] as WARP_DEVICES lists them: none from a wrapper from before it."""
+    try:
+        devices = json.loads(env("WARP_DEVICES", "[]"))
+    except ValueError:
+        devices = []
+    if not isinstance(devices, list):
+        return []
+    return [(_s(d["tag"]), _s(d["unit"])) for d in devices if isinstance(d, dict) and d.get("tag") and d.get("unit")]
+
+
 def _warp_devices():
     """[(tag, unit)] of the WARP devices behind outbounds: their sing-box tunnels or AmneziaWG profiles.
 
     A global "warp" profile belongs to `awg on warp`, not here.
     """
-    try:
-        devices = json.loads(env("WARP_DEVICES", "[]"))
-    except ValueError:
-        devices = []
-    listed = [(_s(d["tag"]), _s(d["unit"])) for d in devices if isinstance(d, dict) and d.get("tag") and d.get("unit")]
+    listed = _warp_devices_listed()
     if listed:
         return listed
     # A wrapper from before WARP_DEVICES: the one device there was.
@@ -801,7 +813,9 @@ COMPLETE = {
     "": {
         "words": {
             "status": "services and routing mode",
-            "restart": "restart active services",
+            "restart": "restart active services, or the ones named",
+            "start": "start the services named",
+            "stop": "stop the services named",
             "logs": "follow logs",
             "where": "how a host is routed right now",
             "proxy": "local proxy backend",
@@ -831,6 +845,7 @@ COMPLETE = {
     },
     "status": {"flags": {"--json": "machine-readable state, with the GUI's overall state"}},
     "logs": {"args": lambda: _names(_snapshot_units()), "repeat": True},
+    **{verb: {"args": lambda: _names(_service_units()), "repeat": True} for verb in ("start", "stop", "restart")},
     "where": {"args": _autoproxy_choices},
     "proxy": {
         "words": {
@@ -1463,13 +1478,106 @@ def cmd_status(*args):
         _status_row("learned hosts", zapret)
 
 
-def cmd_restart(*_):
-    """Restarts what is running; starting something stopped on purpose is `proxy on`."""
-    for svc in ["proxy-suite-socks", *RESTART_SERVICES]:
+def _service_units():
+    """The units `status` lists: what `start`, `stop` and `restart <unit>` take."""
+    return [u for u in _snapshot_units() if u != SUBSCRIPTION_UPDATE]
+
+
+def _named_unit(name, units):
+    """The unit a name means: as `status` lists it, or without its proxy-suite- prefix."""
+    unit = name.removesuffix(".service")
+    for candidate in (unit, f"proxy-suite-{unit}"):
+        if candidate in units:
+            if not svc_exists(candidate):
+                die(f"{candidate} is not enabled in this configuration.")
+            return candidate
+    known = [u.removeprefix("proxy-suite-") for u in _unit_states(units)]
+    die(f"Unknown service: {name}." + (f" Known here: {', '.join(known)}" if known else ""))
+
+
+# Units a group controls, whose on|off do more than systemctl: proxy off takes tun and tproxy
+# along, a global tunnel's off lifts the kill switch. `start`, `stop` and `restart <unit>` go
+# through them, and the front ends run them.
+UNIT_GROUPS = {
+    "proxy-suite-socks": ["proxy"],
+    "proxy-suite-tun": ["proxy", "tun"],
+    "proxy-suite-tproxy": ["proxy", "tproxy"],
+    "proxy-suite-killswitch": ["killswitch"],
+    "proxy-suite-ssh-proxy": ["ssh"],
+    "proxy-suite-warp-tunnel": ["warp"],
+    # WARP as an AmneziaWG outbound: `proxy-ctl warp`, not `awg`, which only knows global profiles.
+    "proxy-suite-awg-warp": ["warp"],
+    "proxy-suite-tg-ws-proxy": ["tg"],
+    "proxy-suite-tor": ["tor"],
+    "proxy-suite-zapret": ["zapret"],
+}
+UNIT_VERBS = {"start": "on", "stop": "off", "restart": "restart"}
+
+
+def _wl_by_unit(unit):
+    """The whitelist-bypass creator or joiner a unit runs, or None."""
+    return next((w for w in _wl() if _wl_unit(w) == unit), None)
+
+
+def _unit_argv(unit, verb):
+    """The argv of the group that controls unit, with verb (on, off, toggle, restart), or None.
+
+    With no systemctl call: the front ends ask it of every row they draw.
+    """
+    for prefix in ("proxy-suite-awg@", "proxy-suite-awg-"):
+        if unit.startswith(prefix) and (profile := unit.removeprefix(prefix)) in _awg_profiles():
+            return ["awg", verb, profile]
+    if w := _wl_by_unit(unit):
+        return ["wl", verb, w["name"]]
+    # One WARP device of several: `warp` alone takes them all. As WARP_DEVICES lists them;
+    # UNIT_GROUPS has the one device a wrapper from before it knows.
+    if tag := next((t for t, u in _warp_devices_listed() if u == unit), ""):
+        return ["warp", verb, tag]
+    if unit in UNIT_GROUPS:
+        return [*UNIT_GROUPS[unit], verb]
+    return None
+
+
+def _units_do(verb, names):
+    """start, stop or restart the units named, whatever their state: through its group, a unit that has one."""
+    units = _service_units()
+    # Every name first: a typo after the first must not leave half of them done.
+    for unit in dict.fromkeys(_named_unit(n, units) for n in names):
+        argv = _unit_argv(unit, UNIT_VERBS[verb])
+        if argv:
+            COMMANDS[argv[0]](*argv[1:])
+        else:
+            must(verb, unit)
+
+
+def cmd_start(*names):
+    if not names:
+        usage("start <unit...>")
+    _units_do("start", names)
+
+
+def cmd_stop(*names):
+    if not names:
+        usage("stop <unit...>")
+    _units_do("stop", names)
+
+
+def cmd_restart(*names):
+    """Restarts the units named; or, with none, what is running.
+
+    Starting everything stopped on purpose is `proxy on` and the like, not this.
+    """
+    if names:
+        _units_do("restart", names)
+        return
+    # WARP devices on units of their own: RESTART_SERVICES has the first one's sing-box tunnel
+    # alone, under the name it had before WARP_DEVICES.
+    warp = [u for _, u in _warp_devices_listed()]
+    for svc in dict.fromkeys(["proxy-suite-socks", *RESTART_SERVICES, *warp]):
         if svc_exists(svc) and svc_active(svc):
             must("restart", svc)
     for profile in _awg_profiles():
-        if svc_active(_awg_service(profile)):
+        if svc_active(_awg_service(profile)) and _awg_service(profile) not in warp:
             must("restart", _awg_service(profile))
 
 
@@ -7618,6 +7726,8 @@ COMMANDS = {
     "--help": lambda *_: sys.stdout.write(HELP),
     "status": cmd_status,
     "restart": cmd_restart,
+    "start": cmd_start,
+    "stop": cmd_stop,
     "logs": cmd_logs,
     "proxy": cmd_proxy,
     "zapret": cmd_zapret,

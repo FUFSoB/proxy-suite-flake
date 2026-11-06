@@ -378,6 +378,75 @@ class WarpDevicesTest(EnvTest):
         self.assertIn("reserved for WARP", run(ctl.cmd_awg, "add", "warp-2", "vpn://x")[2])
 
 
+class UnitVerbTest(EnvTest):
+    """`start`, `stop` and `restart <unit>`: any unit `status` lists, alone, the ones without a group of their own too."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["WARP_DEVICES"] = json.dumps([{"tag": "warp-1", "unit": "proxy-suite-awg-warp-1"}, {"tag": "warp-2", "unit": "proxy-suite-awg-warp-2"}])
+        # As on a host with WARP over AmneziaWG: proxy-suite-warp registers warp-1.
+        self.existing = {"proxy-suite-socks", "proxy-suite-tun", "proxy-suite-inbounds", "proxy-suite-warp", "proxy-suite-tor", "proxy-suite-awg-warp-1", "proxy-suite-awg-warp-2"}
+        self.active = self.existing - {"proxy-suite-tor", "proxy-suite-tun"}
+        self.calls = []
+        self.patch("_awg_profiles", lambda: [])
+        self.patch("_wl", lambda: [])
+        self.patch("svc_exists", lambda unit: unit in self.existing)
+        self.patch("svc_active", lambda unit: unit in self.active)
+        self.patch("_unit_states", lambda units: {u: "active" for u in units if u in self.existing})
+        self.patch("systemctl", lambda *a, **kw: self.calls.append(a) or (0, ""))
+
+    def test_one_unit_by_its_name(self):
+        ok(ctl.cmd_restart, "inbounds")
+        ok(ctl.cmd_restart, "proxy-suite-inbounds.service")
+        # WARP's registration and a device's tunnel, each alone; a stopped one named starts.
+        ok(ctl.cmd_restart, "warp", "awg-warp-2", "proxy-suite-warp", "tor")
+        self.assertEqual(
+            self.calls,
+            [("restart", u) for u in ("proxy-suite-inbounds", "proxy-suite-inbounds", "proxy-suite-warp", "proxy-suite-awg-warp-2", "proxy-suite-tor")],
+        )
+        self.assertIn("proxy-suite-awg-warp-1", ctl._complete_tree("restart"))  # as logs completes them
+        self.assertIn("proxy-suite-awg-warp-1", ctl._complete_tree("restart", "inbounds"))
+
+    def test_a_wrong_name_restarts_nothing(self):
+        status, _, err = run(ctl.cmd_restart, "inbounds", "nope")
+        self.assertEqual(status, 1)
+        self.assertIn("Unknown service: nope", err)
+        self.assertIn("awg-warp-1", err)
+        self.assertIn("not enabled", run(ctl.cmd_restart, "inbounds", "zapret")[2])
+        # Not a service: `proxy subs update` runs it.
+        self.assertIn("Unknown service", run(ctl.cmd_restart, ctl.SUBSCRIPTION_UPDATE)[2])
+        self.assertEqual(self.calls, [])
+
+    def test_everything_running_takes_every_warp_device(self):
+        ok(ctl.cmd_restart)
+        self.assertEqual(self.calls, [("restart", u) for u in ("proxy-suite-socks", "proxy-suite-inbounds", "proxy-suite-awg-warp-1", "proxy-suite-awg-warp-2")])
+
+    def test_start_and_stop_any_unit(self):
+        ok(ctl.cmd_stop, "inbounds", "warp")
+        ok(ctl.cmd_start, "proxy-suite-inbounds")
+        # A WARP device through `warp`, that one alone.
+        ok(ctl.cmd_stop, "awg-warp-1")
+        self.assertEqual(
+            self.calls,
+            [("stop", "proxy-suite-inbounds"), ("stop", "proxy-suite-warp"), ("start", "proxy-suite-inbounds"), ("stop", "proxy-suite-awg-warp-1")],
+        )
+        self.assertIn("proxy-suite-inbounds", ctl._complete_tree("stop"))
+        self.assertEqual(ctl._complete_tree("start").keys(), ctl._complete_tree("restart").keys())
+
+    def test_stop_goes_through_the_group(self):
+        """stop socks is proxy off: tun goes down with it, not left running on a stopped proxy."""
+        ok(ctl.cmd_stop, "socks")
+        self.assertEqual(self.calls, [("stop", "proxy-suite-tun"), ("stop", "proxy-suite-socks")])
+
+    def test_start_and_stop_need_a_unit(self):
+        for fn in (ctl.cmd_start, ctl.cmd_stop):
+            status, _, err = run(fn)
+            self.assertEqual(status, 1)
+            self.assertIn("<unit...>", err)
+        self.assertEqual(run(ctl.cmd_stop, "inbounds", "nope")[0], 1)
+        self.assertEqual(self.calls, [])
+
+
 class GroupWatchTest(EnvTest):
     """Failover groups, through a Clash API that answers from a table."""
 

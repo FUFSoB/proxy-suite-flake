@@ -325,21 +325,9 @@ def _lines(name):
         return []
 
 
-TOGGLES = {
-    "proxy-suite-socks": ["proxy"],
-    "proxy-suite-tun": ["proxy", "tun"],
-    "proxy-suite-tproxy": ["proxy", "tproxy"],
-    "proxy-suite-killswitch": ["killswitch"],
-    "proxy-suite-ssh-proxy": ["ssh"],
-    "proxy-suite-warp-tunnel": ["warp"],
-    # WARP as an AmneziaWG outbound: `proxy-ctl warp`, not `awg`, which only knows global profiles.
-    "proxy-suite-awg-warp": ["warp"],
-    "proxy-suite-tg-ws-proxy": ["tg"],
-    "proxy-suite-tor": ["tor"],
-    "proxy-suite-zapret": ["zapret"],
-}
+# Units whose on|off are a group's (proxy, warp, tor…); proxy_ctl runs `start` and `stop` through them too.
+TOGGLES = ctl.UNIT_GROUPS
 AWG_PREFIX = ctl._awg_service("")
-AWG_RUNTIME_PREFIX = "proxy-suite-awg@"
 ZAPRET_LISTS = (
     ("learned", "zapret-hosts-auto.txt"),
     ("pinned", "zapret-hosts-user.txt"),
@@ -349,7 +337,7 @@ ZAPRET_LISTS = (
 
 def _wl_entry(row):
     """The whitelist-bypass creator or joiner behind a row, or None."""
-    return next((w for w in ctl._wl() if ctl._wl_unit(w) == row["unit"]), None)
+    return ctl._wl_by_unit(row["unit"])
 
 
 def _wl_role(*roles, platforms=None, fixed=None):
@@ -371,33 +359,19 @@ def _wl_argv(verb, *extra):
     return lambda r, *_: ["wl", verb, _wl_entry(r)["name"], *extra]
 
 
-def _awg_profile(row):
-    """The global AmneziaWG profile behind a row, or empty."""
-    unit = row["unit"]
-    for prefix in (AWG_RUNTIME_PREFIX, AWG_PREFIX):
-        if unit.startswith(prefix) and (name := unit.removeprefix(prefix)) in ctl._awg_profiles():
-            return name
-    return ""
-
-
-def _unit_argv(row, verb):
-    if profile := _awg_profile(row):
-        return ["awg", verb, profile]
-    if w := _wl_entry(row):
-        return ["wl", verb, w["name"]]
-    return [*TOGGLES[row["unit"]], verb]
-
-
 def toggle_argv(row, *_):
-    return _unit_argv(row, "off" if row["state"] in UP_STATES else "on")
+    up = row.get("state") in UP_STATES
+    # One with no group of its own (the inbounds, WARP's registration) by its unit.
+    return ctl._unit_argv(row["unit"], "off" if up else "on") or ["stop" if up else "start", row["unit"]]
 
 
 def restart_argv(row, *_):
-    return _unit_argv(row, "restart")
+    return ctl._unit_argv(row["unit"], "restart") or ["restart", row["unit"]]
 
 
-def _controllable(row):
-    return row["unit"] in TOGGLES or bool(_awg_profile(row)) or bool(_wl_entry(row))
+# Stopped only once asked: proxy off takes tun and tproxy down with it, and the inbounds' stop
+# cuts off every client, perhaps the one at the keyboard.
+CONFIRM_STOP = ("proxy-suite-socks", "proxy-suite-inbounds", "proxy-suite-inbounds-sing-box")
 
 
 # Units whose failure is one run's, not something still down: once seen, it stops marking the
@@ -866,13 +840,12 @@ TABS = [
                 "space",
                 "start / stop",
                 toggle_argv,
-                when=_controllable,
-                # proxy off takes tun and tproxy down with it.
-                confirm=lambda r: r["unit"] == "proxy-suite-socks" and r["state"] in UP_STATES,
+                when=ROW,
+                confirm=lambda r: r["unit"] in CONFIRM_STOP and r.get("state") in UP_STATES,
             ),
             Action("l", "follow its logs", lambda r, *_: ["logs", r["unit"]], when=ROW, mode="suspend"),
-            # A failed unit restarts too: that is how it gets another try.
-            Action("ctrl+r", "restart it", restart_argv, when=lambda r: _controllable(r) and r["state"] in ("active", "failed")),
+            # Any unit, with a toggle or not; a failed one too: that is how it gets another try.
+            Action("ctrl+r", "restart it", restart_argv, when=lambda r: r.get("state") in ("active", "failed")),
             Action("R", "restart everything running", lambda r, *_: ["restart"], confirm=True),
             Action(
                 "n",

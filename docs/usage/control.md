@@ -129,7 +129,17 @@ proxy-ctl status          # everything at a glance
 proxy-ctl status --json   # the same, for scripts
 proxy-ctl logs            # follow the logs of every proxy-suite service, with the last 1000 lines
 proxy-ctl restart         # restart what is running
+proxy-ctl restart inbounds awg-warp-1   # only these, by the names status lists
+proxy-ctl stop inbounds   # stop one; start brings it back
 ```
+
+Every service in `status` starts, stops and restarts on its own, those with no group of their
+own (the inbounds, WARP's registration) included. A unit that has a group goes through it:
+`proxy-ctl stop socks` is `proxy off`, which takes TUN and TProxy along, and stopping a global
+tunnel lifts the kill switch. In the TUI and the app, space on the Services tab starts or
+stops the selected service (stopping the proxy or the inbounds asks first), ctrl+r restarts
+it, and R restarts everything running. With several WARP devices, each device's row acts on
+that device alone, as `proxy-ctl warp restart <device>` does.
 
 In a terminal, `proxy-ctl logs` follows in [`lnav`](https://lnav.org): it follows while at
 the bottom, scrolling back pauses it, `G` follows again, `e`/`E` jump between errors, `/`

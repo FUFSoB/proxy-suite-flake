@@ -137,7 +137,12 @@ Groups with on|off also take toggle and restart.
 Changes and secrets need root or the userControl group.
 
   status [--json]                        services and routing mode (--tray: deprecated)
-  restart                                restart running services
+  restart [unit...]                      restart running services, or only the units named
+  start <unit...>                        start the units named
+  stop <unit...>                         stop the units named
+                                         (names as status lists them, proxy-suite- optional;
+                                         a unit with a group goes through it: stop socks is
+                                         proxy off, which takes tun and tproxy along)
   logs [unit...]                         follow logs (default: all proxy-suite units); in a
                                          terminal, in lnav: scroll back, G follows, q quits
   where <domain>                         how a domain is routed right now
