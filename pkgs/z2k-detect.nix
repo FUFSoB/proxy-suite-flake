@@ -20,7 +20,7 @@ pkgs.buildGoModule (finalAttrs: {
     name = "z2k-detect-source-${shortRev}";
     inherit (locked) owner repo rev;
     sparseCheckout = [ "z2k-detect" ];
-    hash = "sha256-eEsvNS3sZ12DWcGc/Q+KDbofE32VBXXedDZYWSth0Yk=";
+    hash = "sha256-LwyEGd66eEtuZZHB19mC27DEnbMn4+qFaabbnKkUAVU=";
   };
   sourceRoot = "${finalAttrs.src.name}/z2k-detect";
   vendorHash = "sha256-liRRQWyGv8qvL/wFmrWYtthkHFD1g+hpX7FAqtnBabU=";
