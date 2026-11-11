@@ -93,7 +93,10 @@ awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
       } else if (every != "" && (prof in overrkn) && t ~ /^--hostlist=/) {
         t = ""
       } else if (t == wl) {
-        t = t esuf
+        # Not where the RKN list takes <HOSTLIST_NOAUTO>: the init script expands it to the
+        # user exclude list too (hsuf carries the excluded domains), and nfqws2 1.0.7 refuses
+        # a profile that names the same list twice.
+        if (every != "" || !(prof in overrkn)) t = t esuf
       } else if (t ~ /^--lua-desync=circular:/) {
         n = split(substr(t, 23), p, ":")
         t = "--lua-desync=circular"
@@ -111,7 +114,8 @@ awk -v rkn="--hostlist=$root/extra_strats/TCP/RKN/List.txt" \
     if (watch != "" && !watched) { print "z2k general TLS profile has no instances" > "/dev/stderr"; exit 1 }
     if (every != "") exit
     if (learn == "")
-      printf " --new --filter-tcp=%s --filter-l7=tls %s%s <HOSTLIST>%s", ports[learner], wl, esuf, hsuf
+      # <HOSTLIST> brings the user exclude list, hsuf the excluded domains.
+      printf " --new --filter-tcp=%s --filter-l7=tls %s <HOSTLIST>%s", ports[learner], wl, hsuf
     else {
       # Its own excludes come first: the profile itself takes every remaining TLS flow.
       sub(/:exclude=/, ":exclude=" wlfile ",", learn)

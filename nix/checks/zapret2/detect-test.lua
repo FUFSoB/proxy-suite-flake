@@ -271,6 +271,68 @@ for _ = 1, 2 do automate_failure_counter(urec, {}, 1) end
 automate_failure_counter(trec, {}, 1)
 assert(verdicts()["203.0.113.5 udp"] == "unfixable" and not verdicts()["203.0.113.5 tcp"], "unfixable for its UDP only")
 
+-- Transfers cut short (stall on circular): the first 4 KB pass, which circular counts as a
+-- success (its stub here marks the connection judged), and the rest never comes. Two within
+-- the time switch the strategy; a cycle of strategies that each cut it is unfixable.
+local srec = { nstrategy = 1, ctstrategy = 3 }
+autostate.circular_3_1["discord.com"] = srec
+local sarg = { key = "circular_3_1", fails = "2", time = "300", stall = "", win = "15" }
+local function spacket(track, outgoing, opts)
+  return {
+    track = track,
+    outgoing = outgoing,
+    arg = opts.arg or sarg,
+    l7payload = opts.l7,
+    pos = { n = opts.n or 1, s = opts.s or 1 },
+    dis = { flow = track.flow, tcp = { th_flags = opts.flags or 16 }, payload = opts.payload or "" },
+  }
+end
+-- A connection that sent its ClientHello and got `body` back, judged as circular does.
+local function transfer(body, opts)
+  opts = opts or {}
+  local t = flow("discord.com")
+  local crec = {}
+  automate_failure_check(spacket(t, true, { l7 = opts.nontls and "mtproto_initial" or "tls_client_hello", payload = "hello" }), srec, crec)
+  automate_failure_check(spacket(t, false, { s = 1, n = opts.n or 5, payload = body }), srec, crec)
+  return t, crec
+end
+local cut = record(9000) .. string.rep("x", 4000)
+local _, c1 = transfer(cut)
+assert(c1.nocheck, "the connection counted as a success meanwhile")
+fire("psst_")
+assert(srec.nstrategy == 1 and #srec.ps_stalls == 1, "one cut transfer only counts")
+transfer(cut)
+fire("psst_")
+assert(srec.nstrategy == 2 and srec.ps_stall_cycle == 1 and not srec.ps_stalls, "two cut transfers switch the strategy")
+-- Finished replies, ones past the queue window, ones the client hung up on, and what is not
+-- TLS say nothing: whole records, a packet number past win, a reset, an unknown framing.
+transfer(record(100) .. string.rep("x", 100))
+transfer(cut, { n = 20 })
+local hung, hung_crec = transfer(cut)
+automate_failure_check(spacket(hung, true, { flags = TH_RST }), srec, hung_crec)
+transfer(cut, { nontls = true })
+fire("psst_")
+assert(srec.nstrategy == 2 and not srec.ps_stalls, "finished, out of window, hung up or non-TLS transfers are no failure")
+-- Not asked for (no stall on the circular): nothing is watched.
+local plain = {}
+for k, v in pairs(sarg) do plain[k] = v end
+plain.stall = nil
+local pt = flow("discord.com")
+automate_failure_check(spacket(pt, true, { l7 = "tls_client_hello", payload = "hello", arg = plain }), srec, {})
+automate_failure_check(spacket(pt, false, { s = 1, n = 5, payload = cut, arg = plain }), srec, {})
+fire("psst_")
+assert(srec.nstrategy == 2 and not srec.ps_stalls, "without stall nothing is watched")
+-- Every strategy cut it in turn: unfixable, and the rotation stops there.
+for _ = 1, 4 do
+  transfer(cut)
+  fire("psst_")
+end
+assert(srec.nstrategy == 3 and srec.final == 3 and verdicts()["discord.com tcp"] == "unfixable", "unfixable after a whole cycle of cut transfers")
+transfer(cut)
+transfer(cut)
+fire("psst_")
+assert(srec.nstrategy == 3, "no rotation once final")
+
 -- Addresses: unanswered connections make one blocked, an answer clears it; local ones never.
 local function syn(ip, answered)
   local s = flow("")

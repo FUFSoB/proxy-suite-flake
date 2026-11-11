@@ -18,6 +18,7 @@ let
     zapretDiscordYoutubeGlobal
     zapret2Global
     zapret2Ipv4
+    zapret2NoStall
     zapret2NoHostIpv6
     zapret2PerApp
     zapret2PerAppZ2k
@@ -278,7 +279,10 @@ in
         grep -qx 'NFQWS2_TCP_PKT_OUT=9' "${globalRuntime}/config"
         # Wider with detect.lua learning, to see a transfer stall past the 16 KB cutoff.
         grep -qx 'NFQWS2_TCP_PKT_IN=32' "${globalRuntime}/config"
-        grep -qx 'NFQWS2_TCP_PKT_IN=15' "${tunedRuntime}/config"
+        # And with stallRotation, which judges the same stall for the strategies' sake (the
+        # tuned one learns nothing, so it is the option alone that widens it); z2k's: 15 below.
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${tunedRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${runtimeDir zapret2NoStall globalService}/config"
 
         # Learning off means list mode, not "no lists".
         grep -qx 'MODE_FILTER=hostlist' "${noAutoRuntime}/config"
@@ -392,8 +396,8 @@ in
         test "$(grep -oF -- '<HOSTLIST>' "${globalRuntime}/config" | wc -l)" = 0
         # The profile that takes the learned sites follows their transfers ahead of rotation,
         # its filters back at their defaults after; circular keeps its name for its sites.
-        grep -qE -- " --in-range=-s65536 --payload=all --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --in-range=-s5556 [^ ]+ --lua-desync=circular:[^ ]*:key=circular_3_1:" "${globalRuntime}/config"
-        grep -qE -- " --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --out-range=-s34228 --in-range=-s5556 --lua-desync=z2k_sni_pick:[^ ]*:key=rkn_tcp:" "${z2kRuntime}/config"
+        grep -qE -- " --in-range=-s65536 --payload=all --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --in-range=-s65536 [^ ]+ --lua-desync=circular:[^ ]*:key=circular_3_1:" "${globalRuntime}/config"
+        grep -qE -- " --lua-desync=ps_watch:fails=3:time=300:win=32:log --in-range=x --payload=all --out-range=-s34228 --in-range=-s5556 --lua-desync=z2k_sni_fake:[^ ]* --lua-desync=circular:[^ ]*:key=rkn_tcp:" "${z2kRuntime}/config"
         test "$(grep -oF -- 'ps_watch:' "${z2kRuntime}/config" | wc -l)" = 1
         if grep -qF -- 'ps_watch' "${tunedRuntime}/config"; then exit 1; fi
         if grep -qF -- '<STALLWATCH>' "${tunedRuntime}/config"; then exit 1; fi
@@ -442,17 +446,26 @@ in
         if grep -qF -- '--lua-desync=fake:repeats=' "${globalRuntime}/config"; then exit 1; fi
         # circular sees what it counts: incoming resets and replies on TCP, as many UDP
         # packets as udp_out; the strategies after it keep their own filters.
-        grep -qF -- '--in-range=-s5556 --payload=tls_client_hello,mtproto_initial,tls_server_hello,empty,unknown --lua-desync=circular:' "${globalRuntime}/config"
-        grep -qE -- ':reset --in-range=x --payload=tls_client_hello,mtproto_initial --lua-desync=fake:' "${globalRuntime}/config"
+        # With stallRotation (on by default) it sees the whole NFQUEUE window of the server's packets,
+        # to tell a transfer cut short from one that went on.
+        grep -qF -- '--in-range=-s65536 --payload=tls_client_hello,mtproto_initial,tls_server_hello,empty,unknown --lua-desync=circular:' "${globalRuntime}/config"
+        # Off, and on z2k's and the user's profiles, it keeps the first 5.5 KB and no stall arguments.
+        grep -qF -- '--in-range=-s5556 --payload=tls_client_hello,mtproto_initial,tls_server_hello,empty,unknown --lua-desync=circular:' "${runtimeDir zapret2NoStall globalService}/config"
+        if grep -qF -- ':stall' "${runtimeDir zapret2NoStall globalService}/config"; then exit 1; fi
+        if grep -qF -- ':stall' "${z2kRuntime}/config"; then exit 1; fi
+        grep -qE -- ':reset(:stall:win=26)? --in-range=x --payload=tls_client_hello,mtproto_initial --lua-desync=fake:' "${globalRuntime}/config"
         grep -qE -- '--out-range=a --in-range=a --payload=[^ ]+ --lua-desync=circular:[^ ]+ --out-range=<n2 --in-range=x --lua-desync=fake:' "${globalRuntime}/config"
         # autoHostlist fills what circular leaves unset; the source keeps its fails and time.
-        grep -qF -- '--lua-desync=circular:fails=2:time=300:retrans=3:nld=2:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset ' "${globalRuntime}/config"
+        grep -qF -- '--lua-desync=circular:fails=2:time=300:retrans=3:nld=2:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset:stall:win=26 ' "${globalRuntime}/config"
 
         # z2k: its generator's pools, detectors and fake TTL; only the general profile learns.
         grep -qx 'NFQWS2_TCP_PKT_OUT=20' "${z2kRuntime}/config"
         grep -qx 'NFQWS2_UDP_PKT_IN=8' "${z2kRuntime}/config"
-        # Its Discord profile filters up to 50100, one port past its queue: the queue takes it.
-        grep -qx 'NFQWS2_PORTS_UDP=443,1400,3478-3481,5349,19294-19344,50000-50100' "${z2kRuntime}/config"
+        # Its queue and its UDP profiles' ports; not its whitelist pass-through's 1-65535,
+        # which acts on nothing: every UDP flow would go through nfqws2.
+        grep -qF -- '--filter-udp=1-65535 --hostlist=' "${z2kRuntime}/config"
+        grep -qx 'NFQWS2_PORTS_UDP=443,590-600,1400,3478-3481,5349,19294-19344,49152-65535' "${z2kRuntime}/config"
+        grep -qx 'NFQWS2_PORTS_TCP=80,443,2053,2083,2087,2096,5222,8443' "${z2kRuntime}/config"
         grep -qF -- 'key=rkn_tcp:nld=2:hostkey=z2k_service_hostkey:failure_detector=z2k_fail_tls_alert:discord_tls_timeout=1:discord_tls_in_limit=10:discord_tls_out_limit=20:retrans=3:maxseq=32768:inseq=4096:udp_out=4:udp_in=1:reset' "${z2kRuntime}/config"
         grep -qF -- 'failure_detector=z2k_fail_quic_silence' "${z2kRuntime}/config"
         grep -qF -- ':fool=z2k_dynamic_ttl' "${z2kRuntime}/config"
@@ -465,20 +478,24 @@ in
         test "$(grep -oF -- '<HOSTLIST_NOAUTO>' "${z2kRuntime}/config" | wc -l)" = 3
         # nfqws2's own learner, without extendedDetection.
         test "$(grep -oF -- '<HOSTLIST>' "${z2kTunedRuntime}/config" | wc -l)" = 1
-        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443,8444 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt <HOSTLIST> --new --filter-tcp=\* " "${z2kTunedRuntime}/config"
+        grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443,8444 --filter-l7=tls --hostlist-exclude=[^ ]+/lists/whitelist.txt <HOSTLIST> --new --filter-tcp=\* " "${z2kTunedRuntime}/config"
         grep -qx 'NFQWS2_TCP_PKT_IN=15' "${z2kTunedRuntime}/config"
         # detect.lua's in its place by default: same ports, the same auto list and excludes,
         # and the server's packets past the 16 KB cutoff.
         test "$(grep -oF -- '<HOSTLIST>' "${z2kRuntime}/config" | wc -l)" = 0
         grep -qE -- " --new --filter-tcp=443,2053,2083,2087,2096,8443 --filter-l7=tls --in-range=-s65536 --out-range=-s32768 --payload=all --lua-desync=ps_learn:auto=/var/lib/proxy-suite/zapret2/zapret-hosts-auto.txt:exclude=[^ ]+/lists/whitelist.txt,/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt:fails=3:time=300:inseq=4096:retrans=3:win=32:reset:log --new --filter-tcp=\* " "${z2kRuntime}/config"
         grep -qx 'NFQWS2_TCP_PKT_IN=32' "${z2kRuntime}/config"
+        # The user exclude list joins the whitelist where no marker brings it: <HOSTLIST_NOAUTO>
+        # does over the RKN list, and nfqws2 refuses a profile naming a list twice (dry_run below).
         grep -qF -- '/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config"
+        test "$(grep -oF -- '--hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt' "${z2kRuntime}/config" | wc -l)" = 2
 
         # proxy-ctl names state.tsv's rows by this map: keyed circulars by key, the
         # others by instance, a template's strategies under the profile importing it.
-        jq -e '.rkn_tcp["1"] | map(split(":")[0]) == ["hostfakesplit"]' "${z2kRuntime}/strategies.json"
+        jq -e '.rkn_tcp["1"] | map(split(":")[0]) == ["fake", "hostfakesplit"]' "${z2kRuntime}/strategies.json"
         jq -e '.http_rkn["1"] == ["http_methodeol:payload=http_req:dir=out"]' "${z2kRuntime}/strategies.json"
-        jq -e 'keys == ["discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${z2kRuntime}/strategies.json"
+        # circular_7_1: its WireGuard/STUN/unknown UDP profile, whose circular has no key.
+        jq -e 'keys == ["circular_7_1", "discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${z2kRuntime}/strategies.json"
         # One QUIC pool, YouTube's and the blocked sites'. Its detector is written for
         # z2k's zapret2 fork and takes the standard one on ours, where the server's
         # first flight is no success: rotation moves.
@@ -501,8 +518,11 @@ in
         # The whitelisted-name step runs ahead of rotation, in z2k only: ahead of the
         # nfqws2-keenetic strategies it broke hosts they reach on their own.
         grep -qF -- '/files/lua/z2k-tcp16.lua' "${z2kRuntime}/config"
-        grep -qF -- 'blob=z2k_ch:optional:repeats=8:tcp_ts=-1000:tcp_md5 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
-        if grep -qF -- 'z2k_sni_pick' "${globalRuntime}/config"; then exit 1; fi
+        # Its googlevideo probe: --dry-run loads no Lua, so a missing file shows only at start.
+        grep -qF -- '--lua-desync=z2k_preflight' "${z2kRuntime}/config"
+        grep -qE -- '/files/lua/z2k-tcp16\.lua --lua-init=@[^ ]+/files/lua/z2k-preflight\.lua ' "${z2kRuntime}/config"
+        grep -qF -- '--lua-desync=z2k_sni_fake:payload=tls_client_hello:dir=out:repeats=8:tcp_ts=-1000:tcp_md5 --lua-desync=circular:fails=3:time=60:key=rkn_tcp' "${z2kRuntime}/config"
+        if grep -qF -- 'z2k_sni_' "${globalRuntime}/config"; then exit 1; fi
         if grep -qF -- 'z2k-tcp16.lua' "${globalRuntime}/config"; then exit 1; fi
         # zapret2 leaves the probe's own connections alone, in every chain.
         test "$(grep -c 'ct mark and 0x2000000 != 0 return' "${globalRuntime}/init.d/sysv/custom.d/50-proxy-suite-custom.sh")" = 4
@@ -653,21 +673,24 @@ in
         for config in ${perAppRuntime}/config ${perAppZ2kRuntime}/config; do
           if grep -qE -- '--hostlist-domains=|/user\.list|/RKN/List\.txt|TCP_Discord\.txt|/UDP/YT/List\.txt' "$config"; then exit 1; fi
           if grep -qE -- 'ps_learn|ps_watch|ps_syn' "$config"; then exit 1; fi
-          grep -qx 'NFQWS2_TCP_PKT_IN=15' "$config"
         done
+        # nfqws2-keenetic's circular judges stalls too (32); z2k's keeps its window.
+        grep -qx 'NFQWS2_TCP_PKT_IN=32' "${perAppRuntime}/config"
+        grep -qx 'NFQWS2_TCP_PKT_IN=15' "${perAppZ2kRuntime}/config"
         # nfqws2-keenetic: its MODE_ALL, every list an exclude.
         if grep -qF -- '--hostlist=' "${perAppRuntime}/config"; then exit 1; fi
         for marker in '<HOSTLIST_NOAUTO>' '<HOSTLIST>'; do
           grep -qE -- "$marker --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --hostlist-exclude=[^ ]+/etc/nfqws2/lists/exclude.list( |')" "${perAppRuntime}/config"
         done
         # z2k: rkn_tcp keeps YouTube's lists as excludes, for yt_tcp/gv_tcp below it, which
-        # keep them as their own; QUIC and HTTP keep none.
-        test "$(grep -oE -- '--hostlist=[^ ]+' "${perAppZ2kRuntime}/config" | sed 's|.*/extra_strats/||')" = "$(printf 'TCP/YT/List.txt\nTCP/YT_GV/List.txt')"
+        # keep them as their own; QUIC and HTTP keep none. The UDP whitelist pass-through
+        # keeps its list: whitelisted names stay out of the UDP strategies after it.
+        test "$(grep -oE -- '--hostlist=[^ ]+' "${perAppZ2kRuntime}/config" | sed 's|.*/extra_strats/||; s|.*/lists/whitelist\.txt$|whitelist|')" = "$(printf 'TCP/YT/List.txt\nTCP/YT_GV/List.txt\nwhitelist')"
         grep -qE -- "/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --hostlist-exclude=[^ ]+/extra_strats/TCP/YT/List.txt --hostlist-exclude=[^ ]+/extra_strats/TCP/YT_GV/List.txt --filter-tcp=[^ ]+ --filter-l7=tls --(in-range|out-range|payload|lua-desync)=" "${perAppZ2kRuntime}/config"
         grep -qF -- '/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --filter-udp=443 --filter-l7=quic ' "${perAppZ2kRuntime}/config"
         grep -qE -- " --new --filter-tcp=80 --hostlist-exclude=[^ ]+/lists/whitelist.txt --hostlist-exclude=/var/lib/proxy-suite/zapret2/zapret-hosts-user-exclude.txt --hostlist-exclude-domains=excluded.example --(in-range|out-range|payload|lua-desync)=" "${perAppZ2kRuntime}/config"
         if grep -qF -- '<HOSTLIST' "${perAppZ2kRuntime}/config"; then exit 1; fi
-        jq -e 'keys == ["discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${perAppZ2kRuntime}/strategies.json"
+        jq -e 'keys == ["circular_7_1", "discord_udp", "gv_tcp", "http_rkn", "quic", "rkn_tcp", "yt_tcp"]' "${perAppZ2kRuntime}/strategies.json"
         # The global instance keeps them all.
         grep -qE -- '<HOSTLIST_NOAUTO> --hostlist-domains=pinned.example --hostlist-exclude-domains=excluded.example --hostlist=[^ ]+/etc/nfqws2/lists/user.list --hostlist-exclude=[^ ]+/etc/nfqws2/lists/exclude.list' "${perAppGlobalRuntime}/config"
         grep -qF -- '--lua-desync=ps_learn:' "${perAppGlobalRuntime}/config"
@@ -749,7 +772,8 @@ in
         test "$(grep -c -- '^--hostlist=' per-app.args)" = 0
         test "$(grep -cx -- "--hostlist-exclude=$HOSTLIST_BASE/zapret-hosts-user-exclude.txt" per-app.args)" = 2
         dry_run ${perAppZ2kRuntime} per-app-z2k.args >/dev/null
-        test "$(grep -c -- '^--hostlist=' per-app-z2k.args)" = 2
+        # YouTube's two and the UDP whitelist pass-through's.
+        test "$(grep -c -- '^--hostlist=' per-app-z2k.args)" = 3
 
         dry_run ${z2kRuntime} z2k.args
         # The learner is the last profile: nothing after it, and nfqws2's own autohostlist off.

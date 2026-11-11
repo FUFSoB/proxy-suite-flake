@@ -79,9 +79,11 @@ let
         # <STALLWATCH>: it takes the learned sites (runtime.nix). ps_watch there makes
         # circular the profile's second instance: keyed as nfqws2 named it before
         # (<func>_<profile>_<nth instance>), its sites keep the strategies remembered.
+        # <CIRCULAR_RANGE>: what circular sees of the server's bytes (runtime.nix): the first
+        # 5.5 KB, or the NFQUEUE window when it also judges transfers cut short (stallRotation).
         "${
           patch "NFQWS_ARGS" "${tcpPayload} ${circular}"
-            "<STALLWATCH> --in-range=-s5556 ${tcpPayload},tls_server_hello,empty,unknown ${circular}:key=circular_3_1 --in-range=x ${tcpPayload}"
+            "<STALLWATCH> --in-range=<CIRCULAR_RANGE> ${tcpPayload},tls_server_hello,empty,unknown ${circular}:key=circular_3_1 --in-range=x ${tcpPayload}"
             (args "NFQWS_ARGS")
         } <HOSTLIST> ${lists}"
       ];
@@ -122,10 +124,14 @@ let
       # Its TLS and QUIC detectors are written for z2k's zapret2 fork: on ours they leave
       # what only the fork can do (the QUIC handshake and Discord update timers, which
       # report through circular_report_failure) to nfqws2's standard detector.
+      #
+      # z2k-preflight: its googlevideo profile's z2k_preflight, a probe connection ahead of
+      # the real one; nfqws2 refuses to start on a desync function no file defines.
       luaInit = map (name: "${src}/files/lua/${name}.lua") [
         "z2k-alert"
         "z2k-quic-silence"
         "z2k-tcp16"
+        "z2k-preflight"
         "z2k-fooling-ext"
         "z2k-nfqws1-compat"
         "z2k-range-rand"

@@ -43,6 +43,12 @@ in
     zapret2.ipv6 = false;
   };
 
+  # Without judging transfers cut short: circular keeps its first 5.5 KB window.
+  zapret2NoStall = mkZapret2 {
+    enable = true;
+    zapret2.stallRotation = false;
+  };
+
   # A host without IPv6: zapret2.ipv6 follows proxy.ipv6, which follows networking.enableIPv6.
   zapret2NoHostIpv6 = evalProxySuite [
     baseModule

@@ -127,6 +127,22 @@ in
       '';
     };
 
+    stallRotation = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Count a TLS transfer that dies partway as a failure of its strategy. DPI that throttles
+        by name can let a site's ClientHello and first few KB through and cut the rest (a page,
+        a script bundle): the strategy passes circular's 4 KB success test, so it was never
+        switched, and the site hung until the client gave up. With this, two such cut transfers
+        within five minutes (circular's own `fails` and `time`) switch the strategy, and a whole
+        cycle of strategies that each cut it is unfixable (the proxy carries it, as for any other
+        failure). Only for `nfqws2-keenetic`'s profiles: it widens their circular's window past
+        the first 5.5 KB the server sends. z2k, and your own `profiles`, keep their windows and are
+        left as they are.
+      '';
+    };
+
     ipv6 = mkOption {
       type = types.bool;
       default = config.services.proxy-suite.proxy.ipv6;

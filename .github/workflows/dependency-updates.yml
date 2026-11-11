@@ -5,8 +5,18 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
+      # z2k is never bumped on schedule: its generator's output (profiles, Lua it calls,
+      # ports) changes from one rev to the next and needs a look of its own. `z2k` moves
+      # that input alone, with z2k-detect's hashes, into a pull request of its own.
+      target:
+        description: "dependencies: the scheduled set (everything but z2k); z2k: z2k alone"
+        type: choice
+        options:
+          - dependencies
+          - z2k
+        default: dependencies
       force_nixpkgs:
-        description: "Update nixpkgs even when no watched package version changed"
+        description: "Update nixpkgs even when no watched package version changed (dependencies only)"
         type: boolean
         default: false
 
@@ -17,12 +27,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: dependency-updates
+  group: dependency-updates-${{ inputs.target || 'dependencies' }}
   cancel-in-progress: false
 
 jobs:
   update-dependencies:
     runs-on: ubuntu-24.04
+    env:
+      # The schedule has no inputs: it is the `dependencies` run.
+      TARGET: ${{ inputs.target || 'dependencies' }}
     outputs:
       has_changes: ${{ steps.changes.outputs.has_changes }}
       # A skipped pin, failed package build or failed check: the pull request opens as a
@@ -41,6 +54,7 @@ jobs:
 
       - name: Decide whether nixpkgs should be updated
         id: nixpkgs_gate
+        if: env.TARGET == 'dependencies'
         run: |
           set -euo pipefail
           scripts/check-nixpkgs-relevance.sh >> "$GITHUB_OUTPUT"
@@ -52,14 +66,18 @@ jobs:
           FORCE_NIXPKGS: ${{ inputs.force_nixpkgs }}
         run: |
           set -euo pipefail
+          if [[ "$TARGET" == "z2k" ]]; then
+            # update-pins.sh then refreshes z2k-detect, which follows it.
+            nix flake update z2k
+            exit 0
+          fi
           if [[ "$SHOULD_UPDATE_NIXPKGS" == "true" || "$FORCE_NIXPKGS" == "true" ]]; then
             nix flake update nixpkgs
           else
             echo "Skipping nixpkgs update: watched package versions on nixos-unstable are unchanged."
           fi
-          # Every other input, every run; update-pins.sh then refreshes the hashes of the
-          # sources that follow one (z2k-detect follows z2k).
-          nix flake update zapret z2k nfqws2-keenetic disko
+          # Every other input but z2k (target z2k), every run.
+          nix flake update zapret nfqws2-keenetic disko
 
       # A pin that cannot be updated is put back and listed as "skipped"; the rest go through.
       - name: Update pinned sources
@@ -68,8 +86,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # z2k: only the sources that follow a flake input (z2k-detect); the release pins
+          # wait for the scheduled run.
+          only=()
+          [[ "$TARGET" != "z2k" ]] || only=(--locked-only)
           scripts/update-pins.sh --self-test
-          scripts/update-pins.sh | tee "$RUNNER_TEMP/pin-updates.txt"
+          scripts/update-pins.sh "${only[@]}" | tee "$RUNNER_TEMP/pin-updates.txt"
           if grep -q '^skipped ' "$RUNNER_TEMP/pin-updates.txt"; then
             echo "skipped=true" >> "$GITHUB_OUTPUT"
           else
@@ -98,7 +120,9 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         run: |
           set -uo pipefail
-          mapfile -t attrs < <(scripts/update-pins.sh --attrs)
+          only=()
+          [[ "$TARGET" != "z2k" ]] || only=(--locked-only)
+          mapfile -t attrs < <(scripts/update-pins.sh --attrs "${only[@]}")
           : > "$RUNNER_TEMP/failed-builds.txt"
           for attr in "${attrs[@]}"; do
             echo "::group::nix build ${attr}"
@@ -143,9 +167,17 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "## Automated dependency update"
-            echo
-            echo "Managed by CI; the \`ci/update-dependencies\` branch is reused across runs."
+            if [[ "$TARGET" == "z2k" ]]; then
+              echo "## z2k update"
+              echo
+              echo "Started by hand (target \`z2k\`); the \`ci/update-z2k\` branch is reused across runs."
+              echo "Review what its generator now emits: profiles, the Lua functions they call, the ports they queue."
+            else
+              echo "## Automated dependency update"
+              echo
+              echo "Managed by CI; the \`ci/update-dependencies\` branch is reused across runs."
+              echo "z2k is not updated here: run this workflow with target \`z2k\`."
+            fi
             echo
             echo "### Pinned sources"
             if [[ "$PINS_SKIPPED" == "true" ]]; then
@@ -158,8 +190,10 @@ jobs:
             fi
             echo
             echo "### Flake inputs"
-            echo "- nixpkgs updated: \`$SHOULD_UPDATE_NIXPKGS\`"
-            echo "- changed watched attrs: \`$CHANGED_WATCH_ATTRS\`"
+            if [[ "$TARGET" != "z2k" ]]; then
+              echo "- nixpkgs updated: \`$SHOULD_UPDATE_NIXPKGS\`"
+              echo "- changed watched attrs: \`$CHANGED_WATCH_ATTRS\`"
+            fi
             # The locked revs that moved, against the checked-out lock file.
             git show HEAD:flake.lock | jq -r --slurpfile new flake.lock '
               .nodes as $old | $new[0].nodes | to_entries[]
@@ -259,18 +293,19 @@ jobs:
 
       - name: Create or update pull request
         id: pr
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           # always-true also turns an open pull request back into a draft.
           draft: ${{ needs.update-dependencies.outputs.failed == 'true' && 'always-true' || 'false' }}
-          branch: ci/update-dependencies
+          # z2k's own branch: its pull request never folds into the scheduled one.
+          branch: ${{ inputs.target == 'z2k' && 'ci/update-z2k' || 'ci/update-dependencies' }}
           delete-branch: false
           add-paths: |
             flake.lock
             pkgs
             *.nix
-          commit-message: "chore(deps): refresh flake inputs and pinned sources"
-          title: "chore(deps): refresh flake inputs and pinned sources"
+          commit-message: "${{ inputs.target == 'z2k' && 'chore(deps): update z2k' || 'chore(deps): refresh flake inputs and pinned sources' }}"
+          title: "${{ inputs.target == 'z2k' && 'chore(deps): update z2k' || 'chore(deps): refresh flake inputs and pinned sources' }}"
           body-path: ${{ runner.temp }}/dependency-updates/dependency-updates.md
           labels: |
             dependencies

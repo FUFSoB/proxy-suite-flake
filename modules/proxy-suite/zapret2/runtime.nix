@@ -51,6 +51,10 @@ let
   };
   source = sources.${zapret2Cfg.strategySource};
   isZ2k = zapret2Cfg.strategySource == "z2k";
+  # detect.lua's judging of transfers cut short, on the circular of nfqws2-keenetic's own
+  # profiles, whose in-range it needs widened (<CIRCULAR_RANGE>): z2k's and the user's
+  # profiles keep theirs, where it would take a transfer past the window for a stalled one.
+  stallRotation = zapret2Cfg.stallRotation && !isZ2k && zapret2Cfg.profiles == null;
 
   blobPath = file: if lib.hasPrefix "/" file then file else "${zapretBase}/files/fake/${file}";
 
@@ -131,10 +135,22 @@ let
       # <STALLWATCH>: where the source's profile for learned sites takes stallWatch.
       renderProfile =
         profile:
-        lib.replaceStrings (hostlistMarkers ++ [ "<STALLWATCH> " ]) (
-          map (marker: marker + withSpaces listArgs) hostlistMarkers
-          ++ [ (lib.optionalString (watch != "") (watch + " ")) ]
-        ) (lib.addContextFrom profile (lib.trim profile));
+        lib.replaceStrings
+          (
+            hostlistMarkers
+            ++ [
+              "<STALLWATCH> "
+              "<CIRCULAR_RANGE>"
+            ]
+          )
+          (
+            map (marker: marker + withSpaces listArgs) hostlistMarkers
+            ++ [
+              (lib.optionalString (watch != "") (watch + " "))
+              (if stallRotation then "-s65536" else "-s5556")
+            ]
+          )
+          (lib.addContextFrom profile (lib.trim profile));
 
       z2kGenerated = sources.z2k.mkProfiles (
         {
@@ -233,16 +249,25 @@ let
 
   # Detector args a circular instance leaves unset come from autoHostlist, so
   # learning and rotation agree; each source keeps its own fails and time.
-  circularFill = lib.concatStringsSep " " (
-    [
-      "retrans=${toString autoCfg.retransThreshold}"
-      "maxseq=${toString autoCfg.retransMaxseq}"
-      "inseq=${toString autoCfg.incomingMaxseq}"
-      "udp_out=${toString autoCfg.udpOut}"
-      "udp_in=${toString autoCfg.udpIn}"
-    ]
-    ++ lib.optional autoCfg.retransReset "reset"
-  );
+  # `win`: the server's packets still surely seen, for the transfers it judges cut short.
+  # The queue window counts the client's packets, which acknowledge at least every other
+  # server one, and the handshake takes about six of them: tcpIn less six is safely inside.
+  circularFillFor =
+    window:
+    lib.concatStringsSep " " (
+      [
+        "retrans=${toString autoCfg.retransThreshold}"
+        "maxseq=${toString autoCfg.retransMaxseq}"
+        "inseq=${toString autoCfg.incomingMaxseq}"
+        "udp_out=${toString autoCfg.udpOut}"
+        "udp_in=${toString autoCfg.udpIn}"
+      ]
+      ++ lib.optional autoCfg.retransReset "reset"
+      ++ lib.optionals stallRotation [
+        "stall"
+        "win=${toString (window.tcpIn - 6)}"
+      ]
+    );
 
   # The NFQUEUE window must exceed the retransmission threshold it counts, and
   # cover what the source's detectors need.
@@ -250,7 +275,9 @@ let
     tcpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.tcpOut or 0);
     # The learner tells a stalled transfer from a finished one only while it still sees
     # the server's packets; the 16 KB cutoff falls at about 12 of them.
-    tcpIn = if learns then 32 else 15;
+    # The window counts the client's packets (nft: ct original packets 1-N), the server's
+    # reaching 20 and more within it, the stall judging likewise.
+    tcpIn = if learns || stallRotation then 32 else 15;
     udpOut = lib.max (6 + autoCfg.retransThreshold) (source.window.udpOut or 0);
     udpIn = source.window.udpIn or 3;
   };
@@ -270,6 +297,7 @@ let
     let
       inherit (mkProfileSet everySite) profilesFile tailProfiles blobsFile;
       window = mkPacketWindow (learnLua && !everySite);
+      circularFill = circularFillFor window;
       header = pkgs.writeText "proxy-suite-zapret2" (
         lib.concatStringsSep "\n" (
           [

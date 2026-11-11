@@ -1,7 +1,7 @@
 # nfqws2's options in, with the extra ports (xtcp, xudp) joined to every profile that
 # tells its traffic by protocol (--filter-l7). The ports to queue go to the file named
-# by `ports`: the base lists (btcp, budp), the extras, and every port a profile filters
-# on, since a profile port the queue lacks never sees a packet. Overlaps are merged:
+# by `ports`: the base lists (btcp, budp), the extras, and every port a profile with
+# instances filters on, since a profile port the queue lacks never sees a packet. Overlaps are merged:
 # nftables refuses overlapping intervals in a set.
 
 function mark(proto, list,   n, p, i, r, lo, hi, port) {
@@ -41,6 +41,8 @@ END {
   for (i = 1; i <= n; i++) {
     if (tok[i] == "--new") prof++
     else if (tok[i] ~ /^--filter-l7=/) l7[prof] = 1
+    # A profile acts through its instances, or a template's (--import).
+    else if (tok[i] ~ /^--(lua-desync|import)=/) acts[prof] = 1
   }
   prof = 0
   for (i = 1; i <= n; i++) {
@@ -49,10 +51,12 @@ END {
       prof++
     } else if (t ~ /^--filter-tcp=/) {
       if ((prof in l7) && xtcp != "") t = t "," xtcp
-      mark("tcp", substr(t, 14))
+      if (prof in acts) mark("tcp", substr(t, 14))
     } else if (t ~ /^--filter-udp=/) {
       if ((prof in l7) && xudp != "") t = t "," xudp
-      mark("udp", substr(t, 14))
+      # One that does nothing (z2k's whitelist pass-through, --filter-udp=1-65535) only
+      # keeps flows from the profiles after it: its ports need no queue of their own.
+      if (prof in acts) mark("udp", substr(t, 14))
     }
     printf "%s%s", (i > 1 ? " " : ""), t
   }

@@ -529,6 +529,7 @@ Jmax 70, S1 = S2 = 0, H1-H4 = 1-4 and an I1 packet that reads as a QUIC Initial
       };
       profiles = null;
       proxyFallback = true;
+      stallRotation = true;
       strategyLog = true;
       strategySource = "nfqws2-keenetic";
     };

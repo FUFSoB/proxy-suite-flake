@@ -16,7 +16,19 @@
 # and errors go to stderr. A pin whose update fails (no tarball, no vendorHash to read
 # from the build) is put back as it was and printed as a "skipped <name>: <reason>"
 # line instead; the others still go through. `--attrs` lists the flake attrs instead.
+# `--locked-only` leaves PINS alone (with `--attrs`, lists only LOCKED_PINS' attrs): for
+# a run that moved one locked input and nothing else.
 set -euo pipefail
+
+MODE=update LOCKED_ONLY=
+for arg in "$@"; do
+  case "$arg" in
+    --attrs) MODE=attrs ;;
+    --self-test) MODE=self-test ;;
+    --locked-only) LOCKED_ONLY=1 ;;
+    *) echo "unknown argument: ${arg}" >&2; exit 2 ;;
+  esac
+done
 
 PINS=(
   "pkgs/tg-ws-proxy.nix|Flowseal|tg-ws-proxy|rev|tg-ws-proxy"
@@ -32,9 +44,9 @@ LOCKED_PINS=(
 
 FAKE_HASH="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-if [[ "${1:-}" == "--attrs" ]]; then
+if [[ "$MODE" == attrs ]]; then
   {
-    for pin in "${PINS[@]}"; do
+    [[ -n "$LOCKED_ONLY" ]] || for pin in "${PINS[@]}"; do
       IFS='|' read -r _ _ _ _ attr <<<"$pin"
       [[ "$attr" == "-" ]] || printf '.#%s\n' "$attr"
     done
@@ -165,7 +177,7 @@ FIXTURE
   echo "self-test ok"
 }
 
-if [[ "${1:-}" == "--self-test" ]]; then
+if [[ "$MODE" == self-test ]]; then
   self_test
   exit 0
 fi
@@ -264,7 +276,7 @@ restore_locked_input() {
 snapshot=$(mktemp)
 trap 'rm -f "$snapshot"' EXIT
 
-for pin in "${PINS[@]}"; do
+[[ -n "$LOCKED_ONLY" ]] || for pin in "${PINS[@]}"; do
   IFS='|' read -r file owner repo key attr <<<"$pin"
   [[ -f "$file" ]] || { echo "missing ${file}" >&2; exit 1; }
   cp "$file" "$snapshot"

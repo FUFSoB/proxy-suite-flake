@@ -280,7 +280,9 @@ forget = function(key)
   else
     for askey, hosts in pairs(autostate or {}) do
       local rec = hosts[name]
-      if rec and transport(askey, rec) == proto then rec.ps_cycle = 0 end
+      if rec and transport(askey, rec) == proto then
+        rec.ps_cycle, rec.ps_stall_cycle, rec.ps_stalls = 0, 0, nil
+      end
     end
   end
 end
@@ -485,6 +487,98 @@ local function reset_client(desync)
     dis.ip6.ip6_flow = (desync.track and desync.track.pos.reverse.ip6_flow) and desync.track.pos.reverse.ip6_flow or 0x60000000
   end
   rawsend_dissect(dis, { ifout = desync.ifin })
+end
+
+-- --- rotation on transfers cut short -------------------------------------------------------
+
+-- A strategy can carry the ClientHello and the first 4 KB (circular's success) and the
+-- transfer still dies a few KB on: DPI that throttles by name lets a site's small
+-- replies through and cuts its page (discord.com stops at 7-8 KB while its gateway
+-- works). That connection counted as a success, which also wipes the failures counted
+-- before it, so circular stayed on a strategy that never delivered a page.
+--
+-- With `stall` on its circular (the strategy source's profiles over the site lists, whose
+-- in-range must reach the NFQUEUE window), a TLS transfer cut short inside a record, while
+-- the window still shows the server's packets, is a failure of the strategy. They are
+-- counted here, apart from circular's counter that every success wipes: `fails` within
+-- `time` seconds switch the strategy, and a whole cycle of strategies that each stalled
+-- is unfixable, as for the failures circular counts.
+
+-- How long a cycle's count is kept: the cut may be gone, or the line another, by then.
+local STALL_CYCLE_KEEP = 1800
+
+local function stall_failure(hrec, arg, kb)
+  local askey, host = ident(hrec)
+  if not host or not hrec.ctstrategy or hrec.ctstrategy < 1 then return end
+  refresh()
+  if hrec.final then return end
+  local now = os.time()
+  local fails, window = tonumber(arg.fails) or 2, tonumber(arg.time) or 300
+  local times = {}
+  for _, t in ipairs(hrec.ps_stalls or {}) do
+    if now - t <= window then times[#times + 1] = t end
+  end
+  times[#times + 1] = now
+  hrec.ps_stalls = times
+  say(askey .. " " .. host .. ": transfer stalled after " .. kb .. " KB on strategy " .. (hrec.nstrategy or 1) .. "/" .. hrec.ctstrategy .. " (" .. #times .. "/" .. fails .. ")")
+  if #times < fails then return end
+  hrec.ps_stalls = nil
+  if now - (hrec.ps_stall_cycle_time or 0) > STALL_CYCLE_KEEP then hrec.ps_stall_cycle = 0 end
+  hrec.ps_stall_cycle, hrec.ps_stall_cycle_time = (hrec.ps_stall_cycle or 0) + 1, now
+  if VERDICTS and hrec.ps_stall_cycle >= hrec.ctstrategy then
+    hrec.final = hrec.nstrategy or 1
+    local proto = transport(askey, hrec)
+    say(askey .. " " .. host .. ": no strategy of " .. hrec.ctstrategy .. " carries a whole transfer, the proxy carries its " .. proto)
+    verdict("unfixable", host, proto, askey)
+    return
+  end
+  hrec.nstrategy = ((hrec.nstrategy or 1) % hrec.ctstrategy) + 1
+end
+
+function ps_stall_timer(_, data)
+  local st = data.st
+  if not cut_short(st, data.arg) then return end
+  st.done = true
+  stall_failure(data.hrec, data.arg, math.floor((st.next - 1) / 1024))
+end
+
+-- Called for every packet circular is handed, ahead of its own judging, which stops for
+-- good once a connection counted as a success: that is where this one starts.
+local function stall_watch(desync, hrec, crec)
+  local arg, dis = desync.arg, desync.dis
+  if arg.stall == nil or not (desync.track and dis and dis.tcp) then return end
+  local st = crec.ps_stall
+  local flags = dis.tcp.th_flags or 0
+  if desync.outgoing then
+    if not st then
+      -- Only what began as TLS: the record framing means nothing on anything else.
+      if desync.l7payload == "tls_client_hello" then
+        crec.ps_stall = { next = 1, need = 0, hdr = "", pending = {}, inpk = 0 }
+      end
+    elseif bitand(flags, TH_RST + TH_FIN) ~= 0 then
+      st.done = true
+    end
+    return
+  end
+  if not st or st.done then return end
+  if bitand(flags, TH_RST + TH_FIN) ~= 0 then
+    st.done = true
+    return
+  end
+  st.inpk = pos_get(desync, "n") or (st.inpk + 1)
+  local payload = dis.payload or ""
+  if #payload > 0 then
+    receive(st, desync, payload)
+    st.name = st.name or dis_timer_name(dis)
+    -- Replacing the timer restarts its countdown: it fires once the server goes quiet.
+    timer_set("psst_" .. st.name, ps_stall_timer, STALL_MS, true, { st = st, hrec = hrec, arg = arg })
+  end
+end
+
+local judge = automate_failure_check
+function automate_failure_check(desync, hrec, crec)
+  stall_watch(desync, hrec, crec)
+  return judge(desync, hrec, crec)
 end
 
 function ps_learn_noreply(_, data)
