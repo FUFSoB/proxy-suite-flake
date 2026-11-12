@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -42,6 +43,7 @@ ALL_SERVICES = [
     "proxy-suite-warp",
     "proxy-suite-warp-tunnel",
     "proxy-suite-tor",
+    "proxy-suite-mitm",
     "proxy-suite-tg-ws-proxy",
     "proxy-suite-zapret",
     "proxy-suite-zapret-vm-exempt",
@@ -54,6 +56,7 @@ RESTART_SERVICES = [
     "proxy-suite-ssh-proxy",
     "proxy-suite-warp-tunnel",
     "proxy-suite-tor",
+    "proxy-suite-mitm",
     "proxy-suite-tg-ws-proxy",
     "proxy-suite-zapret",
 ]
@@ -187,6 +190,27 @@ Changes and secrets need root or the userControl group.
   warp [status|on|off] [device]          WARP tunnel (every device, or the one named)
   tor [status|on|off]                    Tor
   tor newnym                             new circuits for new connections
+  mitm [status|on|off]                   mitmproxy: reads the HTTP requests inside TLS
+  mitm upstream [outbound]               where what it read leaves: proxy, direct or an outbound
+  mitm hosts [add|rm <domain>...]        sites sent through it, wherever they come from
+  mitm all [on|off]                      send it what no routing rule decides
+  mitm ignore [add|rm <domain>...]       sites passed on undecrypted (pinned certificates)
+  mitm web [on|off]                      mitmweb's address, or switch it on or off
+  mitm flows [on|off]                    keep every request and answer on disk
+  mitm requests [on|off|--addon]         log a line of JSON per request, for jq; or the
+                                         addon that writes them, for mitmdump -s
+  mitm requests follow [--all] [--bodies]
+                                         those lines on stdout as they come: from now, or
+                                         from the start; for > file.jsonl or | jq. With
+                                         --bodies the whole requests, as mitmproxy's flows,
+                                         for | mitmdump -nr - -s your_addon.py
+  mitm requests bodies [on|off]          write the whole requests, for follow --bodies
+  mitm ca [--path|--bundle|--android|--env]
+                                         its CA: the certificate, where it is, or the
+                                         variables that make a program trust it
+  mitm listener                          the proxy to point programs and devices at
+  mitm run -- <cmd> [args]               run a command through it, trusting its CA; a browser
+                                         in a profile of its own
   tg [status|on|off]                     Telegram proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link for its joiner
@@ -825,6 +849,7 @@ COMPLETE = {
             "ssh": "SSH SOCKS5 tunnel",
             "warp": "WARP tunnel behind the warp outbound",
             "tor": "Tor, behind the tor outbound and the onion service",
+            "mitm": "mitmproxy: read the requests inside TLS",
             "tg": "Telegram WebSocket proxy",
             "wl": "whitelist-bypass creators and joiners",
             "apps": "per-app routing profiles",
@@ -1043,6 +1068,48 @@ COMPLETE = {
     "warp": {"words": TOGGLE, "args": lambda: {t: u for t, u in _warp_devices()} if len(_warp_devices()) > 1 else {}},
     "killswitch": {"words": TOGGLE},
     "tor": {"words": {**TOGGLE, "newnym": "new circuits for new connections"}},
+    "mitm": {
+        "words": {
+            **TOGGLE,
+            "upstream": "where what it read leaves",
+            "hosts": "sites sent through it",
+            "all": "send it what no routing rule decides",
+            "ignore": "sites passed on undecrypted",
+            "web": "mitmweb's address, or switch it",
+            "flows": "keep requests on disk",
+            "requests": "log a line of JSON per request",
+            "ca": "its CA certificate",
+            "listener": "the proxy to point programs and devices at",
+            "run": "run a command through it",
+        }
+    },
+    "mitm upstream": {"args": lambda: {"proxy": "the outbound in use", "direct": "straight out", **_outbound_choices(), **_group_choices()}},
+    "mitm hosts": {"words": {"add": "send a site through mitm", "rm": "stop sending it"}},
+    "mitm all": {"words": {"on": "send mitm what no rule decides", "off": "only what is sent to it"}},
+    "mitm ignore": {"words": {"add": "pass a site on undecrypted", "rm": "read it again"}},
+    "mitm web": {"words": {"on": "run mitmweb", "off": "run mitmdump"}},
+    "mitm flows": {"words": {"on": "keep requests on disk", "off": "stop keeping them"}},
+    "mitm requests": {
+        "words": {
+            "on": "log each request as JSON",
+            "off": "stop logging them",
+            "follow": "those lines on stdout as they come",
+            "bodies": "write the whole requests, for follow --bodies",
+        },
+        "flags": {"--addon": "the addon that writes them, for mitmdump -s"},
+    },
+    "mitm requests follow": {
+        "flags": {"--all": "from the start of the log", "--bodies": "the whole requests, for mitmdump -nr -"}
+    },
+    "mitm requests bodies": {"words": {"on": "write the whole requests", "off": "stop writing them"}},
+    "mitm ca": {
+        "flags": {
+            "--path": "where the certificate is",
+            "--bundle": "the system's CAs with it",
+            "--android": "its copy under Android's name",
+            "--env": "variables that make a program trust it",
+        }
+    },
     "tg": {"words": TOGGLE},
     "wl": {
         "words": {
@@ -1509,6 +1576,7 @@ UNIT_GROUPS = {
     "proxy-suite-awg-warp": ["warp"],
     "proxy-suite-tg-ws-proxy": ["tg"],
     "proxy-suite-tor": ["tor"],
+    "proxy-suite-mitm": ["mitm"],
     "proxy-suite-zapret": ["zapret"],
 }
 UNIT_VERBS = {"start": "on", "stop": "off", "restart": "restart"}
@@ -1914,7 +1982,9 @@ def _broker_allows(method, path, scopes, query=""):
             or (parts == ["connections"] and "secrets" in scopes)
         )
     if method == "PUT" and parts[0] == "proxies" and len(parts) == 2:
-        return urllib.parse.unquote(parts[1]) == CLASH_TEST_SELECTOR or "routing" in scopes
+        name = urllib.parse.unquote(parts[1])
+        # mitm's upstream is the mitm scope's own: what it reads leaves where they say.
+        return name == CLASH_TEST_SELECTOR or "routing" in scopes or (name == MITM_UPSTREAM_SELECTOR and "mitm" in scopes)
     return False
 
 
@@ -3120,7 +3190,7 @@ def _check_tag_shape(kind, tag):
 
 # As the start script skips them, with proxy-suite-*: "priority" would be priority.json in the
 # outbounds spool, "tor" the Tor outbound (reserved here whether or not this host has one).
-RUNTIME_RESERVED_TAGS = ("proxy", "direct", "block", "priority", "tor")
+RUNTIME_RESERVED_TAGS = ("proxy", "direct", "block", "priority", "tor", "mitm")
 
 
 def _check_runtime_tag(kind, tag):
@@ -4180,7 +4250,7 @@ def _rule_check_target(target):
         return
     if not _rule_target_ok(target):
         die(f"Not an outbound: {target!r}")
-    tags = set(_outbound_tags()) | set(_outbound_groups())
+    tags = set(_outbound_tags()) | set(_outbound_groups()) | set(_mitm_tags())
     if not tags:
         print(f"Cannot check '{target}' until the proxy has run; a rule naming no outbound is left out.", file=sys.stderr)
     elif target not in tags:
@@ -6602,8 +6672,11 @@ def _run_via(tag, label, cmd, route=""):
             )
             die(f"Cannot run via '{tag}': {why}. \"interface\" AmneziaWG outbounds: {interfaces}.")
         tags = _outbound_tags()
-        if tags and tag not in {*tags, *_outbound_groups(), "proxy", "direct", "block"}:
+        if tags and tag not in {*tags, *_outbound_groups(), *_mitm_tags(), "proxy", "direct", "block"}:
             die(f"Unknown outbound: {tag}. See: proxy-ctl proxy outbounds")
+        if tag == MITM_TAG:
+            # What it runs must trust the CA mitmproxy signs with.
+            os.environ.update(_mitm_ca_env())
         key = f"{route}-{tag.encode().hex()}"
         unit = f"proxy-suite-per-app-via-{route}@{tag.encode().hex()}.service"
         global_units = ("proxy-suite-tun", "proxy-suite-tproxy")
@@ -6706,6 +6779,554 @@ def cmd_apps_run(*args):
         _wrap_slice(slice_base, profile, list(cmd))
     else:
         die(f"Route backend '{route}' is not implemented.")
+
+
+# --- mitm: mitmproxy ---------------------------------------------------------
+#
+# With the proxy it is the "mitm" outbound: what a rule, a pin, mitm.listener or
+# mitm.interfaces sends there is read, comes back into the backend and leaves by the
+# selector MITM_UPSTREAM_SELECTOR. Without, a proxy of its own on its listener.
+# settings.json in its spool (MITM_SETTINGS_FILE), the mitm scope's: {upstream, web,
+# saveFlows, requestLog, ignoreHosts}, over the options; root hands mitmproxy a copy as it starts, and
+# the backend reads `upstream` as it does.
+
+MITM_UNIT = "proxy-suite-mitm"
+MITM_TAG = "mitm"
+MITM_UPSTREAM_SELECTOR = "proxy-suite-mitm-upstream"
+# The runtime routing rules `mitm hosts` and `mitm all` keep (proxy rules shows them too).
+MITM_HOSTS_RULE = "mitm"
+MITM_ALL_RULE = "mitm-all"
+MITM_SETTINGS_MAX_BYTES = 1024 * 1024
+MITM_USAGE = (
+    "mitm [status|on|off|toggle|restart] | upstream [outbound] | hosts [add|rm <domain>...] | all [on|off]"
+    " | ignore [add|rm <domain>...] | web [on|off] | flows [on|off] | requests [on|off|--addon|follow [--all] [--bodies]|bodies [on|off]]"
+    " | ca [--path|--bundle|--android|--env]"
+    " | listener | run -- <cmd> [args]"
+)
+# What reads which variable: OpenSSL and what is built on it, Nix's own wrappers, curl,
+# Python's requests, git, and Node, which takes it besides its own roots.
+MITM_CA_BUNDLE_VARS = ("SSL_CERT_FILE", "NIX_SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "GIT_SSL_CAINFO")
+MITM_CA_CERT_VARS = ("NODE_EXTRA_CA_CERTS",)
+# Browsers keep their own trust: each gets a profile of its own that trusts the CA.
+MITM_CHROMIUM = (
+    "chromium", "chromium-browser", "ungoogled-chromium", "google-chrome", "google-chrome-stable", "chrome",
+    "brave", "brave-browser", "vivaldi", "microsoft-edge", "microsoft-edge-stable",
+)
+MITM_FIREFOX = ("firefox", "firefox-esr", "firefox-beta", "firefox-devedition", "librewolf", "floorp", "zen", "zen-browser")
+MITM_CA_NICKNAME = "proxy-suite mitm"
+
+
+def _mitm_outbound():
+    """Whether mitmproxy is the backend's "mitm" outbound (the proxy is on)."""
+    return env("MITM_OUTBOUND") == "1"
+
+
+def _mitm_tags():
+    """The outbound the config templates add, which the backend's inventory does not list."""
+    return [MITM_TAG] if _mitm_outbound() else []
+
+
+def _mitm_require(outbound=False):
+    require_enabled("MITM_ENABLED", "mitm")
+    if outbound and not _mitm_outbound():
+        die("This needs proxy.enable: without the proxy, mitmproxy dials by itself and reads what is pointed at its listener.")
+
+
+def _mitm_env_list(name):
+    try:
+        value = json.loads(env(name) or "[]")
+    except ValueError:
+        return []
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def _mitm_settings(writing=False):
+    """What was changed without a rebuild: {} when nothing was, or it cannot be read."""
+    path = env("MITM_SETTINGS_FILE")
+    try:
+        data = json.loads(read_shared_text(path, MITM_SETTINGS_MAX_BYTES))
+    except FileNotFoundError:
+        return {}
+    except PermissionError:
+        if writing:
+            denied(path, "change")
+        return {}
+    except (OSError, ValueError):
+        if writing:
+            die(f"{path} is not valid; fix or remove it first.")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _mitm_edit(change):
+    """change(settings) under the spool's lock, then saved."""
+    path = env("MITM_SETTINGS_FILE")
+    try:
+        with _file_lock(path):
+            settings = _mitm_settings(writing=True)
+            change(settings)
+            _spool_write(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        denied(path, "write")
+
+
+def _mitm_restart():
+    """mitmproxy reads its settings as it starts."""
+    if svc_active(MITM_UNIT):
+        must("restart", MITM_UNIT)
+
+
+def _mitm_flag(key, variable):
+    """A switch as it stands: the setting, else the option."""
+    value = _mitm_settings().get(key)
+    return value if isinstance(value, bool) else env(variable) == "1"
+
+
+def _mitm_upstream():
+    """Where what mitmproxy read leaves: as chosen, else mitm.upstream."""
+    chosen = _mitm_settings().get("upstream")
+    return chosen if isinstance(chosen, str) and chosen else env("MITM_UPSTREAM", "proxy")
+
+
+def _mitm_upstream_set(tag):
+    known = {*_outbound_tags(), *_outbound_groups()}
+    if tag == MITM_TAG or tag == "block" or tag.startswith("proxy-suite-"):
+        die(f"Not somewhere to leave by: {tag}")
+    if tag not in ("proxy", "direct"):
+        if not known:
+            die(f"Cannot check '{tag}' until the proxy has run. Start it, or choose proxy or direct.")
+        if tag not in known:
+            die(f"Unknown outbound or group: {tag} (or proxy, direct)")
+    _mitm_edit(lambda settings: settings.__setitem__("upstream", tag))
+    # The running backend is switched now; the setting is for its next start.
+    status, _ = _clash("PUT", f"/proxies/{MITM_UPSTREAM_SELECTOR}", {"name": tag})
+    if status in (200, 204):
+        print(f"mitm leaves by {tag}.")
+    elif status == 0:
+        print(f"mitm leaves by {tag} once the proxy runs.")
+    else:
+        print(f"Saved, but the running proxy did not take {tag} (HTTP {status}); it will at its next start.", file=sys.stderr)
+
+
+def _mitm_hosts(op="list", *domains):
+    declared = _mitm_env_list("MITM_HOSTS")
+    if op == "list" and not domains:
+        rule = next((r for r in _runtime_rules() if r["name"] == MITM_HOSTS_RULE and r["target"] == MITM_TAG), None)
+        added = rule["domains"] if rule and not rule["disabled"] else []
+        for host in declared:
+            print(f"  {host:<40} declared")
+        for host in added:
+            print(f"  {host:<40} runtime")
+        if not declared and not added:
+            print("No hosts are sent to mitm. Add one: proxy-ctl mitm hosts add <domain>")
+        return
+    if op not in ("add", "rm") or not domains:
+        usage("mitm hosts [add|rm <domain>...]")
+    for host in domains:
+        if not RULE_DOMAIN.fullmatch(host.lower()):
+            die(f"Not a domain: {host}")
+    hosts = [h.lower() for h in domains]
+    if op == "add":
+        # Ahead of the other runtime rules, and of the configuration's.
+        _rules_add(MITM_TAG, *hosts, "--name", MITM_HOSTS_RULE, "--priority", "0")
+        return
+    kept = [h for h in hosts if h in declared]
+    if kept:
+        die(f"Declared in mitm.hosts, not added here: {', '.join(kept)}")
+    _rules_matches(MITM_HOSTS_RULE, "rm", *hosts)
+
+
+def _mitm_all(verb="status"):
+    on = any(r["name"] == MITM_ALL_RULE and not r["disabled"] for r in _runtime_rules())
+    if verb == "status":
+        print("on: what no routing rule decides goes through mitm" if on else "off")
+    elif verb == "on":
+        if on:
+            print("Already on.")
+            return
+        # Last: whatever a rule sends somewhere keeps going there.
+        _rules_add(MITM_TAG, "0.0.0.0/0", "::/0", "--name", MITM_ALL_RULE, "--priority", str(RULE_PRIORITY_LIMIT))
+    elif verb == "off":
+        if not on:
+            print("Already off.")
+            return
+
+        def change(rules):
+            rules.remove(_rule_find(rules, MITM_ALL_RULE))
+            return "mitm reads only what is sent to it."
+
+        _rules_edit(change)
+    else:
+        usage("mitm all [on|off]")
+
+
+def _mitm_ignore(op="list", *domains):
+    declared = _mitm_env_list("MITM_IGNORE_HOSTS")
+    saved = [h for h in _mitm_settings().get("ignoreHosts") or [] if isinstance(h, str)]
+    if op == "list" and not domains:
+        for host in declared:
+            print(f"  {host:<40} declared")
+        for host in saved:
+            print(f"  {host:<40} runtime")
+        if not declared and not saved:
+            print("Nothing is passed on undecrypted.")
+        return
+    if op not in ("add", "rm") or not domains:
+        usage("mitm ignore [add|rm <domain>...]")
+    hosts = [h.lower() for h in domains]
+    for host in hosts:
+        if not RULE_DOMAIN.fullmatch(host):
+            die(f"Not a domain: {host}")
+    if op == "rm" and (kept := [h for h in hosts if h in declared and h not in saved]):
+        die(f"Declared in mitm.ignoreHosts, not added here: {', '.join(kept)}")
+
+    def change(settings):
+        have = [h for h in settings.get("ignoreHosts") or [] if isinstance(h, str)]
+        settings["ignoreHosts"] = [h for h in have if h not in hosts] + (hosts if op == "add" else [])
+
+    _mitm_edit(change)
+    _mitm_restart()
+    print(f"{'Passed on undecrypted' if op == 'add' else 'Read again'}: {', '.join(hosts)}")
+
+
+# Each switch's setting, and the verb that turns it.
+MITM_SWITCHES = {"web": "web", "saveFlows": "flows", "requestLog": "requests", "requestBodies": "requests bodies"}
+
+
+def _mitm_switch(key, variable, verb, shown):
+    """on|off for a switch mitmproxy reads as it starts; shown() prints how it stands."""
+    if verb in ("on", "off"):
+        _mitm_edit(lambda settings: settings.__setitem__(key, verb == "on"))
+        _mitm_restart()
+    elif verb != "status":
+        usage(f"mitm {MITM_SWITCHES[key]} [on|off]")
+    shown(_mitm_flag(key, variable))
+
+
+def _mitm_web_shown(on):
+    if not on:
+        print(f"mitmweb is off: mitmproxy logs a line for each request (proxy-ctl logs {MITM_UNIT}). Turn it on: proxy-ctl mitm web on")
+        return
+    path = env("MITM_WEB_PASSWORD_FILE")
+    port = env("MITM_WEB_PORT", "18536")
+    try:
+        password = read_text(path).strip()
+    except FileNotFoundError:
+        print(f"http://127.0.0.1:{port}/ (its password is set when mitmproxy starts: proxy-ctl mitm on)")
+        return
+    except OSError:
+        denied(path)
+    print(f"http://127.0.0.1:{port}/?token={urllib.parse.quote(password, safe='')}")
+
+
+def _mitm_flows_shown(on):
+    path = env("MITM_FLOWS_FILE")
+    print(f"Requests are kept in {path} (read them with: mitmproxy -r {path})" if on else "Requests are not kept.")
+
+
+def _mitm_log_shown(on):
+    path = env("MITM_REQUEST_LOG_FILE")
+    print(f"Each request is a line of JSON in {path} (follow them with: proxy-ctl mitm requests follow | jq .)" if on else "Requests are not logged.")
+
+
+def _mitm_bodies_shown(on):
+    if not on:
+        print("Bodies are not written.")
+        return
+    print(
+        f"Each request is written whole, bodies included, to {env('MITM_REQUEST_FLOWS_FILE')}"
+        " (for an addon of your own: proxy-ctl mitm requests follow --bodies | mitmdump -nr - -s addon.py)"
+    )
+
+
+# Often: a log that fills between two looks, made and rotated away, is not read at all.
+MITM_LOG_POLL = 0.05
+
+
+def _mitm_log_follow(*args, poll=MITM_LOG_POLL):
+    """The request log's lines on stdout as they are written: from now, or with --all from its start.
+
+    Whole lines alone, for `> file.jsonl` and `| jq`. With --bodies the flows instead
+    (mitm.requestLog.bodies), byte for byte, for `mitmdump -nr - -s addon.py`: the addon
+    rotates between two of them. Waits for a log not there yet, and starts again from the
+    top of one truncated or made anew. Rotated twice while it read (maxSizeMiB), the one in
+    between is <log>.1 by then: that is read first.
+    """
+    if len(set(args)) != len(args) or not set(args) <= {"--all", "--bodies"}:
+        usage("mitm requests follow [--all] [--bodies]")
+    bodies = "--bodies" in args
+    if bodies:
+        path = env("MITM_REQUEST_FLOWS_FILE")
+        if not _mitm_flag("requestBodies", "MITM_REQUEST_BODIES"):
+            print("Bodies are not written yet (proxy-ctl mitm requests bodies on); waiting for them.", file=sys.stderr)
+    else:
+        path = env("MITM_REQUEST_LOG_FILE")
+        if not _mitm_flag("requestLog", "MITM_REQUEST_LOG"):
+            print("Requests are not logged yet (proxy-ctl mitm requests on); waiting for them.", file=sys.stderr)
+
+    def emit(data):
+        """What of data is whole: with --bodies all of it, else its lines (the rest is kept)."""
+        nonlocal partial
+        if not bodies:
+            *lines, partial = (partial + data).split(b"\n")
+            data = b"".join(line + b"\n" for line in lines)
+        if data:
+            sys.stdout.buffer.write(data)
+            sys.stdout.flush()
+
+    from_end = "--all" not in args
+    log, inode, partial = None, None, b""
+    # The logs read to their end: a rotated one is not read again.
+    finished = set()
+    while True:
+        if log is None:
+            try:
+                log = open(path, "rb")
+            except FileNotFoundError:
+                # All of a log made after this is new.
+                from_end = False
+                time.sleep(poll)
+                continue
+            except PermissionError:
+                # The mitm scope's groups read it (mitm.nix), as they open mitmweb.
+                denied(path)
+            inode = os.fstat(log.fileno()).st_ino
+            if from_end:
+                log.seek(0, os.SEEK_END)
+            # A log made anew after this is read whole.
+            from_end = False
+        chunk = log.read(65536)
+        if chunk:
+            emit(chunk)
+            continue
+        try:
+            now = os.stat(path)
+        except FileNotFoundError:
+            now = None
+        if now is not None and now.st_ino == inode:
+            if now.st_size < log.tell():
+                # Truncated: from its top again.
+                log.close()
+                log, partial = None, b""
+                continue
+            time.sleep(poll)
+            continue
+        # Replaced or removed, this one read to its end.
+        log.close()
+        log, partial = None, b""
+        finished.add(inode)
+        try:
+            with open(path + ".1", "rb") as older:
+                if os.fstat(older.fileno()).st_ino not in finished:
+                    finished.add(os.fstat(older.fileno()).st_ino)
+                    emit(older.read())
+        except OSError:
+            pass
+        partial = b""
+
+
+def _mitm_ca_env():
+    """The variables that make a program trust the CA, {} with a warning when it is not there yet."""
+    bundle, cert = env("MITM_CA_BUNDLE"), env("MITM_CA_FILE")
+    if not (bundle and cert and os.path.isfile(bundle) and os.path.isfile(cert)):
+        print("warning: mitmproxy's CA is not there yet (proxy-ctl mitm on); HTTPS through it will be refused.", file=sys.stderr)
+        return {}
+    return {**{name: bundle for name in MITM_CA_BUNDLE_VARS}, **{name: cert for name in MITM_CA_CERT_VARS}}
+
+
+def _mitm_ca(*args):
+    cert, bundle, android = env("MITM_CA_FILE"), env("MITM_CA_BUNDLE"), env("MITM_CA_ANDROID_DIR")
+    flag = args[0] if args else ""
+    if len(args) > 1 or flag not in ("", "--path", "--bundle", "--android", "--env"):
+        usage("mitm ca [--path|--bundle|--android|--env]")
+    if not os.path.isfile(cert):
+        die("mitmproxy's CA is made when it first starts: proxy-ctl mitm on")
+    if flag == "--path":
+        print(cert)
+    elif flag == "--bundle":
+        print(bundle)
+    elif flag == "--android":
+        # Named as Android names a system CA.
+        try:
+            names = sorted(os.listdir(android))
+        except OSError:
+            names = []
+        if not names:
+            die(f"No Android copy in {android}; restart mitm.")
+        print(os.path.join(android, names[0]))
+    elif flag == "--env":
+        for name, value in _mitm_ca_env().items():
+            print(f"export {name}={shlex.quote(value)}")
+    else:
+        sys.stdout.write(read_text(cert))
+
+
+def _mitm_listener_url():
+    """mitm.listener as a proxy URL for this host's programs, or None when it is off."""
+    host, port = env("MITM_LISTENER_HOST"), env("MITM_LISTENER_PORT")
+    if not (host and port):
+        return None
+    login = ""
+    if env("MITM_LISTENER_USER"):
+        path = env("MITM_LISTENER_PASSWORD_FILE")
+        try:
+            password = read_text(path).split("\n")[0]
+        except OSError:
+            denied(path)
+        login = f"{urllib.parse.quote(env('MITM_LISTENER_USER'), safe='')}:{urllib.parse.quote(password, safe='')}@"
+    return f"http://{login}{'[' + host + ']' if ':' in host else host}:{port}"
+
+
+def _mitm_listener():
+    host, port, address = env("MITM_LISTENER_HOST"), env("MITM_LISTENER_PORT"), env("MITM_LISTENER_ADDRESS")
+    if not (host and port):
+        print("mitm.listener is off: traffic reaches mitm by rule (mitm hosts), by program (mitm run) or by interface.")
+        return
+    print(f"HTTP{' and SOCKS5' if _mitm_outbound() else ''} proxy, this host: {host}:{port}")
+    if host == address:
+        print("Other devices cannot reach it: set mitm.listener.address (\"0.0.0.0\" or a LAN address) and openFirewall.")
+    else:
+        print(f"Other devices: this host's address, port {port}; then open http://mitm.it there for the CA.")
+    if env("MITM_LISTENER_USER"):
+        print(f"Login: {env('MITM_LISTENER_USER')}, password in {env('MITM_LISTENER_PASSWORD_FILE')}")
+
+
+def _mitm_profile_dir(name):
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    path = os.path.join(base, "proxy-suite", "mitm", name)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+def _mitm_browser(cmd, proxy):
+    """cmd for a browser, in a profile of its own that trusts the CA and takes no QUIC; as it
+    is for anything else. proxy: the listener to point it at, or None when a pin carries it."""
+    name = os.path.basename(cmd[0])
+    cert, spki = env("MITM_CA_FILE"), env("MITM_CA_SPKI_FILE")
+    if name in MITM_CHROMIUM:
+        try:
+            key = read_text(spki).strip()
+        except OSError:
+            die("mitmproxy's CA is made when it first starts: proxy-ctl mitm on")
+        return [
+            cmd[0],
+            f"--user-data-dir={_mitm_profile_dir(name)}",
+            # Any chain with this key in it is accepted, in this profile only.
+            f"--ignore-certificate-errors-spki-list={key}",
+            "--disable-quic",
+            "--no-first-run",
+            *([f"--proxy-server={proxy}"] if proxy else ["--no-proxy-server"]),
+            *cmd[1:],
+        ]
+    if name in MITM_FIREFOX:
+        if not os.path.isfile(cert):
+            die("mitmproxy's CA is made when it first starts: proxy-ctl mitm on")
+        profile = _mitm_profile_dir(name)
+        certutil = env("MITM_CERTUTIL", "certutil")
+        store = f"sql:{profile}"
+        if not os.path.exists(os.path.join(profile, "cert9.db")):
+            _run([certutil, "-N", "--empty-password", "-d", store], quiet=True)
+        # Again each time: the CA may have changed since.
+        _run([certutil, "-D", "-n", MITM_CA_NICKNAME, "-d", store], quiet=True)
+        if _run([certutil, "-A", "-n", MITM_CA_NICKNAME, "-t", "C,,", "-i", cert, "-d", store], quiet=True)[0]:
+            die(f"Cannot add mitmproxy's CA to the profile in {profile} ({certutil}).")
+        prefs = {"network.http.http3.enable": False, "network.proxy.type": 0}
+        if proxy:
+            parts = urllib.parse.urlsplit(proxy)
+            prefs.update({
+                "network.proxy.type": 1,
+                "network.proxy.http": parts.hostname,
+                "network.proxy.http_port": parts.port,
+                "network.proxy.ssl": parts.hostname,
+                "network.proxy.ssl_port": parts.port,
+                "network.proxy.no_proxies_on": "",
+                "network.proxy.allow_hijacking_localhost": True,
+            })
+        with open(os.path.join(profile, "user.js"), "w", encoding="utf-8") as f:
+            for key, value in prefs.items():
+                f.write(f"user_pref({json.dumps(key)}, {json.dumps(value)});\n")
+        return [cmd[0], "--profile", profile, "--no-remote", *cmd[1:]]
+    return list(cmd)
+
+
+def _mitm_run(*args):
+    cmd = list(args[1:] if args[:1] == ("--",) else args)
+    if not cmd:
+        usage("mitm run -- <cmd> [args]")
+    os.environ.update(_mitm_ca_env())
+    # A pin takes everything the program sends; under a global mode there is none to take it,
+    # and the listener is what is left: for what follows the proxy variables, and browsers.
+    pinned = _mitm_outbound() and env("PER_APP_ROUTING_ENABLED") == "1" and _pin_routes() and not _active_global_proxy()
+    if pinned:
+        _run_via(MITM_TAG, MITM_TAG, _mitm_browser(cmd, None))
+        return
+    proxy = _mitm_listener_url()
+    if not proxy:
+        die(
+            "Nothing to run it through: mitm.listener is off, and there is no pin slot"
+            " (perAppRouting with per-app TUN or TProxy) or a global mode is up."
+        )
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        os.environ[name] = proxy
+    for name in ("all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"):
+        os.environ.pop(name, None)
+    _exec(_mitm_browser(cmd, proxy))
+
+
+def _mitm_status():
+    if not svc_exists(MITM_UNIT):
+        die("mitm is not enabled in this configuration.")
+    status, _ = systemctl("is-active", MITM_UNIT)
+    if _mitm_outbound():
+        print(f"upstream {_mitm_upstream()}")
+    if env("MITM_LISTENER_HOST"):
+        print(f"listener {env('MITM_LISTENER_ADDRESS')}:{env('MITM_LISTENER_PORT')}")
+    print(f"web {'on' if _mitm_flag('web', 'MITM_WEB') else 'off'}")
+    # is-active's code, as `tor status` gives it.
+    if status:
+        sys.exit(status)
+
+
+def cmd_mitm(verb="status", *args):
+    _mitm_require()
+    if verb == "status" and not args:
+        _mitm_status()
+    elif verb in ("on", "off", "toggle", "restart") and not args:
+        _toggle(MITM_UNIT, "mitm", verb)
+    elif verb == "upstream" and len(args) <= 1:
+        _mitm_require(outbound=True)
+        if args:
+            _mitm_upstream_set(args[0])
+        else:
+            print(_mitm_upstream())
+    elif verb == "hosts":
+        _mitm_require(outbound=True)
+        _mitm_hosts(*args)
+    elif verb == "all" and len(args) <= 1:
+        _mitm_require(outbound=True)
+        _mitm_all(*args)
+    elif verb == "ignore":
+        _mitm_ignore(*args)
+    elif verb == "web" and len(args) <= 1:
+        _mitm_switch("web", "MITM_WEB", args[0] if args else "status", _mitm_web_shown)
+    elif verb == "flows" and len(args) <= 1:
+        _mitm_switch("saveFlows", "MITM_SAVE_FLOWS", args[0] if args else "status", _mitm_flows_shown)
+    elif verb == "requests" and args == ("--addon",):
+        print(env("MITM_REQUEST_LOG_ADDON"))
+    elif verb == "requests" and args[:1] == ("follow",):
+        _mitm_log_follow(*args[1:])
+    elif verb == "requests" and args[:1] == ("bodies",) and len(args) <= 2:
+        _mitm_switch("requestBodies", "MITM_REQUEST_BODIES", args[1] if len(args) == 2 else "status", _mitm_bodies_shown)
+    elif verb == "requests" and len(args) <= 1:
+        _mitm_switch("requestLog", "MITM_REQUEST_LOG", args[0] if args else "status", _mitm_log_shown)
+    elif verb == "ca":
+        _mitm_ca(*args)
+    elif verb == "listener" and not args:
+        _mitm_listener()
+    elif verb == "run":
+        _mitm_run(*args)
+    else:
+        usage(MITM_USAGE)
 
 
 # --- inbounds -----------------------------------------------------------------
@@ -7665,12 +8286,23 @@ def cmd_debug(verb="", *args):
 LOGS_BACKLOG = 1000
 
 
+def _log_units(names):
+    """The units named, "mitm" standing for proxy-suite-mitm when that is one of ours.
+
+    Anything else goes to journalctl as given: another unit, a glob, a name with its suffix.
+    """
+    if not names:
+        return []
+    known = set(_snapshot_units())
+    return [f"proxy-suite-{n}" if n not in known and f"proxy-suite-{n}" in known else n for n in names]
+
+
 def cmd_logs(*units):
     # One --unit per unit: a bare second name would be taken as a journal match. journalctl
     # takes unit globs, so the default needs no unit list of its own.
     argv = _manager_argv(
         "journalctl",
-        ["-f", "-n", str(LOGS_BACKLOG), *(f"--unit={u}" for u in units or ["proxy-suite-*"])],
+        ["-f", "-n", str(LOGS_BACKLOG), *(f"--unit={u}" for u in _log_units(units) or ["proxy-suite-*"])],
     )
     viewer = _log_viewer()
     if not (viewer and sys.stdin.isatty() and sys.stdout.isatty()):
@@ -7736,6 +8368,7 @@ COMMANDS = {
     "ssh": lambda *args: _toggle("proxy-suite-ssh-proxy", "ssh", *args),
     "warp": cmd_warp,
     "tor": cmd_tor,
+    "mitm": cmd_mitm,
     "tg": lambda *args: _toggle("proxy-suite-tg-ws-proxy", "tg", *args),
     "wl": cmd_wl,
     "apps": cmd_apps,

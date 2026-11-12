@@ -457,6 +457,23 @@ let
             ASN_PREFIXES_JSON='{}'
         fi
       ''}
+      # mitm: the upstream `proxy-ctl mitm upstream` chose, or mitm.upstream; the logins of
+      # the listeners that take one, by their files' names.
+      MITM_ARGS=()
+      ${lib.optionalString ctx.mitmOutboundEnabled ''
+        MITM_UPSTREAM=${lib.escapeShellArg ctx.mitmCfg.upstream}
+        MITM_SETTINGS=${lib.escapeShellArg constants.mitmSettingsFile}
+        if [ -f "$MITM_SETTINGS" ] && [ ! -L "$MITM_SETTINGS" ]; then
+          MITM_CHOSEN=$(${jq} -r '.upstream? // "" | strings' "$MITM_SETTINGS" 2>/dev/null || true)
+          [ -n "$MITM_CHOSEN" ] && MITM_UPSTREAM="$MITM_CHOSEN"
+        fi
+        MITM_ARGS+=(--arg mitm_upstream "$MITM_UPSTREAM"
+          --rawfile mitm_hop ${lib.escapeShellArg constants.hopLoginFile})
+        ${lib.optionalString (ctx.mitmListenerEnabled && ctx.mitmListenerAuth) ''
+          MITM_ARGS+=(--arg mitm_listener_user ${lib.escapeShellArg ctx.mitmCfg.listener.auth.username}
+            --rawfile mitm_listener_password ${lib.escapeShellArg ctx.mitmCfg.listener.auth.passwordFile})
+        ''}
+      ''}
       # umask: the file holds credentials until the chmod below; the process
       # substitutions keep them out of the argv every local user can read.
       (umask 077 && ${jq} \
@@ -488,6 +505,7 @@ let
         --slurpfile xray_selectable <(printf '%s' "$SELECTABLE_TAGS_JSON") \
         --argjson xray_tun_dns_runtime ${if xrayTunDnsRuntime then "true" else "false"} \
         --argjson host_addresses "$HOST_ADDRESSES_JSON" \
+        "''${MITM_ARGS[@]}" \
         -f "$BACKEND_JQ_FILTER" \
         "${configFile}" > "$RUNTIME_DIR/config.json")
       ${lib.optionalString excludeServiceUserFromTun ''

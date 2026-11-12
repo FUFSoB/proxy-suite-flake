@@ -49,6 +49,7 @@ let
       perAppZapretRulesFile
       nftablesRulesFile
       killSwitchRulesFile
+      mitmInterfacesRulesFile
       ip
       nft
       ;

@@ -34,6 +34,8 @@ in
         - "amneziaWg": add and remove global AmneziaWG profiles (`proxy-ctl awg add`, `awg rm`).
           A global profile takes over the host's routes and DNS. Starting and stopping one is
           "services"; an AmneziaWG outbound is "outbounds".
+        - "mitm": everything under `proxy-ctl mitm`: start and stop mitmproxy, choose what it
+          reads and where that leaves, and open mitmweb, which shows passwords and cookies.
       '';
       example = [
         "services"

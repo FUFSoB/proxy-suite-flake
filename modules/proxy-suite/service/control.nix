@@ -203,6 +203,48 @@ in
     // lib.optionalAttrs ctx.clashBrokerEnabled {
       CLASH_BROKER = constants.clashBrokerSocket;
     }
+    // lib.optionalAttrs cfg.mitm.enable (
+      let
+        m = ctx.mitmCfg;
+      in
+      {
+        MITM_ENABLED = "1";
+        MITM_OUTBOUND = flag ctx.mitmOutboundEnabled;
+        MITM_SETTINGS_FILE = constants.mitmSettingsFile;
+        # The options, which the settings there stand over.
+        MITM_UPSTREAM = m.upstream;
+        MITM_HOSTS = builtins.toJSON m.hosts;
+        MITM_IGNORE_HOSTS = builtins.toJSON m.ignoreHosts;
+        MITM_WEB = flag m.web.enable;
+        MITM_SAVE_FLOWS = flag m.saveFlows;
+        MITM_REQUEST_LOG = flag m.requestLog.enable;
+        MITM_REQUEST_LOG_FILE = "${m.requestLogDir}/requests.jsonl";
+        MITM_REQUEST_BODIES = flag m.requestLog.bodies;
+        MITM_REQUEST_FLOWS_FILE = "${m.requestLogDir}/requests.mitm";
+        # For `mitmdump -s` over flows kept before (`mitm requests --addon`).
+        MITM_REQUEST_LOG_ADDON = "${ctx.proxySuiteScriptsDir}/mitm_request_log.py";
+        MITM_WEB_PORT = toString m.web.port;
+        MITM_WEB_PASSWORD_FILE = constants.mitmWebPasswordFile;
+        MITM_FLOWS_FILE = "${m.dataDir}/flows.mitm";
+        MITM_CA_FILE = constants.mitmCaFile;
+        MITM_CA_BUNDLE = constants.mitmCaBundle;
+        MITM_CA_SPKI_FILE = constants.mitmCaSpkiFile;
+        MITM_CA_ANDROID_DIR = constants.mitmCaAndroidDir;
+        # Firefox's profiles take the CA through it (`mitm run`).
+        MITM_CERTUTIL = "${pkgs.nssTools}/bin/certutil";
+      }
+      // lib.optionalAttrs ctx.mitmListenerEnabled (
+        {
+          MITM_LISTENER_ADDRESS = m.listener.address;
+          MITM_LISTENER_HOST = ctx.mitmListenerHost;
+          MITM_LISTENER_PORT = toString m.listener.port;
+        }
+        // lib.optionalAttrs ctx.mitmListenerAuth {
+          MITM_LISTENER_USER = m.listener.auth.username;
+          MITM_LISTENER_PASSWORD_FILE = m.listener.auth.passwordFile;
+        }
+      )
+    )
     // lib.optionalAttrs (constants.serviceManager == "supervisor") {
       SUPERVISOR_CTL = constants.systemctl;
     };

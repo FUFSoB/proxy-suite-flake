@@ -38,6 +38,9 @@ has rm awg
 has torrent apps run
 has unpin proxy
 has newnym tor
+has upstream mitm
+has add mitm hosts
+has --android mitm ca
 has --onion inbounds link
 has community-de proxy pin
 

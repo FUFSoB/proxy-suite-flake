@@ -55,7 +55,7 @@ these are given access to them through POSIX ACLs, so the file systems of
 
 What this group may do, as in ` userControl.scopes `\. Empty allows everything\.
 
-**Type:** list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “inbounds”, “whitelistBypass”, “amneziaWg”)\
+**Type:** list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “inbounds”, “whitelistBypass”, “amneziaWg”, “mitm”)\
 **Default:** `[ ]`
 
 <a id="services-proxy-suite-usercontrol-scopes"></a>
@@ -77,7 +77,9 @@ What the group may do\. Empty allows everything\.
  - “amneziaWg”: add and remove global AmneziaWG profiles (` proxy-ctl awg add `, ` awg rm `)\.
    A global profile takes over the host’s routes and DNS\. Starting and stopping one is
    “services”; an AmneziaWG outbound is “outbounds”\.
+ - “mitm”: everything under ` proxy-ctl mitm `: start and stop mitmproxy, choose what it
+   reads and where that leaves, and open mitmweb, which shows passwords and cookies\.
 
-**Type:** list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “inbounds”, “whitelistBypass”, “amneziaWg”)\
+**Type:** list of (one of “services”, “perApp”, “routing”, “outbounds”, “secrets”, “autoProxy”, “zapret”, “stats”, “inbounds”, “whitelistBypass”, “amneziaWg”, “mitm”)\
 **Default:** `[ ]`\
 **Example:** `[ "services" "routing" ]`

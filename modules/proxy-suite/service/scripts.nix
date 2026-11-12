@@ -129,6 +129,7 @@ let
       sshProxyCfg
       warpCfg
       torCfg
+      mitmOutboundEnabled
       whitelistBypassJoiners
       awgOutbounds
       awgRuntimeOutbounds
@@ -178,6 +179,15 @@ let
       !(lib.hasPrefix "127." address || address == "::1" || address == "localhost");
     userDnsRules = proxyCfg.dns.singBox.rules;
     inherit (proxyCfg.routing) blockQuic;
+    mitm =
+      if ctx.mitmOutboundEnabled then
+        {
+          tag = ctx.mitmOutboundTag;
+          selector = ctx.mitmUpstreamSelector;
+          inherit (constants) hopUser;
+        }
+      else
+        null;
     awgRuntimeDnsServer =
       if ctx.awgRuntimeIfaceOutbounds then
         {

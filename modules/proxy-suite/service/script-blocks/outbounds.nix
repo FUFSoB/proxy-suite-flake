@@ -6,6 +6,9 @@
   sshProxyCfg,
   warpCfg,
   torCfg,
+  # The "mitm" outbound is the config template's (config-templates/sing-box.nix): here only
+  # its name is kept from runtime outbounds and groups.
+  mitmOutboundEnabled ? false,
   whitelistBypassJoiners,
   awgOutbounds,
   awgRuntimeOutbounds ? false,
@@ -393,7 +396,7 @@ let
           case "$tag" in
             # proxy-suite-*: the test selector and the pin selectors the start script adds;
             # priority.json is the priority overrides, not an outbound.
-            proxy | direct | block | priority | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"})
+            proxy | direct | block | priority | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"}${lib.optionalString mitmOutboundEnabled " | mitm"})
               [ "$f" = "${runtimeOutboundsDir}/priority.json" ] && continue
               echo "proxy-suite: warning: ignoring runtime outbound '$tag': reserved name" >&2
               continue
@@ -902,7 +905,7 @@ let
             # As proxy-ctl names them; the spool is group-writable, and a group tagged "proxy"
             # would shadow the real selector.
             case "$GROUP_NAME" in
-              proxy | direct | block | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"} | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*)
+              proxy | direct | block | proxy-suite-*${lib.optionalString torOutboundEnabled " | tor"}${lib.optionalString mitmOutboundEnabled " | mitm"} | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*)
                 echo "proxy-suite: warning: ignoring runtime group '$GROUP_NAME': reserved or invalid name" >&2
                 continue
                 ;;

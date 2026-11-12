@@ -19,6 +19,8 @@
   xhttpXmuxJq ? "",
   # proxy.routing.blockQuic.
   blockQuic ? false,
+  # derived.mitmOutboundEnabled, and its outbound's and selector's tags.
+  mitm ? null,
 }:
 
 let
@@ -114,6 +116,39 @@ let
             {type: "field", ruleTag: "final-quic", network: "udp", port: "443", outboundTag: "block"}, .
           else . end]
   '';
+  # mitm: its listeners' logins, and the selector its traffic leaves by, which takes every
+  # outbound and group but mitmproxy itself and proxy-suite's own selectors: the upstream
+  # chosen ($mitm_upstream) if it is there, else "proxy". Then, as mitmproxy carries no UDP,
+  # every rule that sends traffic to it gets a twin just before it, matching the same and
+  # UDP, that rejects: a browser falls back from QUIC at once. Not a rule that names its
+  # own network or inbound (mitm.listener's and mitm.interfaces', which say what of UDP goes).
+  singBoxMitm = lib.optionalString (mitm != null) ''
+    | (($ARGS.named.mitm_hop // "") | rtrimstr("\n")) as $mitm_hop
+    | if $mitm_hop != "" then
+        (.inbounds[] | select(.tag == "mitm-return") | .users)
+          = [{username: ${builtins.toJSON mitm.hopUser}, password: $mitm_hop}]
+      elif any(.inbounds[]; .tag == "mitm-return") then
+        error("proxy-suite: no hop login for the mitm-return listener")
+      else . end
+    | (($ARGS.named.mitm_listener_password // "") | split("\n")[0] // "") as $mitm_password
+    | if $mitm_password != "" then
+        (.inbounds[] | select(.tag == "mitm-in") | .users)
+          = [{username: $ARGS.named.mitm_listener_user, password: $mitm_password}]
+      else . end
+    | ([.outbounds[].tag
+        | select((startswith("proxy-suite-") or . == ${builtins.toJSON mitm.tag} or . == "block") | not)]) as $mitm_exits
+    | ($ARGS.named.mitm_upstream // "proxy") as $mitm_upstream
+    | .outbounds |= map(if .type == "selector" and .tag == ${builtins.toJSON mitm.selector}
+        then .outbounds = $mitm_exits
+          | .default = (if ($mitm_exits | index([$mitm_upstream])) != null then $mitm_upstream
+              elif ($mitm_exits | index(["proxy"])) != null then "proxy" else "direct" end)
+        else . end)
+    | .route.rules = [.route.rules[]
+        | if (.outbound? // "") == ${builtins.toJSON mitm.tag} and ((has("network") or has("inbound")) | not) then
+            {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"]}],
+             action: "reject"}, .
+          else . end]
+  '';
   # XRay's port list: "80,1000-2000".
   closedPorts = map (
     r: if r.from == r.to then toString r.from else "${toString r.from}-${toString r.to}"
@@ -184,3 +219,4 @@ else
     }
   )
   + lib.optionalString blockQuic singBoxBlockQuic
+  + singBoxMitm

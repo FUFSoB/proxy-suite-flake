@@ -19,6 +19,8 @@ let
     perAppPinTproxy
     perAppPinTun
     perAppPinSlots
+    mitmCfg
+    mitmInterfacesEnabled
     ;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
@@ -491,6 +493,50 @@ let
     })
   ) (if perAppPinTun then perAppPinSlots else 0);
 
+  # mitm.interfaces: the TCP its guests send past this host goes to the backend's
+  # mitm-tproxy-in, and from there to mitmproxy; UDP to 443 with it, for the backend to
+  # refuse, so they fall back from QUIC. Everything else is forwarded as it was. Ahead of
+  # TProxy's own chain; an interface cannot be in both (service-assertions.nix).
+  mitmInterfaceSet = "{ ${lib.concatMapStringsSep ", " (i: ''"${i}"'') mitmCfg.interfaces} }";
+  mitmDivert =
+    family: target:
+    lib.concatMapStrings
+      (match: ''
+        meta nfproto ${family} ${match} meta mark set ${toString constants.mitmDivertFwmark} tproxy ${target}:${toString mitmCfg.interfacesPort}
+      '')
+      [
+        "meta l4proto tcp"
+        "udp dport 443"
+      ];
+  mitmInterfacesRulesFile = pkgs.writeText "proxy-suite-routing" ''
+    ${reservedIpBlock}
+    table inet ${constants.mitmDivertNftTable} {
+        chain prerouting {
+            type filter hook prerouting priority mangle - 1; policy accept;
+            iifname != ${mitmInterfaceSet} return
+            # The guests' own network, this host and the LAN (proxy.tproxy.localSubnets) stay
+            # as they were.
+            ip daddr $RESERVED_IP return
+            ip6 daddr $RESERVED_IP6 return
+    ${lib.concatMapStrings (cidr: ''
+      ${ipFamily cidr} daddr ${cidr} return
+    '') globalTproxy.localSubnets}
+            fib daddr type local return
+    ${mitmDivert "ipv4" "ip to 127.0.0.1"}
+    ${
+      if proxyCfg.ipv6 then
+        mitmDivert "ipv6" "ip6 to [::1]"
+      else
+        # Nothing takes IPv6 without proxy.ipv6: marked all the same, it meets the unreachable
+        # route of its table, and the guests fall back to IPv4 instead of going past unread.
+        ''
+          meta nfproto ipv6 meta l4proto tcp meta mark set ${toString constants.mitmDivertFwmark}
+        ''
+    }
+        }
+    }
+  '';
+
   ip = "${pkgs.iproute2}/bin/ip";
   nft = "${pkgs.nftables}/bin/nft";
 
@@ -505,6 +551,7 @@ in
     perAppZapretRulesFile
     perAppTunChainFile
     perAppPinTunChainFiles
+    mitmInterfacesRulesFile
     ip
     nft
     ;

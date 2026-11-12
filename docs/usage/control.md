@@ -42,6 +42,7 @@ Members of the group get the listed scopes. An empty `scopes` list grants all of
 | `perApp` | `apps run` with `tun`, `tproxy` and `zapret` profiles |
 | `secrets` | reading share links, subscription URLs and running configs |
 | `inbounds` | adding, removing and binding runtime inbound users and listeners, and their secrets |
+| `mitm` | everything under `proxy-ctl mitm`, mitmweb included, which shows passwords and cookies |
 | `autoProxy`, `zapret`, `stats`, `whitelistBypass` | the matching `proxy-ctl` groups |
 
 Log out and back in after joining the group. Without `userControl`, a change asks for an

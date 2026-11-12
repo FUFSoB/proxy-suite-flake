@@ -16,6 +16,7 @@ Update the module option docs there instead of editing these files by hand.
 | [warp](./warp.md) | Cloudflare WARP, as an outbound or an AmneziaWG profile. |
 | [tor](./tor.md) | Tor as an outbound, with bridges, and an onion service for the inbounds. |
 | [sshProxy](./sshProxy.md) | An SSH SOCKS5 tunnel, optionally as an outbound. |
+| [mitm](./mitm.md) | mitmproxy, to read the HTTP requests inside TLS. |
 | [tgWsProxy](./tgWsProxy.md) | A Telegram MTProto proxy over WebSocket. |
 | [whitelistBypass](./whitelistBypass.md) | Tunnels through video-call servers, past mobile internet whitelists. |
 | [inbounds](./inbounds.md) | Server side: listeners for remote clients, share links, subscriptions and stats. |
@@ -180,6 +181,45 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
     timeSyncUsers = ‹the users of the enabled timesyncd, chrony, ntp and openntpd on NixOS; elsewhere
 [ "systemd-timesync" "chrony" "_chrony" "ntp" "ntpsec" ]
 ›;
+  };
+  mitm = {
+    ca = {
+      certFile = null;
+      keyFile = null;
+    };
+    enable = false;
+    extraOptions = { };
+    hosts = [ ];
+    ignoreHosts = [ ];
+    interfaces = [ ];
+    interfacesPort = 18529;
+    listener = {
+      address = "127.0.0.1";
+      auth = {
+        passwordFile = null;
+        username = null;
+      };
+      enable = true;
+      openFirewall = false;
+      port = 1088;
+    };
+    package = pkgs.mitmproxy;
+    port = 18531;
+    requestLog = {
+      bodies = false;
+      enable = false;
+      headers = false;
+      maxSizeMiB = 64;
+      persist = false;
+    };
+    returnPort = 18532;
+    saveFlows = false;
+    upstream = ‹"proxy" with proxy.enable, "direct" without›;
+    web = {
+      enable = false;
+      passwordFile = null;
+      port = 18536;
+    };
   };
   perAppRouting = {
     createDefaultProfiles = false;

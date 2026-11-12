@@ -831,5 +831,80 @@ class ModelTest(unittest.TestCase):
             os.chmod(runtime, 0o700)
 
 
+class MitmTabTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        settings = os.path.join(self.tmp.name, "settings.json")
+        with open(settings, "w") as f:
+            json.dump({"upstream": "nl", "ignoreHosts": ["bank.example"], "web": True}, f)
+        patcher = mock.patch.dict(os.environ, {
+            "MITM_ENABLED": "1", "MITM_OUTBOUND": "1", "MITM_SETTINGS_FILE": settings, "MITM_UPSTREAM": "proxy",
+            "MITM_HOSTS": '["declared.example"]', "MITM_IGNORE_HOSTS": '["pinned.example"]', "MITM_WEB": "0",
+            "MITM_LISTENER_ADDRESS": "0.0.0.0", "MITM_LISTENER_HOST": "127.0.0.1", "MITM_LISTENER_PORT": "1088",
+        })
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        rules = [
+            {"name": "mitm", "target": "mitm", "disabled": False, "domains": ["x.example"]},
+            {"name": "mitm-all", "target": "mitm", "disabled": False, "domains": []},
+            {"name": "other", "target": "proxy", "disabled": False, "domains": ["y.example"]},
+        ]
+        for name, value in {
+            "_runtime_rules": lambda *a, **kw: rules,
+            "svc_state": lambda unit: "active",
+            "_outbound_inventory": lambda: {"tags": ["nl"], "sources": {"nl": "url"}},
+        }.items():
+            patcher = mock.patch.object(ctl, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.tab = next(t for t in model.TABS if t.id == "mitm")
+
+    def test_rows_summary_and_actions(self):
+        self.assertTrue(self.tab.available({}))
+        rows = {r["key"]: r for r in self.tab.rows({})}
+        self.assertEqual(
+            {k: (r["kind"], r["source"]) for k, r in rows.items()},
+            {
+                "read:declared.example": ("read", "declared"), "read:x.example": ("read", "runtime"), "all": ("read", "runtime"),
+                "passed on:pinned.example": ("passed on", "declared"), "passed on:bank.example": ("passed on", "runtime"),
+            },
+        )
+        self.assertEqual(self.tab.summary(), "proxy-suite-mitm: active   leaves by nl   listener 0.0.0.0:1088   mitmweb on")
+        keys = lambda row: {a.key: a for a in model.applicable(self.tab, row)}  # noqa: E731
+        # Only what proxy-ctl added can be taken out here.
+        self.assertNotIn("d", keys(rows["read:declared.example"]))
+        self.assertEqual(keys(rows["read:x.example"])["d"].argv(rows["read:x.example"]), ["mitm", "hosts", "rm", "x.example"])
+        self.assertEqual(keys(rows["all"])["d"].argv(rows["all"]), ["mitm", "all", "off"])
+        self.assertEqual(keys(rows["passed on:bank.example"])["d"].argv(rows["passed on:bank.example"]), ["mitm", "ignore", "rm", "bank.example"])
+        actions = {a.key: a for a in self.tab.actions}
+        self.assertEqual(actions["space"].argv(None, {}, {"proxy-suite-mitm": "active"}), ["mitm", "off"])
+        self.assertEqual(actions["space"].argv(None, {}, {"proxy-suite-mitm": "inactive"}), ["mitm", "on"])
+        self.assertEqual(form_argv(actions["u"], upstream="direct"), ["mitm", "upstream", "direct"])
+        self.assertLessEqual({"proxy", "direct", "nl"}, set(model.field_choices(actions["u"].fields[0])))
+        self.assertEqual(form_argv(actions["n"], domain="z.example"), ["mitm", "hosts", "add", "z.example"])
+        self.assertEqual(form_argv(actions["x"], domain="z.example"), ["mitm", "ignore", "add", "z.example"])
+        # The switches say the other state than the one they are in.
+        self.assertEqual(actions["W"].argv(None, {}, {}), ["mitm", "web", "off"])
+        self.assertEqual(actions["f"].argv(None, {}, {}), ["mitm", "flows", "on"])
+        self.assertEqual(actions["j"].argv(None, {}, {}), ["mitm", "requests", "on"])
+        self.assertEqual(actions["J"].argv(None, {}, {}), ["mitm", "requests"])
+        self.assertEqual(actions["b"].argv(None, {}, {}), ["mitm", "requests", "bodies", "on"])
+        self.assertEqual(form_argv(actions["v"], command="curl -v 'https://a b'"), ["mitm", "run", "--", "curl", "-v", "https://a b"])
+        self.assertEqual(model.TOGGLES["proxy-suite-mitm"], ["mitm"])
+
+    def test_without_the_proxy_there_is_only_the_listener(self):
+        with mock.patch.dict(os.environ, {"MITM_OUTBOUND": "0"}):
+            self.assertEqual({r["kind"] for r in self.tab.rows({})}, {"passed on"})
+            offered = {a.key for a in self.tab.actions if model.offered(a)}
+            self.assertFalse({"u", "n", "a"} & offered)
+            self.assertLessEqual({"space", "x", "s", "C", "l"}, offered)
+            self.assertNotIn("leaves by", self.tab.summary())
+
+    def test_absent_without_mitm(self):
+        with mock.patch.dict(os.environ, {"MITM_ENABLED": "0"}):
+            self.assertFalse(self.tab.available({}))
+
+
 if __name__ == "__main__":
     unittest.main()

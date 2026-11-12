@@ -110,6 +110,10 @@ let
     ++ lib.optional cfg.proxy.autoProxy.enable {
       path = constants.autoProxySpoolDir;
       scope = "autoProxy";
+    }
+    ++ lib.optional cfg.mitm.enable {
+      path = derived.mitmCfg.settingsDir;
+      scope = "mitm";
     };
 
   serviceUnits = import ./units.nix {
@@ -426,8 +430,22 @@ lib.mkMerge [
             extraReversePathFilterRules = rules "";
           }
         ))
+        # mitm.interfaces' guests, the same way and with their own mark.
+        (lib.mkIf derived.mitmInterfacesEnabled (
+          let
+            rules =
+              extra:
+              lib.concatMapStrings (interface: ''
+                iifname "${interface}" meta mark ${toString constants.mitmDivertFwmark}${extra} accept
+              '') cfg.mitm.interfaces;
+          in
+          {
+            extraInputRules = rules " socket transparent 1";
+            extraReversePathFilterRules = rules "";
+          }
+        ))
       ];
-      sysctl = tproxyLanSysctl;
+      sysctl = tproxyLanSysctl // derived.mitmInterfacesSysctl;
 
       groups = lib.mkIf (cfg.enable && (userControlEnabled || localProxyAuthEnabled)) (
         [ userControlCfg.group ] ++ derived.userControlExtraGroups
@@ -469,6 +487,11 @@ lib.mkMerge [
             constants.runtimeSubscriptionsDir
           ]
         ))
+        # What `proxy-ctl mitm` changed without a rebuild: the mitm scope's. Root hands
+        # mitmproxy a copy as it starts (mitm.nix).
+        (lib.mkIf (cfg.enable && cfg.mitm.enable) [
+          "d ${derived.mitmCfg.settingsDir} ${spoolDirMode "mitm"} -"
+        ])
         # Routing rules added at runtime (`proxy rules`): the routing scope's. Nothing secret
         # in them, but root renders what is there into every backend's route.
         (lib.mkIf (cfg.enable && proxyEnabled) [
@@ -618,6 +641,29 @@ lib.mkMerge [
             + " anyone who reaches the port uses your outbounds; set listener.auth, or keep it off the"
             + " firewall's allowed ports"
           )
+      # mitm.listener: whoever reaches it sends traffic out through this host, and has it read.
+      ++
+        lib.optional
+          (
+            derived.mitmListenerEnabled
+            && !derived.mitmListenerAuth
+            && !(
+              lib.hasPrefix "127." cfg.mitm.listener.address
+              || cfg.mitm.listener.address == "::1"
+              || cfg.mitm.listener.address == "localhost"
+            )
+          )
+          (
+            "proxy-suite: mitm.listener.address is ${cfg.mitm.listener.address} without listener.auth:"
+            + " anyone who reaches the port sends traffic through this host; set mitm.listener.auth, or"
+            + " keep it off the firewall's allowed ports"
+          )
+      # mitmproxy's own port takes no login either (a browser would ask for one).
+      ++ lib.optional (!constants.privileged && derived.mitmOutboundEnabled) (
+        "proxy-suite: without root, nothing keeps other local users (on Android, other apps) off"
+        + " mitmproxy's loopback port (mitm.port), which takes no login: they can have it read"
+        + " their own traffic, and leave through mitm.upstream"
+      )
       # OpenSSH's -D takes no login at all.
       ++
         lib.optional

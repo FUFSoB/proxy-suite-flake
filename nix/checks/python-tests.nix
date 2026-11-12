@@ -46,6 +46,11 @@ pkgs.lib.mapAttrs mkPythonCheck {
     file = "${scripts}/test-build-inbound.py";
     env = withPath scripts;
   };
+  # mitm.requestLog's addon, without mitmproxy.
+  mitm-request-log = {
+    file = "${scripts}/test-mitm-request-log.py";
+    env = withPath scripts;
+  };
   fetch-subscription-parser = {
     file = "${scripts}/test-fetch-subscription.py";
     env = withPath scripts;

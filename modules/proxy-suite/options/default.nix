@@ -17,6 +17,7 @@
     ./ssh-proxy.nix
     ./warp.nix
     ./tor.nix
+    ./mitm.nix
     ./tg-ws-proxy.nix
     ./whitelist-bypass.nix
     ./geodata.nix

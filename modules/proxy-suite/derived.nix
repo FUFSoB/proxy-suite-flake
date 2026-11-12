@@ -34,6 +34,15 @@ let
           "net.ipv6.conf.all.forwarding" = 1;
         }
       );
+  # The same for mitm.interfaces' guests: only their TCP is taken.
+  mitmInterfacesSysctl = lib.optionalAttrs mitmInterfacesEnabled (
+    {
+      "net.ipv4.ip_forward" = 1;
+    }
+    // lib.optionalAttrs proxyCfg.ipv6 {
+      "net.ipv6.conf.all.forwarding" = 1;
+    }
+  );
   # proxy.routing.ruleSets, with the format settled and the file sing-box reads.
   ruleSets = lib.mapAttrsToList (
     name: rs:
@@ -183,6 +192,42 @@ let
   torOutboundTag = "tor";
   torOutboundEnabled = torCfg.enable && torCfg.asOutbound;
   torRouteOnion = torOutboundEnabled && torCfg.routeOnion && proxyEnabled;
+  mitmCfg = cfg.mitm // {
+    # mitmproxy's confdir: its CA, config.yaml and saved flows, its own user's alone.
+    dataDir = "${stateDir}/mitm";
+    # What proxy-ctl changed without a rebuild (settings.json), over the options.
+    settingsDir = "${stateDir}/mitm.d";
+    # The public half of the CA, for whatever is to trust it.
+    publicDir = "${runtimeDir}/proxy-suite-mitm";
+    # mitm.requestLog's: mitmproxy's user writes it, the mitm scope's groups read it. In
+    # memory, inside the runtime directory and gone with it; or kept beside the state.
+    requestLogDir =
+      if cfg.mitm.requestLog.persist then
+        "${stateDir}/mitm-requests"
+      else
+        "${runtimeDir}/proxy-suite-mitm/requests";
+  };
+  mitmOutboundTag = "mitm";
+  # With the proxy it is an outbound whose own traffic comes back into the backend; without,
+  # a proxy of its own that dials by itself.
+  mitmOutboundEnabled = mitmCfg.enable && proxyEnabled;
+  # Where the backend sends what comes back, switched by `proxy-ctl mitm upstream`.
+  mitmUpstreamSelector = "proxy-suite-mitm-upstream";
+  mitmListenerEnabled = mitmCfg.enable && mitmCfg.listener.enable;
+  mitmListenerAuth =
+    mitmCfg.listener.auth.username != null && mitmCfg.listener.auth.passwordFile != null;
+  # A wildcard listener is reached on loopback, as localProxy's.
+  mitmListenerHost =
+    if
+      builtins.elem mitmCfg.listener.address [
+        "0.0.0.0"
+        "::"
+      ]
+    then
+      "127.0.0.1"
+    else
+      mitmCfg.listener.address;
+  mitmInterfacesEnabled = mitmOutboundEnabled && mitmCfg.interfaces != [ ];
 
   # Joiners in name order, each an outbound on a loopback SOCKS listener of its own.
   whitelistBypassCfg = cfg.whitelistBypass;
@@ -252,6 +297,7 @@ let
       lib.genList (i: constants.awgRuntimeTunnelBasePort + i) constants.awgRuntimeTunnelSlots
     )
     ++ lib.optional torOutboundEnabled torCfg.socksPort
+    ++ lib.optional mitmOutboundEnabled mitmCfg.port
     ++ map (j: j.port) whitelistBypassJoiners
     ++ lib.optional (sshProxyOutboundEnabled && !sshProxyNativeOutbound) sshProxyCfg.listener.port
     ++ lib.optionals hybridEnabled (builtins.attrValues constants.xraySidecarPorts)
@@ -642,6 +688,7 @@ let
     ++ lib.optional sshProxyOutboundEnabled sshProxyOutboundTag
     ++ lib.optionals warpOutboundEnabled (map (d: d.tag) warpDevices)
     ++ lib.optional torOutboundEnabled torOutboundTag
+    ++ lib.optional mitmOutboundEnabled mitmOutboundTag
     ++ map (j: j.tag) whitelistBypassJoiners
     ++ map (ob: ob.tag) awgOutbounds;
   subscriptionTags = map (sub: sub.tag) proxyCfg.subscriptions;
@@ -912,6 +959,10 @@ let
     serviceUser = "proxy-suite-daemon";
     # Tor's own user, apart from the other daemons and their credentials.
     torUser = "proxy-suite-tor";
+    # mitmproxy's own user, which alone reads its CA's key and what it decrypts. Not among
+    # ownTrafficUsers: with the proxy it dials loopback only, and without, it is to follow
+    # the host's routes as any program does.
+    mitmUser = "proxy-suite-mitm";
     # Whose traffic is proxy-suite's own, kept out of TUN and TProxy and past the kill switch.
     # Not Tor's through the local proxy: whatever else it dialled would leave by the uplink.
     ownTrafficUsers = [
@@ -1302,6 +1353,20 @@ let
     torOnionHostnameFile = "${stateDir}/tor/onion/hostname";
     # proxy-ctl tor status|newnym.
     torControlSocket = "${runtimeDir}/proxy-suite-tor/control/socket";
+    # Written by proxy-suite-mitm before mitmproxy starts: the CA's certificate, the
+    # system's CAs with it, its key's hash (for Chromium) and its copy under Android's name.
+    mitmCaFile = "${mitmCfg.publicDir}/ca.pem";
+    mitmCaBundle = "${mitmCfg.publicDir}/ca-bundle.pem";
+    mitmCaSpkiFile = "${mitmCfg.publicDir}/ca-spki";
+    mitmCaAndroidDir = "${mitmCfg.publicDir}/android";
+    # mitmweb's password, for `proxy-ctl mitm web`: root's, and the mitm scope's.
+    mitmWebPasswordFile = "${runtimeDir}/proxy-suite-mitm-web-password";
+    mitmSettingsFile = "${mitmCfg.settingsDir}/settings.json";
+    # mitm.interfaces: the mark on what is diverted to the backend, and the table that
+    # delivers it there. Clear of the per-app ranges from 23040 and the tables from 100.
+    mitmDivertFwmark = 23296;
+    mitmDivertRouteTable = 104;
+    mitmDivertNftTable = "proxy_suite_mitm";
 
     # sing-box DNS server resolving through an "interface" AmneziaWG outbound.
     awgDnsServerTag = tag: "awg-dns-${tag}";
@@ -1414,6 +1479,15 @@ in
     torOutboundTag
     torOutboundEnabled
     torRouteOnion
+    mitmCfg
+    mitmOutboundTag
+    mitmOutboundEnabled
+    mitmUpstreamSelector
+    mitmListenerEnabled
+    mitmListenerAuth
+    mitmListenerHost
+    mitmInterfacesEnabled
+    mitmInterfacesSysctl
     whitelistBypassCfg
     whitelistBypassJoiners
     torOnionEnabled

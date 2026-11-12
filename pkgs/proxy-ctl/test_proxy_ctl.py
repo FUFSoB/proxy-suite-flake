@@ -973,9 +973,16 @@ class ServiceManagerTest(EnvTest):
         self.patch("_follow_in_pager", lambda argv, viewer: ran.append((viewer, argv)) or 0)
         found = {"lnav", "less"}
         self.patch("shutil", mock.Mock(which=lambda name: f"/bin/{name}" if name in found else None))
+        self.patch("_snapshot_units", lambda: ["proxy-suite-socks", "proxy-suite-mitm"])
         # Piped (run() captures stdout): journalctl itself, with a backlog.
         run(ctl.cmd_logs)
         self.assertEqual(ran[-1], ("exec", ["journalctl", "-f", "-n", "1000", "--unit=proxy-suite-*"]))
+        # A short name is ours when its long one is; anything else goes as given.
+        run(ctl.cmd_logs, "mitm", "proxy-suite-socks", "sshd", "awg-*")
+        self.assertEqual(
+            ran[-1],
+            ("exec", ["journalctl", "-f", "-n", "1000", "--unit=proxy-suite-mitm", "--unit=proxy-suite-socks", "--unit=sshd", "--unit=awg-*"]),
+        )
         # In a terminal: through lnav, one --unit per named unit.
         terminal = mock.Mock(isatty=lambda: True)
         with mock.patch.object(ctl.sys, "stdin", terminal), mock.patch.object(ctl.sys, "stdout", terminal):
@@ -1118,7 +1125,7 @@ class ServiceManagerTest(EnvTest):
         self.assertNotEqual(run(ctl.cmd_wl, "new", "phone")[0], 0)
 
     def test_toggle_completes(self):
-        for path in ("ssh", "zapret", "proxy", "proxy tun", "tor"):
+        for path in ("ssh", "zapret", "proxy", "proxy tun", "tor", "mitm"):
             self.assertLessEqual({"toggle", "restart"}, set(ctl._complete_tree(*path.split())))
         self.assertIn("toggle", ctl._complete_tree("awg"))
 
@@ -3504,6 +3511,393 @@ class StatusSnapshotTest(EnvTest):
         self.assertEqual(ctl._status_outbound(), "c (pinned)")
         inventory["detours"]["c"] = "b"
         self.assertEqual(ctl._status_outbound(), "c via b (pinned)")
+
+
+class MitmTest(EnvTest):
+    """proxy-ctl mitm: the settings it leaves for mitmproxy and the backend, and what it runs."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.path("mitm.d"))
+        os.makedirs(self.path("routing.d"))
+        os.makedirs(self.path("public/android"))
+        os.environ.update(
+            MITM_ENABLED="1",
+            MITM_OUTBOUND="1",
+            MITM_SETTINGS_FILE=self.path("mitm.d/settings.json"),
+            MITM_UPSTREAM="proxy",
+            MITM_HOSTS='["declared.example"]',
+            MITM_IGNORE_HOSTS='["pinned.example"]',
+            MITM_WEB="0",
+            MITM_SAVE_FLOWS="0",
+            MITM_REQUEST_LOG="0",
+            MITM_REQUEST_LOG_FILE="/var/lib/proxy-suite/mitm/requests.jsonl",
+            MITM_REQUEST_LOG_ADDON="/nix/store/x-proxy-suite-scripts/mitm_request_log.py",
+            MITM_REQUEST_BODIES="0",
+            MITM_REQUEST_FLOWS_FILE="/run/proxy-suite-mitm/requests/requests.mitm",
+            MITM_WEB_PORT="18536",
+            MITM_WEB_PASSWORD_FILE=self.write("web-password", "s3cret/+"),
+            MITM_FLOWS_FILE="/var/lib/proxy-suite/mitm/flows.mitm",
+            MITM_CA_FILE=self.write("public/ca.pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"),
+            MITM_CA_BUNDLE=self.write("public/ca-bundle.pem", "bundle\n"),
+            MITM_CA_SPKI_FILE=self.write("public/ca-spki", "c3BraQ==\n"),
+            MITM_CA_ANDROID_DIR=self.path("public/android"),
+            MITM_CERTUTIL="certutil",
+            MITM_LISTENER_ADDRESS="127.0.0.1",
+            MITM_LISTENER_HOST="127.0.0.1",
+            MITM_LISTENER_PORT="1088",
+            RUNTIME_ROUTING_DIR=self.path("routing.d"),
+            ROUTING_RULES_DIR=self.path("routing"),
+            ROUTING_RULES_FILE=self.write("buckets.json", {"common": [], "sections": []}),
+            OUTBOUND_INVENTORY_FILE=self.write("socks/outbounds.json", {"tags": ["de", "nl"], "groups": {"fast": {}}}),
+            XDG_STATE_HOME=self.path("state"),
+            PER_APP_ROUTING_ENABLED="1",
+            PER_APP_PIN_TUN="1",
+        )
+        self.write("public/android/9a5ba575.0", "cert")
+        self.units = []
+        self.active = {"proxy-suite-mitm"}
+
+        def systemctl(*args, **_):
+            self.units.append(args)
+            if args[0] == "is-active":
+                return (0 if args[1].removesuffix(".service") in self.active else 3), ""
+            return 0, ""
+
+        self.patch("systemctl", systemctl)
+        self.patch("svc_exists", lambda unit: True)
+        self.patch("svc_active", lambda unit: unit.removesuffix(".service") in self.active)
+        self.clash = []
+        self.patch("_clash", lambda method, path, body=None, timeout=10: (self.clash.append((method, path, body)), (204, None))[1])
+        self.ran = []
+        self.patch("_exec", lambda argv: self.ran.append(("exec", list(argv), dict(os.environ))))
+        self.patch("_run_via", lambda tag, label, cmd, route="": self.ran.append(("via", tag, list(cmd), dict(os.environ))))
+        self.tools = []
+        self.patch("_run", lambda argv, **_: (self.tools.append(list(argv)), (0, ""))[1])
+
+    def settings(self):
+        with open(self.path("mitm.d/settings.json")) as f:
+            return json.load(f)
+
+    def rules(self):
+        with open(self.path("routing.d/rules.json")) as f:
+            return {r["name"]: r for r in json.load(f)["rules"]}
+
+    def test_upstream_is_saved_and_switched_live(self):
+        self.assertEqual(ok(ctl.cmd_mitm, "upstream").strip(), "proxy")
+        out = ok(ctl.cmd_mitm, "upstream", "nl")
+        self.assertIn("leaves by nl", out)
+        self.assertEqual(self.settings(), {"upstream": "nl"})
+        self.assertEqual(self.clash, [("PUT", "/proxies/proxy-suite-mitm-upstream", {"name": "nl"})])
+        self.assertEqual(ok(ctl.cmd_mitm, "upstream").strip(), "nl")
+        # A group, and the two that are always there.
+        for tag in ("fast", "direct", "proxy"):
+            ok(ctl.cmd_mitm, "upstream", tag)
+        # Never itself, nothing that is not an exit, nothing unknown.
+        for tag in ("mitm", "block", "proxy-suite-mitm-upstream", "nowhere"):
+            status, _, err = run(ctl.cmd_mitm, "upstream", tag)
+            self.assertEqual(status, 1, tag)
+        self.assertEqual(self.settings(), {"upstream": "proxy"})
+
+    def test_upstream_waits_for_a_proxy_that_is_down(self):
+        self.patch("_clash", lambda *a, **kw: (0, None))
+        self.assertIn("once the proxy runs", ok(ctl.cmd_mitm, "upstream", "direct"))
+        self.assertEqual(self.settings(), {"upstream": "direct"})
+
+    def test_hosts_are_a_runtime_rule_ahead_of_the_rest(self):
+        ok(ctl.cmd_mitm, "hosts", "add", "X.example", "y.example")
+        rule = self.rules()["mitm"]
+        self.assertEqual((rule["target"], rule["priority"], rule["domains"]), ("mitm", 0, ["x.example", "y.example"]))
+        out = ok(ctl.cmd_mitm, "hosts")
+        self.assertIn("declared.example", out)
+        self.assertIn("x.example", out)
+        ok(ctl.cmd_mitm, "hosts", "rm", "x.example")
+        self.assertEqual(self.rules()["mitm"]["domains"], ["y.example"])
+        status, _, err = run(ctl.cmd_mitm, "hosts", "rm", "declared.example")
+        self.assertEqual(status, 1)
+        self.assertIn("Declared in mitm.hosts", err)
+        self.assertEqual(run(ctl.cmd_mitm, "hosts", "add", "not a domain")[0], 1)
+
+    def test_all_is_the_last_rule(self):
+        self.assertEqual(ok(ctl.cmd_mitm, "all").strip(), "off")
+        ok(ctl.cmd_mitm, "all", "on")
+        rule = self.rules()["mitm-all"]
+        self.assertEqual((rule["target"], rule["priority"], rule["ips"]), ("mitm", ctl.RULE_PRIORITY_LIMIT, ["0.0.0.0/0", "::/0"]))
+        self.assertTrue(ok(ctl.cmd_mitm, "all").startswith("on"))
+        ok(ctl.cmd_mitm, "all", "off")
+        self.assertNotIn("mitm-all", self.rules())
+
+    def test_a_rule_or_a_pin_may_name_mitm(self):
+        ok(ctl.cmd_rules, "add", "mitm", "z.example", "--name", "mine")
+        self.assertEqual(self.rules()["mine"]["target"], "mitm")
+        os.environ["MITM_OUTBOUND"] = "0"
+        self.assertEqual(run(ctl.cmd_rules, "add", "mitm", "z.example", "--name", "other")[0], 1)
+
+    def test_ignore_and_switches_restart_mitmproxy(self):
+        ok(ctl.cmd_mitm, "ignore", "add", "Bank.example")
+        self.assertEqual(self.settings()["ignoreHosts"], ["bank.example"])
+        self.assertIn(("restart", "proxy-suite-mitm"), self.units)
+        out = ok(ctl.cmd_mitm, "ignore")
+        self.assertIn("pinned.example", out)
+        self.assertIn("bank.example", out)
+        ok(ctl.cmd_mitm, "ignore", "rm", "bank.example")
+        self.assertEqual(self.settings()["ignoreHosts"], [])
+        self.assertEqual(run(ctl.cmd_mitm, "ignore", "rm", "pinned.example")[0], 1)
+
+        self.units.clear()
+        self.assertIn("mitmweb is off", ok(ctl.cmd_mitm, "web"))
+        out = ok(ctl.cmd_mitm, "web", "on")
+        self.assertEqual(self.settings()["web"], True)
+        self.assertIn(("restart", "proxy-suite-mitm"), self.units)
+        # The password is a query value.
+        self.assertIn("http://127.0.0.1:18536/?token=s3cret%2F%2B", out)
+        ok(ctl.cmd_mitm, "web", "off")
+        self.assertEqual(self.settings()["web"], False)
+        # An option that is on is switched off by the setting, not lost to it.
+        os.environ["MITM_WEB"] = "1"
+        self.assertIn("mitmweb is off", ok(ctl.cmd_mitm, "web"))
+
+        self.assertIn("not kept", ok(ctl.cmd_mitm, "flows"))
+        self.assertIn("flows.mitm", ok(ctl.cmd_mitm, "flows", "on"))
+        self.assertEqual(self.settings()["saveFlows"], True)
+
+        self.units.clear()
+        self.assertIn("not logged", ok(ctl.cmd_mitm, "requests"))
+        self.assertIn("requests follow", ok(ctl.cmd_mitm, "requests", "on"))
+        self.assertEqual(self.settings()["requestLog"], True)
+        self.assertIn(("restart", "proxy-suite-mitm"), self.units)
+        ok(ctl.cmd_mitm, "requests", "off")
+        self.assertEqual(self.settings()["requestLog"], False)
+        self.units.clear()
+        self.assertEqual(ok(ctl.cmd_mitm, "requests", "--addon").strip(), "/nix/store/x-proxy-suite-scripts/mitm_request_log.py")
+        self.assertEqual(self.units, [])
+        status, _, err = run(ctl.cmd_mitm, "requests", "maybe")
+        self.assertNotEqual(status, 0)
+        self.assertIn("mitm requests [on|off]", err)
+        status, _, err = run(ctl.cmd_mitm, "requests", "follow", "--everything")
+        self.assertNotEqual(status, 0)
+        self.assertIn("mitm requests follow [--all] [--bodies]", err)
+
+        # The whole requests: a switch of their own, beside the lines.
+        self.units.clear()
+        self.assertIn("not written", ok(ctl.cmd_mitm, "requests", "bodies"))
+        self.assertIn("follow --bodies", ok(ctl.cmd_mitm, "requests", "bodies", "on"))
+        self.assertEqual(self.settings()["requestBodies"], True)
+        self.assertIn(("restart", "proxy-suite-mitm"), self.units)
+        ok(ctl.cmd_mitm, "requests", "bodies", "off")
+        self.assertEqual(self.settings()["requestBodies"], False)
+        status, _, err = run(ctl.cmd_mitm, "requests", "bodies", "maybe")
+        self.assertNotEqual(status, 0)
+        self.assertIn("mitm requests bodies [on|off]", err)
+
+    def test_requests_follow_bodies_byte_for_byte(self):
+        self.write("requests.mitm", "old")
+        # Not lines: what is there goes on as it comes, a record cut short and all.
+        out = self.follow([self.append("12:{flow one},"), self.append("12:{flow")], "--bodies")
+        self.assertEqual(out, "12:{flow one},12:{flow")
+        out = self.follow([self.append(" two},")], "--bodies", "--all")
+        self.assertEqual(out, "old12:{flow one},12:{flow two},")
+
+    def follow(self, steps, *args):
+        """What `mitm requests follow` writes while steps() run, one each time it waits."""
+        if "--bodies" in args:
+            path = self.path("requests.mitm")
+            os.environ.update(MITM_REQUEST_BODIES="1", MITM_REQUEST_FLOWS_FILE=path)
+        else:
+            path = self.path("requests.jsonl")
+            os.environ.update(MITM_REQUEST_LOG="1", MITM_REQUEST_LOG_FILE=path)
+        steps = iter(steps)
+
+        class Done(Exception):
+            pass
+
+        def wait(_):
+            step = next(steps, None)
+            if step is None:
+                raise Done
+            step(path)
+
+        out = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with mock.patch.object(ctl.time, "sleep", wait), mock.patch.object(ctl.sys, "stdout", out):
+            with self.assertRaises(Done):
+                ctl.cmd_mitm("requests", "follow", *args)
+            out.flush()
+            return out.buffer.getvalue().decode()
+
+    @staticmethod
+    def append(text):
+        def step(path):
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text)
+
+        return step
+
+    def test_requests_follow(self):
+        def truncate(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"c":3}\n')
+
+        def replace(path):
+            # Made before the old one goes: another inode, whatever the filesystem reuses.
+            with open(path + ".new", "w", encoding="utf-8") as f:
+                f.write('{"d":4}\n')
+            os.replace(path + ".new", path)
+
+        self.write("requests.jsonl", '{"old":0}\n')
+        out = self.follow([self.append('{"a":1}\n{"b"'), self.append(':2}\n'), truncate, replace])
+        # From now: whole lines alone, then from the top of a log truncated or made anew.
+        self.assertEqual(out, '{"a":1}\n{"b":2}\n{"c":3}\n{"d":4}\n')
+
+    def test_requests_follow_across_rotations(self):
+        def rotate(text):
+            def step(path):
+                with open(path + ".new", "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(path, path + ".1")
+                os.replace(path + ".new", path)
+
+            return step
+
+        def twice(path):
+            # The one in between is .1 by the time it looks.
+            rotate('{"b":2}\n')(path)
+            rotate('{"c":3}\n')(path)
+
+        def removed(path):
+            # .1 was read already: not again.
+            os.remove(path)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"e":5}\n')
+
+        self.write("requests.jsonl", "")
+        out = self.follow([self.append('{"a":1}\n'), twice, rotate('{"d":4}\n'), removed])
+        self.assertEqual(out, '{"a":1}\n{"b":2}\n{"c":3}\n{"d":4}\n{"e":5}\n')
+
+    def test_requests_follow_all_and_a_log_not_there_yet(self):
+        self.write("requests.jsonl", '{"old":0}\n')
+        self.assertEqual(self.follow([self.append('{"a":1}\n')], "--all"), '{"old":0}\n{"a":1}\n')
+        os.remove(self.path("requests.jsonl"))
+        self.assertEqual(self.follow([lambda _: None, self.append('{"a":1}\n')]), '{"a":1}\n')
+
+    def test_a_stopped_mitmproxy_is_not_started_by_a_setting(self):
+        self.active.clear()
+        ok(ctl.cmd_mitm, "web", "on")
+        self.assertNotIn(("restart", "proxy-suite-mitm"), self.units)
+
+    def test_settings_others_cannot_write_are_refused(self):
+        os.chmod(self.path("mitm.d"), 0o500)
+        self.addCleanup(os.chmod, self.path("mitm.d"), 0o700)
+        if os.geteuid() == 0:
+            self.skipTest("root writes anywhere")
+        status, _, err = run(ctl.cmd_mitm, "web", "on")
+        self.assertEqual(status, 1)
+        self.assertIn("Cannot write", err)
+
+    def test_ca(self):
+        self.assertIn("BEGIN CERTIFICATE", ok(ctl.cmd_mitm, "ca"))
+        self.assertEqual(ok(ctl.cmd_mitm, "ca", "--path").strip(), self.path("public/ca.pem"))
+        self.assertEqual(ok(ctl.cmd_mitm, "ca", "--bundle").strip(), self.path("public/ca-bundle.pem"))
+        self.assertEqual(ok(ctl.cmd_mitm, "ca", "--android").strip(), self.path("public/android/9a5ba575.0"))
+        env = dict(line.removeprefix("export ").split("=", 1) for line in ok(ctl.cmd_mitm, "ca", "--env").splitlines())
+        self.assertEqual(env["SSL_CERT_FILE"], self.path("public/ca-bundle.pem"))
+        self.assertEqual(env["NODE_EXTRA_CA_CERTS"], self.path("public/ca.pem"))
+        os.unlink(self.path("public/ca.pem"))
+        status, _, err = run(ctl.cmd_mitm, "ca")
+        self.assertEqual(status, 1)
+        self.assertIn("proxy-ctl mitm on", err)
+
+    def test_run_pins_the_program_and_hands_it_the_ca(self):
+        ok(ctl.cmd_mitm, "run", "--", "curl", "https://example.com")
+        kind, tag, cmd, env = self.ran[0]
+        self.assertEqual((kind, tag, cmd), ("via", "mitm", ["curl", "https://example.com"]))
+        self.assertEqual(env["CURL_CA_BUNDLE"], self.path("public/ca-bundle.pem"))
+        self.assertNotIn("https_proxy", {k: v for k, v in env.items() if v.startswith("http://127.0.0.1:1088")})
+
+    def test_run_takes_the_listener_under_a_global_mode(self):
+        self.active.add("proxy-suite-tun")
+        os.environ["all_proxy"] = "socks5h://elsewhere:1"
+        ok(ctl.cmd_mitm, "run", "curl", "https://example.com")
+        kind, cmd, env = self.ran[-1]
+        self.assertEqual((kind, cmd), ("exec", ["curl", "https://example.com"]))
+        self.assertEqual((env["https_proxy"], env["HTTP_PROXY"]), ("http://127.0.0.1:1088",) * 2)
+        self.assertNotIn("all_proxy", env)
+        self.assertEqual(env["SSL_CERT_FILE"], self.path("public/ca-bundle.pem"))
+
+    def test_run_names_the_listener_login(self):
+        os.environ.update(PER_APP_PIN_TUN="0", MITM_LISTENER_USER="me", MITM_LISTENER_PASSWORD_FILE=self.write("pw", "p@ss\nrest\n"))
+        ok(ctl.cmd_mitm, "run", "curl", "x")
+        self.assertEqual(self.ran[-1][2]["https_proxy"], "http://me:p%40ss@127.0.0.1:1088")
+
+    def test_run_without_a_way_in(self):
+        os.environ.update(PER_APP_PIN_TUN="0", MITM_LISTENER_HOST="", MITM_LISTENER_PORT="")
+        status, _, err = run(ctl.cmd_mitm, "run", "curl", "x")
+        self.assertEqual(status, 1)
+        self.assertIn("mitm.listener is off", err)
+
+    def test_run_gives_a_browser_a_profile_that_trusts_the_ca(self):
+        ok(ctl.cmd_mitm, "run", "--", "/run/current-system/sw/bin/chromium", "https://example.com")
+        cmd = self.ran[-1][2]
+        profile = self.path("state/proxy-suite/mitm/chromium")
+        self.assertEqual(cmd, [
+            "/run/current-system/sw/bin/chromium", f"--user-data-dir={profile}",
+            "--ignore-certificate-errors-spki-list=c3BraQ==", "--disable-quic", "--no-first-run", "--no-proxy-server",
+            "https://example.com",
+        ])
+        self.assertTrue(os.path.isdir(profile))
+        # Through the listener, it is told where that is.
+        self.active.add("proxy-suite-tproxy")
+        ok(ctl.cmd_mitm, "run", "chromium")
+        self.assertIn("--proxy-server=http://127.0.0.1:1088", self.ran[-1][1])
+
+        self.active.discard("proxy-suite-tproxy")
+        ok(ctl.cmd_mitm, "run", "firefox", "about:blank")
+        profile = self.path("state/proxy-suite/mitm/firefox")
+        self.assertEqual(self.ran[-1][2], ["firefox", "--profile", profile, "--no-remote", "about:blank"])
+        self.assertEqual(self.tools[-1], ["certutil", "-A", "-n", "proxy-suite mitm", "-t", "C,,", "-i", self.path("public/ca.pem"), "-d", f"sql:{profile}"])
+        self.assertEqual(self.tools[0][:2], ["certutil", "-N"])
+        with open(os.path.join(profile, "user.js")) as f:
+            prefs = f.read()
+        self.assertIn('user_pref("network.http.http3.enable", false);', prefs)
+        self.assertIn('user_pref("network.proxy.type", 0);', prefs)
+        self.active.add("proxy-suite-tun")
+        ok(ctl.cmd_mitm, "run", "firefox")
+        with open(os.path.join(profile, "user.js")) as f:
+            prefs = f.read()
+        self.assertIn('user_pref("network.proxy.ssl_port", 1088);', prefs)
+
+    def test_without_the_proxy_there_is_no_upstream_or_rule(self):
+        os.environ["MITM_OUTBOUND"] = "0"
+        for args in (("upstream",), ("hosts",), ("all", "on")):
+            status, _, err = run(ctl.cmd_mitm, *args)
+            self.assertEqual(status, 1, args)
+            self.assertIn("proxy.enable", err)
+        self.assertIn("HTTP proxy, this host: 127.0.0.1:1088", ok(ctl.cmd_mitm, "listener"))
+        ok(ctl.cmd_mitm, "run", "curl", "x")
+        self.assertEqual(self.ran[-1][0], "exec")
+
+    def test_status_and_toggle(self):
+        out = ok(ctl.cmd_mitm)
+        self.assertIn("upstream proxy", out)
+        self.assertIn("listener 127.0.0.1:1088", out)
+        self.assertIn("web off", out)
+        self.active.clear()
+        self.assertEqual(run(ctl.cmd_mitm)[0], 3)
+        ok(ctl.cmd_mitm, "on")
+        self.assertIn(("start", "proxy-suite-mitm"), self.units)
+        os.environ["MITM_ENABLED"] = "0"
+        self.assertIn("not enabled", run(ctl.cmd_mitm)[2])
+
+    def test_completion_and_groups(self):
+        self.assertLessEqual({"toggle", "restart", "upstream", "run", "ca"}, set(ctl._complete_tree("mitm")))
+        self.assertLessEqual({"proxy", "direct", "nl", "fast"}, set(ctl._complete_tree("mitm", "upstream")))
+        self.assertEqual(ctl.UNIT_GROUPS["proxy-suite-mitm"], ["mitm"])
+        self.assertIn("mitm", ctl.RUNTIME_RESERVED_TAGS)
+
+    def test_the_broker_lets_the_mitm_scope_switch_its_upstream_alone(self):
+        allows = lambda name, scopes: ctl._broker_allows("PUT", f"/proxies/{name}", scopes)  # noqa: E731
+        self.assertTrue(allows("proxy-suite-mitm-upstream", {"mitm"}))
+        self.assertFalse(allows("proxy", {"mitm"}))
+        self.assertFalse(allows("proxy-suite-mitm-upstream", {"services"}))
 
 
 if __name__ == "__main__":

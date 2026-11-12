@@ -7,6 +7,7 @@
   customRules,
   customRuleCategory,
   onionOutbound,
+  mitmCommonRules ? [ ],
   geodata,
   ruleSets,
   proxyInboundsLoopback,
@@ -127,7 +128,8 @@ let
       port = hopPorts;
       action = "reject";
     }
-  ];
+  ]
+  ++ mitmCommonRules;
 
   customRouteRules = map (rule: {
     category = customRuleCategory rule.outbound;

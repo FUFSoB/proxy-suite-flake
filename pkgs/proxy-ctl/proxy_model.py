@@ -812,6 +812,59 @@ def _source_fields(what, example):
     ]
 
 
+def mitm_rows(_):
+    """What mitmproxy reads, and what it passes on undecrypted: the options' and proxy-ctl's."""
+    rows = []
+
+    def add(kind, host, source, key=None):
+        rows.append({"key": key or f"{kind}:{host}", "host": host, "kind": kind, "source": source})
+
+    if ctl._mitm_outbound():
+        for host in ctl._mitm_env_list("MITM_HOSTS"):
+            add("read", host, "declared")
+        rules = {r["name"]: r for r in ctl._runtime_rules() if r["target"] == ctl.MITM_TAG and not r["disabled"]}
+        for host in (rules.get(ctl.MITM_HOSTS_RULE) or {}).get("domains") or []:
+            add("read", host, "runtime")
+        if ctl.MITM_ALL_RULE in rules:
+            add("read", "what no routing rule decides", "runtime", key="all")
+    for host in ctl._mitm_env_list("MITM_IGNORE_HOSTS"):
+        add("passed on", host, "declared")
+    for host in ctl._mitm_settings().get("ignoreHosts") or []:
+        if isinstance(host, str):
+            add("passed on", host, "runtime")
+    return rows
+
+
+def mitm_summary():
+    parts = [f"proxy-suite-mitm: {ctl.svc_state(ctl.MITM_UNIT) or 'unknown'}"]
+    if ctl._mitm_outbound():
+        parts.append(f"leaves by {ctl._mitm_upstream()}")
+    if ctl.env("MITM_LISTENER_HOST"):
+        parts.append(f"listener {ctl.env('MITM_LISTENER_ADDRESS')}:{ctl.env('MITM_LISTENER_PORT')}")
+    parts.append("mitmweb on" if ctl._mitm_flag("web", "MITM_WEB") else "mitmweb off")
+    if ctl._mitm_flag("saveFlows", "MITM_SAVE_FLOWS"):
+        parts.append("keeping requests")
+    if ctl._mitm_flag("requestLog", "MITM_REQUEST_LOG"):
+        parts.append("logging requests")
+    if ctl._mitm_flag("requestBodies", "MITM_REQUEST_BODIES"):
+        parts.append("writing bodies")
+    return "   ".join(parts)
+
+
+def _mitm_upstreams(row):
+    return {"proxy": "the outbound in use", "direct": "straight out", **_outbounds(row)}
+
+
+def _mitm_forget(row, *_):
+    if row["key"] == "all":
+        return ["mitm", "all", "off"]
+    return ["mitm", "hosts" if row["kind"] == "read" else "ignore", "rm", row["host"]]
+
+
+def _mitm_switch(group, key, variable):
+    return lambda *_: ["mitm", group, "off" if ctl._mitm_flag(key, variable) else "on"]
+
+
 def _zapret_auto():
     return ctl.env("ZAPRET_AUTO_ENABLED") == "1"
 
@@ -1291,6 +1344,51 @@ TABS = [
             Action("c", "copy subscription URL", lambda r, *_: ["inbounds", "sub", r["name"]], when=lambda r: _sub_url(r, "name"), mode="copy"),
             Action("Q", "subscription URL as QR", lambda r, *_: ["inbounds", "sub", r["name"], "--qr"], when=lambda r: _sub_url(r, "name"), mode="dialog"),
             Action("i", "traffic per user", lambda r, *_: ["inbounds", "stats"], mode="dialog"),
+        ],
+    ),
+    Tab(
+        "mitm",
+        "mitm",
+        _enabled("MITM_ENABLED"),
+        [("host", "Site"), ("kind", "What"), ("source", "Source")],
+        mitm_rows,
+        summary=mitm_summary,
+        actions=[
+            Action("space", "start / stop mitmproxy", lambda r, v, states: ["mitm", "off" if states.get(ctl.MITM_UNIT) in UP_STATES else "on"]),
+            Action("ctrl+r", "restart mitmproxy", lambda *_: ["mitm", "restart"]),
+            Action(
+                "u",
+                "where what it read leaves…",
+                lambda r, v, _: ["mitm", "upstream", v["upstream"]],
+                fields=[Field("upstream", "Upstream", "proxy, direct, or an outbound or group", choices=_mitm_upstreams)],
+                offered=ctl._mitm_outbound,
+            ),
+            Action("n", "read a site…", lambda r, v, _: ["mitm", "hosts", "add", v["domain"]], fields=[DOMAIN], offered=ctl._mitm_outbound),
+            Action("a", "read what no routing rule decides", lambda *_: ["mitm", "all", "on"], confirm=True, offered=ctl._mitm_outbound),
+            Action("x", "pass a site on undecrypted…", lambda r, v, _: ["mitm", "ignore", "add", v["domain"]], fields=[DOMAIN]),
+            Action("d", "forget it", _mitm_forget, when=lambda r: r["source"] == "runtime"),
+            Action("s", "mitmweb's address", lambda *_: ["mitm", "web"], mode="dialog"),
+            Action("c", "copy mitmweb's address", lambda *_: ["mitm", "web"], mode="copy", offered=lambda: ctl._mitm_flag("web", "MITM_WEB")),
+            Action("W", "mitmweb on / off", _mitm_switch("web", "web", "MITM_WEB")),
+            Action("f", "keep requests on disk: on / off", _mitm_switch("flows", "saveFlows", "MITM_SAVE_FLOWS")),
+            Action("j", "log a line of JSON per request: on / off", _mitm_switch("requests", "requestLog", "MITM_REQUEST_LOG")),
+            Action("J", "where that log is", lambda *_: ["mitm", "requests"], mode="dialog"),
+            Action(
+                "b",
+                "write whole requests, for an addon of your own: on / off",
+                lambda *_: ["mitm", "requests", "bodies", "off" if ctl._mitm_flag("requestBodies", "MITM_REQUEST_BODIES") else "on"],
+            ),
+            Action("C", "where its CA certificate is", lambda *_: ["mitm", "ca", "--path"], mode="dialog"),
+            Action("l", "the proxy to point programs and devices at", lambda *_: ["mitm", "listener"], mode="dialog"),
+            # Per user, as `apps run`: nothing a root session can use.
+            Action(
+                "v",
+                "run a command through it…",
+                lambda r, v, _: ["mitm", "run", "--", *shlex.split(v["command"])],
+                fields=[Field("command", "Command", "as in a shell, e.g. firefox or curl -v https://example.com")],
+                mode="pause",
+                offered=lambda: not is_root(),
+            ),
         ],
     ),
     Tab(

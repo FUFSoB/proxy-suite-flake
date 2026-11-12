@@ -73,6 +73,15 @@ in
               }
             else
               "wrapPerApp needs perAppRouting.enable";
+          mitm =
+            if cfg.enable && cfg.mitm.enable then
+              {
+                inherit (assembly.context.control) proxyCtl;
+                caFile = derived.constants.mitmCaFile;
+                caBundle = derived.constants.mitmCaBundle;
+              }
+            else
+              "mitm needs services.proxy-suite.mitm.enable";
         };
       # xray and sing-box default to this flake's own nixpkgs (redirect it
       # with inputs.nixpkgs.follows), not the system's: a stable release lags
@@ -178,6 +187,17 @@ in
 
         (lib.mkIf cfg.tor.enable (
           import ./tor.nix {
+            inherit
+              lib
+              pkgs
+              cfg
+              derived
+              ;
+          }
+        ))
+
+        (lib.mkIf cfg.mitm.enable (
+          import ./mitm.nix {
             inherit
               lib
               pkgs

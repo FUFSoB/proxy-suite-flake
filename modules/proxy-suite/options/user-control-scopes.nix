@@ -12,4 +12,5 @@
   "inbounds"
   "whitelistBypass"
   "amneziaWg"
+  "mitm"
 ]

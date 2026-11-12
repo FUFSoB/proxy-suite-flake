@@ -55,6 +55,8 @@ let
   } fake;
   viaChains = helpers.wrapProxychains { programs = [ "fake" ]; } fake;
   viaTun = helpers.wrapPerApp { profile = "tun"; } fake;
+  withMitm = helpersFor { mitm.enable = true; };
+  viaMitm = withMitm.mitm.wrap { programs = [ "fake" ]; } fake;
 in
 assert helpers.urls.http == "http://127.0.0.1:1080";
 assert helpers.urls.socks5h == "socks5h://127.0.0.1:1080";
@@ -64,6 +66,10 @@ assert helpers.env.ALL_PROXY == "socks5h://127.0.0.1:1080";
 assert refuses (bare.wrapProxychains { } fake);
 assert refuses (bare.wrapPerApp { profile = "tun"; } fake);
 assert refuses (helpers.wrapPerApp { profile = "nope"; } fake);
+assert refuses bare.mitm;
+assert withMitm.mitm.caFile == "/run/proxy-suite-mitm/ca.pem";
+assert withMitm.mitm.caEnv.SSL_CERT_FILE == "/run/proxy-suite-mitm/ca-bundle.pem";
+assert withMitm.mitm.caEnv.NODE_EXTRA_CA_CERTS == withMitm.mitm.caFile;
 assert refuses (
   (helpersFor {
     proxy.listener.auth = {
@@ -93,6 +99,10 @@ pkgs.runCommand "proxy-suite-proxy-helpers-check" { } ''
 
   # proxychains preloads itself into the program.
   ${viaChains}/bin/fake | grep -q '^LD_PRELOAD=.*libproxychains4'
+
+  # mitmproxy too, and only the named program.
+  grep -q 'proxy-ctl.* mitm run -- ${fake}/bin/fake' ${viaMitm}/bin/fake
+  [ "$(readlink -f ${viaMitm}/bin/other)" = ${fake}/bin/other ]
 
   # Per-app routing goes through proxy-ctl.
   grep -q 'proxy-ctl.* apps run tun -- ${fake}/bin/fake' ${viaTun}/bin/fake

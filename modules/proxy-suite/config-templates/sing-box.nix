@@ -21,6 +21,7 @@ let
     perAppPinTun
     singBoxLogLevel
     connectionLogEnabled
+    mitmCfg
     ;
   inherit (constants)
     xrayDnsBridgePorts
@@ -189,6 +190,8 @@ let
       xrayDnsBridgePort ? xrayDnsBridgePorts.socks,
       # Names the fake IP cache: TUN configs only.
       fakeIpCache ? null,
+      # mitm's listeners: what mitmproxy sends back, mitm.listener and mitm.interfaces.
+      enableMitm ? false,
     }:
     let
       fakeIp = fakeIpCache != null && proxyCfg.dns.fakeIp.enable;
@@ -254,6 +257,40 @@ let
                 }
               ) (lib.genList (slot: slot) perAppPinSlots)
             )
+            ++ lib.optionals (enableMitm && derived.mitmOutboundEnabled) (
+              # Its login is the hop login, set at start (backend-jq-filter.nix): whoever
+              # connects here picks an exit past every routing rule.
+              [
+                {
+                  type = "mixed";
+                  tag = "mitm-return";
+                  listen = "127.0.0.1";
+                  listen_port = mitmCfg.returnPort;
+                }
+              ]
+              ++ lib.optional derived.mitmListenerEnabled {
+                type = "mixed";
+                tag = "mitm-in";
+                listen = mitmCfg.listener.address;
+                listen_port = mitmCfg.listener.port;
+              }
+              ++ lib.optionals derived.mitmInterfacesEnabled (
+                [
+                  {
+                    type = "tproxy";
+                    tag = "mitm-tproxy-in";
+                    listen = "127.0.0.1";
+                    listen_port = mitmCfg.interfacesPort;
+                  }
+                ]
+                ++ lib.optional proxyCfg.ipv6 {
+                  type = "tproxy";
+                  tag = "mitm-tproxy-in6";
+                  listen = "::1";
+                  listen_port = mitmCfg.interfacesPort;
+                }
+              )
+            )
             ++ lib.optional enableTun (
               {
                 type = "tun";
@@ -285,7 +322,25 @@ let
               tag = "block";
             }
           ]
-          ++ lib.optionals (pins != null) pins.selectors;
+          ++ lib.optionals (pins != null) pins.selectors
+          # In every config, as the rules naming them are (rules.nix): mitmproxy itself, and
+          # the selector its traffic leaves by, which the backend filter fills with every
+          # outbound but "mitm" and `proxy-ctl mitm upstream` switches.
+          ++ lib.optionals derived.mitmOutboundEnabled [
+            {
+              type = "http";
+              tag = derived.mitmOutboundTag;
+              server = "127.0.0.1";
+              server_port = mitmCfg.port;
+            }
+            {
+              type = "selector";
+              tag = derived.mitmUpstreamSelector;
+              outbounds = [ "direct" ];
+              default = "direct";
+              interrupt_exist_connections = true;
+            }
+          ];
 
           route = {
             default_domain_resolver = "local";
@@ -323,6 +378,7 @@ in
   # connections nor mark sockets: there it is the SOCKS/HTTP listener alone.
   tproxy = mkConfig {
     enableMixed = true;
+    enableMitm = true;
     enableTProxy = constants.privileged;
     pins = if perAppPinTproxy then tproxyPins else null;
     useOutboundRoutingMark = constants.privileged;

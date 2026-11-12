@@ -15,6 +15,7 @@
   perAppZapretRulesFile,
   nftablesRulesFile,
   killSwitchRulesFile,
+  mitmInterfacesRulesFile,
   ip,
   nft,
 }:
@@ -110,6 +111,7 @@ let
       perAppZapretRulesFile
       nftablesRulesFile
       killSwitchRulesFile
+      mitmInterfacesRulesFile
       ip
       nft
       ;

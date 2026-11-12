@@ -91,7 +91,7 @@ in
             in
             lib.optional (rules != "") (
               "proxy-suite: system-manager leaves the host firewall alone; if it filters input, let in"
-              + " what the devices on proxy.tproxy.lanInterfaces send through the proxy (nftables: "
+              + " what the devices on proxy.tproxy.lanInterfaces and mitm.interfaces send through the proxy (nftables: "
               + lib.concatStringsSep "; " (lib.splitString "\n" (lib.removeSuffix "\n" rules))
               + ")"
             );

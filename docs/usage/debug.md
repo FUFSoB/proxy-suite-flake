@@ -98,4 +98,5 @@ proxy-ctl logs proxy-suite-per-app-tproxy-dns
 ## See also
 
 - [`debug`](../options/debug.md): every option
+- [Read HTTPS requests with mitmproxy](./mitm.md): which request failed, and with what status
 - [Control it day to day](./control.md): `proxy-ctl logs` and the rest

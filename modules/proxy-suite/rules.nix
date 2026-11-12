@@ -75,9 +75,110 @@ let
   # .onion names go to Tor in every route mode: nothing else can reach them.
   onionOutbound = if derived.torRouteOnion then resolveTag derived.torOutboundTag else null;
 
+  # mitm.hosts, ahead of the rest: a rule like any other, so the names are looked up as a
+  # proxied one's are.
+  mitmHostRules = lib.optional (derived.mitmOutboundEnabled && derived.mitmCfg.hosts != [ ]) {
+    outbound = derived.mitmOutboundTag;
+    domains = derived.mitmCfg.hosts;
+    ips = [ ];
+    geosites = [ ];
+    geoips = [ ];
+    ruleSets = [ ];
+    asns = [ ];
+  };
+
+  # What mitmproxy has read comes back on mitm-return and leaves by the upstream chosen,
+  # never by "mitm" again; what mitm.listener and mitm.interfaces take in goes to it whole.
+  # Among the common rules: no route mode or runtime rule comes before them, and the hop
+  # guard above still does.
+  mitmCommonRules =
+    let
+      m = derived.mitmCfg;
+      listenerExposed =
+        !(
+          lib.hasPrefix "127." m.listener.address
+          || m.listener.address == "::1"
+          || m.listener.address == "localhost"
+        );
+      # Not this host's own programs.
+      remote = {
+        source_ip_cidr = [
+          "127.0.0.0/8"
+          "::1/128"
+        ];
+        invert = true;
+      };
+      divertIn = [ "mitm-tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "mitm-tproxy-in6";
+    in
+    lib.optionals derived.mitmOutboundEnabled (
+      [
+        {
+          inbound = [ "mitm-return" ];
+          outbound = derived.mitmUpstreamSelector;
+        }
+      ]
+      ++ lib.optionals derived.mitmListenerEnabled (
+        # A listener others reach: one of them could ask for 127.0.0.1, or a name resolving
+        # there, and have this host's loopback-only services dialed from here (as mixed-in's
+        # guard, backend-jq-filter.nix).
+        lib.optionals listenerExposed [
+          {
+            type = "logical";
+            mode = "and";
+            rules = [
+              { inbound = [ "mitm-in" ]; }
+              remote
+            ];
+            action = "resolve";
+            server = "local";
+          }
+          {
+            type = "logical";
+            mode = "and";
+            rules = [
+              {
+                inbound = [ "mitm-in" ];
+                ip_cidr = derived.proxyInboundsLoopback;
+              }
+              remote
+            ];
+            action = "reject";
+          }
+        ]
+        ++ [
+          # mitmproxy is an HTTP proxy: it carries no UDP.
+          {
+            inbound = [ "mitm-in" ];
+            network = [ "udp" ];
+            action = "reject";
+          }
+          {
+            inbound = [ "mitm-in" ];
+            outbound = derived.mitmOutboundTag;
+          }
+        ]
+      )
+      ++ lib.optionals derived.mitmInterfacesEnabled [
+        # QUIC refused, so the guests take TCP; their other UDP follows the rules below.
+        {
+          inbound = divertIn;
+          network = [ "udp" ];
+          port = [ 443 ];
+          action = "reject";
+        }
+        {
+          inbound = divertIn;
+          network = [ "tcp" ];
+          outbound = derived.mitmOutboundTag;
+        }
+      ]
+    );
+
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.
   customRules =
-    perOutboundRules ++ map (rule: rule // { outbound = resolveTag rule.outbound; }) r.rules;
+    mitmHostRules
+    ++ perOutboundRules
+    ++ map (rule: rule // { outbound = resolveTag rule.outbound; }) r.rules;
 
   singBoxRules = import ./rules/sing-box.nix {
     inherit
@@ -88,6 +189,7 @@ let
       customRules
       customRuleCategory
       onionOutbound
+      mitmCommonRules
       ;
     inherit (cfg) geodata;
     inherit (derived)

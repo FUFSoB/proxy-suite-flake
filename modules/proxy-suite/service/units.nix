@@ -46,6 +46,9 @@ let
     tproxyUpScript
     tproxyReloadScript
     tproxyDownScript
+    mitmInterfacesUpScript
+    mitmInterfacesReloadScript
+    mitmInterfacesDownScript
     killSwitchUpScript
     killSwitchDownScript
     tunCleanupScript
@@ -153,6 +156,7 @@ let
       lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service"
       ++ lib.optional (proxyEnabled || proxyInboundsEnabled) "proxy-suite-daemon-guard.service"
       ++ lib.optional (proxyEnabled && globalTproxy.enable) "${serviceNames.tproxy}.service"
+      ++ lib.optional ctx.mitmInterfacesEnabled "proxy-suite-mitm-interfaces.service"
       # Only XRay's TUN has a reload; sing-box's would be restarted.
       ++ lib.optional (proxyEnabled && globalTun.enable && pureXrayEnabled) "${serviceNames.tun}.service"
     )
@@ -310,6 +314,8 @@ let
         ]
         ++ lib.optional (sshProxyOutboundEnabled && sshProxyUnitEnabled) "proxy-suite-ssh-proxy.service"
         ++ lib.optional torOutboundEnabled "proxy-suite-tor.service"
+        # Not after it: it only dials this listener once something is sent to it.
+        ++ lib.optional ctx.mitmOutboundEnabled "proxy-suite-mitm.service"
         ++ map (j: "proxy-suite-wb-joiner-${j.tag}.service") whitelistBypassJoiners;
         wantedBy = [ "multi-user.target" ];
         # The hop login drawn as root, ahead of the start script, which ProtectSystem keeps
@@ -524,6 +530,35 @@ let
           # otherwise outlive it and send marked traffic out past the kill switch.
           execStopPost = ctx.constants.withPerAppStandby "${serviceNames.tproxy}.service" tproxyDownScript;
         })
+      );
+    }
+    {
+      enable = ctx.mitmInterfacesEnabled;
+      name = "proxy-suite-mitm-interfaces";
+      # With mitmproxy and the backend it sends the guests to, and gone with either: a
+      # divert left behind would send them nowhere.
+      value = restartOnSwitch (
+        reloadAfterFirewallUnlessIncluded mitmInterfacesReloadScript (
+          lib.recursiveUpdate
+            (mkOneshotService {
+              description = "proxy-suite mitm - divert mitm.interfaces to mitmproxy";
+              after = [
+                "network.target"
+                "${serviceNames.socks}.service"
+                "proxy-suite-mitm.service"
+              ];
+              wantedBy = [ "proxy-suite-mitm.service" ];
+              execStart = mitmInterfacesUpScript;
+              # Post: also after a start that failed partway.
+              execStopPost = mitmInterfacesDownScript;
+            })
+            {
+              bindsTo = [
+                "${serviceNames.socks}.service"
+                "proxy-suite-mitm.service"
+              ];
+            }
+        )
       );
     }
     {

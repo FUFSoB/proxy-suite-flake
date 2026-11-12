@@ -118,6 +118,10 @@ let
         asOutbound = true;
         onionService.enable = true;
       };
+      mitm = {
+        enable = true;
+        web.enable = true;
+      };
       perAppRouting = {
         enable = true;
         proxychains.enable = true;
@@ -205,6 +209,10 @@ in
       assert hmCfg.lib.proxy-suite.urls.http == "http://127.0.0.1:1080";
       assert hmCfg.systemd.user.services ? proxy-suite-inbounds;
       assert hmCfg.systemd.user.services ? proxy-suite-tor;
+      # mitmproxy runs as the user too, its CA under the user's own runtime directory.
+      assert hmCfg.systemd.user.services ? proxy-suite-mitm;
+      assert !(hmCfg.systemd.user.services.proxy-suite-mitm.Service ? User);
+      assert lib.hasPrefix "/home/u/" hmCfg.lib.proxy-suite.mitm.caFile;
       # Rootless, there is no userControl group to hand the control socket to.
       assert !(hmCfg.systemd.user.services.proxy-suite-tor.Service ? Group);
       assert forced hmCfg.systemd.user.services;
@@ -269,6 +277,7 @@ in
       assert lib.hasInfix "proxy-suitectl ensure" nodCfg.environment.etc.profile.text;
       assert forced nodCfg.build.activationAfter.proxySuite;
       assert nodCfg.services.proxy-suite.internal.services.proxy-suite-tor.enable;
+      assert nodCfg.services.proxy-suite.internal.services.proxy-suite-mitm.enable;
       assert nodCfg.services.proxy-suite.internal.services.proxy-suite-wb-joiner-wl.enable;
       assert nodCfg.services.proxy-suite.internal.services.proxy-suite-wb-creator-phone.enable;
       # Android bans apps from netlink's route groups, which stock sing-box subscribes to.

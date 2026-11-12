@@ -131,7 +131,7 @@ in
                 cfg.internal.firewall.extraInputRules == ""
                 || !config.networking.firewall.enable
                 || config.networking.nftables.enable;
-              message = "proxy-suite: proxy.tproxy.lanInterfaces needs the nftables firewall (networking.nftables.enable); the iptables one drops the gateway clients' diverted traffic";
+              message = "proxy-suite: proxy.tproxy.lanInterfaces and mitm.interfaces need the nftables firewall (networking.nftables.enable); the iptables one drops the diverted traffic";
             }
             # The kill switch lets that user's traffic past, all of it: a login user's browser
             # and apps too, whenever no tunnel is up.

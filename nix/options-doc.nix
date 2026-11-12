@@ -88,6 +88,10 @@ import ./options-doc/render-options-markdown.nix {
       summary = "An SSH SOCKS5 tunnel, optionally as an outbound.";
     }
     {
+      name = "mitm";
+      summary = "mitmproxy, to read the HTTP requests inside TLS.";
+    }
+    {
       name = "tgWsProxy";
       summary = "A Telegram MTProto proxy over WebSocket.";
     }

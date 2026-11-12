@@ -81,11 +81,21 @@ let
       ob.directPort
     ]) derived.awgTunnelOutbounds
     ++ lib.optional derived.torOutboundEnabled derived.torCfg.socksPort
+    ++ mitmLoopbackPorts
     ++ map (j: j.port) derived.whitelistBypassJoiners
     ++ lib.optionals derived.proxyInboundsEnabled (
       map (listener: listener.internalPort) (derived.proxyInboundsAwg ++ derived.proxyInboundsSingBox)
     )
     ++ awgRuntimeTunnelPorts;
+  # mitmproxy's own listener, the backend's for what it sends back and for mitm.interfaces,
+  # and mitmweb's.
+  mitmLoopbackPorts =
+    lib.optionals derived.mitmOutboundEnabled [
+      mitmCfg.port
+      mitmCfg.returnPort
+    ]
+    ++ lib.optional derived.mitmInterfacesEnabled mitmCfg.interfacesPort
+    ++ lib.optional (mitmCfg.enable && mitmCfg.web.enable) mitmCfg.web.port;
   # The loopback listeners of AmneziaWG outbounds added at runtime, one per slot.
   awgRuntimeTunnelPorts = lib.optionals derived.awgRuntimeOutbounds (
     lib.genList (i: constants.awgRuntimeTunnelBasePort + i) constants.awgRuntimeTunnelSlots
@@ -833,7 +843,7 @@ let
         lib.concatMapStringsSep ", " toString (
           builtins.filter (port: builtins.elem port reservedLoopbackPorts) derived.proxyInboundPorts
         )
-      }): the XRay DNS bridges' 18533-18535, the outbound test's 18537, the WARP tunnels' 18538-18539 and from 18900, tor.socksPort, and the loopback listeners of the AmneziaWG outbounds from 18600, the AmneziaWG listeners from 18700, the whitelistBypass joiners from 18750, the runtime AmneziaWG outbounds at 18800-18831 and the sing-box listeners from 18850, or the hybrid XRay sidecar's 33080, 33180 and 33280"
+      }): the XRay DNS bridges' 18533-18535, the outbound test's 18537, the WARP tunnels' 18538-18539 and from 18900, tor.socksPort, mitm's port, returnPort, interfacesPort and web.port, and the loopback listeners of the AmneziaWG outbounds from 18600, the AmneziaWG listeners from 18700, the whitelistBypass joiners from 18750, the runtime AmneziaWG outbounds at 18800-18831 and the sing-box listeners from 18850, or the hybrid XRay sidecar's 33080, 33180 and 33280"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -1564,7 +1574,11 @@ let
         !(
           derived.torOutboundEnabled
           && torCfg.upstream == "proxy"
-          && lib.subtractLists [ derived.torOutboundTag ] effectiveOutboundTags == [ ]
+          &&
+            lib.subtractLists [
+              derived.torOutboundTag
+              derived.mitmOutboundTag
+            ] effectiveOutboundTags == [ ]
           && !derived.hasSubscriptions
         )
       )
@@ -1613,6 +1627,96 @@ let
       "proxy-suite: tor.socksPort ${toString torCfg.socksPort} collides with another proxy-suite listener"
     )
   ];
+  mitmCfg = derived.mitmCfg;
+  mitmListenerOnLoopback =
+    builtins.elem mitmCfg.listener.address [
+      "localhost"
+      "::1"
+    ]
+    || lib.hasPrefix "127." mitmCfg.listener.address;
+  # Ports the listener (the one way in without the proxy) may not share.
+  mitmListenerClashes =
+    lib.optional proxyEnabled proxyCfg.listener.port
+    ++ mitmLoopbackPorts
+    ++ lib.optionals proxyInboundsEnabled derived.proxyInboundPorts
+    ++ builtins.attrValues constants.xrayDnsBridgePorts
+    ++ [ constants.outboundTestPort ];
+  mitmAssertions = lib.optionals mitmCfg.enable [
+    (mkAssertion (
+      !pureXrayEnabled
+    ) ''proxy-suite: mitm needs proxy.backend = "sing-box" or "hybrid", or no proxy at all'')
+    (mkAssertion (
+      !(derived.mitmOutboundEnabled && builtins.elem derived.mitmOutboundTag outboundTags)
+    ) "proxy-suite: the outbound tag \"mitm\" belongs to mitm.enable; rename the proxy.outbounds entry")
+    (mkAssertion
+      (
+        !derived.mitmOutboundEnabled
+        || !builtins.elem derived.mitmOutboundTag (subscriptionTags ++ derived.groupTags)
+      )
+      "proxy-suite: the name \"mitm\" belongs to mitm.enable; rename the proxy.subscriptions or proxy.groups entry"
+    )
+    (mkAssertion (proxyEnabled || mitmCfg.upstream == "direct")
+      ''proxy-suite: mitm.upstream = "${mitmCfg.upstream}" requires proxy.enable = true; without the proxy mitmproxy dials by itself, which is "direct"''
+    )
+    (mkAssertion
+      (
+        !derived.mitmOutboundEnabled
+        ||
+          mitmCfg.upstream != derived.mitmOutboundTag
+          && builtins.elem mitmCfg.upstream (builtinTags ++ effectiveOutboundTags ++ derived.groupTags)
+          && mitmCfg.upstream != "block"
+      )
+      ''proxy-suite: mitm.upstream = "${mitmCfg.upstream}" is not "direct", "proxy" or the tag of an outbound or group''
+    )
+    (mkAssertion (proxyEnabled || mitmCfg.hosts == [ ])
+      "proxy-suite: mitm.hosts requires proxy.enable = true; without the proxy, point programs at mitm.listener"
+    )
+    (mkAssertion (proxyEnabled || mitmCfg.listener.enable)
+      "proxy-suite: mitm without proxy.enable needs mitm.listener.enable = true: nothing else leads to it"
+    )
+    (mkAssertion
+      (
+        !derived.mitmOutboundEnabled
+        || builtins.all (e: e.detour != derived.mitmOutboundTag) (
+          proxyCfg.outbounds ++ proxyCfg.subscriptions
+        )
+      )
+      "proxy-suite: detour cannot name \"mitm\": it would read the proxy's own handshake, not what goes through it"
+    )
+    (mkAssertion (
+      (mitmCfg.ca.certFile == null) == (mitmCfg.ca.keyFile == null)
+    ) "proxy-suite: mitm.ca.certFile and mitm.ca.keyFile go together")
+    (mkAssertion (
+      (mitmCfg.listener.auth.username == null) == (mitmCfg.listener.auth.passwordFile == null)
+    ) "proxy-suite: mitm.listener.auth.username and mitm.listener.auth.passwordFile go together")
+    (mkAssertion (
+      !mitmCfg.listener.openFirewall || mitmCfg.listener.enable && !mitmListenerOnLoopback
+    ) "proxy-suite: mitm.listener.openFirewall needs mitm.listener.enable and an address off loopback")
+    (mkAssertion (
+      mitmCfg.interfaces == [ ] || proxyEnabled
+    ) "proxy-suite: mitm.interfaces requires proxy.enable = true")
+    (rootlessForbids (mitmCfg.interfaces != [ ]) "mitm.interfaces")
+    (mkAssertion (lib.intersectLists mitmCfg.interfaces globalTproxy.lanInterfaces == [ ])
+      "proxy-suite: an interface is in both mitm.interfaces and proxy.tproxy.lanInterfaces: ${lib.concatStringsSep ", " (lib.intersectLists mitmCfg.interfaces globalTproxy.lanInterfaces)}"
+    )
+    (uniqueValues derived.mitmOutboundEnabled mitmLoopbackPorts
+      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort and mitm.web.port must differ"
+    )
+    (mkAssertion (!mitmCfg.listener.enable || !builtins.elem mitmCfg.listener.port mitmListenerClashes)
+      "proxy-suite: mitm.listener.port ${toString mitmCfg.listener.port} collides with another proxy-suite listener"
+    )
+    (mkAssertion
+      (
+        !derived.mitmOutboundEnabled
+        || !lib.any (
+          port:
+          port == proxyCfg.listener.port
+          || (proxyInboundsEnabled && builtins.elem port derived.proxyInboundPorts)
+        ) mitmLoopbackPorts
+      )
+      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort or mitm.web.port collides with another proxy-suite listener"
+    )
+  ];
   # zapret2.blobs' names go into nfqws2's argv as --blob=<name>:@<file>.
   blobNameAssertions = map (
     name:
@@ -1624,6 +1728,7 @@ rootlessAssertions
 ++ blobNameAssertions
 ++ featureAssertions
 ++ torAssertions
+++ mitmAssertions
 ++ whitelistBypassAssertions
 ++ perAppRoutingAssertions
 ++ localProxyAuthAssertions

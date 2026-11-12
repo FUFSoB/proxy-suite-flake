@@ -21,6 +21,7 @@ examples follow below.
 | [Other Linux and Android](./other-hosts.md) | You are not on NixOS |
 | [Get past mobile whitelists](./whitelist-bypass.md) | Mobile internet lets only whitelisted services through |
 | [Track down a problem](./debug.md) | Something fails now and then, and you want to see why |
+| [Read HTTPS requests with mitmproxy](./mitm.md) | You need the request and the answer themselves, not only the connection |
 
 ## Complete examples
 

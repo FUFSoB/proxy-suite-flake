@@ -41,6 +41,8 @@ let
     "proxy-suite-inbound-stats." = "stats";
     "proxy-suite-inbounds-reload." = "inbounds";
     "proxy-suite-wb-" = "whitelistBypass";
+    # It reads what is sent through it: not for whoever may restart a tunnel.
+    "proxy-suite-mitm." = "mitm";
   };
   templates = lib.filter (lib.hasSuffix "@") unitNames;
   units = lib.filter (name: !lib.hasSuffix "@" name) unitNames;

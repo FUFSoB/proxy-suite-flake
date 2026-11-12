@@ -9,6 +9,7 @@ let
     nft
     nftablesRulesFile
     killSwitchRulesFile
+    mitmInterfacesRulesFile
     constants
     globalTun
     globalTproxy
@@ -281,6 +282,62 @@ in
       inherit ip;
       fwmark = globalTproxy.fwmark;
       table = globalTproxy.routeTable;
+    }}
+  '';
+
+  # mitm.interfaces: as TProxy's, for the guests' TCP alone and with a mark and table of
+  # its own, so it is there whichever global mode is, or none.
+  mitmInterfacesUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set -euo pipefail
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = constants.mitmDivertNftTable;
+    }}
+    ${builders.mkTproxyRoutingDown {
+      inherit ip;
+      fwmark = constants.mitmDivertFwmark;
+      table = constants.mitmDivertRouteTable;
+    }}
+    # Set on NixOS already; left on at the stop, as TProxy's.
+    ${lib.concatStrings (
+      lib.mapAttrsToList (name: value: ''
+        ${pkgs.procps}/bin/sysctl -q -w ${name}=${toString value}
+      '') ctx.mitmInterfacesSysctl
+    )}
+    # The route first, then the marking.
+    ${builders.mkTproxyRoutingUp {
+      inherit ip;
+      inherit ipv6;
+      fwmark = constants.mitmDivertFwmark;
+      table = constants.mitmDivertRouteTable;
+    }}
+    ${nft} -f ${mitmInterfacesRulesFile}
+    ${persistTable constants.mitmDivertNftTable "'include \"${mitmInterfacesRulesFile}\"'"}
+  '';
+
+  mitmInterfacesReloadScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set -euo pipefail
+    ${builders.mkNftReplaceTable {
+      inherit nft;
+      family = "inet";
+      table = constants.mitmDivertNftTable;
+      file = mitmInterfacesRulesFile;
+    }}
+  '';
+
+  mitmInterfacesDownScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set +e
+    ${unpersistTable constants.mitmDivertNftTable}
+    ${builders.mkNftDeleteTable {
+      inherit nft;
+      family = "inet";
+      table = constants.mitmDivertNftTable;
+    }}
+    ${builders.mkTproxyRoutingDown {
+      inherit ip;
+      fwmark = constants.mitmDivertFwmark;
+      table = constants.mitmDivertRouteTable;
     }}
   '';
 

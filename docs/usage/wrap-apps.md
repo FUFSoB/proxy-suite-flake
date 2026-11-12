@@ -10,6 +10,7 @@ with no setup in the program. On NixOS and home-manager, the module provides the
 | `wrapProxychains` | proxychains, for programs that ignore the variables | TCP; not static or Go programs |
 | `wrapPerApp` | A [per-app routing](./per-app.md) profile, via `proxy-ctl apps run` | Everything, TCP and UDP (`tun` profile) |
 | `env`, `envFor` | Just the variables, for services and shells | Whatever reads them |
+| `mitm.wrap` | Through [mitmproxy](./mitm.md), trusting its CA | Whatever you want to read the requests of |
 
 ## On NixOS
 

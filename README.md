@@ -8,7 +8,7 @@ A declarative proxy stack for NixOS. Route this host's traffic through proxies, 
 > [!NOTE]
 > Much of the code and documentation was written with AI tools, then reviewed and tested on real setups.
 
-Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2), [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) and [whitelist-bypass](https://github.com/kulikov0/whitelist-bypass); see their repositories for licenses and docs. Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [3x-ui](https://github.com/MHSanaei/3x-ui) and similar projects.
+Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.com/XTLS/Xray-core), [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go), [zapret-discord-youtube](https://github.com/kartavkun/zapret-discord-youtube), [zapret2](https://github.com/bol-van/zapret2), [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy), [mitmproxy](https://github.com/mitmproxy/mitmproxy) and [whitelist-bypass](https://github.com/kulikov0/whitelist-bypass); see their repositories for licenses and docs. Inspired by [Throne](https://github.com/throneproj/Throne) (formerly NekoRay), [3x-ui](https://github.com/MHSanaei/3x-ui) and similar projects.
 
 ## Features
 
@@ -24,6 +24,7 @@ Bundles [sing-box](https://github.com/SagerNet/sing-box), [XRay](https://github.
 - AmneziaWG 1.x–3.x from `.conf`, `vpn://` or Nix
 - Cloudflare WARP, Tor (with bridges and an onion service), an SSH tunnel and a Telegram proxy
 - Tunnels through video-call servers, to get past mobile internet whitelists
+- mitmproxy as an outbound, to read the HTTPS requests of a site, a program, a phone or a container
 - Server inbounds (XRay protocols with VLESS Encryption, hysteria2, AnyTLS, NaïveProxy, TUIC, ShadowTLS, AmneziaWG) with share links, QR codes, subscriptions in each client's format (links, Clash, sing-box, a web page) and traffic stats; users with expiry, traffic, device and speed limits
 - A desktop GUI with a tray icon, the `proxy-ctl` CLI and the `proxy-tui` terminal UI
 
@@ -259,6 +260,27 @@ Changes and secrets need root or the userControl group.
   warp [status|on|off] [device]          WARP tunnel (every device, or the one named)
   tor [status|on|off]                    Tor
   tor newnym                             new circuits for new connections
+  mitm [status|on|off]                   mitmproxy: reads the HTTP requests inside TLS
+  mitm upstream [outbound]               where what it read leaves: proxy, direct or an outbound
+  mitm hosts [add|rm <domain>...]        sites sent through it, wherever they come from
+  mitm all [on|off]                      send it what no routing rule decides
+  mitm ignore [add|rm <domain>...]       sites passed on undecrypted (pinned certificates)
+  mitm web [on|off]                      mitmweb's address, or switch it on or off
+  mitm flows [on|off]                    keep every request and answer on disk
+  mitm requests [on|off|--addon]         log a line of JSON per request, for jq; or the
+                                         addon that writes them, for mitmdump -s
+  mitm requests follow [--all] [--bodies]
+                                         those lines on stdout as they come: from now, or
+                                         from the start; for > file.jsonl or | jq. With
+                                         --bodies the whole requests, as mitmproxy's flows,
+                                         for | mitmdump -nr - -s your_addon.py
+  mitm requests bodies [on|off]          write the whole requests, for follow --bodies
+  mitm ca [--path|--bundle|--android|--env]
+                                         its CA: the certificate, where it is, or the
+                                         variables that make a program trust it
+  mitm listener                          the proxy to point programs and devices at
+  mitm run -- <cmd> [args]               run a command through it, trusting its CA; a browser
+                                         in a profile of its own
   tg [status|on|off]                     Telegram proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link for its joiner

@@ -163,6 +163,17 @@ let
       ;
   };
 
+  mitmChecks = import ./mitm.nix {
+    inherit checkLib;
+    inherit
+      pkgs
+      evalProxySuite
+      mkRouting
+      mkTunConfig
+      mkTProxyConfig
+      ;
+  };
+
   proxyInboundsChecks = import ./proxy-inbounds.nix {
     inherit checkLib;
     inherit
@@ -342,6 +353,7 @@ let
     ++ sshProxyChecks.assertions
     ++ warpChecks.assertions
     ++ torChecks.assertions
+    ++ mitmChecks.assertions
     ++ proxyInboundsChecks.assertions
     ++ tgWsProxyChecks.assertions
     ++ xrayBackendChecks.assertions

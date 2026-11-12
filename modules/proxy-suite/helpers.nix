@@ -15,6 +15,8 @@
   # per-app routing. A string instead says why the feature is unavailable.
   proxychains ? "wrapProxychains needs the proxy-suite module",
   perApp ? "wrapPerApp needs the proxy-suite module",
+  # From the module only: { proxyCtl, caFile, caBundle } of mitmproxy's CA.
+  mitm ? "mitm needs services.proxy-suite.mitm.enable",
 }:
 
 let
@@ -141,6 +143,38 @@ in
           --add-flags ${lib.escapeShellArg "${args} "}"$target"
       ''
     );
+
+  # mitmproxy's CA, which it makes as it first starts: paths under /run, there once it has.
+  mitm = using mitm (
+    {
+      proxyCtl,
+      caFile,
+      caBundle,
+    }:
+    {
+      # The certificate alone, and the system's CAs with it.
+      inherit caFile caBundle;
+      # What makes a program trust it: OpenSSL's and Nix's own variable, curl's, Python
+      # requests', git's, and Node's, which takes it besides its own roots.
+      caEnv = {
+        SSL_CERT_FILE = caBundle;
+        NIX_SSL_CERT_FILE = caBundle;
+        CURL_CA_BUNDLE = caBundle;
+        REQUESTS_CA_BUNDLE = caBundle;
+        GIT_SSL_CAINFO = caBundle;
+        NODE_EXTRA_CA_CERTS = caFile;
+      };
+      # The package, with its programs run through mitmproxy (`proxy-ctl mitm run`).
+      wrap =
+        {
+          programs ? null,
+        }:
+        wrapPrograms "mitm" programs ''
+          makeWrapper ${proxyCtl}/bin/proxy-ctl "$prog" \
+            --add-flags ${lib.escapeShellArg "mitm run -- "}"$target"
+        '';
+    }
+  );
 
   wrapPerApp =
     {
