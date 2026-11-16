@@ -284,6 +284,67 @@ let
       # "-": the socks unit may not have made its runtime directory yet.
       // lib.optionalAttrs (extra != [ ]) { ReadWritePaths = map (path: "-${path}") extra; }
     );
+  # The inbound manager runs as root - nft, `ss -K`, AmneziaWG's netlink and systemctl of
+  # the inbounds' units need it - and answers HTTP from the Internet: the subscriptions,
+  # through the web server, and its API on TCP for a bot. A flaw in its parsing would be
+  # root's, so it is kept to what it does: no home directories, devices, kernel tunables,
+  # modules or logs; the address families it speaks (Unix, Internet, netlink); system calls
+  # services make (no mount, module, ptrace, reboot, swap, clock or raw I/O calls); and no
+  # new privileges or capabilities beyond those it uses. CAP_SYS_ADMIN stays: systemd lets
+  # its D-Bus callers manage units by it.
+  managerSandbox = lib.optionalAttrs ctx.constants.privileged {
+    NoNewPrivileges = true;
+    ProtectHome = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    ProtectKernelLogs = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectControlGroups = true;
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    LockPersonality = true;
+    SystemCallArchitectures = "native";
+    RestrictAddressFamilies = [
+      "AF_UNIX"
+      "AF_INET"
+      "AF_INET6"
+      "AF_NETLINK"
+    ];
+    SystemCallFilter = [ "@system-service" ];
+    SystemCallErrorNumber = "EPERM";
+    CapabilityBoundingSet = [
+      "~CAP_SYS_MODULE"
+      "CAP_SYS_RAWIO"
+      "CAP_SYS_PTRACE"
+      "CAP_SYS_BOOT"
+      "CAP_SYS_TIME"
+      "CAP_SYS_PACCT"
+      "CAP_SYS_TTY_CONFIG"
+      "CAP_SYS_CHROOT"
+      "CAP_MKNOD"
+      "CAP_LINUX_IMMUTABLE"
+      "CAP_MAC_ADMIN"
+      "CAP_MAC_OVERRIDE"
+      "CAP_AUDIT_CONTROL"
+      "CAP_AUDIT_WRITE"
+      "CAP_SYSLOG"
+      "CAP_WAKE_ALARM"
+      "CAP_BLOCK_SUSPEND"
+      "CAP_LEASE"
+      "CAP_BPF"
+      "CAP_PERFMON"
+      "CAP_CHECKPOINT_RESTORE"
+      "CAP_IPC_LOCK"
+      "CAP_SETUID"
+      "CAP_SETGID"
+      "CAP_SETPCAP"
+      "CAP_SETFCAP"
+    ];
+  };
   socksRuntimeDir = "${ctx.constants.runtimeDir}/${serviceNames.socks}";
   inboundsRuntimeDirs = [
     "${ctx.constants.runtimeDir}/${serviceNames.inbounds}"
@@ -408,7 +469,7 @@ let
         execStart = scripts.runManager;
         runtimeDirectory = serviceNames.inboundsManager;
         stateDirectory = "proxy-suite";
-        extraServiceConfig = spoolReaderSandbox inboundsRuntimeDirs;
+        extraServiceConfig = spoolReaderSandbox inboundsRuntimeDirs // managerSandbox;
       };
     }
     {

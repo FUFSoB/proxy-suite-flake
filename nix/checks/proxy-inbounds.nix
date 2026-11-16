@@ -1753,6 +1753,12 @@ let
       assert builtins.elem "multi-user.target" managerService.wantedBy;
       assert builtins.elem "proxy-suite-inbounds.service" managerService.after;
       assert managerService.serviceConfig.RuntimeDirectory == "proxy-suite-inbounds-manager";
+      # Root that answers HTTP from the Internet is kept to what it does.
+      assert managerService.serviceConfig.NoNewPrivileges;
+      assert managerService.serviceConfig.ProtectHome;
+      assert managerService.serviceConfig.SystemCallFilter == [ "@system-service" ];
+      assert builtins.elem "AF_NETLINK" managerService.serviceConfig.RestrictAddressFamilies;
+      assert builtins.elem "~CAP_SYS_MODULE" managerService.serviceConfig.CapabilityBoundingSet;
       assert lib.hasInfix "inbound_manager.py" (
         (import ./read-generated.nix).readDerivation managerService.serviceConfig.ExecStart
       );
