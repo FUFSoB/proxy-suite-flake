@@ -49,6 +49,7 @@ let
     mitmInterfacesUpScript
     mitmInterfacesReloadScript
     mitmInterfacesDownScript
+    bridgeNetfilterOffScript
     killSwitchUpScript
     killSwitchDownScript
     tunCleanupScript
@@ -156,7 +157,7 @@ let
       lib.optional killSwitchEnabled "${serviceNames.killSwitch}.service"
       ++ lib.optional (proxyEnabled || proxyInboundsEnabled) "proxy-suite-daemon-guard.service"
       ++ lib.optional (proxyEnabled && globalTproxy.enable) "${serviceNames.tproxy}.service"
-      ++ lib.optional ctx.mitmInterfacesEnabled "proxy-suite-mitm-interfaces.service"
+      ++ lib.optional ctx.mitmRoutingEnabled "proxy-suite-mitm-interfaces.service"
       # Only XRay's TUN has a reload; sing-box's would be restarted.
       ++ lib.optional (proxyEnabled && globalTun.enable && pureXrayEnabled) "${serviceNames.tun}.service"
     )
@@ -594,7 +595,24 @@ let
       );
     }
     {
-      enable = ctx.mitmInterfacesEnabled;
+      # proxy.tproxy.bridgeNetfilter = "off": at boot, and again each time Docker starts, which turns it
+      # back on (not RemainAfterExit, so its start pulls this in anew).
+      enable = ctx.bridgeNetfilterOff;
+      name = "proxy-suite-bridge-netfilter";
+      value = mkOneshotService {
+        description = "proxy-suite - bridge netfilter off, for the bridges the divert takes in from";
+        after = [ "docker.service" ];
+        wantedBy = [
+          "multi-user.target"
+          "docker.service"
+        ];
+        execStart = bridgeNetfilterOffScript;
+        extraServiceConfig.RemainAfterExit = false;
+      };
+    }
+    {
+      enable = ctx.mitmRoutingEnabled;
+      # mitm.interfaces' divert, and mitm.udp's return of what mitmproxy sends on: one table.
       name = "proxy-suite-mitm-interfaces";
       # With mitmproxy and the backend it sends the guests to, and gone with either: a
       # divert left behind would send them nowhere.
@@ -602,7 +620,7 @@ let
         reloadAfterFirewallUnlessIncluded mitmInterfacesReloadScript (
           lib.recursiveUpdate
             (mkOneshotService {
-              description = "proxy-suite mitm - divert mitm.interfaces to mitmproxy";
+              description = "proxy-suite mitm - divert mitm.interfaces and mitm.udp to the backend";
               after = [
                 "network.target"
                 "${serviceNames.socks}.service"

@@ -109,12 +109,52 @@ let
         invert = true;
       };
       divertIn = [ "mitm-tproxy-in" ] ++ lib.optional proxyCfg.ipv6 "mitm-tproxy-in6";
+      udp = derived.mitmUdpEnabled;
+      udpReturn = [
+        derived.constants.mitmUdpReturnInbound
+      ]
+      ++ lib.optional proxyCfg.ipv6 "${derived.constants.mitmUdpReturnInbound}6";
+      # QUIC refused, so browsers take TCP: mitmproxy reads it there.
+      refuseQuic = inbound: {
+        inherit inbound;
+        network = [ "udp" ];
+        port = [ 443 ];
+        action = "reject";
+      };
     in
     lib.optionals derived.mitmOutboundEnabled (
       [
         {
           inbound = [ "mitm-return" ];
           outbound = derived.mitmUpstreamSelector;
+        }
+      ]
+      # mitm.udp: what mitmproxy sends on comes back here, marked by its user. A packet sent
+      # to the listener itself, not diverted, has it as its destination: refused.
+      ++ lib.optionals udp [
+        {
+          inbound = udpReturn;
+          ip_cidr = [
+            "127.0.0.0/8"
+            "::1/128"
+          ];
+          action = "reject";
+        }
+        {
+          inbound = udpReturn;
+          outbound = derived.mitmUpstreamSelector;
+        }
+        # The TUN backends' UDP for mitmproxy (their "mitm-udp" outbound), into the tunnel,
+        # whose one end is here; it carries nothing else.
+        (refuseQuic [ derived.constants.mitmUdpRelayInbound ])
+        {
+          inbound = [ derived.constants.mitmUdpRelayInbound ];
+          network = [ "udp" ];
+          outbound = derived.mitmUdpTag;
+        }
+        {
+          inbound = [ derived.constants.mitmUdpRelayInbound ];
+          action = "reject";
         }
       ]
       ++ lib.optionals derived.mitmListenerEnabled (
@@ -145,33 +185,53 @@ let
             action = "reject";
           }
         ]
+        ++ (
+          if udp then
+            # SOCKS5's UDP through mitmproxy's WireGuard listener, QUIC refused.
+            [
+              (refuseQuic [ "mitm-in" ])
+              {
+                inbound = [ "mitm-in" ];
+                network = [ "udp" ];
+                outbound = derived.mitmUdpTag;
+              }
+            ]
+          else
+            [
+              # mitmproxy's HTTP listener carries no UDP.
+              {
+                inbound = [ "mitm-in" ];
+                network = [ "udp" ];
+                action = "reject";
+              }
+            ]
+        )
         ++ [
-          # mitmproxy is an HTTP proxy: it carries no UDP.
-          {
-            inbound = [ "mitm-in" ];
-            network = [ "udp" ];
-            action = "reject";
-          }
           {
             inbound = [ "mitm-in" ];
             outbound = derived.mitmOutboundTag;
           }
         ]
       )
-      ++ lib.optionals derived.mitmInterfacesEnabled [
-        # QUIC refused, so the guests take TCP; their other UDP follows the rules below.
-        {
+      ++ lib.optionals derived.mitmInterfacesEnabled (
+        # QUIC refused, so the guests take TCP; their other UDP follows the rules below, or
+        # with mitm.udp goes to mitmproxy too.
+        [
+          (refuseQuic divertIn)
+        ]
+        ++ lib.optional udp {
           inbound = divertIn;
           network = [ "udp" ];
-          port = [ 443 ];
-          action = "reject";
+          outbound = derived.mitmUdpTag;
         }
-        {
-          inbound = divertIn;
-          network = [ "tcp" ];
-          outbound = derived.mitmOutboundTag;
-        }
-      ]
+        ++ [
+          {
+            inbound = divertIn;
+            network = [ "tcp" ];
+            outbound = derived.mitmOutboundTag;
+          }
+        ]
+      )
     );
 
   # All custom rules in priority order: per-outbound first, then explicit routing.rules.

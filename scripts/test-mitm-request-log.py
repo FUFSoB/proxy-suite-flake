@@ -19,21 +19,48 @@ ctx = types.SimpleNamespace(
         request_log_max_bytes=0,
         request_log_headers=False,
         request_log_group_read=False,
+        request_log_part_bytes=1 << 20,
+        request_log_part_seconds=10.0,
     )
 )
 
 
+# mitmproxy's flow classes, for isinstance: the flows are namespaces.
+class HTTPFlow(types.SimpleNamespace):
+    pass
+
+
+class TCPFlow(types.SimpleNamespace):
+    pass
+
+
+class UDPFlow(types.SimpleNamespace):
+    pass
+
+
 class FlowWriter:
-    """mitmproxy.io's, in a form the tests read back: one record per flow, in one write."""
+    """mitmproxy.io's, in a form the tests read back: one record per flow, in one write. A
+    request is its URL; a flow with messages their contents and its part's number."""
 
     def __init__(self, fo):
         self.fo = fo
 
     def add(self, flow):
-        self.fo.write(f"<{flow.request.pretty_url}>".encode())
+        if isinstance(flow, HTTPFlow) and flow.websocket is None:
+            self.fo.write(f"<{flow.request.pretty_url}>".encode())
+            return
+        messages = flow.websocket.messages if isinstance(flow, HTTPFlow) else flow.messages
+        text = ",".join(m.content.decode() for m in messages)
+        self.fo.write(f"<{text}:{flow.metadata.get('proxy-suite-part', 0)}>".encode())
 
 
-sys.modules["mitmproxy"] = types.SimpleNamespace(ctx=ctx, io=types.SimpleNamespace(FlowWriter=FlowWriter))
+sys.modules["mitmproxy"] = types.SimpleNamespace(
+    ctx=ctx,
+    io=types.SimpleNamespace(FlowWriter=FlowWriter),
+    http=types.SimpleNamespace(HTTPFlow=HTTPFlow),
+    tcp=types.SimpleNamespace(TCPFlow=TCPFlow),
+    udp=types.SimpleNamespace(UDPFlow=UDPFlow),
+)
 
 import mitm_request_log as addon  # noqa: E402
 
@@ -71,11 +98,28 @@ def flow(response=True, error=None):
             raw_content=b"nope",
             headers=Headers(("Content-Type", "text/plain"), ("Set-Cookie", "x=1"), ("Set-Cookie", "y=2")),
         )
-    return types.SimpleNamespace(
+    return HTTPFlow(
+        id="http-1",
         request=request,
         response=answer,
+        websocket=None,
         error=types.SimpleNamespace(msg=error) if error else None,
         client_conn=types.SimpleNamespace(peername=("192.0.2.7", 51000)),
+        metadata={},
+    )
+
+
+def message(content, from_client=True, timestamp=101.0):
+    return types.SimpleNamespace(content=content, from_client=from_client, timestamp=timestamp)
+
+
+def udp_flow(*messages, error=None):
+    return UDPFlow(
+        id="udp-1",
+        messages=list(messages),
+        error=types.SimpleNamespace(msg=error) if error else None,
+        client_conn=types.SimpleNamespace(peername=("10.0.0.1", 40000), timestamp_start=100.0),
+        server_conn=types.SimpleNamespace(address=("2001:db8::5", 5056), sni=None),
         metadata={},
     )
 
@@ -105,6 +149,7 @@ class RequestLogTest(unittest.TestCase):
         self.assertEqual(
             line,
             {
+                "kind": "http",
                 "ts": 100.0,
                 "client": "192.0.2.7",
                 "method": "GET",
@@ -213,6 +258,74 @@ class RequestLogTest(unittest.TestCase):
     def lines_of(self, path):
         with open(path, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
+
+    def test_udp_a_line_as_it_ends(self):
+        f = udp_flow(message(b"abc"), message(b"de", from_client=False, timestamp=102.5), message(b"f"))
+        for _ in f.messages:
+            self.log.udp_message(f)
+        self.assertEqual(self.lines(), [])
+        self.log.udp_end(f)
+        [line] = self.lines()
+        self.assertEqual(
+            line,
+            {
+                "kind": "udp",
+                "ts": 100.0,
+                "client": "10.0.0.1",
+                "server": "[2001:db8::5]:5056",
+                "sni": None,
+                "error": None,
+                "ms": 1000,
+                "messages_from_client": 2,
+                "messages_from_server": 1,
+                "bytes_from_client": 4,
+                "bytes_from_server": 2,
+            },
+        )
+
+    def test_websocket_with_its_messages_as_it_ends(self):
+        f = flow()
+        f.websocket = types.SimpleNamespace(
+            messages=[message(b"hi"), message(b"there", from_client=False)], close_code=1000, close_reason=""
+        )
+        self.log.response(f)
+        self.assertEqual(self.lines(), [])
+        self.log.websocket_end(f)
+        [line] = self.lines()
+        self.assertEqual((line["kind"], line["url"], line["close_code"]), ("websocket", "https://example.com/a?b=1", 1000))
+        self.assertEqual((line["messages_from_client"], line["bytes_from_server"]), (1, 5))
+
+    def test_long_flows_in_parts(self):
+        flows = os.path.join(self.dir.name, "requests.mitm")
+        ctx.options.request_log_flows_file = flows
+        ctx.options.request_log_part_bytes = 4
+        self.log.configure({"request_log_flows_file"})
+        f = udp_flow()
+        for content in (b"aaa", b"bbb", b"ccc"):
+            f.messages.append(message(content))
+            self.log.udp_message(f)
+        self.log.udp_end(f)
+        with open(flows, "rb") as written:
+            # Each part the messages since the last, numbered; the flow as it was.
+            self.assertEqual(written.read(), b"<aaa,bbb:1><ccc:2>")
+        self.assertEqual(len(f.messages), 3)
+        self.assertEqual(f.metadata, {})
+        # A short one whole, unnumbered.
+        g = udp_flow(message(b"x"))
+        g.id = "udp-2"
+        self.log.udp_message(g)
+        self.log.udp_end(g)
+        with open(flows, "rb") as written:
+            self.assertTrue(written.read().endswith(b"<x:0>"))
+
+    def test_parts_also_by_time(self):
+        parts = addon.Parts()
+        f = udp_flow(message(b"a"))
+        self.assertIsNone(parts.next(f, 1, now=0.0))
+        f.messages.append(message(b"b"))
+        self.assertEqual(parts.next(f, 1, now=10.0), (0, 2, 1))
+        self.assertEqual(parts.last(f), (2, 2, 2))
+        self.assertEqual(parts.last(f), (0, 2, 0))
 
     def test_appended_a_line_at_a_time(self):
         self.log.response(flow())

@@ -1,10 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
-  services.proxy-suite = {
-    enable = true;
-    mitm.enable = true;
-  };
-  environment.systemPackages = [
-    (config.lib.proxy-suite.mitm.wrap { } pkgs.httpie)
-  ];
+  services.proxy-suite.proxy.tproxy.bridgeNetfilter = "off";
 }

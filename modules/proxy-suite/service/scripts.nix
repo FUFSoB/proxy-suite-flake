@@ -185,6 +185,9 @@ let
           tag = ctx.mitmOutboundTag;
           selector = ctx.mitmUpstreamSelector;
           inherit (constants) hopUser;
+          # mitm.udp: the endpoint its UDP goes to, null without.
+          udpTag = if ctx.mitmUdpEnabled then ctx.mitmUdpTag else null;
+          relayInbound = constants.mitmUdpRelayInbound;
         }
       else
         null;

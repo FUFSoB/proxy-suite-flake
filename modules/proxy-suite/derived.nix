@@ -206,6 +206,15 @@ let
         "${stateDir}/mitm-requests"
       else
         "${runtimeDir}/proxy-suite-mitm/requests";
+    # mitm.attach's socket, in a directory of its own inside the runtime directory: the
+    # request log's readers connect to it, nobody else reaches it.
+    attachDir = "${runtimeDir}/proxy-suite-mitm/attach";
+    # What `proxy-ctl mitm addon load` left for mitmproxy to run: root's, or the mitm
+    # scope's with mitm.addons.userControl. Root hands mitmproxy a copy as it starts.
+    addonsDir = "${stateDir}/mitm-addons.d";
+    # mitm.udp: the tunnel's keys, root's, drawn once (ensureMitmWireguardKeys): mitmproxy's
+    # and the backend's, with their public halves.
+    wireguardKeysFile = "${stateDir}/mitm-wireguard.json";
   };
   mitmOutboundTag = "mitm";
   # With the proxy it is an outbound whose own traffic comes back into the backend; without,
@@ -228,6 +237,20 @@ let
     else
       mitmCfg.listener.address;
   mitmInterfacesEnabled = mitmOutboundEnabled && mitmCfg.interfaces != [ ];
+  # mitm.udp: the backend's endpoint into mitmproxy's WireGuard listener, and its listener
+  # for the UDP mitmproxy sends on. Root only: that UDP is marked by its user to come back.
+  mitmUdpEnabled = mitmOutboundEnabled && mitmCfg.udp.enable;
+  mitmUdpTag = "mitm-udp";
+  # The unit that puts both in place: mitm.interfaces' divert and mitm.udp's return.
+  mitmRoutingEnabled = mitmInterfacesEnabled || mitmUdpEnabled;
+  # The interfaces whose devices' traffic is diverted with TProxy as it comes in: on a bridge,
+  # bridge netfilter undoes that (proxy.tproxy.bridgeNetfilter), which is turned off only for
+  # these.
+  divertedInterfaces =
+    lib.optionals mitmInterfacesEnabled mitmCfg.interfaces
+    ++ lib.optionals (proxyEnabled && cfg.proxy.tproxy.enable) cfg.proxy.tproxy.lanInterfaces;
+  bridgeNetfilterOff =
+    cfg.proxy.tproxy.bridgeNetfilter == "off" && cfg.host.privileged && divertedInterfaces != [ ];
 
   # Joiners in name order, each an outbound on a loopback SOCKS listener of its own.
   whitelistBypassCfg = cfg.whitelistBypass;
@@ -298,6 +321,8 @@ let
     )
     ++ lib.optional torOutboundEnabled torCfg.socksPort
     ++ lib.optional mitmOutboundEnabled mitmCfg.port
+    # mitm.udp's relay for the TUN backends.
+    ++ lib.optional mitmUdpEnabled mitmCfg.udp.relayPort
     ++ map (j: j.port) whitelistBypassJoiners
     ++ lib.optional (sshProxyOutboundEnabled && !sshProxyNativeOutbound) sshProxyCfg.listener.port
     ++ lib.optionals hybridEnabled (builtins.attrValues constants.xraySidecarPorts)
@@ -1061,6 +1086,31 @@ let
         ${pkgs.coreutils}/bin/ln "$tmp" "$f" 2>/dev/null || true
         ${pkgs.coreutils}/bin/rm -f "$tmp"
       '';
+    # mitm.udp's tunnel keys, drawn the first time either end starts, as the hop login is:
+    # {server_key, client_key} as mitmproxy's wireguard.json takes them, and their public
+    # halves for the backend's endpoint. Root's alone; each end is handed what it needs.
+    ensureMitmWireguardKeys =
+      pkgs:
+      pkgs.writeShellScript "proxy-suite-mitm-wireguard-keys" ''
+        set -euo pipefail
+        f=${lib.escapeShellArg mitmCfg.wireguardKeysFile}
+        [ -s "$f" ] && [ ! -L "$f" ] && exit 0
+        ${pkgs.coreutils}/bin/rm -f -- "$f"
+        ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$f")"
+        umask 077
+        wg=${pkgs.wireguard-tools}/bin/wg
+        server=$("$wg" genkey)
+        client=$("$wg" genkey)
+        tmp=$(${pkgs.coreutils}/bin/mktemp "$f.XXXXXX")
+        # By the environment, root's to read: argv is public.
+        SERVER_KEY=$server CLIENT_KEY=$client \
+          SERVER_PUBLIC=$(printf '%s' "$server" | "$wg" pubkey) \
+          CLIENT_PUBLIC=$(printf '%s' "$client" | "$wg" pubkey) \
+          ${pkgs.jq}/bin/jq -n '{server_key: $ENV.SERVER_KEY, client_key: $ENV.CLIENT_KEY,
+            server_public: $ENV.SERVER_PUBLIC, client_public: $ENV.CLIENT_PUBLIC}' > "$tmp"
+        ${pkgs.coreutils}/bin/ln "$tmp" "$f" 2>/dev/null || true
+        ${pkgs.coreutils}/bin/rm -f "$tmp"
+      '';
     # One at a time: a unit this host does not have would fail the rest of one call.
     stopPerAppUnits =
       pkgs: patterns:
@@ -1367,6 +1417,21 @@ let
     mitmDivertFwmark = 23296;
     mitmDivertRouteTable = 104;
     mitmDivertNftTable = "proxy_suite_mitm";
+    # Its rule, ahead of the global TUN's (tunAutoRouteRulePriority): mitmproxy's own UDP
+    # (mitm.udp) is marked as it leaves, and a TUN that came up later would take it first.
+    mitmDivertRulePriority = 8987;
+    # The backend's end of it. Loopback carries far more than a guest's MTU: a whole
+    # 1500-byte datagram goes in one packet.
+    mitmUdpAddresses = [
+      "10.0.0.1/32"
+      "fd6d:6974:6d00::1/128"
+    ];
+    mitmUdpMtu = 1500;
+    # The backend's listener for what mitmproxy sends on over UDP.
+    mitmUdpReturnInbound = "mitm-udp-return";
+    # Its SOCKS5 listener for the TUN backends' UDP to mitmproxy, which go there by an outbound
+    # of the same tag as the tunnel (mitmUdpTag): "mitm-udp" is in every config.
+    mitmUdpRelayInbound = "mitm-udp-in";
 
     # sing-box DNS server resolving through an "interface" AmneziaWG outbound.
     awgDnsServerTag = tag: "awg-dns-${tag}";
@@ -1488,6 +1553,11 @@ in
     mitmListenerHost
     mitmInterfacesEnabled
     mitmInterfacesSysctl
+    mitmUdpEnabled
+    mitmUdpTag
+    mitmRoutingEnabled
+    divertedInterfaces
+    bridgeNetfilterOff
     whitelistBypassCfg
     whitelistBypassJoiners
     torOnionEnabled

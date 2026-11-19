@@ -281,6 +281,11 @@ Changes and secrets need root or the userControl group.
   mitm listener                          the proxy to point programs and devices at
   mitm run -- <cmd> [args]               run a command through it, trusting its CA; a browser
                                          in a profile of its own
+  mitm attach [--modify] -- <mitmdump|mitmproxy|mitmweb> [args]
+                                         your own mitmdump's addons on its flows as they come,
+                                         TCP and UDP; with --modify what they change is sent on
+  mitm addon [list|load <file.py> [--set <o>=<v>]...|unload <name>]
+                                         addons mitmproxy itself runs, as its own user (root)
   tg [status|on|off]                     Telegram proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link for its joiner

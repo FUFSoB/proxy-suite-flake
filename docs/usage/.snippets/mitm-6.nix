@@ -1,10 +1,10 @@
-{ config, lib, pkgs, ... }:
+{ config, pkgs, ... }:
 {
   services.proxy-suite = {
-  enable = true;
-  mitm = {
     enable = true;
-    requestLog.enable = true;
+    mitm.enable = true;
   };
-};
+  environment.systemPackages = [
+    (config.lib.proxy-suite.mitm.wrap { } pkgs.httpie)
+  ];
 }

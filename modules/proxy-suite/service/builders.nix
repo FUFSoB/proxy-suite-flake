@@ -319,10 +319,14 @@ rec {
       ipv6,
       fwmark,
       table,
+      # The rule's place, ahead of one another unit adds later; null, the kernel's choice.
+      priority ? null,
     }:
     lib.concatMapStrings (family: ''
       ${ip} ${family} route replace local default dev lo table ${toString table}
-      ${ip} ${family} rule add fwmark ${toString fwmark} table ${toString table}
+      ${ip} ${family} rule add fwmark ${toString fwmark} table ${toString table}${
+        lib.optionalString (priority != null) " pref ${toString priority}"
+      }
     '') ([ "-4" ] ++ lib.optional ipv6 "-6")
     # Without proxy.ipv6, marked IPv6 would leave directly: unreachable instead, so apps fall
     # back to IPv4. Not where the kernel has no IPv6 at all. On-link IPv6 still goes by main

@@ -114,6 +114,34 @@ let
   };
 
   indexOf = pred: list: lib.lists.findFirstIndex pred null list;
+
+  # mitm.udp, with the guests' and without.
+  udp = mkFixtureWith { networking.nftables.enable = true; } {
+    proxy.tproxy.enable = true;
+    mitm = {
+      udp.enable = true;
+      interfaces = [ "waydroid0" ];
+    };
+  };
+  udpConfig = mkTProxyConfig udp;
+  udpRules = (mkRouting udp).singBoxRouteModeRules.common;
+  udpStart = startOf udp;
+  udpSocks = socksStartOf udp;
+  udpNft = checkLib.mkNftRules udp "mitmInterfacesRulesFile";
+  udpAlone = mkFixtureWith { networking.nftables.enable = true; } { mitm.udp.enable = true; };
+  udpAloneNft = checkLib.mkNftRules udpAlone "mitmInterfacesRulesFile";
+  # With pin slots of both routes and the global TUN: the TUN backends reach the tunnel by
+  # the local proxy's relay.
+  udpPins = mkFixtureWith { networking.nftables.enable = true; } {
+    proxy.tun.enable = true;
+    perAppRouting = {
+      enable = true;
+      tun.enable = true;
+      tproxy.enable = true;
+    };
+    mitm.udp.enable = true;
+  };
+  udpPinsConfig = mkTProxyConfig udpPins;
 in
 {
   assertions = [
@@ -413,5 +441,284 @@ in
     (ok (rejects (mkFixture { mitm.listener.openFirewall = true; }) "openFirewall"))
     (ok (rejects (mkFixture { mitm.returnPort = 18531; }) "must differ"))
     (ok (rejects (mkFixture { mitm.listener.port = 1080; }) "mitm.listener.port"))
+
+    # mitm.udp: mitmproxy's WireGuard listener beside its upstream mode, the backend's endpoint
+    # into it, and its listener for what mitmproxy sends on.
+    (ok (failedAssertions udp == [ ] && failedAssertions udpAlone == [ ]))
+    (ok (
+      hasInfix "wireguard:/var/lib/proxy-suite/mitm/wireguard.json@127.0.0.1:18527" udpStart
+      && hasInfix "upstream:http://127.0.0.1:18532@127.0.0.1:18531" udpStart
+      && !(hasInfix "wireguard:" plainStart)
+    ))
+    (
+      let
+        endpoint = byTag (udpConfig.endpoints or [ ]) "mitm-udp";
+        back = byTag udpConfig.inbounds "mitm-udp-return";
+      in
+      ok (
+        endpoint.type == "wireguard"
+        && endpoint.mtu == 1500
+        && (builtins.head endpoint.peers).address == "127.0.0.1"
+        && (builtins.head endpoint.peers).port == 18527
+        && back.type == "tproxy"
+        && back.listen == "127.0.0.1"
+        && back.listen_port == 18528
+        && back.network == "udp"
+        && !(plainConfig ? endpoints)
+        && !(mkTunConfig udp ? endpoints)
+      )
+    )
+    # Its keys are root's, drawn once, handed to the backend by file, never through argv.
+    (ok (
+      hasInfix "proxy-suite-mitm-wireguard-keys" udpSocks
+      && hasInfix "--rawfile mitm_wireguard /var/lib/proxy-suite/mitm-wireguard.json" udpSocks
+      && !(hasInfix "mitm_wireguard" plainSocks)
+    ))
+    # What comes back on UDP leaves by the upstream, as mitm-return's TCP; sent to it straight,
+    # refused.
+    (
+      let
+        guard = indexOf (
+          r: lib.elem "mitm-udp-return" (r.inbound or [ ]) && (r.action or "") == "reject" && r ? ip_cidr
+        ) udpRules;
+        back = indexOf (
+          r:
+          lib.elem "mitm-udp-return" (r.inbound or [ ]) && (r.outbound or "") == "proxy-suite-mitm-upstream"
+        ) udpRules;
+      in
+      ok (guard != null && back != null && guard < back)
+    )
+    # The guests' UDP and SOCKS5's to it, QUIC still refused first.
+    (
+      let
+        quic = indexOf (
+          r:
+          lib.elem "mitm-tproxy-in" (r.inbound or [ ]) && (r.port or [ ]) == [ 443 ] && r.action == "reject"
+        ) udpRules;
+        guests = indexOf (
+          r:
+          lib.elem "mitm-tproxy-in" (r.inbound or [ ])
+          && (r.network or [ ]) == [ "udp" ]
+          && (r.outbound or "") == "mitm-udp"
+        ) udpRules;
+      in
+      ok (
+        quic != null
+        && guests != null
+        && quic < guests
+        && lib.any (
+          r:
+          (r.inbound or [ ]) == [ "mitm-in" ]
+          && (r.network or [ ]) == [ "udp" ]
+          && (r.outbound or "") == "mitm-udp"
+        ) udpRules
+        && lib.any (r: (r.inbound or [ ]) == [ "mitm-in" ] && (r.port or [ ]) == [ 443 ]) udpRules
+      )
+    )
+    # Its table: the guests' UDP whole; mitmproxy's own marked as it leaves, back on lo to the
+    # backend, and dropped if its rule is gone. The global TProxy chain leaves that mark alone.
+    (
+      let
+        up = generated.readDerivation (services udp).proxy-suite-mitm-interfaces.serviceConfig.ExecStart;
+      in
+      ok (
+        hasInfix "meta nfproto ipv4 meta l4proto udp meta mark set 23296 tproxy ip to 127.0.0.1:18529" udpNft
+        && hasInfix "iifname \"lo\" meta mark 23296 meta nfproto ipv4 meta l4proto udp tproxy ip to 127.0.0.1:18528" udpNft
+        && hasInfix "type route hook output priority mangle - 1" udpNft
+        && hasInfix "meta skuid != \"proxy-suite-mitm\" return" udpNft
+        && hasInfix "meta mark 23296 oifname != \"lo\" drop" udpNft
+        && hasInfix "meta mark 23296 return" (checkLib.mkTProxyNftRules udp)
+        && !(hasInfix "meta mark 23296 return" (checkLib.mkTProxyNftRules full))
+        && hasInfix "rule add fwmark 23296 table 104 pref 8987" up
+      )
+    )
+    # Without the guests: the return alone, in the same unit.
+    (ok (
+      (services udpAlone) ? proxy-suite-mitm-interfaces
+      && !(hasInfix "iifname !=" udpAloneNft)
+      && hasInfix "tproxy ip to 127.0.0.1:18528" udpAloneNft
+      && !(udpAlone.config.boot.kernel.sysctl ? "net.ipv4.ip_forward")
+    ))
+    # The backend filter's UDP twins: to mitmproxy with mitm.udp, QUIC refused; refused whole
+    # without. The keys are set there.
+    (
+      let
+        filter =
+          udpTag:
+          import ../../modules/proxy-suite/service/script-blocks/backend-jq-filter.nix {
+            inherit lib;
+            pureXrayEnabled = false;
+            proxyInboundsGuardPrivate = false;
+            selectionMode = "manual";
+            mitm = {
+              tag = "mitm";
+              selector = "proxy-suite-mitm-upstream";
+              hopUser = "hop";
+              relayInbound = "mitm-udp-in";
+              inherit udpTag;
+            };
+          };
+        withUdp = filter "mitm-udp";
+        without = filter null;
+      in
+      ok (
+        hasInfix "outbound: \"mitm-udp\"}" withUdp
+        && hasInfix "{network: [\"udp\"], port: [443]}" withUdp
+        && hasInfix "no keys for the mitm-udp tunnel" withUdp
+        && !(hasInfix "outbound: \"mitm-udp\"" without)
+        && !(hasInfix "mitm_wireguard" without)
+        && hasInfix "action: \"reject\"}, ." without
+      )
+    )
+    (ok (rejects (mkAlone { mitm.udp.enable = true; }) "mitm.udp.enable requires proxy.enable"))
+    # The relay: a SOCKS5 listener of the local proxy's, and in each TUN backend an outbound to
+    # it under the tunnel's tag, which the filter gives the hop login.
+    (
+      let
+        relay = byTag udpPinsConfig.inbounds "mitm-udp-in";
+        socksTo = config: byTag config.outbounds "mitm-udp";
+        relayed =
+          config:
+          (socksTo config).type == "socks"
+          && (socksTo config).server_port == 18526
+          && (socksTo config).network == "udp";
+        relayRules = builtins.filter (r: (r.inbound or [ ]) == [ "mitm-udp-in" ]) udpRules;
+      in
+      ok (
+        failedAssertions udpPins == [ ]
+        && relay.type == "socks"
+        && relay.listen == "127.0.0.1"
+        && relay.listen_port == 18526
+        && socksTo udpPinsConfig == null
+        && relayed (mkTunConfig udpPins)
+        && relayed (checkLib.mkPerAppTunConfig udpPins)
+        &&
+          map (r: r.action or r.outbound) relayRules == [
+            "reject"
+            "mitm-udp"
+            "reject"
+          ]
+      )
+    )
+    # proxy.tproxy.bridgeNetfilter: kept, the divert says so for a bridge; off, a unit Docker's
+    # start pulls in turns it off, and so does the divert as it comes up; off with nothing
+    # diverted, nothing is touched.
+    (
+      let
+        off = mkFixtureWith { networking.nftables.enable = true; } {
+          proxy.tproxy.bridgeNetfilter = "off";
+          mitm.interfaces = [ "waydroid0" ];
+        };
+        offUndiverted = mkFixture { proxy.tproxy.bridgeNetfilter = "off"; };
+        upOf =
+          fixture:
+          generated.readDerivation (services fixture).proxy-suite-mitm-interfaces.serviceConfig.ExecStart;
+        unitOff = (services off).proxy-suite-bridge-netfilter;
+      in
+      ok (
+        failedAssertions off == [ ]
+        && hasInfix "is a bridge and net.bridge.bridge-nf-call-iptables is on" (upOf full)
+        && !(hasInfix "echo 0 >" (upOf full))
+        && hasInfix "echo 0 >" (upOf off)
+        && !(hasInfix "is a bridge" (upOf off))
+        && builtins.elem "docker.service" unitOff.wantedBy
+        && builtins.elem "docker.service" unitOff.after
+        && unitOff.serviceConfig.RemainAfterExit == false
+        && !((services full) ? proxy-suite-bridge-netfilter)
+        && !((services offUndiverted) ? proxy-suite-bridge-netfilter)
+      )
+    )
+    # TProxy's marks for this host's own programs pass the reverse path check on lo, as
+    # mitm.udp's does: the pin slots' among them.
+    (
+      let
+        rules = udpPins.config.networking.firewall.extraReversePathFilterRules;
+        line = builtins.head (
+          builtins.filter (hasInfix "iifname \"lo\" meta mark {") (lib.splitString "\n" rules)
+        );
+      in
+      ok (hasInfix "23168" line && hasInfix "23175" line && !(hasInfix "23176" line))
+    )
+    # Pin slots: a UDP selector and a QUIC one each, whose rules come before the slot's own.
+    (
+      let
+        check =
+          config: route:
+          let
+            names = tags config.outbounds;
+            slot = "proxy-suite-pin-${route}-0";
+            at = outbound: indexOf (r: (r.outbound or "") == outbound) config.route.rules;
+          in
+          builtins.elem "${slot}-udp" names
+          && builtins.elem "${slot}-quic" names
+          && at "${slot}-quic" < at "${slot}-udp"
+          && at "${slot}-udp" < at slot
+          && (builtins.elemAt config.route.rules (at "${slot}-quic")).port == [ 443 ];
+      in
+      ok (
+        check udpPinsConfig "tproxy"
+        && check (checkLib.mkPerAppTunConfig udpPins) "tun"
+        && !(builtins.elem "proxy-suite-pin-tproxy-0-udp" (
+          tags
+            (mkTProxyConfig (mkFixture {
+              perAppRouting = {
+                enable = true;
+                tproxy.enable = true;
+              };
+            })).outbounds
+        ))
+      )
+    )
+    # What comes back on lo passes the reverse path check, which the iptables firewall's cannot
+    # be told.
+    (ok (
+      hasInfix "iifname \"lo\" meta mark 23296 accept" udpAlone.config.networking.firewall.extraReversePathFilterRules
+      && rejects (mkFixture { mitm.udp.enable = true; }) "mitm.udp.enable needs the nftables firewall"
+    ))
+    (ok (
+      rejects (mkFixture {
+        mitm.udp = {
+          enable = true;
+          port = 18531;
+        };
+      }) "must differ"
+    ))
+
+    # mitm.attach: its addon ahead of the request log's, its socket in a directory of its own.
+    (ok (
+      hasInfix "-proxy-suite-scripts/mitm_attach.py" plainStart
+      && hasInfix "\"attach_socket\":\"/run/proxy-suite-mitm/attach/attach.sock\"" plainStart
+      && hasInfix "\"attach_timeout\":5" plainStart
+      && !(hasInfix "mitm_attach.py" (
+        startOf (mkFixture {
+          mitm.attach.enable = false;
+        })
+      ))
+    ))
+    # mitm.addons: their spool root's alone, unless the mitm scope is given it; what they
+    # write beside the request log.
+    (
+      let
+        tmpfiles = fixture: fixture.config.systemd.tmpfiles.rules;
+        given = mkFixture {
+          userControl.enable = true;
+          mitm.addons.userControl = true;
+        };
+      in
+      ok (
+        builtins.elem "d /var/lib/proxy-suite/mitm-addons.d 0700 root root -" (tmpfiles plain)
+        && builtins.elem "d /var/lib/proxy-suite/mitm-addons.d 2770 root proxy-suite -" (tmpfiles given)
+        && builtins.elem "PROXY_SUITE_MITM_OUTPUT=/run/proxy-suite-mitm/requests/addons" (unit plain)
+        .serviceConfig.Environment
+      )
+    )
+    # mitm.pythonPackages: on the path of mitmproxy's own addons, only when there are some.
+    (ok (
+      lib.any (lib.hasPrefix "PYTHONPATH=")
+        (unit (mkFixture {
+          mitm.pythonPackages = ps: [ ps.six ];
+        })).serviceConfig.Environment
+      && !(lib.any (lib.hasPrefix "PYTHONPATH=") (unit plain).serviceConfig.Environment)
+    ))
   ];
 }

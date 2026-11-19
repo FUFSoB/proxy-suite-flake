@@ -88,6 +88,37 @@ let
     family = "inet";
     table = "proxy_suite_killswitch";
   };
+
+  # proxy.tproxy.bridgeNetfilter: with bridge netfilter on, a bridge's devices meet the divert inside the
+  # bridge, before the IP stack, which drops the socket it hands them to. "off" turns it off;
+  # else what the divert takes in from a bridge is warned about, by interface. Bridges and the
+  # module come and go, so this is looked at as the divert comes up.
+  bridgeNetfilterOff = ''
+    for sysctl in /proc/sys/net/bridge/bridge-nf-call-iptables /proc/sys/net/bridge/bridge-nf-call-ip6tables; do
+      if [ -w "$sysctl" ] && [ "$(< "$sysctl")" != 0 ]; then
+        echo 0 > "$sysctl"
+        echo "proxy-suite: ''${sysctl#/proc/sys/} off (proxy.tproxy.bridgeNetfilter)" >&2
+      fi
+    done
+  '';
+  mkBridgeNetfilterCheck =
+    interfaces:
+    if ctx.bridgeNetfilterOff then
+      bridgeNetfilterOff
+    else
+      lib.optionalString (interfaces != [ ]) ''
+        # No such file: no bridge netfilter loaded.
+        if [ -r /proc/sys/net/bridge/bridge-nf-call-iptables ] \
+          && [ "$(< /proc/sys/net/bridge/bridge-nf-call-iptables)" = 1 ]; then
+          for interface in ${lib.escapeShellArgs interfaces}; do
+            if [ -d "/sys/class/net/$interface/bridge" ]; then
+              echo "proxy-suite: $interface is a bridge and net.bridge.bridge-nf-call-iptables is on:" \
+                "its devices get no TCP or UDP through the divert. Set services.proxy-suite.proxy.tproxy.bridgeNetfilter = \"off\"," \
+                "or that sysctl and net.bridge.bridge-nf-call-ip6tables to 0." >&2
+            fi
+          done
+        fi
+      '';
 in
 {
   # One nft transaction swaps the old table for the new: traffic never sees neither. Also the
@@ -212,6 +243,12 @@ in
     }}
   '';
 
+  # proxy.tproxy.bridgeNetfilter = "off", in a unit of its own that Docker's start pulls in again.
+  bridgeNetfilterOffScript = pkgs.writeShellScript "proxy-suite-routing" ''
+    set -euo pipefail
+    ${bridgeNetfilterOff}
+  '';
+
   tproxyUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
 
@@ -246,6 +283,7 @@ in
     }}
     ${nft} -f ${nftablesRulesFile}
     ${persistTable "singbox" "'include \"${nftablesRulesFile}\"'"}
+    ${mkBridgeNetfilterCheck globalTproxy.lanInterfaces}
   '';
 
   # After a firewall reload that flushed the ruleset (NixOS's flushRuleset, a distribution's
@@ -285,8 +323,9 @@ in
     }}
   '';
 
-  # mitm.interfaces: as TProxy's, for the guests' TCP alone and with a mark and table of
-  # its own, so it is there whichever global mode is, or none.
+  # mitm.interfaces: as TProxy's, for the guests' TCP (and UDP with mitm.udp) alone and with
+  # a mark and table of its own, so it is there whichever global mode is, or none. mitm.udp's
+  # return takes the same mark and table, for what mitmproxy itself sends.
   mitmInterfacesUpScript = pkgs.writeShellScript "proxy-suite-routing" ''
     set -euo pipefail
     ${builders.mkNftDeleteTable {
@@ -311,9 +350,11 @@ in
       inherit ipv6;
       fwmark = constants.mitmDivertFwmark;
       table = constants.mitmDivertRouteTable;
+      priority = constants.mitmDivertRulePriority;
     }}
     ${nft} -f ${mitmInterfacesRulesFile}
     ${persistTable constants.mitmDivertNftTable "'include \"${mitmInterfacesRulesFile}\"'"}
+    ${mkBridgeNetfilterCheck (lib.optionals ctx.mitmInterfacesEnabled ctx.mitmCfg.interfaces)}
   '';
 
   mitmInterfacesReloadScript = pkgs.writeShellScript "proxy-suite-routing" ''

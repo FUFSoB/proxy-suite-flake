@@ -118,10 +118,45 @@ let
   '';
   # mitm: its listeners' logins, and the selector its traffic leaves by, which takes every
   # outbound and group but mitmproxy itself and proxy-suite's own selectors: the upstream
-  # chosen ($mitm_upstream) if it is there, else "proxy". Then, as mitmproxy carries no UDP,
-  # every rule that sends traffic to it gets a twin just before it, matching the same and
-  # UDP, that rejects: a browser falls back from QUIC at once. Not a rule that names its
-  # own network or inbound (mitm.listener's and mitm.interfaces', which say what of UDP goes).
+  # chosen ($mitm_upstream) if it is there, else "proxy". Then, as mitmproxy's HTTP listener
+  # carries no UDP, every rule that sends traffic to it gets a twin just before it, matching
+  # the same and UDP, that rejects: a browser falls back from QUIC at once. With mitm.udp
+  # (mitm.udpTag) two: QUIC refused, the rest of UDP to mitmproxy's WireGuard listener,
+  # whose keys are set here. Not a rule that names its own network or inbound
+  # (mitm.listener's and mitm.interfaces', which say what of UDP goes).
+  mitmUdpTag = mitm.udpTag or null;
+  udpTwins =
+    if mitmUdpTag == null then
+      ''
+        {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"]}],
+         action: "reject"}, .''
+    else
+      ''
+        {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"], port: [443]}],
+         action: "reject"},
+        {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"]}],
+         outbound: ${builtins.toJSON mitmUdpTag}}, .'';
+  # The tunnel's keys where it is (the local proxy), and the hop login of its relay for the
+  # TUN backends: on the relay's listener there, on the outbound to it here.
+  singBoxMitmUdp = lib.optionalString (mitmUdpTag != null) ''
+    | (($ARGS.named.mitm_wireguard // "") | if . == "" then null else fromjson end) as $mitm_wg
+    | if any(.endpoints[]?; .tag == ${builtins.toJSON mitmUdpTag}) then
+        if $mitm_wg == null then
+          error("proxy-suite: no keys for the mitm-udp tunnel")
+        else
+          .endpoints |= map(if .tag == ${builtins.toJSON mitmUdpTag} then
+              .private_key = $mitm_wg.client_key
+              | .peers[0].public_key = $mitm_wg.server_public
+            else . end)
+        end
+      else . end
+    | if any(.inbounds[]; .tag == ${builtins.toJSON mitm.relayInbound}) or any(.outbounds[]; .tag == ${builtins.toJSON mitmUdpTag}) then
+        if $mitm_hop == "" then error("proxy-suite: no hop login for the mitm-udp relay") else . end
+        | (.inbounds[] | select(.tag == ${builtins.toJSON mitm.relayInbound}) | .users)
+            = [{username: ${builtins.toJSON mitm.hopUser}, password: $mitm_hop}]
+        | (.outbounds[] | select(.tag == ${builtins.toJSON mitmUdpTag}) | .password) = $mitm_hop
+      else . end
+  '';
   singBoxMitm = lib.optionalString (mitm != null) ''
     | (($ARGS.named.mitm_hop // "") | rtrimstr("\n")) as $mitm_hop
     | if $mitm_hop != "" then
@@ -136,7 +171,10 @@ let
           = [{username: $ARGS.named.mitm_listener_user, password: $mitm_password}]
       else . end
     | ([.outbounds[].tag
-        | select((startswith("proxy-suite-") or . == ${builtins.toJSON mitm.tag} or . == "block") | not)]) as $mitm_exits
+        | select((startswith("proxy-suite-") or . == ${builtins.toJSON mitm.tag}
+            or . == ${
+              builtins.toJSON (if mitmUdpTag == null then mitm.tag else mitmUdpTag)
+            } or . == "block") | not)]) as $mitm_exits
     | ($ARGS.named.mitm_upstream // "proxy") as $mitm_upstream
     | .outbounds |= map(if .type == "selector" and .tag == ${builtins.toJSON mitm.selector}
         then .outbounds = $mitm_exits
@@ -145,9 +183,9 @@ let
         else . end)
     | .route.rules = [.route.rules[]
         | if (.outbound? // "") == ${builtins.toJSON mitm.tag} and ((has("network") or has("inbound")) | not) then
-            {type: "logical", mode: "and", rules: [del(.outbound, .action), {network: ["udp"]}],
-             action: "reject"}, .
+            ${udpTwins}
           else . end]
+    ${singBoxMitmUdp}
   '';
   # XRay's port list: "80,1000-2000".
   closedPorts = map (

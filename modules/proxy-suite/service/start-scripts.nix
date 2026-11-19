@@ -473,6 +473,11 @@ let
           MITM_ARGS+=(--arg mitm_listener_user ${lib.escapeShellArg ctx.mitmCfg.listener.auth.username}
             --rawfile mitm_listener_password ${lib.escapeShellArg ctx.mitmCfg.listener.auth.passwordFile})
         ''}
+        ${lib.optionalString ctx.mitmUdpEnabled ''
+          # mitm.udp: the tunnel's keys, drawn here if mitmproxy has not started yet.
+          ${constants.ensureMitmWireguardKeys pkgs}
+          MITM_ARGS+=(--rawfile mitm_wireguard ${lib.escapeShellArg ctx.mitmCfg.wireguardKeysFile})
+        ''}
       ''}
       # umask: the file holds credentials until the chmod below; the process
       # substitutions keep them out of the argv every local user can read.

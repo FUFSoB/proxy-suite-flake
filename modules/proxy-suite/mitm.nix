@@ -23,8 +23,19 @@ let
       Group = mitmUser;
     };
 
+  scriptsDir = import ./lib/scripts-dir.nix { inherit lib; };
   # mitm.requestLog's addon.
-  requestLogAddon = "${import ./lib/scripts-dir.nix { inherit lib; }}/mitm_request_log.py";
+  requestLogAddon = "${scriptsDir}/mitm_request_log.py";
+  # mitm.attach's: the socket programs attach to, beside the client addon they run.
+  attachAddon = "${scriptsDir}/mitm_attach.py";
+  attachSocket = "${m.attachDir}/attach.sock";
+  udp = derived.mitmUdpEnabled;
+  # mitm.udp: loaded first, keeps the tunnel's key out of the log mitmproxy writes as its
+  # WireGuard listener starts.
+  firstScripts = lib.optional udp "${scriptsDir}/mitm_quiet.py";
+  # mitm.pythonPackages, for the addons mitmproxy itself runs.
+  extraPython = m.pythonPackages pkgs.python3.pkgs;
+  extraPythonPath = "${pkgs.python3.withPackages m.pythonPackages}/${pkgs.python3.sitePackages}";
   # Its log, for whoever holds the mitm scope, as mitmweb's password is: mitmweb shows them
   # the same. userControl.group owns the directory; the other groups get ACLs.
   logGroupOwns = privileged && derived.userControlAllows "mitm";
@@ -38,6 +49,15 @@ let
       "-m 0750 -o ${mitmUser} -g ${mitmUser}"
     else
       "-m 0700 -o ${mitmUser} -g ${mitmUser}";
+  # mitm.attach's directory: the same groups reach it, but to connect to the socket, not to
+  # put anything there. The socket is made 0660 for them (attach_group_access).
+  attachDirOwner =
+    if !privileged then
+      "-m 0700"
+    else if logGroupOwns then
+      "-m 2750 -o ${mitmUser} -g ${lib.escapeShellArg derived.userControlCfg.group}"
+    else
+      "-m 0750 -o ${mitmUser} -g ${mitmUser}";
 
   coreutils = "${pkgs.coreutils}/bin";
   jq = "${pkgs.jq}/bin/jq";
@@ -55,6 +75,9 @@ let
     mode =
       if outbound then
         [ "upstream:http://127.0.0.1:${toString m.returnPort}@127.0.0.1:${toString m.port}" ]
+        # mitm.udp: the backend's UDP, through a WireGuard tunnel on loopback; what mitmproxy
+        # sends on is marked by its user and comes back to the backend (nftables.nix).
+        ++ lib.optional udp "wireguard:${m.dataDir}/wireguard.json@127.0.0.1:${toString m.udp.port}"
       else
         [
           "regular@${
@@ -81,6 +104,29 @@ let
       ${constants.ensureHopLogin pkgs}
       hand hop-login < ${lib.escapeShellArg constants.hopLoginFile}
     ''}
+    ${lib.optionalString udp ''
+      # mitm.udp: its half of the tunnel's keys, as mitmproxy's wireguard.json takes them.
+      ${constants.ensureMitmWireguardKeys pkgs}
+      ${jq} '{server_key, client_key}' ${lib.escapeShellArg m.wireguardKeysFile} | hand wireguard.json
+    ''}
+    # The addons `proxy-ctl mitm addon load` left, each with its options: copies, made anew.
+    ${coreutils}/rm -rf -- "$state/addons"
+    ${coreutils}/install -d ${give}-m 0700 -- "$state/addons"
+    spool=${lib.escapeShellArg m.addonsDir}
+    if [ -d "$spool" ] && [ ! -L "$spool" ]; then
+      for addon in "$spool"/*.py; do
+        [ -f "$addon" ] && [ ! -L "$addon" ] || continue
+        name=''${addon##*/}
+        name=''${name%.py}
+        case "$name" in "" | *[!A-Za-z0-9_-]*) continue ;; esac
+        hand "addons/$name.py" < "$addon"
+        options="$spool/$name.options.json"
+        if [ -f "$options" ] && [ ! -L "$options" ] \
+          && ${jq} -e 'type == "object"' "$options" > /dev/null 2>&1; then
+          hand "addons/$name.options.json" < "$options"
+        fi
+      done
+    fi
     settings=${lib.escapeShellArg constants.mitmSettingsFile}
     if [ -f "$settings" ] && [ ! -L "$settings" ] \
       && ${jq} -e 'type == "object"' "$settings" > /dev/null 2>&1; then
@@ -120,7 +166,24 @@ let
       ${coreutils}/rm -f -- "$logdir"
     fi
     ${coreutils}/install -d ${logDirOwner} -- "$logdir"
+    # Where loaded addons write what they find ($PROXY_SUITE_MITM_OUTPUT), read as the log is.
+    if [ -L "$logdir/addons" ] || { [ -e "$logdir/addons" ] && [ ! -d "$logdir/addons" ]; }; then
+      ${coreutils}/rm -f -- "$logdir/addons"
+    fi
+    ${coreutils}/install -d ${logDirOwner} -- "$logdir/addons"
     ${constants.grantDirAcl pkgs ''"$logdir"'' userControlGroups "rX"}
+    ${lib.optionalString m.attach.enable ''
+      # mitm.attach's socket's directory, in the runtime directory made for this start.
+      attach=${lib.escapeShellArg m.attachDir}
+      ${coreutils}/rm -rf -- "$attach"
+      ${coreutils}/install -d ${attachDirOwner} -- "$attach"
+      ${lib.optionalString (privileged && userControlGroups != [ ]) ''
+        # The other groups: to reach the socket, and to connect to it once it is made.
+        ${pkgs.acl}/bin/setfacl -m ${
+          lib.concatMapStringsSep "," (g: "g:${g}:rX,d:g:${g}:rw") userControlGroups
+        } -- "$attach"
+      ''}
+    ''}
   '';
 
   # The CA mitmproxy signs with, and its public half for whatever is to trust it.
@@ -196,6 +259,17 @@ let
     # mitm.requestLog's files, in the directory root made as it staged.
     log_file=${lib.escapeShellArg "${m.requestLogDir}/requests.jsonl"}
     flows_file=${lib.escapeShellArg "${m.requestLogDir}/requests.mitm"}
+    # The addons root copied as it staged, with the options each was loaded with.
+    loaded='[]'
+    loaded_options='{}'
+    for addon in "$state"/addons/*.py; do
+      [ -f "$addon" ] || continue
+      loaded=$(${jq} -c --arg path "$addon" '. + [$path]' <<< "$loaded")
+      options="''${addon%.py}.options.json"
+      if [ -f "$options" ]; then
+        loaded_options=$(${jq} -c --slurpfile o "$options" '. + ($o[0] // {})' <<< "$loaded_options")
+      fi
+    done
     # The options, then what proxy-ctl changed without a rebuild, then extraOptions.
     ${jq} -n \
       --argjson static ${lib.escapeShellArg (builtins.toJSON staticOptions)} \
@@ -210,6 +284,23 @@ let
       --arg logFile "$log_file" \
       --argjson logMax ${toString (builtins.floor (m.requestLog.maxSizeMiB * 1024 * 1024))} \
       --argjson logShared ${builtins.toJSON logShared} \
+      --argjson attach ${
+        lib.escapeShellArg (
+          builtins.toJSON (
+            lib.optionalAttrs m.attach.enable {
+              script = attachAddon;
+              options = {
+                attach_socket = attachSocket;
+                attach_timeout = m.attach.timeout;
+                attach_group_access = logShared;
+              };
+            }
+          )
+        )
+      } \
+      --argjson first ${lib.escapeShellArg (builtins.toJSON firstScripts)} \
+      --argjson loaded "$loaded" \
+      --argjson loadedOptions "$loaded_options" \
       --slurpfile s "$settings" \
       --arg state "$state" \
       "''${secrets[@]}" \
@@ -230,18 +321,25 @@ let
             .scripts = [$logAddon]
             | .request_log_max_bytes = $logMax
             | .request_log_group_read = $logShared
-          else . end
+          else .scripts = [] end
         | if $lines then .request_log_file = $logFile | .request_log_headers = $logHeaders else . end
         | if $whole then .request_log_flows_file = $flowsFile else . end
+        | if $attach != {} then .scripts = [$attach.script] + .scripts | . + $attach.options else . end
         | .web_password = ($web_password | rtrimstr("\n"))
         ${lib.optionalString outbound ''| .upstream_auth = "${constants.hopUser}:" + ($hop | rtrimstr("\n"))''}
         ${lib.optionalString (!outbound && derived.mitmListenerAuth)
           ''| .proxyauth = ${builtins.toJSON m.listener.auth.username} + ":" + ($listener_password | split("\n")[0])''
         }
-        # The scripts of extraOptions come after these, not instead of them.
-        | ((.scripts // []) + ($extra.scripts // [])) as $scripts
+        # The addons that change traffic first, those of extraOptions and those loaded; then
+        # the programs attached, then the log, which keeps what was sent on. Before all, the
+        # one that keeps the key of the tunnel out of the log.
+        | ($first + ($extra.scripts // []) + $loaded + .scripts) as $scripts
+        | . + $extra
+        # The options of a loaded addon are its own: none of those set above.
+        | . as $set
+        | . + ($loadedOptions | with_entries(select(.key as $k | $set | has($k) | not)))
         | {
-            config: (. + $extra | if $scripts == [] then del(.scripts) else .scripts = $scripts end),
+            config: (if $scripts == [] then del(.scripts) else .scripts = $scripts end),
             web: chosen("web"; $web)
           }
       ' > "$state/config.json.new"
@@ -279,7 +377,12 @@ in
       ];
       ExecStart = startScript;
       # mitmdump's line per request into the journal as it comes, not a buffer at a time.
-      Environment = [ "PYTHONUNBUFFERED=1" ];
+      # Loaded addons write what they find beside the request log, where its readers look.
+      Environment = [
+        "PYTHONUNBUFFERED=1"
+        "PROXY_SUITE_MITM_OUTPUT=${m.requestLogDir}/addons"
+      ]
+      ++ lib.optional (extraPython != [ ]) "PYTHONPATH=${extraPythonPath}";
       # The CA's key, config.yaml with its logins, and saved flows.
       StateDirectory = "proxy-suite/mitm";
       StateDirectoryMode = "0700";

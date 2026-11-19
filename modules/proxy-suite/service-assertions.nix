@@ -95,6 +95,11 @@ let
       mitmCfg.returnPort
     ]
     ++ lib.optional derived.mitmInterfacesEnabled mitmCfg.interfacesPort
+    ++ lib.optionals derived.mitmUdpEnabled [
+      mitmCfg.udp.port
+      mitmCfg.udp.returnPort
+      mitmCfg.udp.relayPort
+    ]
     ++ lib.optional (mitmCfg.enable && mitmCfg.web.enable) mitmCfg.web.port;
   # The loopback listeners of AmneziaWG outbounds added at runtime, one per slot.
   awgRuntimeTunnelPorts = lib.optionals derived.awgRuntimeOutbounds (
@@ -133,6 +138,9 @@ let
     (rootlessForbids (proxyEnabled && globalTun.enable) "proxy.tun")
     (rootlessForbids (proxyEnabled && globalTproxy.enable) "proxy.tproxy")
     (rootlessForbids cfg.killSwitch.enable "killSwitch")
+    (rootlessForbids (
+      cfg.proxy.tproxy.bridgeNetfilter == "off"
+    ) "proxy.tproxy.bridgeNetfilter = \"off\"")
     (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTun.enable) "perAppRouting.tun")
     (rootlessForbids (perAppRoutingCfg.enable && perAppRoutingTproxy.enable) "perAppRouting.tproxy")
     (rootlessForbids perAppZapretCfg.enable "perAppRouting.zapret")
@@ -843,7 +851,7 @@ let
         lib.concatMapStringsSep ", " toString (
           builtins.filter (port: builtins.elem port reservedLoopbackPorts) derived.proxyInboundPorts
         )
-      }): the XRay DNS bridges' 18533-18535, the outbound test's 18537, the WARP tunnels' 18538-18539 and from 18900, tor.socksPort, mitm's port, returnPort, interfacesPort and web.port, and the loopback listeners of the AmneziaWG outbounds from 18600, the AmneziaWG listeners from 18700, the whitelistBypass joiners from 18750, the runtime AmneziaWG outbounds at 18800-18831 and the sing-box listeners from 18850, or the hybrid XRay sidecar's 33080, 33180 and 33280"
+      }): the XRay DNS bridges' 18533-18535, the outbound test's 18537, the WARP tunnels' 18538-18539 and from 18900, tor.socksPort, mitm's port, returnPort, interfacesPort, udp.port, udp.returnPort, udp.relayPort and web.port, and the loopback listeners of the AmneziaWG outbounds from 18600, the AmneziaWG listeners from 18700, the whitelistBypass joiners from 18750, the runtime AmneziaWG outbounds at 18800-18831 and the sing-box listeners from 18850, or the hybrid XRay sidecar's 33080, 33180 and 33280"
     )
     # The prober opens one loopback listener per exit from probeBasePort; the WARP
     # and AmneziaWG tunnels open two each from their own bases. They all bind
@@ -1696,11 +1704,16 @@ let
       mitmCfg.interfaces == [ ] || proxyEnabled
     ) "proxy-suite: mitm.interfaces requires proxy.enable = true")
     (rootlessForbids (mitmCfg.interfaces != [ ]) "mitm.interfaces")
+    (mkAssertion (!mitmCfg.udp.enable || proxyEnabled)
+      "proxy-suite: mitm.udp.enable requires proxy.enable = true: without the proxy, mitmproxy's listener carries no UDP"
+    )
+    # What mitmproxy sends on over UDP is told apart by its user, which a rootless host has not.
+    (rootlessForbids mitmCfg.udp.enable "mitm.udp.enable")
     (mkAssertion (lib.intersectLists mitmCfg.interfaces globalTproxy.lanInterfaces == [ ])
       "proxy-suite: an interface is in both mitm.interfaces and proxy.tproxy.lanInterfaces: ${lib.concatStringsSep ", " (lib.intersectLists mitmCfg.interfaces globalTproxy.lanInterfaces)}"
     )
     (uniqueValues derived.mitmOutboundEnabled mitmLoopbackPorts
-      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort and mitm.web.port must differ"
+      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort, mitm.udp.port, mitm.udp.returnPort, mitm.udp.relayPort and mitm.web.port must differ"
     )
     (mkAssertion (!mitmCfg.listener.enable || !builtins.elem mitmCfg.listener.port mitmListenerClashes)
       "proxy-suite: mitm.listener.port ${toString mitmCfg.listener.port} collides with another proxy-suite listener"
@@ -1714,7 +1727,7 @@ let
           || (proxyInboundsEnabled && builtins.elem port derived.proxyInboundPorts)
         ) mitmLoopbackPorts
       )
-      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort or mitm.web.port collides with another proxy-suite listener"
+      "proxy-suite: mitm.port, mitm.returnPort, mitm.interfacesPort, mitm.udp.port, mitm.udp.returnPort, mitm.udp.relayPort or mitm.web.port collides with another proxy-suite listener"
     )
   ];
   # zapret2.blobs' names go into nfqws2's argv as --blob=<name>:@<file>.

@@ -21,6 +21,7 @@ let
     perAppPinSlots
     mitmCfg
     mitmInterfacesEnabled
+    mitmUdpEnabled
     ;
   proxyCfg = cfg.proxy;
   globalTproxy = proxyCfg.tproxy;
@@ -35,6 +36,11 @@ let
   # Apps run `--via` an AmneziaWG interface are routed into it, not into the proxy.
   perAppViaMarkLine = lib.optionalString (perAppViaMarks != [ ]) ''
     meta mark { ${lib.concatMapStringsSep ", " toString perAppViaMarks} } return
+  '';
+  # mitm.udp: what mitmproxy sends on is marked to come back to the backend's own listener
+  # for it (mitmInterfacesRulesFile), not into TProxy's.
+  mitmUdpMarkLine = lib.optionalString mitmUdpEnabled ''
+    meta mark ${toString constants.mitmDivertFwmark} return
   '';
 
   # Shared across the rule files; redefine, as the firewall's ruleset includes several at once.
@@ -166,7 +172,7 @@ let
                   # inbound XRay dials unmarked, lacking CAP_NET_ADMIN), leave as they are.
                   ct direction reply return
                   meta skuid ${constants.bypassUsersNft} return
-    ${tgWsProxyBypassMarkLine}${perAppViaMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
+    ${tgWsProxyBypassMarkLine}${perAppViaMarkLine}${mitmUdpMarkLine}${lib.optionalString perAppTun.enable "              meta mark ${toString perAppTun.fwmark} return\n"}${lib.optionalString perAppTproxy.enable "              meta mark ${toString perAppTproxy.fwmark} return\n"}              ${tproxyProtocols} meta mark set ${toString globalTproxy.fwmark}
     ${tproxyIPv6RefuseLine ""}
               }
     ${mkMisroutedGuard globalTproxy.fwmark [ "lo" ] tproxyMarkedFamilies}
@@ -495,33 +501,31 @@ let
 
   # mitm.interfaces: the TCP its guests send past this host goes to the backend's
   # mitm-tproxy-in, and from there to mitmproxy; UDP to 443 with it, for the backend to
-  # refuse, so they fall back from QUIC. Everything else is forwarded as it was. Ahead of
-  # TProxy's own chain; an interface cannot be in both (service-assertions.nix).
+  # refuse, so they fall back from QUIC. The rest of their UDP too with mitm.udp, else
+  # forwarded as it was. Ahead of TProxy's own chain; an interface cannot be in both
+  # (service-assertions.nix).
   mitmInterfaceSet = "{ ${lib.concatMapStringsSep ", " (i: ''"${i}"'') mitmCfg.interfaces} }";
+  mitmMark = toString constants.mitmDivertFwmark;
   mitmDivert =
     family: target:
     lib.concatMapStrings
       (match: ''
-        meta nfproto ${family} ${match} meta mark set ${toString constants.mitmDivertFwmark} tproxy ${target}:${toString mitmCfg.interfacesPort}
+        meta nfproto ${family} ${match} meta mark set ${mitmMark} tproxy ${target}:${toString mitmCfg.interfacesPort}
       '')
       [
         "meta l4proto tcp"
-        "udp dport 443"
+        (if mitmUdpEnabled then "meta l4proto udp" else "udp dport 443")
       ];
-  mitmInterfacesRulesFile = pkgs.writeText "proxy-suite-routing" ''
-    ${reservedIpBlock}
-    table inet ${constants.mitmDivertNftTable} {
-        chain prerouting {
-            type filter hook prerouting priority mangle - 1; policy accept;
-            iifname != ${mitmInterfaceSet} return
-            # The guests' own network, this host and the LAN (proxy.tproxy.localSubnets) stay
-            # as they were.
-            ip daddr $RESERVED_IP return
-            ip6 daddr $RESERVED_IP6 return
+  mitmInterfaceLines = ''
+    iifname != ${mitmInterfaceSet} return
+    # The guests' own network, this host and the LAN (proxy.tproxy.localSubnets) stay
+    # as they were.
+    ip daddr $RESERVED_IP return
+    ip6 daddr $RESERVED_IP6 return
     ${lib.concatMapStrings (cidr: ''
       ${ipFamily cidr} daddr ${cidr} return
     '') globalTproxy.localSubnets}
-            fib daddr type local return
+    fib daddr type local return
     ${mitmDivert "ipv4" "ip to 127.0.0.1"}
     ${
       if proxyCfg.ipv6 then
@@ -530,10 +534,53 @@ let
         # Nothing takes IPv6 without proxy.ipv6: marked all the same, it meets the unreachable
         # route of its table, and the guests fall back to IPv4 instead of going past unread.
         ''
-          meta nfproto ipv6 meta l4proto tcp meta mark set ${toString constants.mitmDivertFwmark}
+          meta nfproto ipv6 meta l4proto ${
+            if mitmUdpEnabled then "{ tcp, udp }" else "tcp"
+          } meta mark set ${mitmMark}
         ''
     }
+  '';
+  # mitm.udp: what mitmproxy sends on over UDP is marked by its user as it leaves, and the
+  # same table's route (mkTproxyRoutingUp) brings it back on lo, to the backend's
+  # mitm-udp-return: it leaves by mitm.upstream, as the TCP it sends to mitm-return does.
+  # Its tunnel's own replies, on loopback, and what goes to the LAN stay as they were.
+  mitmUdpReturnPort = toString mitmCfg.udp.returnPort;
+  mitmUdpChains = ''
+    chain output {
+        type route hook output priority mangle - 1; policy accept;
+        meta skuid != "${constants.mitmUser}" return
+        meta l4proto != udp return
+        ct direction reply return
+        ip daddr $RESERVED_IP return
+        ip6 daddr $RESERVED_IP6 return
+    ${lib.concatMapStrings (cidr: ''
+      ${ipFamily cidr} daddr ${cidr} return
+    '') globalTproxy.localSubnets}
+        fib daddr type local return
+        meta mark set ${mitmMark}
+    }
+    # Marked and leaving by anything but lo: its rule is gone (`ip rule flush`, a VPN tool),
+    # and it would leave unread past the upstream.
+    chain misrouted {
+        type filter hook postrouting priority filter; policy accept;
+        meta mark ${mitmMark} oifname != "lo" drop
+    }
+  '';
+  mitmUdpReturnLines = ''
+    iifname "lo" meta mark ${mitmMark} meta nfproto ipv4 meta l4proto udp tproxy ip to 127.0.0.1:${mitmUdpReturnPort}
+    ${lib.optionalString proxyCfg.ipv6 ''
+      iifname "lo" meta mark ${mitmMark} meta nfproto ipv6 meta l4proto udp tproxy ip6 to [::1]:${mitmUdpReturnPort}
+    ''}
+  '';
+  mitmInterfacesRulesFile = pkgs.writeText "proxy-suite-routing" ''
+    ${reservedIpBlock}
+    table inet ${constants.mitmDivertNftTable} {
+        chain prerouting {
+            type filter hook prerouting priority mangle - 1; policy accept;
+    ${lib.optionalString mitmUdpEnabled mitmUdpReturnLines}
+    ${lib.optionalString mitmInterfacesEnabled mitmInterfaceLines}
         }
+    ${lib.optionalString mitmUdpEnabled mitmUdpChains}
     }
   '';
 

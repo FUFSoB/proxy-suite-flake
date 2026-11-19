@@ -232,6 +232,18 @@ in
         MITM_CA_ANDROID_DIR = constants.mitmCaAndroidDir;
         # Firefox's profiles take the CA through it (`mitm run`).
         MITM_CERTUTIL = "${pkgs.nssTools}/bin/certutil";
+        MITM_UDP = flag ctx.mitmUdpEnabled;
+        # mitm.interfaces, which `mitm` checks bridge netfilter for (proxy.tproxy.bridgeNetfilter).
+        MITM_INTERFACES = builtins.toJSON (lib.optionals ctx.mitmInterfacesEnabled m.interfaces);
+        # `mitm addon load`: the spool root copies into mitmproxy as it starts, and where the
+        # addons write.
+        MITM_ADDONS_DIR = m.addonsDir;
+        MITM_ADDONS_OUTPUT = "${m.requestLogDir}/addons";
+      }
+      # `mitm attach`: the socket, and the client addon the program runs with its own.
+      // lib.optionalAttrs m.attach.enable {
+        MITM_ATTACH_SOCKET = "${m.attachDir}/attach.sock";
+        MITM_ATTACH_ADDON = "${ctx.proxySuiteScriptsDir}/mitm_attach_client.py";
       }
       // lib.optionalAttrs ctx.mitmListenerEnabled (
         {

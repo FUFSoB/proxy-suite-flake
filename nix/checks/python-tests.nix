@@ -51,6 +51,14 @@ pkgs.lib.mapAttrs mkPythonCheck {
     file = "${scripts}/test-mitm-request-log.py";
     env = withPath scripts;
   };
+  # mitm.attach's two ends, with mitmproxy itself: its own tests are not this check's.
+  mitm-attach = {
+    file = "${scripts}/test-mitm-attach.py";
+    python = pkgs.python3.withPackages (ps: [
+      (ps.mitmproxy.overridePythonAttrs { doCheck = false; })
+    ]);
+    env = withPath scripts;
+  };
   fetch-subscription-parser = {
     file = "${scripts}/test-fetch-subscription.py";
     env = withPath scripts;

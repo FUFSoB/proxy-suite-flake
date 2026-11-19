@@ -1,13 +1,16 @@
 { config, lib, pkgs, ... }:
 {
-  services.proxy-suite = {
+  networking.nftables.enable = true;
+services.proxy-suite = {
   enable = true;
+  proxy = {
+    enable = true;
+    outbounds = [ { tag = "my-vps"; urlFile = "/run/secrets/my-vps-url"; } ];
+  };
   mitm = {
     enable = true;
-    ca = {
-      certFile = "/run/secrets/mitm-ca.crt";
-      keyFile = "/run/secrets/mitm-ca.key";
-    };
+    interfaces = [ "waydroid0" ];
+    udp.enable = true;
   };
 };
 }

@@ -3096,6 +3096,31 @@ class WhereTest(EnvTest):
         os.environ.update(GEODATA_GEOSITE_DIR=self.dir, SING_BOX=sys.executable)
         self.assertIn("geosite:netflix not checked here", ok(ctl.cmd_where, "example.org"))
 
+    def test_zapret_unfixable(self):
+        """A source's site every strategy failed for goes through the proxy: neither the source's
+        list nor a connection still open from before the verdict may read as the bypass."""
+        os.environ.update(
+            OUTBOUND_INVENTORY_FILE=self.path("socks/outbounds.json"), ROUTE_MODE_STATE_FILE=self.path("no-mode"),
+            ZAPRET_AUTO_ENABLED="1", ZAPRET_STATE_DIR=self.path("zap"), ZAPRET_DIRECT_DIR=self.path("direct"),
+        )
+        self.write("socks/config.json", {"route": {"rules": []}})
+        self.write("direct/sites.txt", "googlevideo.com\n")
+        self.write("zap/verdicts.tsv", "works\tgooglevideo.com\ttcp\t\t1\nunfixable\tgooglevideo.com\ttcp\tcircular_3_1\t2\n")
+        self.patch("svc_exists", lambda unit: unit == "proxy-suite-socks")
+        self.patch("_status_outbound", lambda: "vps")
+        self.patch("_where_sing_box", lambda config, domain: ("proxy", "rule-set zapret-unfixable"))
+        self.patch("_where_live", lambda domain: {"direct": 1})
+        out = ok(ctl.cmd_where, "rr2.googlevideo.com")
+        self.assertIn("live           1 via direct - new ones take vps", out)
+        self.assertIn("verdict        via the proxy: no strategy gets through", out)
+        self.assertTrue(out.endswith("  -> vps - zapret2 has no strategy that gets through\n"), out)
+        # A later "works" clears it: the bypass again, and open connections agree.
+        self.write("zap/verdicts.tsv", "unfixable\tgooglevideo.com\ttcp\tcircular_3_1\t2\nworks\tgooglevideo.com\ttcp\t\t3\n")
+        self.patch("_where_sing_box", lambda config, domain: ("direct", "rule-set zapret-hosts"))
+        out = ok(ctl.cmd_where, "rr2.googlevideo.com")
+        self.assertIn("live           1 via direct\n", out)
+        self.assertTrue(out.endswith("  -> direct, with the zapret bypass\n"), out)
+
 
 class ConnectionLogTest(unittest.TestCase):
     """`debug conns`: opens, stalls and closes read off successive /connections looks."""
@@ -3898,6 +3923,84 @@ class MitmTest(EnvTest):
         self.assertTrue(allows("proxy-suite-mitm-upstream", {"mitm"}))
         self.assertFalse(allows("proxy", {"mitm"}))
         self.assertFalse(allows("proxy-suite-mitm-upstream", {"services"}))
+
+    def attachable(self):
+        socket_path = self.write("attach/attach.sock", "")
+        os.environ.update(
+            MITM_ATTACH_SOCKET=socket_path, MITM_ATTACH_ADDON="/nix/store/x-proxy-suite-scripts/mitm_attach_client.py"
+        )
+        return socket_path
+
+    def test_attach_puts_the_client_addon_after_the_program(self):
+        socket_path = self.attachable()
+        ok(ctl.cmd_mitm, "attach", "--", ",", "mitmdump", "-s", "pjsk.py", "--set", "pjsk_out=x.jsonl")
+        kind, argv, environ = self.ran[-1]
+        client = ["-n", "-s", "/nix/store/x-proxy-suite-scripts/mitm_attach_client.py", "--set", f"attach_socket={socket_path}"]
+        self.assertEqual((kind, argv), ("exec", [",", "mitmdump", *client, "-s", "pjsk.py", "--set", "pjsk_out=x.jsonl"]))
+        self.assertEqual(environ["PROXY_SUITE_MITM_ATTACH"], socket_path)
+        # Changing traffic, from mitmproxy's console.
+        ok(ctl.cmd_mitm, "attach", "--modify", "/usr/bin/mitmproxy")
+        self.assertEqual(self.ran[-1][1], ["/usr/bin/mitmproxy", *client, "--set", "attach_modify=true"])
+        self.assertEqual(ok(ctl.cmd_mitm, "attach", "--addon").strip(), "/nix/store/x-proxy-suite-scripts/mitm_attach_client.py")
+        self.assertEqual(ok(ctl.cmd_mitm, "attach", "--socket").strip(), socket_path)
+
+    def test_attach_needs_a_mitmproxy_program_and_the_option(self):
+        self.attachable()
+        status, _, err = run(ctl.cmd_mitm, "attach", "--", "python3", "x.py")
+        self.assertEqual(status, 1)
+        self.assertIn("mitmdump", err)
+        # Not running yet: it attaches once it is.
+        self.active.clear()
+        _, _, err = run(ctl.cmd_mitm, "attach", "mitmdump")
+        self.assertIn("attaching once it is", err)
+        del os.environ["MITM_ATTACH_SOCKET"]
+        self.assertIn("mitm.attach is off", run(ctl.cmd_mitm, "attach", "mitmdump")[2])
+
+    def test_addon_load_list_unload(self):
+        os.makedirs(self.path("addons.d"))
+        os.environ.update(MITM_ADDONS_DIR=self.path("addons.d"), MITM_ADDONS_OUTPUT="/run/proxy-suite-mitm/requests/addons")
+        source = self.write("src/pjsk.py", "addons = []\n")
+        self.assertIn("No addons are loaded", ok(ctl.cmd_mitm, "addon"))
+        out = ok(ctl.cmd_mitm, "addon", "load", source, "--set", "pjsk_out=/tmp/x", "--set", "verbose=true", "--set", "n=3")
+        self.assertIn("$PROXY_SUITE_MITM_OUTPUT", out)
+        with open(self.path("addons.d/pjsk.py")) as f:
+            self.assertEqual(f.read(), "addons = []\n")
+        with open(self.path("addons.d/pjsk.options.json")) as f:
+            self.assertEqual(json.load(f), {"pjsk_out": "/tmp/x", "verbose": True, "n": 3})
+        self.assertIn(("restart", "proxy-suite-mitm"), self.units)
+        self.assertIn("pjsk", ok(ctl.cmd_mitm, "addon", "list"))
+        # Under another name, without options: none kept from before.
+        ok(ctl.cmd_mitm, "addon", "load", source, "--name", "other")
+        self.assertFalse(os.path.exists(self.path("addons.d/other.options.json")))
+        self.assertEqual(set(ctl._mitm_addons()), {"pjsk", "other"})
+        ok(ctl.cmd_mitm, "addon", "unload", "pjsk")
+        self.assertEqual(sorted(os.listdir(self.path("addons.d"))), ["other.py"])
+        self.assertEqual(run(ctl.cmd_mitm, "addon", "unload", "pjsk")[0], 1)
+        self.assertEqual(run(ctl.cmd_mitm, "addon", "load", source, "--name", "../x")[0], 1)
+        self.assertEqual(run(ctl.cmd_mitm, "addon", "load", source, "--set", "bad key=1")[0], 1)
+
+    def test_status_warns_of_a_bridge_bridge_netfilter_keeps_out(self):
+        self.patch("BRIDGE_NF_CALL", self.write("proc/bridge-nf-call-iptables", "1\n"))
+        self.patch("SYS_CLASS_NET", self.path("sys"))
+        os.makedirs(self.path("sys/waydroid0/bridge"))
+        os.makedirs(self.path("sys/eth1"))
+        os.environ["MITM_INTERFACES"] = '["waydroid0", "eth1"]'
+        _, _, err = run(ctl.cmd_mitm)
+        self.assertIn("waydroid0 is a bridge", err)
+        self.assertNotIn("eth1", err)
+        self.assertIn('proxy.tproxy.bridgeNetfilter = "off"', err)
+        # Off, or not loaded at all: nothing to say.
+        self.write("proc/bridge-nf-call-iptables", "0\n")
+        self.assertNotIn("bridge", run(ctl.cmd_mitm)[2])
+        os.remove(self.path("proc/bridge-nf-call-iptables"))
+        self.assertNotIn("bridge", run(ctl.cmd_mitm)[2])
+
+    def test_status_shows_udp_and_attach(self):
+        self.attachable()
+        os.environ["MITM_UDP"] = "1"
+        out = ok(ctl.cmd_mitm)
+        self.assertIn("udp on", out)
+        self.assertIn("attach ", out)
 
 
 if __name__ == "__main__":

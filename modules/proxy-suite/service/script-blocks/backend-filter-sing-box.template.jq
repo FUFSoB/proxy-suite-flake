@@ -66,7 +66,11 @@ $route_rules[0] as $route_rules | $probe_inbounds[0] as $probe_inbounds
   | (.route.rules | map((.action? // "") == "sniff") | index(true)) as $sniff
   | .route.rules = (if $sniff == null then $pin_rules + .route.rules
       else .route.rules[:$sniff + 1] + $pin_rules + .route.rules[$sniff + 1:] end)
-  # Each pin's selector takes any outbound, block first: a slot nobody switched blocks.
+  # Each pin's selector takes any outbound, block first: a slot nobody switched blocks. A slot's
+  # UDP selector (mitm.udp) the endpoints too: the local proxy's "mitm-udp" is one.
   | ([.outbounds[].tag | select(startswith("proxy-suite-pin-") | not)]) as $tags
+  | ([.endpoints[]?.tag] - $tags) as $endpoint_tags
   | .outbounds |= map(if .type == "selector" and (.tag | startswith("proxy-suite-pin-"))
-      then .outbounds = (["block"] + ($tags - ["block"])) | .default = "block" else . end)
+      then .outbounds = (["block"] + ($tags - ["block"])
+          + (if .tag | endswith("-udp") then $endpoint_tags else [] end))
+        | .default = "block" else . end)

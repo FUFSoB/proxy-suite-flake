@@ -9,6 +9,11 @@ Part of the [proxy-suite options reference](./index.md).
 - mitm
   - [enable](#services-proxy-suite-mitm-enable)
   - [package](#services-proxy-suite-mitm-package)
+  - addons
+    - [userControl](#services-proxy-suite-mitm-addons-usercontrol)
+  - attach
+    - [enable](#services-proxy-suite-mitm-attach-enable)
+    - [timeout](#services-proxy-suite-mitm-attach-timeout)
   - ca
     - [certFile](#services-proxy-suite-mitm-ca-certfile)
     - [keyFile](#services-proxy-suite-mitm-ca-keyfile)
@@ -26,6 +31,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [openFirewall](#services-proxy-suite-mitm-listener-openfirewall)
     - [port](#services-proxy-suite-mitm-listener-port)
   - [port](#services-proxy-suite-mitm-port)
+  - [pythonPackages](#services-proxy-suite-mitm-pythonpackages)
   - requestLog
     - [enable](#services-proxy-suite-mitm-requestlog-enable)
     - [bodies](#services-proxy-suite-mitm-requestlog-bodies)
@@ -34,6 +40,11 @@ Part of the [proxy-suite options reference](./index.md).
     - [persist](#services-proxy-suite-mitm-requestlog-persist)
   - [returnPort](#services-proxy-suite-mitm-returnport)
   - [saveFlows](#services-proxy-suite-mitm-saveflows)
+  - udp
+    - [enable](#services-proxy-suite-mitm-udp-enable)
+    - [port](#services-proxy-suite-mitm-udp-port)
+    - [relayPort](#services-proxy-suite-mitm-udp-relayport)
+    - [returnPort](#services-proxy-suite-mitm-udp-returnport)
   - [upstream](#services-proxy-suite-mitm-upstream)
   - web
     - [enable](#services-proxy-suite-mitm-web-enable)
@@ -59,6 +70,40 @@ mitmproxy package\.
 
 **Type:** package\
 **Default:** `pkgs.mitmproxy`
+
+<a id="services-proxy-suite-mitm-addons-usercontrol"></a>
+## services\.proxy-suite\.mitm\.addons\.userControl
+
+Let the groups whose ` userControl ` scopes hold ` mitm ` load addons into mitmproxy
+itself (` proxy-ctl mitm addon load `), not only root\. An addon there runs as
+mitmproxy’s user, which reads the CA’s key: whoever loads one can sign certificates
+with it\. Prefer ` proxy-ctl mitm attach `, which runs your addons as you\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-mitm-attach-enable"></a>
+## services\.proxy-suite\.mitm\.attach\.enable
+
+Let programs attach to mitmproxy, to read the flows live and change them:
+` proxy-ctl mitm attach -- mitmdump -s addon.py ` runs a mitmdump, mitmproxy or
+mitmweb of your own, with your addons and your Python packages, that sees each
+request, answer and WebSocket, TCP or UDP message as it comes\. With ` --modify `
+what its addons change is what is sent on\. Whoever reads the request log and opens
+mitmweb may attach: the groups whose ` userControl ` scopes hold ` mitm `, and root\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-mitm-attach-timeout"></a>
+## services\.proxy-suite\.mitm\.attach\.timeout
+
+Seconds an attached program that changes traffic has to answer each hook, unless it
+asks for more (` --set attach_timeout=… `)\. A late one is detached, and the flow goes on
+unchanged\.
+
+**Type:** positive integer or floating point number, meaning >0\
+**Default:** `5`
 
 <a id="services-proxy-suite-mitm-ca-certfile"></a>
 ## services\.proxy-suite\.mitm\.ca\.certFile
@@ -116,9 +161,9 @@ pin their certificates\.
 
 Interfaces of containers, virtual machines or LAN devices that use this host as their
 gateway: all TCP they send is intercepted, with nothing to set up in them but the CA\.
-UDP to port 443 is refused, so they fall back from QUIC; the rest is forwarded as
-usual\. Turns on IP forwarding\. Needs ` proxy.enable `, root and, on NixOS, the nftables
-firewall\.
+UDP to port 443 is refused, so they fall back from QUIC; the rest of their UDP is
+forwarded as usual, or with ` udp.enable ` read too\. Turns on IP forwarding\. Needs
+` proxy.enable `, root and, on NixOS, the nftables firewall\.
 
 **Type:** list of network interface name\
 **Default:** `[ ]`\
@@ -136,7 +181,8 @@ Loopback port of the backend that ` interfaces ` are diverted to\.
 ## services\.proxy-suite\.mitm\.listener\.enable
 
 Listen for programs and devices pointed straight at mitmproxy: everything that
-connects here is intercepted\. An HTTP proxy, and SOCKS5 too with ` proxy.enable `\.
+connects here is intercepted\. An HTTP proxy, and SOCKS5 too with ` proxy.enable `,
+its UDP read with ` udp.enable `\.
 
 **Type:** boolean\
 **Default:** `true`
@@ -195,11 +241,23 @@ connect to it; everything else comes in through ` listener `\.
 **Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `18531`
 
+<a id="services-proxy-suite-mitm-pythonpackages"></a>
+## services\.proxy-suite\.mitm\.pythonPackages
+
+Python packages for the addons mitmproxy itself runs: ` extraOptions.scripts ` and those
+` proxy-ctl mitm addon load ` loads\. From ` pkgs.python3.pkgs `, the Python mitmproxy is
+built with\. Not needed for ` attach `, whose addons run in your own mitmdump\.
+
+**Type:** function that evaluates to a(n) list of package\
+**Default:** `ps: [ ]`\
+**Example:** `ps: [ ps.msgpack ps.pycryptodome ]`
+
 <a id="services-proxy-suite-mitm-requestlog-enable"></a>
 ## services\.proxy-suite\.mitm\.requestLog\.enable
 
 Append a line of JSON for each request to ` requests.jsonl `, for jq and the like: the
-time, client, method, URL, status or error, duration, sizes and content type\.
+time, client, method, URL, status or error, duration, sizes and content type\. A
+WebSocket, TCP or UDP flow gets one as it ends, with the messages and bytes each way\.
 ` proxy-ctl mitm requests on|off ` switches it without a rebuild, and
 ` proxy-ctl mitm requests follow ` streams it (` > session.jsonl ` to keep one)\.
 
@@ -213,7 +271,9 @@ Also write each request whole, bodies included, as mitmproxy’s flows to
 ` requests.mitm ` beside that log: for an addon of your own, run by you with what it
 needs, ` proxy-ctl mitm requests follow --bodies | mitmdump -nr - -s addon.py `\.
 ` proxy-ctl mitm requests bodies on|off ` switches it without a rebuild\. Rotated
-and readable as the log is, whether or not that is on\.
+and readable as the log is, whether or not that is on\. A WebSocket, TCP or UDP flow
+is written in parts as it goes, at each MiB or ten seconds, each with the messages
+since the last and the flow’s id\. For the flows live as they come, attach instead\.
 
 **Type:** boolean\
 **Default:** `false`
@@ -263,6 +323,47 @@ Keep every request and answer, bodies included, in the state directory
 
 **Type:** boolean\
 **Default:** `false`
+
+<a id="services-proxy-suite-mitm-udp-enable"></a>
+## services\.proxy-suite\.mitm\.udp\.enable
+
+Send mitmproxy the UDP that goes to “mitm” as well: what ` hosts `, ` listener `
+(SOCKS5), ` interfaces ` and the routing rules send there\. The backend hands it over
+through a WireGuard tunnel on loopback, and what mitmproxy sends on comes back to the
+backend to leave by ` upstream `, as TCP does\. mitmproxy reads each datagram as a
+message of a UDP flow: in mitmweb, the request log and attached programs\. QUIC (UDP
+to port 443) is still refused, so browsers take TCP\. Needs ` proxy.enable `, root
+and, on NixOS, the nftables firewall\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-mitm-udp-port"></a>
+## services\.proxy-suite\.mitm\.udp\.port
+
+Loopback UDP port of mitmproxy’s WireGuard listener, which the backend dials\.
+
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `18527`
+
+<a id="services-proxy-suite-mitm-udp-relayport"></a>
+## services\.proxy-suite\.mitm\.udp\.relayPort
+
+Loopback port of the backend’s SOCKS5 listener that the TUN backends (global TUN,
+per-app TUN and its pinned apps) hand their UDP for mitmproxy to: the tunnel into it
+has one end, in that backend\. It takes the hop login\.
+
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `18526`
+
+<a id="services-proxy-suite-mitm-udp-returnport"></a>
+## services\.proxy-suite\.mitm\.udp\.returnPort
+
+Loopback port of the backend that the UDP mitmproxy sends on is diverted to, to leave
+by ` upstream `\.
+
+**Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
+**Default:** `18528`
 
 <a id="services-proxy-suite-mitm-upstream"></a>
 ## services\.proxy-suite\.mitm\.upstream

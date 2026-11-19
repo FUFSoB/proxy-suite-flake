@@ -183,6 +183,13 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
 ›;
   };
   mitm = {
+    addons = {
+      userControl = false;
+    };
+    attach = {
+      enable = true;
+      timeout = 5;
+    };
     ca = {
       certFile = null;
       keyFile = null;
@@ -205,6 +212,7 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
     };
     package = pkgs.mitmproxy;
     port = 18531;
+    pythonPackages = ps: [ ];
     requestLog = {
       bodies = false;
       enable = false;
@@ -214,6 +222,12 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
     };
     returnPort = 18532;
     saveFlows = false;
+    udp = {
+      enable = false;
+      port = 18527;
+      relayPort = 18526;
+      returnPort = 18528;
+    };
     upstream = ‹"proxy" with proxy.enable, "direct" without›;
     web = {
       enable = false;
@@ -362,6 +376,7 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
     tproxy = {
+      bridgeNetfilter = "keep";
       enable = false;
       fwmark = 1;
       lanInterfaces = [ ];

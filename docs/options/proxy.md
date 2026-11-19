@@ -159,6 +159,7 @@ Part of the [proxy-suite options reference](./index.md).
       - [userAgent](#services-proxy-suite-proxy-subscriptions-useragent)
   - tproxy
     - [enable](#services-proxy-suite-proxy-tproxy-enable)
+    - [bridgeNetfilter](#services-proxy-suite-proxy-tproxy-bridgenetfilter)
     - [fwmark](#services-proxy-suite-proxy-tproxy-fwmark)
     - [lanInterfaces](#services-proxy-suite-proxy-tproxy-laninterfaces)
     - [localSubnets](#services-proxy-suite-proxy-tproxy-localsubnets)
@@ -1495,6 +1496,25 @@ Whether to enable global TProxy mode\.
 
 **Type:** boolean\
 **Default:** `false`
+
+<a id="services-proxy-suite-proxy-tproxy-bridgenetfilter"></a>
+## services\.proxy-suite\.proxy\.tproxy\.bridgeNetfilter
+
+Bridge netfilter (` br_netfilter `, which Docker loads), where ` lanInterfaces ` or
+` mitm.interfaces ` are bridges: a LAN ` br0 `, Waydroid’s ` waydroid0 `\. With
+` net.bridge.bridge-nf-call-iptables ` on, what their devices send meets the divert inside
+the bridge, before the IP stack, which then drops the socket the divert handed it to:
+they get no TCP or UDP through at all\.
+
+ - “keep”: leave it as it is\. The divert units and ` proxy-ctl mitm ` say so when it bites\.
+ - “off”: with either list set, turn ` bridge-nf-call-iptables ` and
+   ` bridge-nf-call-ip6tables ` off at boot, as the divert comes up and each time Docker
+   starts, which turns them on\. Docker then no longer filters traffic between containers
+   on one of its bridges with iptables\.
+
+**Type:** one of “keep”, “off”\
+**Default:** `"keep"`\
+**Example:** `"off"`
 
 <a id="services-proxy-suite-proxy-tproxy-fwmark"></a>
 ## services\.proxy-suite\.proxy\.tproxy\.fwmark

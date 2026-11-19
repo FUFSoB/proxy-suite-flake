@@ -53,5 +53,26 @@ in
       '';
       example = [ "br0" ];
     };
+
+    bridgeNetfilter = mkOption {
+      type = types.enum [
+        "keep"
+        "off"
+      ];
+      default = "keep";
+      description = ''
+        Bridge netfilter (`br_netfilter`, which Docker loads), where `lanInterfaces` or
+        `mitm.interfaces` are bridges: a LAN `br0`, Waydroid's `waydroid0`. With
+        `net.bridge.bridge-nf-call-iptables` on, what their devices send meets the divert inside
+        the bridge, before the IP stack, which then drops the socket the divert handed it to:
+        they get no TCP or UDP through at all.
+        - "keep": leave it as it is. The divert units and `proxy-ctl mitm` say so when it bites.
+        - "off": with either list set, turn `bridge-nf-call-iptables` and
+          `bridge-nf-call-ip6tables` off at boot, as the divert comes up and each time Docker
+          starts, which turns them on. Docker then no longer filters traffic between containers
+          on one of its bridges with iptables.
+      '';
+      example = "off";
+    };
   };
 }

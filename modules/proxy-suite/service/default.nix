@@ -114,6 +114,12 @@ let
     ++ lib.optional cfg.mitm.enable {
       path = derived.mitmCfg.settingsDir;
       scope = "mitm";
+    }
+    # Code mitmproxy runs as its own user, which reads the CA's key: the mitm scope's only
+    # with mitm.addons.userControl.
+    ++ lib.optional (cfg.mitm.enable && cfg.mitm.addons.userControl) {
+      path = derived.mitmCfg.addonsDir;
+      scope = "mitm";
     };
 
   serviceUnits = import ./units.nix {
@@ -430,6 +436,32 @@ lib.mkMerge [
             extraReversePathFilterRules = rules "";
           }
         ))
+        # TProxy for this host's own programs: global, per-app and each pin slot's mark routes
+        # them to lo, and they come back there from this host's own address, which the
+        # reverse path check finds no route out for (a local one) and drops. Only this host
+        # puts packets on lo.
+        (
+          let
+            marks =
+              lib.optional (proxyEnabled && globalTproxy.enable) globalTproxy.fwmark
+              ++ lib.optional (proxyEnabled && perAppRoutingTproxy.enable) perAppRoutingTproxy.fwmark
+              ++ lib.optionals derived.perAppPinTproxy (
+                lib.genList (slot: constants.perAppPinTproxyFwmarkBase + slot) derived.perAppPinSlots
+              );
+          in
+          lib.mkIf (constants.privileged && marks != [ ]) {
+            extraReversePathFilterRules = ''
+              iifname "lo" meta mark { ${lib.concatMapStringsSep ", " toString marks} } accept
+            '';
+          }
+        )
+        # mitm.udp: what mitmproxy sends on comes back on lo from this host's own address,
+        # which the reverse path check would drop: the route its mark takes is lo itself.
+        (lib.mkIf derived.mitmUdpEnabled {
+          extraReversePathFilterRules = ''
+            iifname "lo" meta mark ${toString constants.mitmDivertFwmark} accept
+          '';
+        })
         # mitm.interfaces' guests, the same way and with their own mark.
         (lib.mkIf derived.mitmInterfacesEnabled (
           let
@@ -491,6 +523,16 @@ lib.mkMerge [
         # mitmproxy a copy as it starts (mitm.nix).
         (lib.mkIf (cfg.enable && cfg.mitm.enable) [
           "d ${derived.mitmCfg.settingsDir} ${spoolDirMode "mitm"} -"
+          # The addons `proxy-ctl mitm addon load` leaves: root's alone unless
+          # mitm.addons.userControl gives them to the mitm scope.
+          "d ${derived.mitmCfg.addonsDir} ${
+            if cfg.mitm.addons.userControl then
+              spoolDirMode "mitm"
+            else if constants.privileged then
+              "0700 root root"
+            else
+              "0700 - -"
+          } -"
         ])
         # Routing rules added at runtime (`proxy rules`): the routing scope's. Nothing secret
         # in them, but root renders what is there into every backend's route.

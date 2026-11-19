@@ -561,24 +561,48 @@ let
       fi
     '';
 
-  # select_pin <tag> <attempts>: switches the slot's selector, while the backend comes up.
+  # select_pin <tag> <attempts>: switches the slot's selector, while the backend comes up. With
+  # mitm.udp its UDP's and QUIC's too (config-templates/sing-box.nix): for "mitm", mitmproxy's
+  # UDP tunnel and refused; else the same.
+  mitmUdp = ctx.mitmUdpEnabled;
   mkSelect =
     route:
     let
       r = pinRoutes.${route};
     in
     ''
+      # put_pin <selector> <outbound>: the HTTP code of the Clash API's answer.
+      put_pin() {
+        local secret
+        secret=$(${pkgs.coreutils}/bin/tr -d '\r\n' 2>/dev/null < ${r.secretFile} || true)
+        ${curl} -s -o /dev/null -w '%{http_code}' --noproxy '*' -m 3 \
+          -X PUT "${r.clashApi}/proxies/$1" \
+          -H "Content-Type: application/json" \
+          -H @<(printf 'Authorization: Bearer %s\n' "$secret") \
+          -d "$(${jq} -cn --arg n "$2" '{name: $n}')" || true
+      }
       select_pin() {
-        local code attempt secret
+        local code attempt
         for attempt in $(${pkgs.coreutils}/bin/seq 1 "$2"); do
-          secret=$(${pkgs.coreutils}/bin/tr -d '\r\n' 2>/dev/null < ${r.secretFile} || true)
-          code=$(${curl} -s -o /dev/null -w '%{http_code}' --noproxy '*' -m 3 \
-            -X PUT "${r.clashApi}/proxies/proxy-suite-pin-${route}-$slot" \
-            -H "Content-Type: application/json" \
-            -H @<(printf 'Authorization: Bearer %s\n' "$secret") \
-            -d "$(${jq} -cn --arg n "$1" '{name: $n}')" || true)
+          code=$(put_pin "proxy-suite-pin-${route}-$slot" "$1")
           case "$code" in
-            2??) return 0 ;;
+            2??)
+              ${lib.optionalString mitmUdp ''
+                local udp=$1 quic=$1 selector
+                if [[ $1 == ${lib.escapeShellArg ctx.mitmOutboundTag} ]]; then
+                  udp=${lib.escapeShellArg ctx.mitmUdpTag}
+                  quic=block
+                fi
+                for selector in udp:"$udp" quic:"$quic"; do
+                  code=$(put_pin "proxy-suite-pin-${route}-$slot-''${selector%%:*}" "''${selector#*:}")
+                  if [[ $code != 2?? ]]; then
+                    echo "proxy-suite: the backend's ${route} pin slot $slot took no ''${selector%%:*} selector ''${selector#*:} (HTTP $code); restart ${r.backend}" >&2
+                    return 2
+                  fi
+                done
+              ''}
+              return 0
+              ;;
             400)
               echo "proxy-suite: the backend has no outbound '$1' to run apps through" >&2
               return 2

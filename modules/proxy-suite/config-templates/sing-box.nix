@@ -133,21 +133,53 @@ let
   # backend filter fills with every outbound, block first and by default, and the Clash API
   # switches to the outbound an app runs through. `match` is what of an app's connection
   # tells its slot apart.
+  # With mitm.udp a slot has two more, switched with it: its UDP's, which takes "mitm-udp" where
+  # the slot's takes "mitm" (mitmproxy's HTTP listener carries no UDP), and its QUIC's, which
+  # blocks there, so a browser takes TCP and is read (per-app-routing/via.nix).
   mkPins =
     route: count: match:
     let
       slots = lib.genList (slot: slot) count;
       tag = slot: "proxy-suite-pin-${route}-${toString slot}";
+      udp = derived.mitmUdpEnabled;
+      selector = name: {
+        type = "selector";
+        tag = name;
+        outbounds = [ "block" ];
+        default = "block";
+      };
     in
     {
       inherit route;
-      rules = map (slot: match slot // { outbound = tag slot; }) slots;
-      selectors = map (slot: {
-        type = "selector";
-        tag = tag slot;
-        outbounds = [ "block" ];
-        default = "block";
-      }) slots;
+      rules = lib.concatMap (
+        slot:
+        lib.optionals udp [
+          (
+            match slot
+            // {
+              network = [ "udp" ];
+              port = [ 443 ];
+              outbound = "${tag slot}-quic";
+            }
+          )
+          (
+            match slot
+            // {
+              network = [ "udp" ];
+              outbound = "${tag slot}-udp";
+            }
+          )
+        ]
+        ++ [ (match slot // { outbound = tag slot; }) ]
+      ) slots;
+      selectors = lib.concatMap (
+        slot:
+        [ (selector (tag slot)) ]
+        ++ lib.optionals udp [
+          (selector "${tag slot}-udp")
+          (selector "${tag slot}-quic")
+        ]
+      ) slots;
     };
   pinTproxyInbound = slot: "per-app-pin-tproxy-${toString slot}";
   tproxyPins = mkPins "tproxy" perAppPinSlots (slot: {
@@ -290,6 +322,34 @@ let
                   listen_port = mitmCfg.interfacesPort;
                 }
               )
+              # mitm.udp: what mitmproxy sends on, marked by its user and diverted here
+              # (nftables.nix), to leave by the upstream as mitm-return's TCP does. And the
+              # TUN backends' UDP for mitmproxy, by SOCKS5 into the tunnel's one end, here; its
+              # login is the hop login, set at start.
+              ++ lib.optionals derived.mitmUdpEnabled (
+                [
+                  {
+                    type = "socks";
+                    tag = constants.mitmUdpRelayInbound;
+                    listen = "127.0.0.1";
+                    listen_port = mitmCfg.udp.relayPort;
+                  }
+                  {
+                    type = "tproxy";
+                    tag = constants.mitmUdpReturnInbound;
+                    listen = "127.0.0.1";
+                    listen_port = mitmCfg.udp.returnPort;
+                    network = "udp";
+                  }
+                ]
+                ++ lib.optional proxyCfg.ipv6 {
+                  type = "tproxy";
+                  tag = "${constants.mitmUdpReturnInbound}6";
+                  listen = "::1";
+                  listen_port = mitmCfg.udp.returnPort;
+                  network = "udp";
+                }
+              )
             )
             ++ lib.optional enableTun (
               {
@@ -340,7 +400,19 @@ let
               default = "direct";
               interrupt_exist_connections = true;
             }
-          ];
+          ]
+          # mitm.udp in the TUN backends: their UDP for mitmproxy, to the local proxy's relay,
+          # which has the tunnel. The local proxy has the tunnel itself under the tag.
+          ++ lib.optional (derived.mitmUdpEnabled && !enableMitm) {
+            type = "socks";
+            tag = derived.mitmUdpTag;
+            server = "127.0.0.1";
+            server_port = mitmCfg.udp.relayPort;
+            version = "5";
+            username = constants.hopUser;
+            password = "";
+            network = "udp";
+          };
 
           route = {
             default_domain_resolver = "local";
@@ -357,6 +429,30 @@ let
           // lib.optionalAttrs (enableTun && tunAutoRoute) {
             auto_detect_interface = true;
           };
+        }
+        # mitm.udp: the way UDP reaches mitmproxy, its WireGuard listener on loopback. The keys
+        # are set at start (backend-jq-filter.nix), from the file root drew them into.
+        // lib.optionalAttrs (enableMitm && derived.mitmUdpEnabled) {
+          endpoints = [
+            {
+              type = "wireguard";
+              tag = derived.mitmUdpTag;
+              address = [
+                (builtins.head constants.mitmUdpAddresses)
+              ]
+              ++ lib.optionals proxyCfg.ipv6 (builtins.tail constants.mitmUdpAddresses);
+              mtu = constants.mitmUdpMtu;
+              private_key = "";
+              peers = [
+                {
+                  address = "127.0.0.1";
+                  port = mitmCfg.udp.port;
+                  public_key = "";
+                  allowed_ips = [ "0.0.0.0/0" ] ++ lib.optional proxyCfg.ipv6 "::/0";
+                }
+              ];
+            }
+          ];
         }
         // lib.optionalAttrs enableClashApi (clashApiBlock clashApiPort)
       )

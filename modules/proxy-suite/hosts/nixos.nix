@@ -133,6 +133,14 @@ in
                 || config.networking.nftables.enable;
               message = "proxy-suite: proxy.tproxy.lanInterfaces and mitm.interfaces need the nftables firewall (networking.nftables.enable); the iptables one drops the diverted traffic";
             }
+            {
+              assertion =
+                !(cfg.enable && cfg.proxy.enable && cfg.mitm.enable && cfg.mitm.udp.enable)
+                || !config.networking.firewall.enable
+                || config.networking.firewall.checkReversePath == false
+                || config.networking.nftables.enable;
+              message = "proxy-suite: mitm.udp.enable needs the nftables firewall (networking.nftables.enable): the iptables one's reverse path check drops what mitmproxy sends on";
+            }
             # The kill switch lets that user's traffic past, all of it: a login user's browser
             # and apps too, whenever no tunnel is up.
             (

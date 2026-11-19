@@ -81,10 +81,17 @@ let
         # (<func>_<profile>_<nth instance>), its sites keep the strategies remembered.
         # <CIRCULAR_RANGE>: what circular sees of the server's bytes (runtime.nix): the first
         # 5.5 KB, or the NFQUEUE window when it also judges transfers cut short (stallRotation).
+        # Strategy 2's fake is four zero bytes, not a ClientHello: its tls_mod failed on every
+        # connection ("cannot apply tls mod. tls structure invalid") and fake() sent the
+        # bytes unchanged. Without it the same packet goes out, minus the log line.
         "${
           patch "NFQWS_ARGS" "${tcpPayload} ${circular}"
             "<STALLWATCH> --in-range=<CIRCULAR_RANGE> ${tcpPayload},tls_server_hello,empty,unknown ${circular}:key=circular_3_1 --in-range=x ${tcpPayload}"
-            (args "NFQWS_ARGS")
+            (
+              patch "NFQWS_ARGS" "fake:blob=0x00000000:tcp_ack=-66000:tls_mod=rnd,dupsid,sni=www.google.com:"
+                "fake:blob=0x00000000:tcp_ack=-66000:"
+                (args "NFQWS_ARGS")
+            )
         } <HOSTLIST> ${lists}"
       ];
     in

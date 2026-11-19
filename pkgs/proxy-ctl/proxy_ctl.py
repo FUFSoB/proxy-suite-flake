@@ -211,6 +211,11 @@ Changes and secrets need root or the userControl group.
   mitm listener                          the proxy to point programs and devices at
   mitm run -- <cmd> [args]               run a command through it, trusting its CA; a browser
                                          in a profile of its own
+  mitm attach [--modify] -- <mitmdump|mitmproxy|mitmweb> [args]
+                                         your own mitmdump's addons on its flows as they come,
+                                         TCP and UDP; with --modify what they change is sent on
+  mitm addon [list|load <file.py> [--set <o>=<v>]...|unload <name>]
+                                         addons mitmproxy itself runs, as its own user (root)
   tg [status|on|off]                     Telegram proxy
   wl [list]                              whitelist-bypass creators and joiners
   wl link <creator> [--qr]               the call link for its joiner
@@ -1081,8 +1086,13 @@ COMPLETE = {
             "ca": "its CA certificate",
             "listener": "the proxy to point programs and devices at",
             "run": "run a command through it",
+            "attach": "run your mitmdump's addons on its flows, live",
+            "addon": "addons mitmproxy itself runs",
         }
     },
+    "mitm attach": {"words": {"--modify": "what your addons change is sent on", "--addon": "the client addon's path"}},
+    "mitm addon": {"words": {"list": "the addons loaded", "load": "load one, from the next start", "unload": "stop running one"}},
+    "mitm addon unload": {"args": lambda: {name: "loaded" for name in _mitm_addons(quiet=True)}},
     "mitm upstream": {"args": lambda: {"proxy": "the outbound in use", "direct": "straight out", **_outbound_choices(), **_group_choices()}},
     "mitm hosts": {"words": {"add": "send a site through mitm", "rm": "stop sending it"}},
     "mitm all": {"words": {"on": "send mitm what no rule decides", "off": "only what is sent to it"}},
@@ -5478,6 +5488,9 @@ def _zapret_strategy_summary(domain, rows=None, strategies=None):
 # the last per name and proto standing. What the proxy carries in zapret2's stead, and
 # whether a learned site is seen working, which decides whether directSync sends it direct.
 ZAPRET_PROXIED = {"tcp": "no strategy gets through", "udp": "its QUIC: no strategy gets through", "ip": "blocked by address"}
+# `where`'s verdict for a site the proxy carries because zapret2 cannot fix it.
+ZAPRET_UNFIXABLE_WHY = "zapret2 has no strategy that gets through"
+ZAPRET_UNFIXABLE = f"the proxy: {ZAPRET_UNFIXABLE_WHY}"
 
 
 def _zapret_verdicts():
@@ -5879,10 +5892,15 @@ def cmd_where(domain="", *_):
                     shown = f"proxy -> {outbound}" if local != exit_tag else exit_tag
                     _where_row("xray", f"{shown} - {why}")
 
+        # Open connections keep the route they opened on: after a change (a zapret2 verdict,
+        # a new rule) they are not what the next connection meets. They decide only where
+        # the config said nothing.
         live = _where_live(domain)
         if live:
-            _where_row("live", ", ".join(f"{n} via {tag}" for tag, n in sorted(live.items())))
-            local = " and ".join(sorted(live))
+            seen = " and ".join(sorted(live))
+            note = f" - new ones take {local}" if local and seen != local else ""
+            _where_row("live", ", ".join(f"{n} via {tag}" for tag, n in sorted(live.items())) + note)
+            local = local or seen
 
         if env("INBOUNDS_ENABLED") == "1":
             inbounds_path = f"{runtime_dir()}/proxy-suite-inbounds/config.json"
@@ -5931,6 +5949,13 @@ def cmd_where(domain="", *_):
             verdict = verdict or "direct, with the zapret bypass"
         else:
             _where_row("zapret", "not learned, not pinned, not excluded")
+        # Every strategy failed: zapret-unfixable sends the whole site through the proxy,
+        # ahead of the lists that would send it direct (zapret2/direct-sync.template.sh).
+        status = "" if excluded else _zapret_status(domain)
+        if status:
+            _where_row("verdict", status)
+        if status.startswith("via the proxy"):
+            verdict = ZAPRET_UNFIXABLE if verdict in ("", "direct, with the zapret bypass") else verdict
         # Remembered for hosts a source's own lists cover too, learned or not.
         strategies = _zapret_strategy_map()
         for row in _zapret_strategies_for(domain):
@@ -5940,7 +5965,10 @@ def cmd_where(domain="", *_):
 
     if local:
         zapret = verdict == "direct, with the zapret bypass"
-        verdict = f"{local}, with the zapret bypass" if zapret and local == "direct" else local
+        if verdict == ZAPRET_UNFIXABLE:
+            verdict = f"{local} - {ZAPRET_UNFIXABLE_WHY}"
+        else:
+            verdict = f"{local}, with the zapret bypass" if zapret and local == "direct" else local
         print(f"  -> {verdict}")
         return
     print(f"  -> {verdict or 'nothing runtime matches it; the configured routing decides'}")
@@ -6802,6 +6830,8 @@ MITM_USAGE = (
     " | ignore [add|rm <domain>...] | web [on|off] | flows [on|off] | requests [on|off|--addon|follow [--all] [--bodies]|bodies [on|off]]"
     " | ca [--path|--bundle|--android|--env]"
     " | listener | run -- <cmd> [args]"
+    " | attach [--modify] -- <mitmdump|mitmproxy|mitmweb> [args] | attach --addon|--socket"
+    " | addon [list|load <file.py> [--name <name>] [--set <option>=<value>]...|unload <name>]"
 )
 # What reads which variable: OpenSSL and what is built on it, Nix's own wrappers, curl,
 # Python's requests, git, and Node, which takes it besides its own roots.
@@ -7125,6 +7155,156 @@ def _mitm_log_follow(*args, poll=MITM_LOG_POLL):
         partial = b""
 
 
+MITM_ATTACH_USAGE = "mitm attach [--modify] [--] <mitmdump|mitmproxy|mitmweb> [args] | attach --addon|--socket"
+# The programs whose addons run on the flows: the client addon goes in right after the name.
+MITM_ATTACH_PROGRAMS = ("mitmdump", "mitmproxy", "mitmweb")
+
+
+def _mitm_attach(*args):
+    """Runs a mitmdump, mitmproxy or mitmweb of the user's own attached to the service's
+    mitmproxy (mitm.attach): with -n, the client addon and the socket put in after its name, so
+    its own addons see the flows live; with --modify what they change is sent on."""
+    path, addon = env("MITM_ATTACH_SOCKET"), env("MITM_ATTACH_ADDON")
+    if not path:
+        die("mitm.attach is off in this configuration.")
+    if args == ("--addon",):
+        print(addon)
+        return
+    if args == ("--socket",):
+        print(path)
+        return
+    rest = list(args)
+    modify = False
+    while rest[:1] == ["--modify"]:
+        modify = True
+        rest.pop(0)
+    if rest[:1] == ["--"]:
+        rest.pop(0)
+    at = next((i for i, word in enumerate(rest) if os.path.basename(word) in MITM_ATTACH_PROGRAMS), None)
+    if at is None:
+        usage(MITM_ATTACH_USAGE)
+    if not svc_active(MITM_UNIT):
+        print("mitmproxy is not running (proxy-ctl mitm on): attaching once it is.", file=sys.stderr)
+    elif os.path.exists(path) and not os.access(path, os.R_OK | os.W_OK):
+        # The request log's readers connect to it, as they open mitmweb (mitm.nix).
+        denied(path, "attach to")
+    inserted = ["-n", "-s", addon, "--set", f"attach_socket={path}"]
+    if modify:
+        inserted += ["--set", "attach_modify=true"]
+    os.environ["PROXY_SUITE_MITM_ATTACH"] = path
+    _exec(rest[: at + 1] + inserted + rest[at + 1 :])
+
+
+MITM_ADDON_USAGE = "mitm addon [list] | addon load <file.py> [--name <name>] [--set <option>=<value>]... | addon unload <name>"
+MITM_ADDON_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _mitm_addon_value(text):
+    """An option's value as mitmproxy's config takes it: true/false, a number, else the text."""
+    if text in ("true", "false"):
+        return text == "true"
+    if re.fullmatch(r"-?[0-9]+", text):
+        return int(text)
+    if re.fullmatch(r"-?[0-9]+\.[0-9]+", text):
+        return float(text)
+    return text
+
+
+def _mitm_addons(quiet=False):
+    """{name: options} of the addons loaded; quiet, {} where they cannot be read."""
+    spool = env("MITM_ADDONS_DIR")
+    try:
+        names = sorted(n[: -len(".py")] for n in os.listdir(spool) if n.endswith(".py"))
+    except FileNotFoundError:
+        return {}
+    except PermissionError:
+        if quiet:
+            return {}
+        die(f"Cannot read {spool}: the addons mitmproxy runs are root's, unless mitm.addons.userControl gives them to the mitm scope.")
+    loaded = {}
+    for name in names:
+        if not MITM_ADDON_NAME.fullmatch(name):
+            continue
+        try:
+            with open(os.path.join(spool, f"{name}.options.json"), encoding="utf-8") as f:
+                options = json.load(f)
+        except (OSError, ValueError):
+            options = {}
+        loaded[name] = options if isinstance(options, dict) else {}
+    return loaded
+
+
+def _mitm_addon(op="list", *args):
+    """Addons mitmproxy itself runs, as its own user, from the next start on: a copy root makes
+    from the spool (mitm.nix). For your own addons on the live flows, `mitm attach` runs them as
+    you."""
+    spool = env("MITM_ADDONS_DIR")
+    if op == "list" and not args:
+        loaded = _mitm_addons()
+        for name, options in loaded.items():
+            shown = " ".join(f"{k}={json.dumps(v) if not isinstance(v, str) else v}" for k, v in options.items())
+            print(f"  {name:<24} {shown}".rstrip())
+        if not loaded:
+            print("No addons are loaded. Load one: proxy-ctl mitm addon load addon.py (or run yours: proxy-ctl mitm attach)")
+        return
+    if op == "load" and args:
+        source, rest = args[0], list(args[1:])
+        name = os.path.basename(source).removesuffix(".py")
+        options = {}
+        while rest:
+            flag = rest.pop(0)
+            if flag == "--name" and rest:
+                name = rest.pop(0)
+            elif flag == "--set" and rest and "=" in rest[0]:
+                key, value = rest.pop(0).split("=", 1)
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                    die(f"Not an option name: {key}")
+                value = _mitm_addon_value(value)
+                # Given again: a list, as mitmproxy's options that take several.
+                if key in options:
+                    have = options[key] if isinstance(options[key], list) else [str(options[key])]
+                    value = have + [str(value)]
+                options[key] = value
+            else:
+                usage(MITM_ADDON_USAGE)
+        if not MITM_ADDON_NAME.fullmatch(name):
+            die(f"Not an addon name (letters, digits, - and _): {name}")
+        try:
+            with open(source, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            die(f"Cannot read {source}: {e.strerror}")
+        try:
+            _spool_write(os.path.join(spool, f"{name}.py"), text)
+            options_path = os.path.join(spool, f"{name}.options.json")
+            if options:
+                _spool_write(options_path, json.dumps(options, indent=2, ensure_ascii=False) + "\n")
+            elif os.path.lexists(options_path):
+                os.unlink(options_path)
+        except PermissionError:
+            die(f"Cannot write {spool}: loading an addon into mitmproxy takes root, unless mitm.addons.userControl gives it to the mitm scope.")
+        except OSError as e:
+            die(f"Cannot write {spool}: {e.strerror}")
+        _mitm_restart()
+        print(f"Loaded {name}: mitmproxy runs it as its own user from now on (its flows broke off as it restarted).")
+        print(f"It writes what it finds to $PROXY_SUITE_MITM_OUTPUT, {env('MITM_ADDONS_OUTPUT')}.")
+        return
+    if op == "unload" and len(args) == 1:
+        name = args[0]
+        if not MITM_ADDON_NAME.fullmatch(name) or name not in _mitm_addons():
+            die(f"No addon {name} is loaded (proxy-ctl mitm addon list).")
+        try:
+            for suffix in (".py", ".options.json"):
+                if os.path.lexists(os.path.join(spool, name + suffix)):
+                    os.unlink(os.path.join(spool, name + suffix))
+        except PermissionError:
+            denied(spool, "change")
+        _mitm_restart()
+        print(f"Unloaded {name}.")
+        return
+    usage(MITM_ADDON_USAGE)
+
+
 def _mitm_ca_env():
     """The variables that make a program trust the CA, {} with a warning when it is not there yet."""
     bundle, cert = env("MITM_CA_BUNDLE"), env("MITM_CA_FILE")
@@ -7270,18 +7450,48 @@ def _mitm_run(*args):
         os.environ[name] = proxy
     for name in ("all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"):
         os.environ.pop(name, None)
+    if _mitm_outbound() and env("MITM_UDP") == "1":
+        # The listener's SOCKS5, whose UDP mitmproxy reads too: for what takes it.
+        socks = "socks5h://" + proxy.removeprefix("http://")
+        os.environ["all_proxy"] = os.environ["ALL_PROXY"] = socks
     _exec(_mitm_browser(cmd, proxy))
+
+
+BRIDGE_NF_CALL = "/proc/sys/net/bridge/bridge-nf-call-iptables"
+SYS_CLASS_NET = "/sys/class/net"
+
+
+def _bridge_netfilter_blocks(interface):
+    """Whether interface is a bridge whose devices bridge netfilter keeps from the divert: on,
+    it runs the divert before the IP stack, which drops the socket handed to them."""
+    try:
+        on = read_text(BRIDGE_NF_CALL).strip() == "1"
+    except OSError:
+        return False
+    return on and os.path.isdir(os.path.join(SYS_CLASS_NET, interface, "bridge"))
 
 
 def _mitm_status():
     if not svc_exists(MITM_UNIT):
         die("mitm is not enabled in this configuration.")
+    for interface in _mitm_env_list("MITM_INTERFACES"):
+        if _bridge_netfilter_blocks(interface):
+            print(
+                f"warning: {interface} is a bridge and net.bridge.bridge-nf-call-iptables is on: its devices get"
+                ' no TCP or UDP through mitm. Set services.proxy-suite.proxy.tproxy.bridgeNetfilter = "off" (or'
+                " sudo sysctl -w net.bridge.bridge-nf-call-iptables=0 net.bridge.bridge-nf-call-ip6tables=0).",
+                file=sys.stderr,
+            )
     status, _ = systemctl("is-active", MITM_UNIT)
     if _mitm_outbound():
         print(f"upstream {_mitm_upstream()}")
     if env("MITM_LISTENER_HOST"):
         print(f"listener {env('MITM_LISTENER_ADDRESS')}:{env('MITM_LISTENER_PORT')}")
+    if _mitm_outbound():
+        print(f"udp {'on' if env('MITM_UDP') == '1' else 'off'}")
     print(f"web {'on' if _mitm_flag('web', 'MITM_WEB') else 'off'}")
+    if env("MITM_ATTACH_SOCKET"):
+        print(f"attach {env('MITM_ATTACH_SOCKET')}")
     # is-active's code, as `tor status` gives it.
     if status:
         sys.exit(status)
@@ -7325,6 +7535,10 @@ def cmd_mitm(verb="status", *args):
         _mitm_listener()
     elif verb == "run":
         _mitm_run(*args)
+    elif verb == "attach":
+        _mitm_attach(*args)
+    elif verb == "addon":
+        _mitm_addon(*args)
     else:
         usage(MITM_USAGE)
 

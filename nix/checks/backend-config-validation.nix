@@ -45,6 +45,30 @@ let
         };
       }
     ];
+  # mitmproxy's outbound and listeners, mitm.udp's endpoint and return among them.
+  mitm = evalProxySuite [
+    baseModule
+    {
+      networking.nftables.enable = true;
+      services.proxy-suite = {
+        proxy = {
+          tproxy.enable = true;
+          tun.enable = true;
+        };
+        # Pin slots with their UDP and QUIC selectors; the TUN backends' relay outbound.
+        perAppRouting = {
+          enable = true;
+          tun.enable = true;
+          tproxy.enable = true;
+        };
+        mitm = {
+          enable = true;
+          udp.enable = true;
+          interfaces = [ "waydroid0" ];
+        };
+      };
+    }
+  ];
   inbounds = evalProxySuite [
     baseModule
     {
@@ -90,7 +114,9 @@ let
     ++ configsOf (direct "xray") proxyAttrs
     ++ configsOf inbounds [ "proxyInboundsFile" ];
   singBoxConfigs =
-    configsOf (proxy "sing-box") proxyAttrs ++ configsOf (direct "sing-box") proxyAttrs;
+    configsOf (proxy "sing-box") proxyAttrs
+    ++ configsOf (direct "sing-box") proxyAttrs
+    ++ configsOf mitm proxyAttrs;
 
   xray = "${(proxy "xray").config.services.proxy-suite.proxy.xray.package}/bin/xray";
   singBox = "${(proxy "sing-box").config.services.proxy-suite.proxy.singBox.package}/bin/sing-box";
@@ -110,7 +136,11 @@ pkgs.runCommand "proxy-suite-backend-config-validation-check" { nativeBuildInput
       fi
     done
     for config in ${lib.escapeShellArgs singBoxConfigs}; do
-      if ! ${singBox} check -c "$config" > log 2>&1; then
+      # mitm.udp's keys come at start (backend-jq-filter.nix): stand-ins of the right length.
+      jq --arg key "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" \
+        'if .endpoints then .endpoints |= map(.private_key = $key | .peers[0].public_key = $key) else . end' \
+        "$config" > config.json
+      if ! ${singBox} check -c config.json > log 2>&1; then
         echo "sing-box refuses $config:" >&2
         cat log >&2
         exit 1

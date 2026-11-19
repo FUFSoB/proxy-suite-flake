@@ -268,7 +268,10 @@ in
       } pinTunConfig.route.rules;
       assert pinTunConfig.experimental.clash_api.external_controller == "127.0.0.1:19180";
       assert hasInfix ''select_pin "$tag" 60'' pinTproxyUp;
-      assert hasInfix "/proxies/proxy-suite-pin-tproxy-$slot" pinTproxyUp;
+      assert hasInfix ''put_pin "proxy-suite-pin-tproxy-$slot" "$1"'' pinTproxyUp;
+      assert hasInfix ''/proxies/$1"'' pinTproxyUp;
+      # Without mitm.udp the slot has its selector alone.
+      assert !(hasInfix "-$slot-\${selector%%:*}" pinTproxyUp);
       assert hasInfix "/run/proxy-suite-socks/clash-secret" pinTproxyUp;
       assert hasInfix "127.0.0.1:19180" pinTunUp;
       assert hasInfix ''route replace default dev psperapptun0 table "$table"'' pinTunUp;
