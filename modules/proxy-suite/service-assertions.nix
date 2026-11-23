@@ -20,6 +20,7 @@ let
     constants
     proxyCfg
     proxyEnabled
+    socksEnabled
     singBoxEnabled
     xrayEnabled
     hybridEnabled
@@ -307,6 +308,12 @@ let
     (requireEnabled proxyCfg.autoProxy.enable proxyEnabled
       "proxy-suite: proxy.autoProxy.enable requires proxy.enable = true"
     )
+    (requireEnabled proxyCfg.autoProxy.enable socksEnabled
+      "proxy-suite: proxy.autoProxy.enable requires proxy.socks.enable = true: probes leave through the local listener's exits"
+    )
+    (requireEnabled (derived.declaredAsns != [ ]) socksEnabled
+      "proxy-suite: routing by autonomous-system number downloads its address lists through the local listener, which requires proxy.socks.enable = true"
+    )
     (mkAssertion (!(proxyCfg.autoProxy.enable && pureXrayEnabled))
       "proxy-suite: proxy.autoProxy needs the sing-box backend: learned routes are local rule-sets that sing-box reloads from disk, and pure XRay has no equivalent"
     )
@@ -409,6 +416,14 @@ let
     (requireEnabled globalTproxy.enable proxyEnabled
       "proxy-suite: proxy.tproxy.enable requires proxy.enable = true"
     )
+    # TProxy carries traffic into the local listener, which only the socks unit serves. The
+    # TUN runs its own backend, so it alone works without one.
+    (requireEnabled globalTproxy.enable socksEnabled
+      "proxy-suite: proxy.tproxy.enable requires proxy.socks.enable = true: TProxy diverts traffic into the local listener, which only the socks unit serves. Use the TUN (proxy.tun.enable) for a listener-less host."
+    )
+    (requireEnabled proxyCfg.tun.only globalTun.enable
+      "proxy-suite: proxy.tun.only requires proxy.tun.enable = true"
+    )
     (requireEnabled (
       proxyCfg.autostart == "tun"
     ) globalTun.enable ''proxy-suite: proxy.autostart = "tun" requires proxy.tun.enable = true'')
@@ -459,6 +474,9 @@ let
     (requires perAppRoutingCfg.proxychains.enable proxyEnabled "perAppRouting.proxychains.enable"
       "proxy.enable"
     )
+    (requires perAppRoutingCfg.proxychains.enable socksEnabled "perAppRouting.proxychains.enable"
+      "proxy.socks.enable"
+    )
     (uniqueValues true effectivePerAppRoutingProfileNames
       "proxy-suite: perAppRouting profile names must be unique"
     )
@@ -481,6 +499,9 @@ let
       "perAppRouting.enable"
     )
     (requires perAppRoutingTproxy.enable proxyEnabled "perAppRouting.tproxy.enable" "proxy.enable")
+    (requires perAppRoutingTproxy.enable socksEnabled "perAppRouting.tproxy.enable"
+      "proxy.socks.enable"
+    )
     (requires hasTproxyProfiles perAppRoutingTproxy.enable "route=tproxy in perAppRouting.profiles"
       "perAppRouting.tproxy.enable"
     )
@@ -738,7 +759,7 @@ let
         || !lib.any inRuntimePorts (
           derived.proxyInboundPorts
           ++ reservedLoopbackPorts
-          ++ lib.optional proxyEnabled proxyCfg.listener.port
+          ++ lib.optional socksEnabled proxyCfg.listener.port
           ++ lib.optional globalTproxy.enable globalTproxy.port
         )
       )
@@ -747,7 +768,7 @@ let
           builtins.filter inRuntimePorts (
             derived.proxyInboundPorts
             ++ reservedLoopbackPorts
-            ++ lib.optional proxyEnabled proxyCfg.listener.port
+            ++ lib.optional socksEnabled proxyCfg.listener.port
             ++ lib.optional globalTproxy.enable globalTproxy.port
           )
         )
@@ -816,6 +837,9 @@ let
     (requireEnabled proxyInboundsNeedLocalProxy proxyEnabled
       "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, which requires proxy.enable = true. Use via = \"direct\" for a plain exit node."
     )
+    (requireEnabled proxyInboundsNeedLocalProxy socksEnabled
+      "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local listener, which requires proxy.socks.enable = true. Use via = \"direct\" for a plain exit node."
+    )
     (requireEnabled proxyInboundsNeedLocalProxy derived.hasAvailableOutbounds
       "proxy-suite: inbounds.routing.via = \"proxy\" relays through the local proxy stack, so at least one proxy.outbounds or proxy.subscriptions entry is required"
     )
@@ -829,7 +853,7 @@ let
     (mkAssertion
       (
         !proxyInboundsEnabled
-        || !proxyEnabled
+        || !socksEnabled
         || !builtins.elem proxyCfg.listener.port derived.proxyInboundPorts
       )
       "proxy-suite: a proxyInbounds listener port collides with proxy.listener.port (${toString proxyCfg.listener.port})"
@@ -1563,6 +1587,14 @@ let
       proxyEnabled
       ''proxy-suite: whitelistBypass.creators.<name>.upstream = "proxy" requires proxy.enable = true''
     )
+    (requireEnabled
+      (
+        whitelistBypassCfg.enable
+        && lib.any (c: c.upstream == "proxy") (builtins.attrValues whitelistBypassCfg.creators)
+      )
+      socksEnabled
+      ''proxy-suite: whitelistBypass.creators.<name>.upstream = "proxy" requires proxy.socks.enable = true''
+    )
   ];
 
   torSnowflake = lib.any (line: lib.hasPrefix "snowflake " line) torCfg.bridges.lines;
@@ -1576,6 +1608,9 @@ let
     (requireEnabled (
       torCfg.enable && torCfg.upstream == "proxy"
     ) proxyEnabled ''proxy-suite: tor.upstream = "proxy" requires proxy.enable = true'')
+    (requireEnabled (
+      torCfg.enable && torCfg.upstream == "proxy"
+    ) socksEnabled ''proxy-suite: tor.upstream = "proxy" requires proxy.socks.enable = true'')
     # Tor as the one outbound would be what the local proxy dials Tor's own relays through.
     (mkAssertion
       (
@@ -1625,7 +1660,7 @@ let
       (
         !derived.torOutboundEnabled
         || !(
-          (proxyEnabled && proxyCfg.listener.port == torCfg.socksPort)
+          (socksEnabled && proxyCfg.listener.port == torCfg.socksPort)
           || (proxyInboundsEnabled && builtins.elem torCfg.socksPort derived.proxyInboundPorts)
           || builtins.elem torCfg.socksPort (
             builtins.attrValues constants.xrayDnsBridgePorts ++ [ constants.outboundTestPort ]
@@ -1644,12 +1679,17 @@ let
     || lib.hasPrefix "127." mitmCfg.listener.address;
   # Ports the listener (the one way in without the proxy) may not share.
   mitmListenerClashes =
-    lib.optional proxyEnabled proxyCfg.listener.port
+    lib.optional socksEnabled proxyCfg.listener.port
     ++ mitmLoopbackPorts
     ++ lib.optionals proxyInboundsEnabled derived.proxyInboundPorts
     ++ builtins.attrValues constants.xrayDnsBridgePorts
     ++ [ constants.outboundTestPort ];
   mitmAssertions = lib.optionals mitmCfg.enable [
+    # Its "mitm-return" listener lives in the socks unit's config, and that unit is what
+    # mitmproxy sends the intercepted traffic back into.
+    (mkAssertion (!derived.mitmOutboundEnabled || socksEnabled)
+      "proxy-suite: mitm.enable with proxy.enable = true requires proxy.socks.enable = true: mitmproxy sends what it intercepts back to a listener in the socks unit"
+    )
     (mkAssertion (
       !pureXrayEnabled
     ) ''proxy-suite: mitm needs proxy.backend = "sing-box" or "hybrid", or no proxy at all'')
@@ -1723,7 +1763,7 @@ let
         !derived.mitmOutboundEnabled
         || !lib.any (
           port:
-          port == proxyCfg.listener.port
+          (socksEnabled && port == proxyCfg.listener.port)
           || (proxyInboundsEnabled && builtins.elem port derived.proxyInboundPorts)
         ) mitmLoopbackPorts
       )

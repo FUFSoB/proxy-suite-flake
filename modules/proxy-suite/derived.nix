@@ -14,6 +14,9 @@ let
   };
   xrayCfg = proxyCfg.xray;
   proxyEnabled = proxyCfg.enable;
+  # The local SOCKS5/HTTP listener's unit. Off with proxy.socks.enable = false, which
+  # proxy.tun.only implies: the TUN runs its own backend and needs no listener.
+  socksEnabled = proxyEnabled && proxyCfg.socks.enable && !proxyCfg.tun.only;
   # "hybrid" runs both; the pure* flags are what backend-specific code branches on.
   singBoxEnabled = proxyEnabled && proxyCfg.backend != "xray";
   xrayEnabled = proxyEnabled && proxyCfg.backend != "sing-box";
@@ -1493,6 +1496,7 @@ in
     singBoxCfg
     xrayCfg
     proxyEnabled
+    socksEnabled
     singBoxEnabled
     xrayEnabled
     hybridEnabled

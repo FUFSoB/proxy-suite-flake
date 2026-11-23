@@ -32,6 +32,27 @@ an AmneziaWG profile running as a global VPN counts as one too.
 Your [routing rules](./routing.md) still apply in both modes. Sites that the rules send
 direct skip the proxy.
 
+## TUN only, with no local proxy
+
+By default every mode also runs `proxy-suite-socks`, the local SOCKS5/HTTP listener at
+`proxy.listener` (127.0.0.1:1080) that desktop apps and TProxy point at. A host that only
+needs the tunnel can leave it out: the TUN runs its own backend and needs no listener.
+
+```nix no-check
+services.proxy-suite.proxy = {
+  enable = true;
+  tun.enable = true;
+  tun.only = true; # same as socks.enable = false, with a TUN
+  autostart = "tun";
+};
+```
+
+`proxy-ctl proxy tun on|off` drives the mode. `proxy-ctl proxy off` still stops the TUN
+and finds no listener to stop; `proxy on` would start one by hand, so leave it off. TProxy
+and the per-app routes, proxychains, autoProxy, mitm as an outbound, inbounds set to
+`routing.via = "proxy"`, and tor or whitelist-bypass upstreams set to "proxy" all relay
+through the listener and refuse to evaluate with it off.
+
 ## Commands
 
 ```sh
