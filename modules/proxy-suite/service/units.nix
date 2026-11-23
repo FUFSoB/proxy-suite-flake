@@ -7,6 +7,7 @@ let
     builders
     proxyCfg
     proxyEnabled
+    socksEnabled
     hybridEnabled
     pureXrayEnabled
     globalTun
@@ -358,6 +359,11 @@ let
   };
 
   systemServiceEntries = [
+    # Off with proxy.socks.enable = false (proxy.tun.only implies it): then no listener starts
+    # at proxy.listener, and the TUN's own unit runs its backend. The unit stays defined, just
+    # not wanted by multi-user.target, so `proxy-ctl proxy off` still finds it and stops the
+    # modes: the CLI (pkgs/proxy-ctl) is left as-is in this change, so on a TUN-only host use
+    # `proxy-ctl proxy tun on|off`. A plain `proxy on` would still start this listener by hand.
     {
       enable = proxyEnabled;
       name = serviceNames.socks;
@@ -379,7 +385,7 @@ let
         # Not after it: it only dials this listener once something is sent to it.
         ++ lib.optional ctx.mitmOutboundEnabled "proxy-suite-mitm.service"
         ++ map (j: "proxy-suite-wb-joiner-${j.tag}.service") whitelistBypassJoiners;
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = lib.optional socksEnabled "multi-user.target";
         # The hop login drawn as root, ahead of the start script, which ProtectSystem keeps
         # from writing /run (constants.ensureHopLogin).
         execStartPre = lib.filter (x: x != null) [

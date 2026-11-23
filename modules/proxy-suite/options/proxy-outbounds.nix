@@ -1,8 +1,9 @@
-{ lib, ... }:
+{ config, lib, ... }:
 
 let
   inherit (lib) mkOption types;
   t = import ./types.nix { inherit lib; };
+  autogroups = import ../autogroups.nix { inherit lib; };
 in
 {
   options.services.proxy-suite.proxy = {
@@ -181,6 +182,18 @@ in
         }
       );
       default = { };
+      # proxy.autoGroups (../autogroups.nix): merge the generated home and whitelist groups here,
+      # so everything that reads proxy.groups -- routing rules, assertions, the start script --
+      # sees them. mkAutoGroups leaves a manually declared group of the same name alone, so a
+      # manual group wins; with autoGroups.enable = false it returns { } and this is a no-op.
+      apply =
+        groups:
+        groups
+        // (autogroups.mkAutoGroups {
+          config = config.services.proxy-suite.proxy.autoGroups;
+          subscriptions = config.services.proxy-suite.proxy.subscriptions;
+          groups = groups;
+        }).groups;
       description = ''
         Outbound groups: one tag standing for several outbounds, which picks among them. A group
         works wherever an outbound tag does: routing rules, `detour`, pins, other groups. Its

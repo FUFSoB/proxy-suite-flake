@@ -8,6 +8,16 @@ Part of the [proxy-suite options reference](./index.md).
 
 - proxy
   - [enable](#services-proxy-suite-proxy-enable)
+  - autoGroups
+    - [enable](#services-proxy-suite-proxy-autogroups-enable)
+    - [extraHomeGlobs](#services-proxy-suite-proxy-autogroups-extrahomeglobs)
+    - [extraWhitelistGlobs](#services-proxy-suite-proxy-autogroups-extrawhitelistglobs)
+    - [failback](#services-proxy-suite-proxy-autogroups-failback)
+    - [homeGroupName](#services-proxy-suite-proxy-autogroups-homegroupname)
+    - [interval](#services-proxy-suite-proxy-autogroups-interval)
+    - [strategy](#services-proxy-suite-proxy-autogroups-strategy)
+    - [whitelistGroupName](#services-proxy-suite-proxy-autogroups-whitelistgroupname)
+    - [whitelistTokens](#services-proxy-suite-proxy-autogroups-whitelisttokens)
   - autoProxy
     - [enable](#services-proxy-suite-proxy-autoproxy-enable)
     - [exclude](#services-proxy-suite-proxy-autoproxy-exclude)
@@ -135,6 +145,8 @@ Part of the [proxy-suite options reference](./index.md).
   - singBox
     - [package](#services-proxy-suite-proxy-singbox-package)
     - [clashApiPort](#services-proxy-suite-proxy-singbox-clashapiport)
+  - socks
+    - [enable](#services-proxy-suite-proxy-socks-enable)
   - [subscriptionHwidFile](#services-proxy-suite-proxy-subscriptionhwidfile)
   - [subscriptionUpdateInterval](#services-proxy-suite-proxy-subscriptionupdateinterval)
   - [subscriptions](#services-proxy-suite-proxy-subscriptions)
@@ -171,6 +183,7 @@ Part of the [proxy-suite options reference](./index.md).
     - [address](#services-proxy-suite-proxy-tun-address)
     - [interface](#services-proxy-suite-proxy-tun-interface)
     - [mtu](#services-proxy-suite-proxy-tun-mtu)
+    - [only](#services-proxy-suite-proxy-tun-only)
   - urlTest
     - [interval](#services-proxy-suite-proxy-urltest-interval)
     - [tolerance](#services-proxy-suite-proxy-urltest-tolerance)
@@ -186,6 +199,106 @@ Whether to enable the local proxy\.
 
 **Type:** boolean\
 **Default:** `false`
+
+<a id="services-proxy-suite-proxy-autogroups-enable"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.enable
+
+Generate two outbound groups from the declared subscriptions:
+
+ - the home group (` homeGroupName `): every entry of every subscription, plus
+   ` extraHomeGlobs `; the everyday pool of main and reserve servers;
+ - the whitelist group (` whitelistGroupName `): only subscription entries whose tag carries
+   a ` whitelistTokens ` token\.
+
+Both are resolved at start against the tags a subscription actually holds then, so a
+refreshed subscription needs no changes here\. The groups are added to ` proxy.groups `
+automatically; a manually declared group of the same name wins\.
+
+**Type:** boolean\
+**Default:** `false`
+
+<a id="services-proxy-suite-proxy-autogroups-extrahomeglobs"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.extraHomeGlobs
+
+Extra globs added to the home group, for outbounds outside a subscription\. Reserved
+subscriptions are already members through ` subscriptions `\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "warp*" ]`
+
+<a id="services-proxy-suite-proxy-autogroups-extrawhitelistglobs"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.extraWhitelistGlobs
+
+Extra globs (` * `, ` ? `) matched against outbound tags and added to the whitelist group,
+for tags the token patterns cannot express (other separators, non-ASCII case)\. Prefer a
+subscription-wide form such as ` "my-sub-*_WL_*" `\.
+
+**Type:** list of string\
+**Default:** `[ ]`\
+**Example:** `[ "mobile-*WL*" ]`
+
+<a id="services-proxy-suite-proxy-autogroups-failback"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.failback
+
+Failback of both generated groups; see ` proxy.groups.<name>.failback `\.
+
+**Type:** boolean\
+**Default:** `true`
+
+<a id="services-proxy-suite-proxy-autogroups-homegroupname"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.homeGroupName
+
+Tag of the generated home group\. A manual group with this name wins\.
+
+**Type:** string matching the pattern \[A-Za-z0-9_\.-]+\
+**Default:** `"home"`\
+**Example:** `"pool"`
+
+<a id="services-proxy-suite-proxy-autogroups-interval"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.interval
+
+Health-check interval of both generated groups; see ` proxy.groups.<name>.interval `\.
+
+**Type:** null or string\
+**Default:** `null`\
+**Example:** `"15s"`
+
+<a id="services-proxy-suite-proxy-autogroups-strategy"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.strategy
+
+Strategy of both generated groups; see ` proxy.groups.<name>.strategy `\.
+
+**Type:** one of “failover”, “urltest”, “selector”\
+**Default:** `"failover"`
+
+<a id="services-proxy-suite-proxy-autogroups-whitelistgroupname"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.whitelistGroupName
+
+Tag of the generated whitelist group\. A manual group with this name wins\.
+
+**Type:** string matching the pattern \[A-Za-z0-9_\.-]+\
+**Default:** `"whitelist"`\
+**Example:** `"mobile-wl"`
+
+<a id="services-proxy-suite-proxy-autogroups-whitelisttokens"></a>
+## services\.proxy-suite\.proxy\.autoGroups\.whitelistTokens
+
+Tokens that make a server a whitelist entry, matched against whole tokens of a tag, not
+as substrings\. Tokens are split on ` - `, ` _ `, space, ` . `, ` | `, ` / ` and whitespace, so
+` LTE ` matches ` sub-LTE-1 ` and ` sub-foo_lte_bar ` but not ` complete ` or ` welt `\.
+
+Matching ignores ASCII case and the emoji presentation selector (U+FE0F), so ` wl `,
+` Wlte ` and ` 🏳 ` match ` WL `, ` WLTE ` and ` 🏳️ `\. Nix cannot do NFKC nor general Unicode case
+folding: a non-ASCII token matches only its exact spelling at build time\. A runtime
+matcher over the fetched tags is the planned second stage\.
+
+Generated globs need a literal separator, and the glob language has only ` * ` and ` ? `,
+so entries with ` . `, `   `, ` / ` or ` | ` between tokens need ` extraWhitelistGlobs `\.
+
+**Type:** list of string\
+**Default:** `[ "WL" "WLTE" "LTE" "🏳️" ]`\
+**Example:** `[ "WL" "WLTE" "LTE" "🏳️" ]`
 
 <a id="services-proxy-suite-proxy-autoproxy-enable"></a>
 ## services\.proxy-suite\.proxy\.autoProxy\.enable
@@ -1274,6 +1387,19 @@ Loopback port of the sing-box Clash API, used to switch and test outbounds\.
 **Type:** 16 bit unsigned integer; between 0 and 65535 (both inclusive)\
 **Default:** `9090`
 
+<a id="services-proxy-suite-proxy-socks-enable"></a>
+## services\.proxy-suite\.proxy\.socks\.enable
+
+Run the local SOCKS5/HTTP listener (` proxy-suite-socks `) at ` proxy.listener `\. Off,
+nothing listens there and the features that relay through it refuse to start: TProxy,
+per-app TProxy and proxychains, autoProxy, ASN lookups, mitm as an outbound, inbounds
+with ` routing.via = "proxy" `, and tor or whitelist-bypass upstreams set to “proxy”\.
+The TUN starts its own backend and needs no listener: with ` proxy.tun.enable ` this
+gives a TUN-only host\. ` proxy.tun.only ` implies off\.
+
+**Type:** boolean\
+**Default:** `true`
+
 <a id="services-proxy-suite-proxy-subscriptionhwidfile"></a>
 ## services\.proxy-suite\.proxy\.subscriptionHwidFile
 
@@ -1599,6 +1725,15 @@ TUN interface MTU\.
 
 **Type:** signed integer\
 **Default:** `1400`
+
+<a id="services-proxy-suite-proxy-tun-only"></a>
+## services\.proxy-suite\.proxy\.tun\.only
+
+Run the global TUN alone, with no local SOCKS5/HTTP listener: ` proxy.socks.enable = false `\.
+For a host whose apps need no system proxy\. Requires ` proxy.tun.enable `\.
+
+**Type:** boolean\
+**Default:** `false`
 
 <a id="services-proxy-suite-proxy-urltest-interval"></a>
 ## services\.proxy-suite\.proxy\.urlTest\.interval

@@ -8,6 +8,15 @@ in
   options.services.proxy-suite.proxy.tun = {
     enable = mkEnableOption "global TUN mode";
 
+    only = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Run the global TUN alone, with no local SOCKS5/HTTP listener: `proxy.socks.enable = false`.
+        For a host whose apps need no system proxy. Requires `proxy.tun.enable`.
+      '';
+    };
+
     interface = mkOption {
       type = interfaceType;
       default = "singtun0";

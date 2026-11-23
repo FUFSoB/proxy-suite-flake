@@ -60,6 +60,21 @@ in
       '';
     };
 
+    socks = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Run the local SOCKS5/HTTP listener (`proxy-suite-socks`) at `proxy.listener`. Off,
+          nothing listens there and the features that relay through it refuse to start: TProxy,
+          per-app TProxy and proxychains, autoProxy, ASN lookups, mitm as an outbound, inbounds
+          with `routing.via = "proxy"`, and tor or whitelist-bypass upstreams set to "proxy".
+          The TUN starts its own backend and needs no listener: with `proxy.tun.enable` this
+          gives a TUN-only host. `proxy.tun.only` implies off.
+        '';
+      };
+    };
+
     listener = {
       address = mkOption {
         # Also a line of proxychains' config.

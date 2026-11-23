@@ -279,6 +279,22 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
     };
   };
   proxy = {
+    autoGroups = {
+      enable = false;
+      extraHomeGlobs = [ ];
+      extraWhitelistGlobs = [ ];
+      failback = true;
+      homeGroupName = "home";
+      interval = null;
+      strategy = "failover";
+      whitelistGroupName = "whitelist";
+      whitelistTokens = [
+        "WL"
+        "WLTE"
+        "LTE"
+        "🏳️"
+      ];
+    };
     autoProxy = {
       enable = false;
       exclude = [ ];
@@ -372,6 +388,9 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
       clashApiPort = 9090;
       package = ‹sing-box from proxy-suite's own nixpkgs input›;
     };
+    socks = {
+      enable = true;
+    };
     subscriptionHwidFile = null;
     subscriptionUpdateInterval = "1d";
     subscriptions = [ ];
@@ -392,6 +411,7 @@ telegram, google, cloudflare, private and the like (pkgs/sing-geoip-extended.nix
       enable = false;
       interface = "singtun0";
       mtu = 1400;
+      only = false;
     };
     urlTest = {
       interval = "3m";
