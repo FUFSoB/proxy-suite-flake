@@ -4,6 +4,7 @@
     ./removed.nix
     ./proxy.nix
     ./proxy-outbounds.nix
+    ./proxy-autogroups.nix
     ./proxy-dns.nix
     ./proxy-routing.nix
     ./proxy-tun.nix
