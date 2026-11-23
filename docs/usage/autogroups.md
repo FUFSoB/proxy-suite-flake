@@ -1,10 +1,9 @@
-# Auto-groups: HOME and WHITELIST from subscriptions (draft)
+# Auto-groups: HOME and WHITELIST from subscriptions
 
-Status: wired. Files: `modules/proxy-suite/options/proxy-autogroups.nix`,
-`modules/proxy-suite/autogroups.nix`, `scripts/test-autogroups-classify.py`.
-
-The goal: after a subscription is imported or refreshed, reserves in the home pool and
-whitelist-only servers are grouped automatically, with no per-server regex from the user.
+After a subscription is imported or refreshed, reserves in the home pool and whitelist-only
+servers are grouped automatically, with no per-server regex from the user. The options live in
+[the reference](../options/proxy.md#services-proxy-suite-proxy-autogroups-enable) and in
+`modules/proxy-suite/options/proxy-autogroups.nix`.
 
 ## How it works
 
@@ -126,7 +125,7 @@ proxy.routing.rules = [
   is skipped, not merged. If a tag is a member of both a manual and a generated group, both keep
   it; routing decides which group a rule names.
 
-## Limitations, and the second stage
+## Limitations
 
 - **Separators.** Generated globs cover `-` and `_`, the only separators a subscription tag can
   contain. A custom outbound tag using `.`, space, `/` or `|` needs `extraWhitelistGlobs`
@@ -138,11 +137,11 @@ proxy.routing.rules = [
 - **Glob syntax.** Only `*` and `?`; `[`, `{` and escapes are literals. A subscription tag
   containing `*` or `?` would widen the generated patterns.
 
-Runtime stage two (a follow-up, not in this lane): let `outbound-groups.jq` classify fetched
-tags directly, with `ascii_downcase` (and NFKC/Unicode folding if the jq build has it), a
-`match` pattern option that takes a regex with the `i` flag, and an `exclude` / negative
-`match` list. That would make separators and Unicode exact, and let `home` exclude whitelist
-tags. The generated globs above stay as the fallback for unchanged engines.
+A later version could let `outbound-groups.jq` classify fetched tags directly, with
+`ascii_downcase` (and NFKC/Unicode folding if the jq build has it), a `match` pattern option
+that takes a regex with the `i` flag, and an `exclude` / negative `match` list. That would
+make separators and Unicode exact, and let `home` exclude whitelist tags. Today's generated
+globs stay as the fallback.
 
 ## Test
 

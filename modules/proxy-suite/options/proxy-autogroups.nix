@@ -1,6 +1,6 @@
 # Options for the generated HOME and WHITELIST groups. The generator itself lives in
 # ../autogroups.nix (mkAutoGroups); options/proxy-outbounds.nix merges its groups into
-# proxy.groups, and this file reports its warnings. See docs/autogroups-draft.md.
+# proxy.groups, and this file reports its warnings. See docs/usage/autogroups.md.
 {
   config,
   lib,

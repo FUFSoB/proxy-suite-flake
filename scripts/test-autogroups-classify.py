@@ -198,7 +198,7 @@ class GlobTests(unittest.TestCase):
 
     def test_dot_separator_needs_extra_glob(self):
         # classifyTag handles ".", but a generated glob cannot: the glob language has no
-        # character class and only "-"/"_" are emitted. Documented in autogroups-draft.md.
+        # character class and only "-"/"_" are emitted. Documented in docs/usage/autogroups.md.
         self.assertEqual(classify("sub-wl.edge"), "whitelist")
         self.assertFalse(any(glob_matches(glob, "sub-wl.edge") for glob in self.globs))
 

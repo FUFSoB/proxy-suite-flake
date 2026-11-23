@@ -10,7 +10,7 @@
 # match list is recomputed on every rebuild from the declared subscription tags, and resolved
 # against the tags a subscription actually holds at start.
 #
-# Limits (see docs/autogroups-draft.md):
+# Limits (see docs/usage/autogroups.md):
 # - globs cannot express a character class, so generated patterns cover "-" and "_" only;
 #   a tag with ".", " ", "/" or "|" as a token separator needs extraWhitelistGlobs;
 # - Nix has no NFKC nor general Unicode case folding, so only ASCII tokens (and their VS16
